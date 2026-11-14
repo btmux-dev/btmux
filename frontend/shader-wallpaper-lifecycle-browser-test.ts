@@ -114,7 +114,7 @@ try {
           const canvas = document.createElement('canvas');
           canvas.style.cssText = 'position:fixed;left:0;top:0;width:400px;height:300px';
           document.body.append(canvas);
-          const params = { 'pixel-size': 6, fish: 0, plants: 0, bubbles: 0, 'water-top': '#ffffff', 'water-bottom': '#000000' };
+          const params = { 'pixel-size': 6, fish: 0, plants: 0, bubbles: 0, seahorses: 0, starfish: 0, jellyfish: 0, 'water-top': '#ffffff', 'water-bottom': '#000000' };
           const renderer = createWallpaperRenderer(
             canvas,
             {

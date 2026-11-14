@@ -43,6 +43,86 @@ const SPECIES = [
   ['#e8e8f0', '#ff7b1c', 1],
 ] as const;
 
+/**
+ * Pixel art as a WGSL u32 array, 4 bits per pixel and 8 pixels per word: each pixel is its
+ * character's index in `keys` plus one, or 0 for '.'.
+ */
+function sprite(keys: string, rows: string[]) {
+  const width = Math.max(...rows.map((row) => row.length));
+  const words = Math.ceil(width / 8);
+  const data = rows.flatMap((row) =>
+    Array.from({ length: words }, (_, w) => {
+      let word = 0;
+      for (let i = 0; i < 8; i++) {
+        const ch = row[w * 8 + i] ?? '.';
+        if (ch === '.') continue;
+        const index = keys.indexOf(ch);
+        if (index < 0) throw new Error(`Unknown sprite pixel ${ch}`);
+        word |= (index + 1) << (4 * i);
+      }
+      return `${word >>> 0}u`;
+    }),
+  );
+  return {
+    width,
+    height: rows.length,
+    array: `array<u32, ${data.length}>(${data.join(', ')})`,
+    /** The pixel at integer f32 expressions `x`, `y`, which must be in bounds. */
+    at: (name: string, x: string, y: string) =>
+      `((${name}[u32(${y}) * ${words}u + u32(${x}) / 8u] >> (4u * (u32(${x}) % 8u))) & 15u)`,
+  };
+}
+
+// Facing right: outline, body, shade, light, eye, fin.
+const SEAHORSE = sprite('obdlef', [
+  '....o.o.......',
+  '...obobo......',
+  '...obbbbo.....',
+  '..obbbbbboooo.',
+  '..obbebbbbbbbo',
+  '..obbbbllllloo',
+  '..odbbbloooo..',
+  '...odbblo.....',
+  '...odbllo.....',
+  '..odbbbllo....',
+  '.fodbbbbllo...',
+  'ffodbbbbbllo..',
+  'ffodbbbbbllo..',
+  '.fodbbbbbllo..',
+  '..odbbbbllo...',
+  '...odbbblo....',
+  '....odbblo....',
+  '....odbbo.....',
+  '....odbo.ooo..',
+  '....odbooblbo.',
+  '....odboboobo.',
+  '.....odbbbbbo.',
+  '......ooooooo.',
+]);
+const SEAHORSE_COLORS = ['#ffc23a', '#ff8a3d', '#ff7eb6'];
+
+// Outline, body, shade, light bumps, center.
+const STARFISH = sprite('obdlc', [
+  '.......o.......',
+  '......obo......',
+  '......olo......',
+  '.....obbbo.....',
+  '.....oblbo.....',
+  'ooooobbbbbooooo',
+  'obllbbbcbbbllbo',
+  '.oddbbbbbbbddo.',
+  '..oobbbbbbboo..',
+  '....obbbbbo....',
+  '...obbbdbbbo...',
+  '...oblboblbo...',
+  '..oblbo.oblbo..',
+  '..obdo...odbo..',
+  '..ooo.....ooo..',
+]);
+const STARFISH_COLORS = ['#ff6b35', '#e8364f', '#a35be8'];
+
+const JELLYFISH_COLORS = ['#ff9ad5', '#c59bff', '#ffb38a'];
+
 const body = `
   // Square cells of whole device pixels, shrunk to keep at least 32x24 of them; the last
   // column and row may be partial. logicalViewportSize is CSS pixels times the device pixel
@@ -143,11 +223,135 @@ const body = `
     }
   }
 
+  let surfaceY = 3.0;
+
+  // Starfish on the sand.
+  var starArt = ${STARFISH.array};
+  var starColors = array<vec3f, ${STARFISH_COLORS.length}>(${STARFISH_COLORS.map(linear).join(', ')});
+  for (var k = 0u; k < u32(starfish); k = k + 1u) {
+    let fk = f32(k);
+    let sx0 = floor(W * (0.06 + 0.88 * ${hash('fk * 4.3 + 61.0')}));
+    let left = sx0 - ${Math.floor(STARFISH.width / 2)}.0;
+    // The bottom row sinks into the sand.
+    let top = ${sandTop('sx0')} + 2.0 - ${STARFISH.height}.0;
+    let sx = cell.x - left;
+    let sy = cell.y - top;
+    if (sx < 0.0 || sx >= ${STARFISH.width}.0 || sy < 0.0 || sy >= ${STARFISH.height}.0) {
+      continue;
+    }
+    let pixel = ${STARFISH.at('starArt', 'sx', 'sy')};
+    if (pixel == 0u) {
+      continue;
+    }
+    let skin = starColors[u32(floor(${hash('fk * 2.3 + 67.0')} * ${STARFISH_COLORS.length}.0)) % ${STARFISH_COLORS.length}u];
+    var shades = array<vec3f, 6>(
+      vec3f(0.0), skin * 0.3, skin, skin * 0.65, mix(skin, vec3f(1.0, 0.92, 0.75), 0.6), mix(skin, vec3f(1.0), 0.25),
+    );
+    color = shades[pixel];
+    alpha = 1.0;
+  }
+
+  // Jellyfish, drifting and pulsing, behind the fish.
+  var jellyColors = array<vec3f, ${JELLYFISH_COLORS.length}>(${JELLYFISH_COLORS.map(linear).join(', ')});
+  for (var k = 0u; k < u32(jellyfish); k = k + 1u) {
+    let fk = f32(k);
+    let R = round(5.0 + 3.0 * ${hash('fk * 3.9 + 71.0')});
+    let reach = round(R * 2.6);
+    // A quick contraction, then a slow release.
+    let beat = fract(time / (2.5 + ${hash('fk * 1.7 + 73.0')}) + ${hash('fk * 6.1 + 75.0')});
+    let squeeze = select(0.0, sin(beat / 0.3 * 3.14159), beat < 0.3);
+    let bw = R * (1.0 - 0.2 * squeeze);
+    let bh = round(R * (0.8 + 0.2 * squeeze));
+    let laneTop = surfaceY + bh + 3.0;
+    let laneBottom = max(laneTop, H - sandRows - reach - 3.0);
+    let wander = 0.5 + 0.5 * sin(time * 0.05 + fk * 2.7 + ${hash('fk * 2.2 + 77.0')} * 6.283);
+    let jy = round(mix(laneTop, laneBottom, wander) - squeeze);
+    let jx = round(W * (0.1 + 0.8 * ${hash('fk * 8.3 + 79.0')}) + sin(time * 0.04 + fk * 1.3) * min(W * 0.08, 16.0));
+    let lx = cell.x - jx;
+    let ly = cell.y - jy;
+    if (abs(lx) > R + 3.0 || ly < -bh - 1.0 || ly > reach + 1.0) {
+      continue;
+    }
+    let jelly = jellyColors[u32(floor(${hash('fk * 5.5 + 81.0')} * ${JELLYFISH_COLORS.length}.0)) % ${JELLYFISH_COLORS.length}u];
+    if (ly < 0.0) {
+      // The bell: a dome over row jy, with a bright rim and a glowing center.
+      let qx = (lx + 0.5) / bw;
+      let qy = (ly + 0.5) / bh;
+      let e = qx * qx + qy * qy;
+      if (e <= 1.0) {
+        let ix = (lx + 0.5) / max(bw - 1.0, 1.0);
+        let iy = (ly + 0.5) / max(bh - 1.0, 1.0);
+        let gx = (lx + 0.5) / (bw * 0.45);
+        let gy = (ly + 0.5 + bh * 0.4) / (bh * 0.3);
+        if (ix * ix + iy * iy > 1.0 || ly == -1.0) {
+          ${over('mix(jelly, vec3f(1.0), 0.35)', '0.85')}
+        } else if (gx * gx + gy * gy <= 1.0) {
+          ${over('mix(jelly, vec3f(1.0), 0.5)', '0.7')}
+        } else if (qy < -0.55 && qx < -0.1 && qx > -0.6) {
+          ${over('mix(jelly, vec3f(1.0), 0.6)', '0.6')}
+        } else {
+          ${over('jelly', '0.45')}
+        }
+      }
+    } else {
+      // Tentacles trail and wave, more the further from the bell.
+      let swing = min(ly * 0.25, 2.0);
+      let arms = lx - round(sin(time * 1.6 + fk * 2.0 - ly * 0.35) * swing);
+      if (abs(arms) <= 1.0 && ly <= round(reach * 0.45) + round(sin(arms * 2.0 + time * 2.0))) {
+        // Frilly oral arms.
+        ${over('mix(jelly, vec3f(1.0), 0.3)', '0.6')}
+        continue;
+      }
+      let strands = floor((R - 1.0) / 2.0);
+      for (var s = -strands; s <= strands; s = s + 1.0) {
+        let trail = reach * (0.6 + 0.4 * ${hash('s * 3.7 + fk * 1.3 + 93.0')});
+        let tx = round(s * 2.0 * bw / R + sin(time * 1.6 + s * 0.9 + fk * 2.0 - ly * 0.35) * swing);
+        if (lx == tx && ly <= trail) {
+          ${over('jelly', '0.45')}
+          break;
+        }
+      }
+    }
+  }
+
+  // Seahorses, drifting upright and turning.
+  var horseArt = ${SEAHORSE.array};
+  var horseColors = array<vec3f, ${SEAHORSE_COLORS.length}>(${SEAHORSE_COLORS.map(linear).join(', ')});
+  for (var k = 0u; k < u32(seahorses); k = k + 1u) {
+    let fk = f32(k);
+    let swayPhase = time * (0.06 + 0.04 * ${hash('fk * 1.9 + 83.0')}) + ${hash('fk * 7.1 + 85.0')} * 6.283;
+    let home = W * (0.15 + 0.7 * ${hash('fk * 3.3 + 87.0')}) - ${Math.floor(SEAHORSE.width / 2)}.0;
+    let left = round(home + sin(swayPhase) * min(W * 0.1, 20.0));
+    let heading = select(-1.0, 1.0, cos(swayPhase) >= 0.0);
+    let laneTop = surfaceY + 5.0;
+    let laneBottom = max(laneTop, H - sandRows - ${SEAHORSE.height}.0 - 4.0);
+    let top = round(mix(laneTop, laneBottom, ${hash('fk * 4.9 + 89.0')}) + sin(time * 0.7 + fk * 1.9) * 1.5);
+    let lx = cell.x - left;
+    let sy = cell.y - top;
+    if (lx < 0.0 || lx >= ${SEAHORSE.width}.0 || sy < 0.0 || sy >= ${SEAHORSE.height}.0) {
+      continue;
+    }
+    let sx = select(${SEAHORSE.width - 1}.0 - lx, lx, heading > 0.0);
+    let pixel = ${SEAHORSE.at('horseArt', 'sx', 'sy')};
+    let skin = horseColors[u32(floor(${hash('fk * 6.7 + 91.0')} * ${SEAHORSE_COLORS.length}.0)) % ${SEAHORSE_COLORS.length}u];
+    if (pixel == 6u) {
+      // The dorsal fin ripples.
+      if (fract(time * 3.0 + sy * 0.3) < 0.6) {
+        ${over('mix(skin, vec3f(1.0), 0.6)', '0.6')}
+      }
+    } else if (pixel != 0u) {
+      var shades = array<vec3f, 6>(
+        vec3f(0.0), skin * 0.25, skin, skin * 0.6, mix(skin, vec3f(1.0, 0.97, 0.85), 0.5), vec3f(0.01),
+      );
+      color = shades[pixel];
+      alpha = 1.0;
+    }
+  }
+
   // Fish.
   var palette = array<vec3f, ${SPECIES.length}>(${SPECIES.map(([main]) => linear(main)).join(', ')});
   var accents = array<vec3f, ${SPECIES.length}>(${SPECIES.map(([, accent]) => linear(accent)).join(', ')});
   var patterns = array<u32, ${SPECIES.length}>(${SPECIES.map(([, , pattern]) => `${pattern}u`).join(', ')});
-  let surfaceY = 3.0;
   for (var i = 0u; i < u32(fish); i = i + 1u) {
     let fi = f32(i);
     let size = 0.6 + ${hash('fi * 1.13 + 11.0')};
@@ -260,7 +464,7 @@ const body = `
 export const componentDefinition = defineShader({
   name: 'Aquarium',
   category: 'Textures',
-  description: 'Pixel-art fish tank with swimming fish, swaying plants, and bubbles',
+  description: 'Pixel-art fish tank with fish, seahorses, jellyfish, starfish, swaying plants, and bubbles',
   animatedTime: { speed: 'speed' },
   props: {
     speed: {
@@ -287,6 +491,21 @@ export const componentDefinition = defineShader({
       default: 2,
       description: 'Number of bubble streams',
       ui: { type: 'range', min: 0, max: 6, step: 1, label: 'Bubbles' },
+    },
+    seahorses: {
+      default: 1,
+      description: 'Number of seahorses',
+      ui: { type: 'range', min: 0, max: 6, step: 1, label: 'Seahorses' },
+    },
+    starfish: {
+      default: 1,
+      description: 'Number of starfish',
+      ui: { type: 'range', min: 0, max: 10, step: 1, label: 'Starfish' },
+    },
+    jellyfish: {
+      default: 1,
+      description: 'Number of jellyfish',
+      ui: { type: 'range', min: 0, max: 6, step: 1, label: 'Jellyfish' },
     },
     cssWidth: {
       default: 0,
