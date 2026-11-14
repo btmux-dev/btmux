@@ -45,9 +45,9 @@ function cli(...args: string[]) {
 }
 
 // No relay is reached: the relayed listener below takes its place.
-const relayCert = path.join(dir, 'relay.der');
-writeFileSync(relayCert, randomBytes(64));
-cli('connect-dev', '--relay', '127.0.0.1:9', '--relay-name', 'relay.test', '--relay-cert', relayCert, '--hostname', 'localhost', '--public-url', origin);
+const relayCa = path.join(dir, 'relay-ca.der');
+writeFileSync(relayCa, randomBytes(64));
+cli('connect-dev', '--relay', '127.0.0.1:9', '--relay-name', 'relay.test', '--relay-ca', relayCa, '--hostname', 'localhost', '--public-url', origin);
 
 let backend: ChildProcess | undefined;
 const browser = await chromium.launch();
