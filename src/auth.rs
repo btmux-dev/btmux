@@ -29,6 +29,8 @@ pub struct Auth {
     /// The only origin relayed requests may come from: the btmux connect
     /// registration's. Without one, relayed requests are refused.
     relayed_origin: RwLock<Option<String>>,
+    /// Passkey sign-in for relayed requests.
+    passkeys: OnceLock<Arc<crate::connect::passkeys::Passkeys>>,
 }
 
 // Browsers keep cookies at most 400 days.
@@ -100,7 +102,16 @@ impl Auth {
             cookie_name: format!("btmux_auth_{port}"),
             pairing_codes: Mutex::new(Vec::new()),
             relayed_origin: RwLock::new(None),
+            passkeys: OnceLock::new(),
         })
+    }
+
+    pub fn set_passkeys(&self, passkeys: crate::connect::passkeys::Passkeys) {
+        let _ = self.passkeys.set(Arc::new(passkeys));
+    }
+
+    pub fn passkeys(&self) -> Option<&Arc<crate::connect::passkeys::Passkeys>> {
+        self.passkeys.get()
     }
 
     /// Accept relayed requests for the btmux connect registration's origin.
@@ -224,7 +235,7 @@ fn is_guest(headers: &HeaderMap) -> bool {
         .is_some_and(|bearer| constant_time_eq(bearer.as_bytes(), token.as_bytes()))
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -237,7 +248,7 @@ pub async fn protect(State(auth): State<Arc<Auth>>, request: Request, next: Next
         .get::<crate::connect::Tunneled>()
         .is_some()
     {
-        return protect_relayed(&auth, request);
+        return protect_relayed(&auth, request, next).await;
     }
     if !auth.permitted_request(request.headers()) {
         return StatusCode::FORBIDDEN.into_response();
@@ -281,16 +292,65 @@ pub async fn protect(State(auth): State<Arc<Auth>>, request: Request, next: Next
 
 /// Requests through a btmux connect relay. The access token never works here,
 /// in any form: whoever has the link reaches the internet-facing hostname, so
-/// sign-in will take a passkey enrolled on this machine. Until then every
-/// relayed request that passes the origin checks gets 401.
-fn protect_relayed(auth: &Auth, request: Request) -> Response {
+/// signing in takes a passkey enrolled on this machine (`connect::passkeys`),
+/// which yields a session cookie.
+async fn protect_relayed(auth: &Auth, mut request: Request, next: Next) -> Response {
     let Some(origin) = auth.relayed_origin.read().unwrap().clone() else {
         return StatusCode::FORBIDDEN.into_response();
     };
     if !relayed_request_permitted(&origin, request.method(), request.headers()) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    relayed_unauthorized()
+    let Some(passkeys) = auth.passkeys() else {
+        return relayed_unauthorized();
+    };
+    if crate::connect::passkeys::public_route(request.method(), request.uri().path()) {
+        return next.run(request).await;
+    }
+    if let Some(session) = passkeys.session(request.headers()) {
+        // So signing out cuts this connection, and the terminals it opens.
+        if let Some(connection) = request
+            .extensions()
+            .get::<crate::connect::RelayedConnection>()
+        {
+            passkeys.track(session, connection);
+        }
+        request
+            .extensions_mut()
+            .insert(crate::connect::passkeys::RelayedSession(session));
+        return next.run(request).await;
+    }
+    let mut response = if is_navigation(&request) {
+        passkeys.login_page()
+    } else {
+        "Sign in with a passkey enrolled on this machine.".into_response()
+    };
+    *response.status_mut() = StatusCode::UNAUTHORIZED;
+    mark_relayed_unauthorized(response.headers_mut());
+    response
+}
+
+/// A page load, which gets the sign-in page in place of what it asked for.
+fn is_navigation(request: &Request) -> bool {
+    let path = request.uri().path();
+    request.method() == Method::GET
+        && !["/api/", "/ws/", "/mcp"]
+            .iter()
+            .any(|prefix| path.starts_with(prefix))
+        && request
+            .headers()
+            .get(HeaderName::from_static("sec-fetch-dest"))
+            .and_then(|v| v.to_str().ok())
+            .map_or_else(
+                || {
+                    request
+                        .headers()
+                        .get(header::ACCEPT)
+                        .and_then(|v| v.to_str().ok())
+                        .is_some_and(|accept| accept.contains("text/html"))
+                },
+                |dest| dest == "document",
+            )
 }
 
 /// A relayed request must name the registration's host, and come from its
@@ -320,16 +380,22 @@ fn relayed_request_permitted(origin: &str, method: &Method, headers: &HeaderMap)
 
 /// Marked so the app knows to show passkey sign-in, not the token form.
 fn relayed_unauthorized() -> Response {
-    (
+    let mut response = (
         StatusCode::UNAUTHORIZED,
-        [
-            (HeaderName::from_static("x-btmux-login"), "passkey"),
-            (header::CACHE_CONTROL, "no-store"),
-            (header::VARY, "Cookie"),
-        ],
         "Sign in with a passkey enrolled on this machine.",
     )
-        .into_response()
+        .into_response();
+    mark_relayed_unauthorized(response.headers_mut());
+    response
+}
+
+fn mark_relayed_unauthorized(headers: &mut HeaderMap) {
+    headers.insert(
+        HeaderName::from_static("x-btmux-login"),
+        HeaderValue::from_static("passkey"),
+    );
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.insert(header::VARY, HeaderValue::from_static("Cookie"));
 }
 
 /// Sign in a device that scanned a pairing QR code, then load the app. A
@@ -365,12 +431,20 @@ fn pair(auth: &Auth, request: &Request) -> Response {
 pub fn routes(auth: Arc<Auth>) -> Router {
     Router::new().route(
         "/api/pair",
-        post(move || async move {
-            Json(serde_json::json!({
-                "code": auth.pairing_code(),
-                "expires_in": PAIRING_CODE_TTL.as_secs(),
-            }))
-        }),
+        post(
+            move |relayed: Option<axum::Extension<crate::connect::passkeys::RelayedSession>>| async move {
+                // A pairing code signs in with the token, which a passkey
+                // session over a relay must not be able to hand out.
+                if relayed.is_some() {
+                    return StatusCode::FORBIDDEN.into_response();
+                }
+                Json(serde_json::json!({
+                    "code": auth.pairing_code(),
+                    "expires_in": PAIRING_CODE_TTL.as_secs(),
+                }))
+                .into_response()
+            },
+        ),
     )
 }
 

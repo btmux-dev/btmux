@@ -16,7 +16,25 @@ use axum::{
 };
 use serde_json::Value;
 
+pub mod passkeys;
+pub mod session;
 pub mod tunnel;
+
+/// Replaces `path` atomically with an owner-only file holding `contents`,
+/// synced before the rename so a crash leaves the old file or the new one.
+pub fn write_private(path: &std::path::Path, contents: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let mut temp = path.as_os_str().to_owned();
+    temp.push(".tmp");
+    let temp = std::path::PathBuf::from(temp);
+    let _ = std::fs::remove_file(&temp);
+    let error = |e: std::io::Error| format!("{}: {e}", path.display());
+    let mut file = crate::discovery::create_private_file(&temp).map_err(error)?;
+    file.write_all(contents).map_err(error)?;
+    file.sync_all().map_err(error)?;
+    drop(file);
+    std::fs::rename(&temp, path).map_err(error)
+}
 
 /// Marks requests that arrived through the relay. It comes from the listener
 /// that accepted the connection, never from anything a client sends.
@@ -40,10 +58,150 @@ pub async fn listen(addr: &str, app: Router) {
     tracing::info!("serving relayed connections on {addr}");
     let app = self::app(app);
     tokio::spawn(async move {
-        if let Err(error) = axum::serve(listener, app).await {
-            tracing::warn!("relayed listener stopped: {error}");
+        loop {
+            match listener.accept().await {
+                Ok((stream, _)) => {
+                    let _ = stream.set_nodelay(true);
+                    tokio::spawn(serve(stream, app.clone()));
+                }
+                Err(error) => {
+                    tracing::warn!("relayed listener: {error}");
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            }
         }
     });
+}
+
+/// One relayed connection, which signing out can cut (`connect::passkeys`).
+/// Shared by its I/O and the requests it carries, so it lives as long as the
+/// connection, including WebSockets upgraded from it.
+pub struct Live {
+    cut: tokio_util::sync::CancellationToken,
+}
+
+impl Live {
+    pub fn cut(&self) {
+        self.cut.cancel();
+    }
+}
+
+/// The connection a relayed request arrived on.
+#[derive(Clone)]
+pub struct RelayedConnection(pub std::sync::Arc<Live>);
+
+impl RelayedConnection {
+    pub fn new() -> Self {
+        Self(std::sync::Arc::new(Live {
+            cut: tokio_util::sync::CancellationToken::new(),
+        }))
+    }
+
+    #[cfg(test)]
+    pub fn is_cut(&self) -> bool {
+        self.0.cut.is_cancelled()
+    }
+}
+
+/// Relayed I/O that fails once its connection is cut, so a WebSocket upgraded
+/// from it ends too: a signed-out session can't keep a terminal it opened.
+struct Cuttable<T> {
+    io: T,
+    _live: std::sync::Arc<Live>,
+    cut: std::pin::Pin<Box<tokio_util::sync::WaitForCancellationFutureOwned>>,
+}
+
+fn cuttable<T>(io: T, connection: &RelayedConnection) -> Cuttable<T> {
+    Cuttable {
+        io,
+        cut: Box::pin(connection.0.cut.clone().cancelled_owned()),
+        _live: connection.0.clone(),
+    }
+}
+
+impl<T> Cuttable<T> {
+    fn check(&mut self, cx: &mut std::task::Context<'_>) -> std::io::Result<()> {
+        use std::future::Future;
+        match self.cut.as_mut().poll(cx) {
+            std::task::Poll::Ready(()) => Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "signed out",
+            )),
+            std::task::Poll::Pending => Ok(()),
+        }
+    }
+}
+
+impl<T: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for Cuttable<T> {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        if let Err(error) = this.check(cx) {
+            return std::task::Poll::Ready(Err(error));
+        }
+        std::pin::Pin::new(&mut this.io).poll_read(cx, buf)
+    }
+}
+
+impl<T: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for Cuttable<T> {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let this = self.get_mut();
+        if let Err(error) = this.check(cx) {
+            return std::task::Poll::Ready(Err(error));
+        }
+        std::pin::Pin::new(&mut this.io).poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let this = self.get_mut();
+        if let Err(error) = this.check(cx) {
+            return std::task::Poll::Ready(Err(error));
+        }
+        std::pin::Pin::new(&mut this.io).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.get_mut().io).poll_shutdown(cx)
+    }
+}
+
+/// Serves one relayed connection (the tunnel's decrypted stream, or a
+/// `--connect-listen` socket) as HTTP/1.1 with upgrades for WebSockets. Each
+/// request carries the connection, so a sign-in can register it to be cut.
+pub async fn serve<T>(io: T, app: Router)
+where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let connection = RelayedConnection::new();
+    let io = cuttable(io, &connection);
+    let service = hyper::service::service_fn(
+        move |mut request: axum::extract::Request<hyper::body::Incoming>| {
+            request.extensions_mut().insert(connection.clone());
+            tower::ServiceExt::oneshot(app.clone(), request)
+        },
+    );
+    if let Err(error) = hyper::server::conn::http1::Builder::new()
+        .timer(hyper_util::rt::TokioTimer::new())
+        .header_read_timeout(std::time::Duration::from_secs(30))
+        .serve_connection(hyper_util::rt::TokioIo::new(io), service)
+        .with_upgrades()
+        .await
+    {
+        tracing::debug!("relayed connection ended: {error}");
+    }
 }
 
 fn refused(path: &str) -> bool {
@@ -188,6 +346,36 @@ mod tests {
         }
         // A repeat compresses against the shared window.
         assert!(sizes[2] < prompt.len() / 4, "{sizes:?}");
+    }
+
+    /// A terminal's socket waits in a read; cutting its connection must end it.
+    #[tokio::test]
+    async fn cutting_a_connection_fails_its_pending_io() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (near, mut far) = tokio::io::duplex(64);
+        let connection = RelayedConnection::new();
+        let mut io = cuttable(near, &connection);
+        far.write_all(b"before").await.unwrap();
+        let mut buf = [0; 6];
+        io.read_exact(&mut buf).await.unwrap();
+        let reader = tokio::spawn(async move {
+            let mut buf = [0; 1];
+            let read = io.read(&mut buf).await;
+            (read, io)
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        connection.0.cut();
+        assert!(connection.is_cut());
+        let (read, mut io) = tokio::time::timeout(std::time::Duration::from_secs(1), reader)
+            .await
+            .expect("the pending read wasn't woken")
+            .unwrap();
+        assert_eq!(
+            read.unwrap_err().kind(),
+            std::io::ErrorKind::ConnectionAborted
+        );
+        assert!(io.write_all(b"after").await.is_err());
+        drop(far);
     }
 
     #[tokio::test]

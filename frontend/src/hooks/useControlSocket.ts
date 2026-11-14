@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useStore } from '../state/store';
 import { ClientMessage, NotificationLevel, ServerMessage } from '../protocol/messages';
 import { windowAttended } from '../lib/windowAttention';
+import { needsPasskey } from '../components/AuthGate';
 import { openInEditor } from '../lib/openInEditor';
 import { vscodeRequestEditor } from '../lib/vscodeFallback';
 import { atLeast } from '../lib/notifications';
@@ -200,7 +201,8 @@ export function useControlSocket() {
         if (!disposed)
           fetch('/api/sessions', { cache: 'no-store' })
             .then((response) => {
-              if (!disposed && response.status === 401) window.dispatchEvent(new Event('btmux-auth-required'));
+              if (disposed || needsPasskey(response)) return;
+              if (response.status === 401) window.dispatchEvent(new Event('btmux-auth-required'));
             })
             .catch(() => {});
         wsRef.current = null;

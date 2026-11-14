@@ -13,6 +13,16 @@ function failureMessage(status: number) {
     : `btmux returned HTTP ${status}. Check that the server is running.`;
 }
 
+/**
+ * Over a btmux connect relay the token doesn't work; the server answers a page
+ * load with its passkey sign-in page instead, so reload into it.
+ */
+export function needsPasskey(response: Response): boolean {
+  if (response.status !== 401 || response.headers.get('x-btmux-login') !== 'passkey') return false;
+  location.reload();
+  return true;
+}
+
 // Vite serves the development HTML itself, so it cannot issue the backend's
 // browser password challenge. This gate authenticates before opening sockets.
 export function AuthGate({ children }: { children: ReactNode }) {
@@ -26,6 +36,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     const controller = new AbortController();
     fetch('/api/sessions', { signal: controller.signal, cache: 'no-store' })
       .then((response) => {
+        if (needsPasskey(response)) return;
         setAuthenticated(response.ok);
         if (!response.ok && response.status !== 401) setError(failureMessage(response.status));
       })

@@ -492,6 +492,12 @@ pub enum SubCommand {
     /// (development, until sign-up exists).
     #[command(hide = true)]
     ConnectDev(crate::connect::tunnel::DevArgs),
+    /// Print a one-time link that enrolls a passkey for btmux connect.
+    #[command(hide = true)]
+    ConnectEnroll,
+    /// List btmux connect passkeys, remove one, or sign out every relayed browser.
+    #[command(hide = true)]
+    ConnectPasskeys(crate::connect::passkeys::PasskeysArgs),
 }
 
 /// The btmux version, taken from `Cargo.toml` at compile time. Shown by the
