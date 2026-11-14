@@ -59,6 +59,44 @@ async fn refuse_surfaces(request: Request, next: Next) -> Response {
     next.run(request).await
 }
 
+/// Announces compressed output on a relayed pane socket; it precedes every
+/// other frame.
+pub const PANE_COMPRESSION_FRAME: &str = r#"{"type":"compression","format":"deflate-raw"}"#;
+
+/// Compresses a relayed pane socket's output frames. Terminal output is mostly
+/// escape sequences repeated across small messages, so one deflate stream per
+/// socket, sync-flushed after each frame, shrinks it about 12x, where
+/// compressing frames separately gets about 2x. Each frame starts with its
+/// uncompressed length as a big-endian u32, so the browser knows when a
+/// frame's output is complete and can keep text frames in order with it.
+pub struct PaneDeflater(flate2::Compress);
+
+impl PaneDeflater {
+    pub fn new() -> Self {
+        Self(flate2::Compress::new(flate2::Compression::new(6), false))
+    }
+
+    pub fn frame(&mut self, data: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(4 + data.len() / 2 + 64);
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        let mut consumed = 0;
+        loop {
+            if out.capacity() - out.len() < 64 {
+                out.reserve(out.capacity());
+            }
+            let before = self.0.total_in();
+            self.0
+                .compress_vec(&data[consumed..], &mut out, flate2::FlushCompress::Sync)
+                .expect("deflate on an in-memory buffer");
+            consumed += (self.0.total_in() - before) as usize;
+            // Spare room left means the sync flush was written in full.
+            if consumed == data.len() && out.len() < out.capacity() {
+                return out;
+            }
+        }
+    }
+}
+
 /// serde writes an internally tagged enum's tag first.
 const CONFIG_PREFIX: &str = r#"{"type":"config","#;
 
@@ -125,6 +163,29 @@ mod tests {
 
         let state = r#"{"type":"state","sessions":[]}"#.to_string();
         assert_eq!(relay_event(state.clone()), state);
+    }
+
+    #[test]
+    fn pane_frames_inflate_in_order_from_one_stream() {
+        let mut deflater = PaneDeflater::new();
+        let mut inflater = flate2::Decompress::new(false);
+        let prompt = b"\x1b[32m~/repos/btmux\x1b[0m main \xe2\x9d\xaf ".repeat(4);
+        let big: Vec<u8> = (0..200_000u32).map(|i| (i * 7919 % 251) as u8).collect();
+        let mut sizes = Vec::new();
+        for message in [&b"x"[..], &prompt, &prompt, &big, &prompt] {
+            let frame = deflater.frame(message);
+            sizes.push(frame.len());
+            let size = u32::from_be_bytes(frame[..4].try_into().unwrap()) as usize;
+            assert_eq!(size, message.len());
+            // Everything a frame encodes is available without the next one.
+            let mut out = Vec::with_capacity(size + 1);
+            inflater
+                .decompress_vec(&frame[4..], &mut out, flate2::FlushDecompress::Sync)
+                .unwrap();
+            assert_eq!(out, message);
+        }
+        // A repeat compresses against the shared window.
+        assert!(sizes[2] < prompt.len() / 4, "{sizes:?}");
     }
 
     #[tokio::test]

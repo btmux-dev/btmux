@@ -5,6 +5,7 @@ import { terminalTransparency, useTerminalOptions } from './TerminalPane';
 import type { ClientConfig } from '../state/types';
 import { STARTUP_THEME } from '../state/startupTheme';
 import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS } from '../state/configDefaults';
+import { paneMessageHandler } from '../lib/paneSocket';
 
 interface Props {
   paneId: string;
@@ -119,17 +120,15 @@ export function MirrorPane({ paneId, config: configOverride, visible, onNaturalS
         setInitialReplayRendered(false);
         term.setPaused(true);
         ws = new WebSocket(url);
-        ws.onclose = () => {
-          if (!disposed) timer = window.setTimeout(connect, 2000);
-        };
-        ws.onerror = () => ws.close();
-        ws.binaryType = 'arraybuffer';
-        ws.onmessage = (ev) => {
-          if (ev.data instanceof ArrayBuffer) {
-            term.write(new Uint8Array(ev.data));
-          } else if (typeof ev.data === 'string') {
+        const messages = paneMessageHandler({
+          // Relayed output inflates asynchronously, so it can land after disposal.
+          binary: (bytes) => {
+            if (!disposed) term.write(bytes);
+          },
+          text: (data) => {
+            if (disposed) return;
             try {
-              const msg = JSON.parse(ev.data);
+              const msg = JSON.parse(data);
               if (msg.type === 'ready') {
                 replayReadyRef.current = true;
                 revealWhenReady();
@@ -143,10 +142,17 @@ export function MirrorPane({ paneId, config: configOverride, visible, onNaturalS
                 if (replayReadyRef.current) reportNaturalSize(msg.cols, msg.rows);
               }
             } catch {
-              term.write(ev.data);
+              term.write(data);
             }
-          }
+          },
+        });
+        ws.onclose = () => {
+          messages.dispose();
+          if (!disposed) timer = window.setTimeout(connect, 2000);
         };
+        ws.onerror = () => ws.close();
+        ws.binaryType = 'arraybuffer';
+        ws.onmessage = messages.onMessage;
       };
       connect();
 
