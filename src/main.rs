@@ -478,24 +478,33 @@ async fn main() {
             auth::protect,
         ));
     multipass::set_app(app.clone());
-    if let Some(addr) = &args.connect_listen {
-        connect::listen(addr, app.clone()).await;
-    }
-    match state_file
+    // Before any relayed listener: without the registration's origin, relayed
+    // requests are refused.
+    let registration = match state_file
         .as_deref()
         .map(connect::tunnel::Registration::load)
         .transpose()
     {
-        Ok(Some(Some(registration))) => {
-            let started = auth
-                .allow(&registration.public_url)
-                .and_then(|()| connect::tunnel::spawn(registration, app.clone()));
-            if let Err(error) = started {
+        Ok(Some(Some(registration))) => match auth.set_relayed_origin(&registration.public_url) {
+            Ok(()) => Some(registration),
+            Err(error) => {
                 tracing::error!("btmux connect: {error}");
+                None
             }
+        },
+        Ok(_) => None,
+        Err(error) => {
+            tracing::error!("btmux connect: {error}");
+            None
         }
-        Ok(_) => {}
-        Err(error) => tracing::error!("btmux connect: {error}"),
+    };
+    if let Some(addr) = &args.connect_listen {
+        connect::listen(addr, app.clone()).await;
+    }
+    if let Some(registration) = registration {
+        if let Err(error) = connect::tunnel::spawn(registration, app.clone()) {
+            tracing::error!("btmux connect: {error}");
+        }
     }
     if let Some(instance) = state.read().await.guest_instance() {
         multipass::restore_bridge(instance);

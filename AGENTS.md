@@ -878,7 +878,13 @@ FIN. It tries the relay's addresses staggered (RFC 8305) and reconnects with
 backoff, including after an upgrade's exec; the relay closes a hostname's old
 tunnel when it registers again. `connect/mod.rs` marks
 relayed requests with `Tunneled`, from the tunnel or the hidden
-`--connect-listen` listener that accepted them, never from a header. Relayed
+`--connect-listen` listener that accepted them, never from a header.
+`protect_relayed` never accepts the access token in any form (Bearer, Basic,
+its cookie, `/pair`, the guest token): with no registration loaded it refuses
+relayed requests outright, and otherwise requires the registration's exact
+Host and Origin, refuses `Sec-Fetch-Site: same-site` (other machines share the
+parent domain), and requires Origin on changes and upgrades. Until passkey
+sign-in exists, relayed requests get 401 marked `X-Btmux-Login: passkey`. Relayed
 tabs get no browser or VS Code surface: their routes return
 403, and `relay_event` rewrites each relayed control socket's config
 (`relayed`, no `browser`, no `vscode` editor), which the store's surface
