@@ -16,7 +16,25 @@ use axum::{
 };
 use serde_json::Value;
 
+pub mod passkeys;
+pub mod session;
 pub mod tunnel;
+
+/// Replaces `path` atomically with an owner-only file holding `contents`,
+/// synced before the rename so a crash leaves the old file or the new one.
+pub fn write_private(path: &std::path::Path, contents: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    let mut temp = path.as_os_str().to_owned();
+    temp.push(".tmp");
+    let temp = std::path::PathBuf::from(temp);
+    let _ = std::fs::remove_file(&temp);
+    let error = |e: std::io::Error| format!("{}: {e}", path.display());
+    let mut file = crate::discovery::create_private_file(&temp).map_err(error)?;
+    file.write_all(contents).map_err(error)?;
+    file.sync_all().map_err(error)?;
+    drop(file);
+    std::fs::rename(&temp, path).map_err(error)
+}
 
 /// Marks requests that arrived through the relay. It comes from the listener
 /// that accepted the connection, never from anything a client sends.

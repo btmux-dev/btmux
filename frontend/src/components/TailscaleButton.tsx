@@ -108,7 +108,8 @@ function Details({ status, open }: { status: TailscaleStatus; open: boolean }) {
           onClick={copy}
         />
       </HStack>
-      {open && <PairingQr url={status.url} />}
+      {/* Relayed tabs can't issue pairing codes, which sign in with the token. */}
+      {open && !useStore.getState().config?.relayed && <PairingQr url={status.url} />}
       <Text type="supporting">Or open the address and sign in with this server's access token.</Text>
     </VStack>
   );

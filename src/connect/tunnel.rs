@@ -59,16 +59,8 @@ impl Registration {
 
     /// Replaces the registration atomically, owner-only.
     pub fn save(&self, state_file: &Path) -> Result<(), String> {
-        use std::io::Write;
-        let path = path(state_file);
-        let temp = path.with_extension("connect.tmp");
-        let _ = std::fs::remove_file(&temp);
         let json = serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?;
-        let mut file = crate::discovery::create_private_file(&temp)
-            .map_err(|e| format!("{}: {e}", temp.display()))?;
-        file.write_all(&json).map_err(|e| e.to_string())?;
-        drop(file);
-        std::fs::rename(&temp, &path).map_err(|e| format!("{}: {e}", path.display()))
+        super::write_private(&path(state_file), &json)
     }
 }
 

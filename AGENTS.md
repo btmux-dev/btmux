@@ -883,8 +883,22 @@ relayed requests with `Tunneled`, from the tunnel or the hidden
 its cookie, `/pair`, the guest token): with no registration loaded it refuses
 relayed requests outright, and otherwise requires the registration's exact
 Host and Origin, refuses `Sec-Fetch-Site: same-site` (other machines share the
-parent domain), and requires Origin on changes and upgrades. Until passkey
-sign-in exists, relayed requests get 401 marked `X-Btmux-Login: passkey`. Relayed
+parent domain), and requires Origin on changes and upgrades. Signing in takes
+a passkey enrolled on the machine (`connect/passkeys.rs`, webauthn-rs, user
+verification required): the hidden `btmux connect-enroll` asks the server
+(`POST /api/connect/enrollments`) for a one-time link (5 min, code in the URL
+fragment), and the server's own pages (`/connect/login`, `/connect/enroll`,
+`connect/signin.js`, strict CSP) run the ceremonies. Passkeys live in
+`state.passkeys`, bound to the registration's hostname. A sign-in sets
+`__Host-btmux_session`, HMAC-signed under `state.session-key`
+(`connect/session.rs`, 7 days), valid only while its passkey is enrolled;
+sign-in state is sealed (AES-GCM) into the response rather than stored, so
+unauthenticated starts can't crowd out the owner's, and starts are
+rate-limited. Without a session, page loads get the sign-in page (401) at their
+own URL and other requests a 401 marked `X-Btmux-Login: passkey`, on which the
+app reloads. Over the relay, enrolling, removing passkeys (`btmux
+connect-passkeys`), and signing out everywhere take a sign-in under 5 minutes
+old, and `POST /api/pair` is refused. Relayed
 tabs get no browser or VS Code surface: their routes return
 403, and `relay_event` rewrites each relayed control socket's config
 (`relayed`, no `browser`, no `vscode` editor), which the store's surface
