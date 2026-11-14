@@ -1,7 +1,7 @@
 //! One authentication boundary for HTTP, WebSocket upgrades, and MCP.
 use axum::{
     extract::{Request, State},
-    http::{header, HeaderMap, HeaderValue, Method, StatusCode},
+    http::{header, HeaderMap, HeaderName, HeaderValue, Method, StatusCode},
     middleware::Next,
     response::{Html, IntoResponse, Response},
     routing::post,
@@ -26,6 +26,9 @@ pub struct Auth {
     cookie_name: String,
     /// One-time codes that sign in another device through `/pair`.
     pairing_codes: Mutex<Vec<(String, Instant)>>,
+    /// The only origin relayed requests may come from: the btmux connect
+    /// registration's. Without one, relayed requests are refused.
+    relayed_origin: RwLock<Option<String>>,
 }
 
 // Browsers keep cookies at most 400 days.
@@ -96,7 +99,15 @@ impl Auth {
             origins: RwLock::new(origins),
             cookie_name: format!("btmux_auth_{port}"),
             pairing_codes: Mutex::new(Vec::new()),
+            relayed_origin: RwLock::new(None),
         })
+    }
+
+    /// Accept relayed requests for the btmux connect registration's origin.
+    pub fn set_relayed_origin(&self, url: &str) -> Result<(), String> {
+        let origin = parse_origin(url)?;
+        *self.relayed_origin.write().unwrap() = Some(origin);
+        Ok(())
     }
 
     /// A random code that `/pair` exchanges once for the auth cookie.
@@ -221,6 +232,13 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 pub async fn protect(State(auth): State<Arc<Auth>>, request: Request, next: Next) -> Response {
+    if request
+        .extensions()
+        .get::<crate::connect::Tunneled>()
+        .is_some()
+    {
+        return protect_relayed(&auth, request);
+    }
     if !auth.permitted_request(request.headers()) {
         return StatusCode::FORBIDDEN.into_response();
     }
@@ -259,6 +277,59 @@ pub async fn protect(State(auth): State<Arc<Auth>>, request: Request, next: Next
         response.headers_mut().append(header::SET_COOKIE, cookie);
     }
     response
+}
+
+/// Requests through a btmux connect relay. The access token never works here,
+/// in any form: whoever has the link reaches the internet-facing hostname, so
+/// sign-in will take a passkey enrolled on this machine. Until then every
+/// relayed request that passes the origin checks gets 401.
+fn protect_relayed(auth: &Auth, request: Request) -> Response {
+    let Some(origin) = auth.relayed_origin.read().unwrap().clone() else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+    if !relayed_request_permitted(&origin, request.method(), request.headers()) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    relayed_unauthorized()
+}
+
+/// A relayed request must name the registration's host, and come from its
+/// origin when it says where it comes from; changes and WebSocket upgrades
+/// must say. Machine hostnames share a parent domain, so another machine is
+/// same-site and `SameSite=Strict` cookies would go along: refuse those.
+fn relayed_request_permitted(origin: &str, method: &Method, headers: &HeaderMap) -> bool {
+    let header = |name| {
+        headers
+            .get(name)
+            .and_then(|v: &HeaderValue| v.to_str().ok())
+    };
+    if !header(header::HOST).is_some_and(|host| host.eq_ignore_ascii_case(authority(origin))) {
+        return false;
+    }
+    if header(HeaderName::from_static("sec-fetch-site")) == Some("same-site") {
+        return false;
+    }
+    match header(header::ORIGIN) {
+        Some(sent) => sent == origin,
+        None => {
+            let changes = !matches!(*method, Method::GET | Method::HEAD);
+            !changes && !headers.contains_key(header::UPGRADE)
+        }
+    }
+}
+
+/// Marked so the app knows to show passkey sign-in, not the token form.
+fn relayed_unauthorized() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        [
+            (HeaderName::from_static("x-btmux-login"), "passkey"),
+            (header::CACHE_CONTROL, "no-store"),
+            (header::VARY, "Cookie"),
+        ],
+        "Sign in with a passkey enrolled on this machine.",
+    )
+        .into_response()
 }
 
 /// Sign in a device that scanned a pairing QR code, then load the app. A
@@ -415,6 +486,99 @@ mod tests {
     fn auth() -> Auth {
         Auth::new("a".repeat(64), "127.0.0.1", 8004, &[]).unwrap()
     }
+    /// Relayed requests go through `connect::app`, as the tunnel and
+    /// `--connect-listen` serve them.
+    #[tokio::test]
+    async fn relayed_requests_never_take_the_token() {
+        use axum::{body::Body, http::Request, routing::get};
+        use tower::ServiceExt;
+        let token = "a".repeat(64);
+        let auth = Arc::new(Auth::new(token.clone(), "127.0.0.1", 8004, &[]).unwrap());
+        let app = Router::new()
+            .route("/", get(|| async { "app" }))
+            .route("/api/x", post(|| async { "ok" }))
+            .route("/ws/control", get(|| async { "ws" }))
+            .layer(axum::middleware::from_fn_with_state(auth.clone(), protect));
+        let relayed = crate::connect::app(app.clone());
+        let request = |method: &str, path: &str, headers: &[(&str, &str)]| {
+            let mut request = Request::builder().method(method).uri(path);
+            for (name, value) in headers {
+                request = request.header(*name, *value);
+            }
+            request.body(Body::empty()).unwrap()
+        };
+        let bearer = format!("Bearer {token}");
+        let status = |app: &Router, request: Request<Body>| {
+            let app = app.clone();
+            async move { app.oneshot(request).await.unwrap().status() }
+        };
+
+        // Locally the token works; relayed, without a registration, nothing does.
+        let local = [
+            ("host", "localhost:8004"),
+            ("authorization", bearer.as_str()),
+        ];
+        assert_eq!(status(&app, request("GET", "/", &local)).await, 200);
+        let relay = [
+            ("host", "laptop.btmux.test"),
+            ("authorization", bearer.as_str()),
+        ];
+        assert_eq!(status(&relayed, request("GET", "/", &relay)).await, 403);
+
+        auth.set_relayed_origin("https://laptop.btmux.test")
+            .unwrap();
+        let host = ("host", "laptop.btmux.test");
+        let origin = ("origin", "https://laptop.btmux.test");
+        let basic = format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode(format!("btmux:{token}"))
+        );
+        let cookie = format!("btmux_auth_8004={token}");
+        for credential in [
+            ("authorization", bearer.as_str()),
+            ("authorization", basic.as_str()),
+            ("cookie", cookie.as_str()),
+        ] {
+            let response = relayed
+                .clone()
+                .oneshot(request("GET", "/", &[host, origin, credential]))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 401, "{credential:?}");
+            assert_eq!(response.headers()["x-btmux-login"], "passkey");
+            assert!(response.headers().get(header::WWW_AUTHENTICATE).is_none());
+            assert!(response.headers().get(header::SET_COOKIE).is_none());
+        }
+        let code = auth.pairing_code();
+        let pair = request("GET", &format!("/pair?code={code}"), &[host]);
+        assert_eq!(status(&relayed, pair).await, 401);
+
+        for (method, path, headers, expected) in [
+            // Another host, origin, or machine under the same parent domain.
+            ("GET", "/", vec![("host", "localhost:8004")], 403),
+            (
+                "GET",
+                "/",
+                vec![host, ("origin", "https://other.btmux.test")],
+                403,
+            ),
+            ("GET", "/", vec![host, ("sec-fetch-site", "same-site")], 403),
+            // Changes and upgrades must say where they come from.
+            ("POST", "/api/x", vec![host], 403),
+            (
+                "GET",
+                "/ws/control",
+                vec![host, ("upgrade", "websocket")],
+                403,
+            ),
+            ("POST", "/api/x", vec![host, origin], 401),
+            ("GET", "/", vec![host, ("sec-fetch-site", "none")], 401),
+        ] {
+            let response = status(&relayed, request(method, path, &headers)).await;
+            assert_eq!(response, expected, "{method} {path} {headers:?}");
+        }
+    }
+
     #[test]
     fn rejects_cross_origin_and_rebound_hosts() {
         let auth = auth();
