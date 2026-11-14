@@ -46,13 +46,15 @@ pub struct Keys {
 }
 
 impl Keys {
-    fn derive(secret: &[u8], rp_id: &str) -> Self {
+    /// Sessions use the secret alone, so they survive restarts; sealed
+    /// ceremony state also takes this process's `salt`, so it doesn't.
+    fn derive(secret: &[u8], rp_id: &str, salt: [u8; 16]) -> Self {
         let root = hmac::Key::new(hmac::HMAC_SHA256, secret);
         let derive = |label: &[u8]| hmac::sign(&root, label);
         let session = hmac::Key::new(hmac::HMAC_SHA256, derive(b"btmux session v1").as_ref());
+        let ceremony = derive(&[b"btmux ceremony v1".as_slice(), &salt].concat());
         let ceremony = aead::LessSafeKey::new(
-            aead::UnboundKey::new(&aead::AES_256_GCM, derive(b"btmux ceremony v1").as_ref())
-                .unwrap(),
+            aead::UnboundKey::new(&aead::AES_256_GCM, ceremony.as_ref()).unwrap(),
         );
         Self {
             session,
@@ -62,7 +64,7 @@ impl Keys {
     }
 
     /// Loads the secret, creating it if missing.
-    pub fn load(state_file: &Path, rp_id: &str) -> Result<Self, String> {
+    pub fn load(state_file: &Path, rp_id: &str, salt: [u8; 16]) -> Result<Self, String> {
         let path = key_path(state_file);
         let secret = match crate::discovery::read_private_file(&path, 1024) {
             Ok(text) => b64()
@@ -74,13 +76,13 @@ impl Keys {
         if secret.len() < 32 {
             return Err(format!("{}: too short", path.display()));
         }
-        Ok(Self::derive(&secret, rp_id))
+        Ok(Self::derive(&secret, rp_id, salt))
     }
 
     /// Replaces the secret: every session and ceremony in flight ends.
-    pub fn rotate(state_file: &Path, rp_id: &str) -> Result<Self, String> {
+    pub fn rotate(state_file: &Path, rp_id: &str, salt: [u8; 16]) -> Result<Self, String> {
         let secret = write_secret(&key_path(state_file))?;
-        Ok(Self::derive(&secret, rp_id))
+        Ok(Self::derive(&secret, rp_id, salt))
     }
 
     fn mac_input(&self, payload: &[u8]) -> Vec<u8> {
@@ -207,7 +209,7 @@ mod tests {
     use super::*;
 
     fn keys(rp_id: &str) -> Keys {
-        Keys::derive(&[7u8; 32], rp_id)
+        Keys::derive(&[7u8; 32], rp_id, [1; 16])
     }
 
     #[test]
@@ -243,7 +245,7 @@ mod tests {
         assert!(self::keys("other.btmux.test")
             .verify(&cookie, 1_000)
             .is_none());
-        assert!(Keys::derive(&[8u8; 32], "laptop.btmux.test")
+        assert!(Keys::derive(&[8u8; 32], "laptop.btmux.test", [1; 16])
             .verify(&cookie, 1_000)
             .is_none());
     }
@@ -267,11 +269,14 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("btmux-session-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let state = dir.join("state.json");
-        let first = Keys::load(&state, "laptop.btmux.test").unwrap();
+        let first = Keys::load(&state, "laptop.btmux.test", [1; 16]).unwrap();
         let cookie = first.sign(credential_digest(b"c"), 1_000);
-        let again = Keys::load(&state, "laptop.btmux.test").unwrap();
+        // Another process: sessions carry over, sealed sign-in state doesn't.
+        let sealed = first.seal(b"ceremony state");
+        let again = Keys::load(&state, "laptop.btmux.test", [2; 16]).unwrap();
         assert!(again.verify(&cookie, 1_000).is_some());
-        let rotated = Keys::rotate(&state, "laptop.btmux.test").unwrap();
+        assert!(again.open(&sealed).is_none());
+        let rotated = Keys::rotate(&state, "laptop.btmux.test", [2; 16]).unwrap();
         assert!(rotated.verify(&cookie, 1_000).is_none());
         #[cfg(unix)]
         {

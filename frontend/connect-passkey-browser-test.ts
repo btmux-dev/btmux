@@ -71,17 +71,29 @@ try {
   const page = await context.newPage();
   const cdp = await context.newCDPSession(page);
   await cdp.send('WebAuthn.enable');
-  await cdp.send('WebAuthn.addVirtualAuthenticator', {
-    options: {
-      protocol: 'ctap2',
-      transport: 'internal',
-      hasResidentKey: true,
-      hasUserVerification: true,
-      isUserVerified: true,
-      automaticPresenceSimulation: true,
-    },
-  });
-  const status = (page: Page) => page.locator('#status').textContent();
+  // A new authenticator stands for another device: one passkey each.
+  const newDevice = async () => {
+    const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
+      options: {
+        protocol: 'ctap2',
+        transport: 'internal',
+        hasResidentKey: true,
+        hasUserVerification: true,
+        isUserVerified: true,
+        automaticPresenceSimulation: true,
+      },
+    });
+    return authenticatorId;
+  };
+  let device = await newDevice();
+  const signIn = (page: Page) => page.getByRole('button', { name: 'Sign in with a passkey' });
+  const enroll = async (page: Page) => {
+    await page.goto(cli('connect-enroll'));
+    await page.getByRole('button', { name: 'Create a passkey' }).click();
+    await page.waitForURL(`${origin}/`);
+  };
+  /** What the pane shows, read on the machine rather than through the relay. */
+  const paneText = () => cli('capture-pane', '-t', '0', '-S', '-');
 
   // Before any passkey: a page load gets the sign-in page, which has nothing to offer.
   const first = await page.goto(`${origin}/`);
@@ -124,23 +136,68 @@ try {
   );
   assert(reuse === 401, `a used enrollment code answered ${reuse}`);
 
+  // The sign-in page's own address, signed in: home, not a reload loop.
+  await page.goto(`${origin}/connect/login`);
+  await page.waitForURL(`${origin}/`);
+  await page.getByLabel('Terminal').first().waitFor({ state: 'attached', timeout: 15_000 });
+  // `?reauth` signs in again despite the session, as relayed changes require.
+  await page.goto(`${origin}/connect/login?reauth`);
+  await signIn(page).click();
+  await page.waitForURL(`${origin}/`);
+
   // Signed out, a deep link shows the sign-in page, then opens what it asked for.
   await context.clearCookies();
   const deep = `${origin}/s/0`;
   await page.goto(deep);
-  await page.getByRole('button', { name: 'Sign in with a passkey' }).click();
+  await signIn(page).click();
   await page.getByLabel('Terminal').first().waitFor({ state: 'attached', timeout: 15_000 });
   // The app then adds the active window to the address.
   assert(page.url().startsWith(`${deep}/`), `signed in at ${page.url()}, not under ${deep}`);
 
-  // Removing the passkey ends its sessions.
+  // Ending a session cuts the terminal it has open: what's typed after never runs.
+  const revoked = async (revoke: () => void, marker: string) => {
+    await page.locator('.wterm').first().click();
+    revoke();
+    await page.keyboard.type(`echo ${marker}-$((40 + 2))\n`);
+    await signIn(page).waitFor({ timeout: 10_000 });
+    assert(!paneText().includes(`${marker}-42`), `${marker}: a revoked session's terminal ran a command`);
+    const status = await page.evaluate(() => fetch('/api/sessions', { cache: 'no-store' }).then((r) => r.status));
+    assert(status === 401, `${marker}: a revoked session's request answered ${status}`);
+  };
+  await revoked(() => cli('connect-passkeys', '--sign-out-everywhere'), 'after-sign-out');
+  await signIn(page).click();
+  await page.getByLabel('Terminal').first().waitFor({ state: 'attached', timeout: 15_000 });
   const [passkey] = JSON.parse(cli('connect-passkeys')) as { id: string }[];
   assert(passkey, 'expected one enrolled passkey');
-  cli('connect-passkeys', '--remove', passkey.id);
-  const after = await page.evaluate(() => fetch('/api/sessions', { cache: 'no-store' }).then((r) => r.status));
-  assert(after === 401, `a removed passkey's session answered ${after}`);
+  // IDs are base64url and may start with `-`.
+  await revoked(() => cli('connect-passkeys', '--remove', passkey.id), 'after-removal');
 
-  console.log('PASS passkey enrollment, sign-in, single-use links, token refusal, and revocation over the relay');
+  // Up to ten passkeys, and signing in with the last still fits the request limit.
+  for (let enrolled = 0; enrolled < 10; enrolled++) {
+    await cdp.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId: device });
+    device = await newDevice();
+    await enroll(page);
+  }
+  assert(JSON.parse(cli('connect-passkeys')).length === 10, 'expected ten passkeys');
+  const eleventh = new URL(cli('connect-enroll')).hash.slice('#code='.length);
+  const refused = await page.evaluate(
+    (code) =>
+      fetch('/connect/passkeys/register/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      }).then((r) => r.status),
+    eleventh,
+  );
+  assert(refused === 409, `an eleventh passkey answered ${refused}`);
+  await context.clearCookies();
+  await page.goto(`${origin}/`);
+  await signIn(page).click();
+  await page.getByLabel('Terminal').first().waitFor({ state: 'attached', timeout: 15_000 });
+
+  console.log(
+    'PASS passkey enrollment, sign-in, reauth, single-use links, token refusal, revocation of live terminals, and the passkey cap over the relay',
+  );
 } catch (error) {
   console.error(`FAIL ${error instanceof Error ? error.stack : error}`);
   process.exitCode = 1;

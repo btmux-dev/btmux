@@ -38,7 +38,10 @@ const FRESH: u64 = 5 * 60;
 /// Unauthenticated ceremony starts, across all clients: the relay hides
 /// their addresses.
 const STARTS_PER_MINUTE: u32 = 60;
-const BODY_LIMIT: usize = 16 * 1024;
+/// Sign-in state names every enrolled passkey and comes back in the finish
+/// request, so the cap on passkeys keeps that request well under the limit.
+const MAX_PASSKEYS: usize = 10;
+const BODY_LIMIT: usize = 64 * 1024;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Credential {
@@ -76,6 +79,13 @@ pub struct Passkeys {
     used: Mutex<HashMap<String, u64>>,
     starts: Mutex<(Instant, u32)>,
     events: Option<tokio::sync::broadcast::Sender<String>>,
+    /// Sign-in state is sealed for this process only, so a restart or an
+    /// upgrade can't make a finished sign-in usable again.
+    salt: [u8; 16],
+    /// Connections signed in with a session, to cut when it ends: a removed
+    /// passkey, everyone signed out, or expiry. Weak, so finished connections
+    /// drop out.
+    connections: Mutex<HashMap<usize, (Session, std::sync::Weak<super::Live>)>>,
 }
 
 fn store_path(state_file: &Path) -> PathBuf {
@@ -118,18 +128,22 @@ impl Passkeys {
                 credentials: Vec::new(),
             }
         };
+        let mut salt = [0u8; 16];
+        aws_lc_rs::rand::fill(&mut salt).map_err(|_| "no system randomness".to_owned())?;
         Ok(Self {
             webauthn,
             hostname: registration.hostname.clone(),
             origin: origin.origin().ascii_serialization(),
             state_file: state_file.to_owned(),
             store: Mutex::new(store),
-            keys: RwLock::new(Keys::load(state_file, &rp_id)?),
+            keys: RwLock::new(Keys::load(state_file, &rp_id, salt)?),
             codes: Mutex::default(),
             registrations: Mutex::default(),
             used: Mutex::default(),
             starts: Mutex::new((Instant::now(), 0)),
             events,
+            salt,
+            connections: Mutex::default(),
         })
     }
 
@@ -148,6 +162,39 @@ impl Passkeys {
                 .is_ok_and(|id| session::credential_digest(&id) == session.credential)
         });
         enrolled.then_some(session)
+    }
+
+    /// Registers the connection a signed-in request arrived on, so ending its
+    /// session cuts it along with any terminal it opened.
+    pub fn track(&self, session: Session, connection: &super::RelayedConnection) {
+        let key = Arc::as_ptr(&connection.0) as usize;
+        let mut connections = self.connections.lock().unwrap();
+        connections.retain(|_, (_, live)| live.strong_count() > 0);
+        connections.insert(key, (session, Arc::downgrade(&connection.0)));
+    }
+
+    /// Cuts the tracked connections whose session `ended`.
+    fn cut(&self, ended: impl Fn(&Session) -> bool) -> usize {
+        let mut connections = self.connections.lock().unwrap();
+        let mut cut = 0;
+        connections.retain(|_, (session, live)| {
+            let Some(live) = live.upgrade() else {
+                return false;
+            };
+            if !ended(session) {
+                return true;
+            }
+            live.cut();
+            cut += 1;
+            false
+        });
+        cut
+    }
+
+    /// Cuts connections whose sessions expired; run periodically.
+    pub fn cut_expired(&self) {
+        let now = session::now();
+        self.cut(|s| s.issued + session::SESSION_LIFETIME.as_secs() <= now);
     }
 
     /// Bounds unauthenticated ceremony starts.
@@ -190,6 +237,7 @@ impl Passkeys {
 
     fn register_start(&self, code: &str) -> Result<(String, CreationChallengeResponse), Refusal> {
         self.admit()?;
+        self.room_for_one()?;
         if !self.redeem(code) {
             return Err(Refusal::unauthorized(
                 "This enrollment link was used or has expired. Ask for a new one.",
@@ -244,6 +292,9 @@ impl Passkeys {
             let mut store = self.store.lock().unwrap();
             if store.credentials.iter().any(|c| c.id == id) {
                 return Err(Refusal::unauthorized("This passkey is already enrolled."));
+            }
+            if store.credentials.len() >= MAX_PASSKEYS {
+                return Err(too_many_passkeys());
             }
             store.credentials.push(Credential {
                 id: id.clone(),
@@ -378,14 +429,27 @@ impl Passkeys {
             return Err(error);
         }
         drop(store);
+        if let Ok(id) = b64().decode(&removed.id) {
+            let digest = session::credential_digest(&id);
+            self.cut(|s| s.credential == digest);
+        }
         self.notify(format!("A passkey was removed: {}", removed.label));
         Ok(true)
     }
 
     pub fn sign_out_everywhere(&self) -> Result<(), String> {
         let rp_id = self.store.lock().unwrap().rp_id.clone();
-        *self.keys.write().unwrap() = Keys::rotate(&self.state_file, &rp_id)?;
+        *self.keys.write().unwrap() = Keys::rotate(&self.state_file, &rp_id, self.salt)?;
+        self.cut(|_| true);
         self.notify("Every relayed browser was signed out.".into());
+        Ok(())
+    }
+
+    /// Refuses enrollment once the cap on passkeys is reached.
+    fn room_for_one(&self) -> Result<(), Refusal> {
+        if self.store.lock().unwrap().credentials.len() >= MAX_PASSKEYS {
+            return Err(too_many_passkeys());
+        }
         Ok(())
     }
 
@@ -439,6 +503,16 @@ pub struct PasskeySummary {
     pub label: String,
     pub created: u64,
     pub last_used: Option<u64>,
+}
+
+fn too_many_passkeys() -> Refusal {
+    Refusal(
+        StatusCode::CONFLICT,
+        format!(
+            "This machine already has {MAX_PASSKEYS} passkeys, the most it allows. \
+             Remove one with `btmux connect-passkeys --remove` there."
+        ),
+    )
 }
 
 /// A refused ceremony step, with a message the page shows.
@@ -552,7 +626,7 @@ fn require_fresh(session: Option<Extension<RelayedSession>>) -> Result<(), Refus
         {
             Err(Refusal(
                 StatusCode::FORBIDDEN,
-                "Sign in again with your passkey to do this.".into(),
+                "Sign in again at /connect/login?reauth, then try again.".into(),
             ))
         }
         _ => Ok(()),
@@ -779,7 +853,7 @@ pub async fn enroll_cli(profile: Option<&str>) -> i32 {
 #[derive(clap::Args, Clone, Debug)]
 pub struct PasskeysArgs {
     /// Remove the passkey with this ID; its sessions end.
-    #[arg(long, value_name = "ID")]
+    #[arg(long, value_name = "ID", allow_hyphen_values = true)]
     remove: Option<String>,
     /// End every relayed session.
     #[arg(long)]
@@ -830,6 +904,11 @@ mod tests {
     fn passkeys() -> (Passkeys, PathBuf) {
         let dir = std::env::temp_dir().join(format!("btmux-passkeys-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
+        (passkeys_in(&dir), dir)
+    }
+
+    /// Another process with the same state, as after a restart or an upgrade.
+    fn passkeys_in(dir: &Path) -> Passkeys {
         let registration = super::super::tunnel::Registration {
             relay: "relay.test:4433".into(),
             relay_name: "relay.test".into(),
@@ -840,8 +919,80 @@ mod tests {
             cert: String::new(),
             key: String::new(),
         };
-        let passkeys = Passkeys::new(&registration, &dir.join("state.json"), None).unwrap();
-        (passkeys, dir)
+        Passkeys::new(&registration, &dir.join("state.json"), None).unwrap()
+    }
+
+    fn signed_in(credential: &[u8], issued: u64) -> Session {
+        Session {
+            credential: session::credential_digest(credential),
+            issued,
+        }
+    }
+
+    #[test]
+    fn ending_a_session_cuts_its_connections() {
+        let (passkeys, dir) = passkeys();
+        let now = session::now();
+        let phone = super::super::RelayedConnection::new();
+        let laptop = super::super::RelayedConnection::new();
+        let stale = super::super::RelayedConnection::new();
+        passkeys.track(signed_in(b"phone", now), &phone);
+        passkeys.track(signed_in(b"laptop", now), &laptop);
+        passkeys.track(
+            signed_in(b"laptop", now - session::SESSION_LIFETIME.as_secs()),
+            &stale,
+        );
+
+        passkeys.cut_expired();
+        assert!(stale.is_cut() && !phone.is_cut() && !laptop.is_cut());
+        // A removed passkey's connections, and only those.
+        let digest = session::credential_digest(b"phone");
+        assert_eq!(passkeys.cut(|s| s.credential == digest), 1);
+        assert!(phone.is_cut() && !laptop.is_cut());
+        passkeys.sign_out_everywhere().unwrap();
+        assert!(laptop.is_cut());
+
+        // Finished connections drop out instead of piling up.
+        let gone = super::super::RelayedConnection::new();
+        passkeys.track(signed_in(b"laptop", now), &gone);
+        drop(gone);
+        assert_eq!(passkeys.cut(|_| true), 0);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn finished_sign_ins_stay_finished_after_a_restart() {
+        let (first, dir) = passkeys();
+        let sealed = first.keys.read().unwrap().seal(b"ceremony");
+        let cookie = first
+            .keys
+            .read()
+            .unwrap()
+            .sign(session::credential_digest(b"c"), session::now());
+        let restarted = passkeys_in(&dir);
+        let keys = restarted.keys.read().unwrap();
+        assert!(
+            keys.open(&sealed).is_none(),
+            "sealed state outlived its process"
+        );
+        assert!(
+            keys.verify(&cookie, session::now()).is_some(),
+            "sessions should survive"
+        );
+        drop(keys);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn credential_ids_may_start_with_a_hyphen() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Cli {
+            #[command(flatten)]
+            args: PasskeysArgs,
+        }
+        let cli = Cli::try_parse_from(["btmux", "--remove", "-fAbc_123"]).unwrap();
+        assert_eq!(cli.args.remove.as_deref(), Some("-fAbc_123"));
     }
 
     #[test]

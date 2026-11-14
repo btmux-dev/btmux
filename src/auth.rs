@@ -308,6 +308,13 @@ async fn protect_relayed(auth: &Auth, mut request: Request, next: Next) -> Respo
         return next.run(request).await;
     }
     if let Some(session) = passkeys.session(request.headers()) {
+        // So signing out cuts this connection, and the terminals it opens.
+        if let Some(connection) = request
+            .extensions()
+            .get::<crate::connect::RelayedConnection>()
+        {
+            passkeys.track(session, connection);
+        }
         request
             .extensions_mut()
             .insert(crate::connect::passkeys::RelayedSession(session));

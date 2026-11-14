@@ -892,13 +892,21 @@ fragment), and the server's own pages (`/connect/login`, `/connect/enroll`,
 `state.passkeys`, bound to the registration's hostname. A sign-in sets
 `__Host-btmux_session`, HMAC-signed under `state.session-key`
 (`connect/session.rs`, 7 days), valid only while its passkey is enrolled;
-sign-in state is sealed (AES-GCM) into the response rather than stored, so
-unauthenticated starts can't crowd out the owner's, and starts are
-rate-limited. Without a session, page loads get the sign-in page (401) at their
-own URL and other requests a 401 marked `X-Btmux-Login: passkey`, on which the
-app reloads. Over the relay, enrolling, removing passkeys (`btmux
-connect-passkeys`), and signing out everywhere take a sign-in under 5 minutes
-old, and `POST /api/pair` is refused. Relayed
+sign-in state is sealed (AES-GCM, under a key that also takes a per-process
+salt, so a restart can't revive a finished sign-in) into the response rather
+than stored, so unauthenticated starts can't crowd out the owner's, and starts
+are rate-limited. A machine holds at most 10 passkeys, which keeps that state
+within the 64 KiB request limit. Relayed connections are served by
+`connect::serve`, whose I/O can be cut: a signed-in request registers its
+connection with `Passkeys::track`, and removing its passkey, signing out
+everywhere, or expiry (checked each minute) cuts it, ending the WebSockets
+(terminals) it carries. Without a session, page loads get the sign-in page
+(401) at their own URL and other requests a 401 marked `X-Btmux-Login:
+passkey`, on which the app reloads; `/connect/login` itself goes home once
+signed in, and `?reauth` signs in again despite a session. Over the relay,
+enrolling, removing passkeys (`btmux connect-passkeys`), and signing out
+everywhere take a sign-in under 5 minutes old, and `POST /api/pair` is
+refused. Relayed
 tabs get no browser or VS Code surface: their routes return
 403, and `relay_event` rewrites each relayed control socket's config
 (`relayed`, no `browser`, no `vscode` editor), which the store's surface

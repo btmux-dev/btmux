@@ -504,7 +504,19 @@ async fn main() {
                 })
                 .map(|passkeys| auth.set_passkeys(passkeys));
             match configured {
-                Ok(()) => Some(registration),
+                Ok(()) => {
+                    // Expired sessions lose their connections within a minute.
+                    if let Some(passkeys) = auth.passkeys().cloned() {
+                        tokio::spawn(async move {
+                            let mut tick = tokio::time::interval(Duration::from_secs(60));
+                            loop {
+                                tick.tick().await;
+                                passkeys.cut_expired();
+                            }
+                        });
+                    }
+                    Some(registration)
+                }
                 Err(error) => {
                     tracing::error!("btmux connect: {error}");
                     None

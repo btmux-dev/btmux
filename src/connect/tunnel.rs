@@ -277,16 +277,7 @@ async fn serve(
         }
     };
     accepted.store(true, std::sync::atomic::Ordering::Relaxed);
-    let service = hyper_util::service::TowerToHyperService::new(app);
-    if let Err(error) = hyper::server::conn::http1::Builder::new()
-        .timer(hyper_util::rt::TokioTimer::new())
-        .header_read_timeout(Duration::from_secs(30))
-        .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
-        .with_upgrades()
-        .await
-    {
-        tracing::debug!("relayed connection ended: {error}");
-    }
+    super::serve(stream, app).await;
 }
 
 /// A stream the relay opened for one browser connection. A stream's slot is

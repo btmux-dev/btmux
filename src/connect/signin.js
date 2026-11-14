@@ -95,11 +95,21 @@ async function enroll(button) {
   });
 }
 
+// This page stands in for whatever URL asked for a sign-in, where a reload then
+// opens it; at its own address there is nothing to reload into, so go home.
+function proceed() {
+  if (location.pathname === '/connect/login') location.replace('/');
+  else location.reload();
+}
+
 async function login(button) {
+  // `?reauth` asks for a fresh sign-in even with a session, as changes over
+  // the relay require.
+  const reauth = new URLSearchParams(location.search).has('reauth');
   // A Strict cookie stays home on cross-site navigations (a link from chat):
   // if this browser is signed in after all, a same-site reload sends it.
-  if ((await fetch('/connect/session', { cache: 'no-store' })).status === 204) {
-    location.reload();
+  if (!reauth && (await fetch('/connect/session', { cache: 'no-store' })).status === 204) {
+    proceed();
     return;
   }
   button.addEventListener('click', async () => {
@@ -109,8 +119,7 @@ async function login(button) {
       const started = await post('/connect/passkeys/login/start');
       const credential = await navigator.credentials.get({ publicKey: requestOptions(started.options.publicKey) });
       await post('/connect/passkeys/login/finish', { ceremony: started.ceremony, credential: credentialJSON(credential) });
-      // This page may stand in for any URL; reloading opens what was asked for.
-      location.reload();
+      proceed();
     } catch (error) {
       failed(error);
       button.disabled = false;
