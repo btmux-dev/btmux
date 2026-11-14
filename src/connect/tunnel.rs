@@ -110,13 +110,13 @@ fn spawn_with(
     let (up, tunnel_up) = tokio::sync::watch::channel(false);
     if let Some(directory) = registration.acme.clone() {
         tokio::spawn(
-            super::acme::Maintainer {
+            super::acme::Maintainer::new(
                 directory,
-                hostname: registration.hostname.to_ascii_lowercase(),
-                state_file: state_file.to_owned(),
-                certificates: certificates.clone(),
-                up: tunnel_up,
-            }
+                registration.hostname.clone(),
+                state_file.to_owned(),
+                certificates.clone(),
+                tunnel_up,
+            )
             .run(),
         );
     }

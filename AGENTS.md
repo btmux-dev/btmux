@@ -886,9 +886,12 @@ machine's certificate from that CA by TLS-ALPN-01 through the relay: the CA
 connects to the hostname with ALPN `acme-tls/1`, the relay routes it here by
 name, and the tunnel's cert resolver (`Certificates`) answers with the
 challenge certificate; such connections never reach the app. Orders wait for
-the tunnel; certificates are reissued when self-signed, from another CA, or in
-the CA's renewal window (ACME Renewal Info), else at two thirds of their
-lifetime, and saved into the registration; the account is in `state.acme`.
+the tunnel; certificates are reissued when self-signed, from another CA, or at
+a time drawn once in the CA's renewal window (ACME Renewal Info, refreshed as
+its `Retry-After` says; such orders name the certificate they replace, which
+exempts them from rate limits), else at two thirds of their lifetime, and
+saved into the registration; the account is in `state.acme`. Requests have no
+deadline of their own, so each attempt gets 10 minutes.
 Until btmux.net is on the Public Suffix List, Let's Encrypt issues at most 50
 new certificates a week for all of it. `connect/mod.rs` marks
 relayed requests with `Tunneled`, from the tunnel or the hidden
