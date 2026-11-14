@@ -4,11 +4,13 @@
 //! so the relay never sees plaintext. Streams serve the main listener's app,
 //! marked `Tunneled`.
 //!
-//! Wire protocol, shared with the relay: the client opens a bidirectional
-//! stream and writes one JSON line, `{"hostname":…,"token":…}`, and the relay
-//! answers `ok`. From then on the relay opens one stream per browser
-//! connection, starting with its ClientHello. A relay closes a hostname's old
-//! tunnel when it registers again, as after an upgrade's exec.
+//! Wire protocol (`btmux-tunnel/1`, the ALPN), shared with the relay in
+//! btmux-connect: the client verifies the relay against its pinned tunnel CA,
+//! opens a bidirectional stream, and writes one JSON line,
+//! `{"hostname":…,"token":…}`; the relay answers `ok`. From then on the relay
+//! opens one stream per browser connection, starting with its ClientHello. A
+//! relay closes a hostname's old tunnel with `REPLACED` when it registers
+//! again, as after an upgrade's exec.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -28,8 +30,8 @@ pub struct Registration {
     pub relay: String,
     /// The name the relay's certificate is checked against.
     pub relay_name: String,
-    /// The relay's certificate (DER, base64), trusted for the tunnel only.
-    pub relay_cert: String,
+    /// The relay's tunnel CA (DER, base64), trusted for the tunnel only.
+    pub relay_ca: String,
     /// The name browsers reach this machine at.
     pub hostname: String,
     /// The origin browsers use, allowed like `--public-url`.
@@ -98,6 +100,11 @@ fn spawn_with(registration: Registration, app: Router, limits: Limits) -> Result
     Ok(())
 }
 
+/// The tunnel protocol, offered as ALPN.
+pub const ALPN: &[u8] = b"btmux-tunnel/1";
+/// The relay's close code when another connection registered this hostname.
+const REPLACED: u32 = 0x10;
+
 const MIN_BACKOFF: Duration = Duration::from_millis(500);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 
@@ -111,13 +118,56 @@ async fn run(
     let mut backoff = MIN_BACKOFF;
     loop {
         let started = Instant::now();
-        let error = connect(&registration, &client, &tls, &app, limits).await;
-        tracing::warn!(relay = registration.relay, "btmux connect tunnel: {error}");
+        let ended = connect(&registration, &client, &tls, &app, limits).await;
         if started.elapsed() > MAX_BACKOFF {
             backoff = MIN_BACKOFF;
         }
+        if ended.replaced {
+            // Two copies of one registration would take turns forever.
+            tracing::warn!(
+                hostname = registration.hostname,
+                "btmux connect tunnel: replaced by another connection for this \
+                 hostname; is this registration in use elsewhere?"
+            );
+            backoff = MAX_BACKOFF;
+        } else {
+            tracing::warn!(
+                relay = registration.relay,
+                "btmux connect tunnel: {}",
+                ended.error
+            );
+        }
         tokio::time::sleep(backoff).await;
         backoff = (backoff * 2).min(MAX_BACKOFF);
+    }
+}
+
+/// Why a tunnel ended.
+struct Ended {
+    error: String,
+    replaced: bool,
+}
+
+impl From<String> for Ended {
+    fn from(error: String) -> Self {
+        Self {
+            error,
+            replaced: false,
+        }
+    }
+}
+
+impl From<quinn::ConnectionError> for Ended {
+    fn from(error: quinn::ConnectionError) -> Self {
+        let replaced = matches!(
+            &error,
+            quinn::ConnectionError::ApplicationClosed(close)
+                if close.error_code == quinn::VarInt::from_u32(REPLACED)
+        );
+        Self {
+            error: error.to_string(),
+            replaced,
+        }
     }
 }
 
@@ -128,7 +178,7 @@ async fn connect(
     tls: &tokio_rustls::TlsAcceptor,
     app: &Router,
     limits: Limits,
-) -> String {
+) -> Ended {
     let result = async {
         let addresses: Vec<_> = tokio::net::lookup_host(&registration.relay)
             .await
@@ -137,14 +187,20 @@ async fn connect(
         // The endpoint must outlive the connection.
         let (_endpoint, connection) =
             connect_any(&addresses, &registration.relay_name, client, limits).await?;
-        register(&connection, registration).await?;
+        // A close during registration surfaces as a read error; its reason
+        // is the connection's.
+        register(&connection, registration).await.map_err(|e| {
+            connection
+                .close_reason()
+                .map_or(Ended::from(e), Ended::from)
+        })?;
         tracing::info!(
             hostname = registration.hostname,
             relay = registration.relay,
             "btmux connect tunnel up"
         );
         loop {
-            let (send, recv) = connection.accept_bi().await.map_err(|e| e.to_string())?;
+            let (send, recv) = connection.accept_bi().await?;
             tokio::spawn(serve(
                 send,
                 recv,
@@ -357,17 +413,18 @@ fn server_tls(registration: &Registration) -> Result<tokio_rustls::TlsAcceptor, 
 
 fn quic_client(registration: &Registration, streams: u32) -> Result<quinn::ClientConfig, String> {
     let der = base64::engine::general_purpose::STANDARD
-        .decode(&registration.relay_cert)
-        .map_err(|e| format!("the relay's certificate: {e}"))?;
+        .decode(&registration.relay_ca)
+        .map_err(|e| format!("the relay's CA: {e}"))?;
     let mut roots = rustls::RootCertStore::empty();
     roots
         .add(CertificateDer::from(der))
-        .map_err(|e| format!("the relay's certificate: {e}"))?;
-    let tls = rustls::ClientConfig::builder_with_provider(provider())
+        .map_err(|e| format!("the relay's CA: {e}"))?;
+    let mut tls = rustls::ClientConfig::builder_with_provider(provider())
         .with_protocol_versions(&[&rustls::version::TLS13])
         .map_err(|e| e.to_string())?
         .with_root_certificates(roots)
         .with_no_client_auth();
+    tls.alpn_protocols = vec![ALPN.to_vec()];
     let crypto =
         quinn::crypto::rustls::QuicClientConfig::try_from(tls).map_err(|e| e.to_string())?;
     let mut config = quinn::ClientConfig::new(Arc::new(crypto));
@@ -390,9 +447,9 @@ pub struct DevArgs {
     /// The name in the relay's certificate.
     #[arg(long)]
     relay_name: String,
-    /// The relay's certificate, DER.
+    /// The relay's tunnel CA, PEM or DER (`ca.pem` in its state directory).
     #[arg(long)]
-    relay_cert: PathBuf,
+    relay_ca: PathBuf,
     /// The name browsers will use for this machine.
     #[arg(long)]
     hostname: String,
@@ -408,14 +465,21 @@ pub fn dev_register(args: &DevArgs, profile: Option<&str>) -> i32 {
     let result = (|| {
         let state_file = crate::persistence::state_path(profile)?
             .ok_or("no state directory: set XDG_STATE_HOME or HOME")?;
-        let relay_cert = std::fs::read(&args.relay_cert)
-            .map_err(|e| format!("{}: {e}", args.relay_cert.display()))?;
+        let relay_ca = std::fs::read(&args.relay_ca)
+            .map_err(|e| format!("{}: {e}", args.relay_ca.display()))?;
+        let relay_ca = if relay_ca.starts_with(b"-----BEGIN") {
+            CertificateDer::from_pem_slice(&relay_ca)
+                .map_err(|e| format!("{}: {e}", args.relay_ca.display()))?
+                .to_vec()
+        } else {
+            relay_ca
+        };
         let cert = rcgen::generate_simple_self_signed(vec![args.hostname.clone()])
             .map_err(|e| e.to_string())?;
         let registration = Registration {
             relay: args.relay.clone(),
             relay_name: args.relay_name.clone(),
-            relay_cert: base64::engine::general_purpose::STANDARD.encode(relay_cert),
+            relay_ca: base64::engine::general_purpose::STANDARD.encode(relay_ca),
             hostname: args.hostname.clone(),
             public_url: args
                 .public_url
@@ -465,10 +529,26 @@ mod tests {
         machine: CertificateDer<'static>,
     }
 
+    /// A tunnel CA and a relay certificate it signed, as `btmux-relay init`
+    /// makes them: the CA's DER, then the leaf's PEM and key.
+    fn relay_identity() -> (CertificateDer<'static>, String, String) {
+        let ca_key = rcgen::KeyPair::generate().unwrap();
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Constrained(0));
+        let ca = params.self_signed(&ca_key).unwrap();
+        let issuer = rcgen::Issuer::new(params, ca_key);
+        let leaf_key = rcgen::KeyPair::generate().unwrap();
+        let leaf = rcgen::CertificateParams::new(vec!["relay.test".into()])
+            .unwrap()
+            .signed_by(&leaf_key, &issuer)
+            .unwrap();
+        (ca.der().clone(), leaf.pem(), leaf_key.serialize_pem())
+    }
+
     fn test_relay() -> TestRelay {
-        let (relay_pem, relay_key, relay_der) = self_signed("relay.test");
+        let (relay_ca, relay_pem, relay_key) = relay_identity();
         let (machine_pem, machine_key, machine) = self_signed("laptop.test");
-        let tls = rustls::ServerConfig::builder_with_provider(provider())
+        let mut tls = rustls::ServerConfig::builder_with_provider(provider())
             .with_protocol_versions(&[&rustls::version::TLS13])
             .unwrap()
             .with_no_client_auth()
@@ -479,6 +559,8 @@ mod tests {
                 PrivateKeyDer::from_pem_slice(relay_key.as_bytes()).unwrap(),
             )
             .unwrap();
+        // QUIC requires ALPN, so a client without it fails the handshake.
+        tls.alpn_protocols = vec![ALPN.to_vec()];
         let endpoint = quinn::Endpoint::server(
             quinn::ServerConfig::with_crypto(Arc::new(
                 quinn::crypto::rustls::QuicServerConfig::try_from(tls).unwrap(),
@@ -489,7 +571,7 @@ mod tests {
         let registration = Registration {
             relay: endpoint.local_addr().unwrap().to_string(),
             relay_name: "relay.test".into(),
-            relay_cert: base64::engine::general_purpose::STANDARD.encode(&relay_der),
+            relay_ca: base64::engine::general_purpose::STANDARD.encode(&relay_ca),
             hostname: "laptop.test".into(),
             public_url: "https://laptop.test".into(),
             token: "secret-token".into(),
@@ -670,6 +752,24 @@ mod tests {
             .is_err());
     }
 
+    /// Two copies of one registration would replace each other forever, so a
+    /// replaced tunnel waits the longest backoff; other closes retry soon.
+    #[tokio::test]
+    async fn a_replaced_tunnel_backs_off() {
+        let relay = test_relay();
+        spawn(relay.registration.clone(), probe_app()).unwrap();
+        let connection = accept_tunnel(&relay.endpoint).await;
+        connection.close(0u32.into(), b"restarting");
+        let again = tokio::time::timeout(Duration::from_secs(3), accept_tunnel(&relay.endpoint));
+        let connection = again.await.expect("didn't reconnect after a restart");
+        connection.close(REPLACED.into(), b"replaced");
+        let again = tokio::time::timeout(Duration::from_secs(3), relay.endpoint.accept());
+        assert!(
+            again.await.is_err(),
+            "reconnected right after being replaced"
+        );
+    }
+
     #[test]
     fn registration_is_private_and_round_trips() {
         let dir = std::env::temp_dir().join(format!("btmux-connect-{}", uuid::Uuid::new_v4()));
@@ -680,7 +780,7 @@ mod tests {
         let registration = Registration {
             relay: "relay.test:4433".into(),
             relay_name: "relay.test".into(),
-            relay_cert: String::new(),
+            relay_ca: String::new(),
             hostname: "laptop.test".into(),
             public_url: "https://laptop.test".into(),
             token: "t".into(),

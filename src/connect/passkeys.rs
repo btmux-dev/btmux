@@ -912,7 +912,7 @@ mod tests {
         let registration = super::super::tunnel::Registration {
             relay: "relay.test:4433".into(),
             relay_name: "relay.test".into(),
-            relay_cert: String::new(),
+            relay_ca: String::new(),
             hostname: "laptop.btmux.test".into(),
             public_url: "https://laptop.btmux.test".into(),
             token: String::new(),
