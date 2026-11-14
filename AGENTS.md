@@ -864,10 +864,18 @@ server with `--tailscale`, on a saved port (`tailnet-port`, chosen below the
 ephemeral port ranges); its card polls the status while shown.
 Never print credentials, put them in URLs, or bypass this middleware for new APIs.
 
-btmux connect (in progress) reaches servers through a relay. `connect.rs` marks
-relayed requests with `Tunneled`, from the listener that accepted them (for now
-the hidden `--connect-listen`, behind the relay spike's agent), never from a
-header. Relayed tabs get no browser or VS Code surface: their routes return
+btmux connect (in progress) reaches servers through a relay that routes by TLS
+SNI and never decrypts. With a registration beside the state file
+(`state.connect`, owner-only; the hidden `btmux connect-dev` writes one with a
+self-signed certificate until sign-up exists), `connect/tunnel.rs` keeps one
+outbound QUIC connection to the relay, registers its hostname (one JSON line,
+answered `ok`), and serves each stream the relay opens: TLS with the machine's
+certificate, then HTTP/1.1 with upgrades into the same app, behind `auth.rs`.
+It reconnects with backoff, including after an upgrade's exec; the relay
+closes a hostname's old tunnel when it registers again. `connect/mod.rs` marks
+relayed requests with `Tunneled`, from the tunnel or the hidden
+`--connect-listen` listener that accepted them, never from a header. Relayed
+tabs get no browser or VS Code surface: their routes return
 403, and `relay_event` rewrites each relayed control socket's config
 (`relayed`, no `browser`, no `vscode` editor), which the store's surface
 setters check. Relayed pane output is compressed (see `/ws/pane`).
