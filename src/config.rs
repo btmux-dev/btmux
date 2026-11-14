@@ -327,6 +327,11 @@ pub struct CliArgs {
     #[arg(long)]
     pub no_browser: bool,
 
+    /// Serve connections a btmux connect relay delivers here (development,
+    /// until the tunnel client lands).
+    #[arg(long, hide = true, value_name = "ADDR")]
+    pub connect_listen: Option<String>,
+
     /// Serve over HTTPS on the tailnet (`tailscale serve`), at this port of
     /// the machine's tailnet name.
     #[arg(long)]
@@ -1347,6 +1352,9 @@ pub struct ClientConfig {
     pub editors: Vec<Editor>,
     /// Whether the server found Chrome or Chromium for the browser surface.
     pub browser: bool,
+    /// Whether this tab reaches the server through a btmux connect relay;
+    /// set per control socket (`connect::relay_event`).
+    pub relayed: bool,
     /// Where the browser's address bar searches; `%s` is the text.
     pub browser_search_url: Option<String>,
     /// Whether the server found Multipass for sandboxed sessions.
@@ -2209,6 +2217,7 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         .filter_map(|(editor, available)| available.then_some(editor))
         .collect(),
         browser: crate::browser::available(),
+        relayed: false,
         browser_search_url: file.browser.search_url.clone(),
         multipass: crate::multipass::available(),
         multipass_shell: file

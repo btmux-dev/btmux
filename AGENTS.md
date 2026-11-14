@@ -863,6 +863,14 @@ token itself never enters the URL. The desktop picker can start a kept-running d
 server with `--tailscale`, on a saved port (`tailnet-port`, chosen below the
 ephemeral port ranges); its card polls the status while shown.
 Never print credentials, put them in URLs, or bypass this middleware for new APIs.
+
+btmux connect (in progress) reaches servers through a relay. `connect.rs` marks
+relayed requests with `Tunneled`, from the listener that accepted them (for now
+the hidden `--connect-listen`, behind the relay spike's agent), never from a
+header. Relayed tabs get no browser or VS Code surface: their routes return
+403, and `relay_event` rewrites each relayed control socket's config
+(`relayed`, no `browser`, no `vscode` editor), which the store's surface
+setters check.
 Only one running server may own a persistence profile (held OS file lock).
 
 Control commands may carry `request_id`; each gets a `command_result` with the

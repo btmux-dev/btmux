@@ -414,6 +414,11 @@ editors: Array<Editor>,
  */
 browser: boolean,
 /**
+ * Whether this tab reaches the server through a btmux connect relay;
+ * set per control socket (`connect::relay_event`).
+ */
+relayed: boolean,
+/**
  * Where the browser's address bar searches; `%s` is the text.
  */
 browser_search_url: string | null,

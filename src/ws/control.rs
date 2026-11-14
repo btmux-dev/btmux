@@ -4,6 +4,7 @@ use axum::{
         Query, State, WebSocketUpgrade,
     },
     response::IntoResponse,
+    Extension,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -26,9 +27,11 @@ pub struct ControlQuery {
 pub async fn handle(
     State(state): State<AppState>,
     Query(query): Query<ControlQuery>,
+    tunneled: Option<Extension<crate::connect::Tunneled>>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state, query.color_mode))
+    let relayed = tunneled.is_some();
+    ws.on_upgrade(move |socket| handle_socket(socket, state, query.color_mode, relayed))
 }
 
 /// Record a browser's system color mode and broadcast the config if the shown
@@ -109,7 +112,12 @@ async fn resynchronize(
     initial_messages(&mgr)
 }
 
-async fn handle_socket(socket: WebSocket, state: AppState, color_mode: Option<ColorMode>) {
+async fn handle_socket(
+    socket: WebSocket,
+    state: AppState,
+    color_mode: Option<ColorMode>,
+    relayed: bool,
+) {
     let (mut ws_tx, mut ws_rx) = socket.split();
     // Subscribe and snapshot under one guard; never hold it during socket I/O.
     let (client, mut events, initial) = {
@@ -127,6 +135,11 @@ async fn handle_socket(socket: WebSocket, state: AppState, color_mode: Option<Co
         pending.extend(initial);
         loop {
             for json in pending.drain(..) {
+                let json = if relayed {
+                    crate::connect::relay_event(json)
+                } else {
+                    json
+                };
                 if !matches!(
                     tokio::time::timeout(
                         std::time::Duration::from_secs(10),

@@ -157,6 +157,13 @@ const sameRect = (a: LayoutRect | null, b: LayoutRect | null) =>
     a.width === b.width &&
     a.height === b.height);
 
+/** Relayed tabs get no browser or VS Code surface; the server refuses both. */
+function unavailableOverRelay(config: ClientConfig | null, name: string): boolean {
+  if (!config?.relayed) return false;
+  showNotification({ message: `${name} isn't available over btmux connect`, level: 'info' });
+  return true;
+}
+
 export const useStore = create<AppStore>((set, get) => ({
   sessions: [],
   allSessions: [],
@@ -249,17 +256,21 @@ export const useStore = create<AppStore>((set, get) => ({
       return { ...(open && surfacesOff(s, nvimPaneId)), nvimOpen: open, nvimPaneId };
     }),
   setNvimRect: (rect) => set((s) => (sameRect(s.nvimRect, rect) ? s : { nvimRect: rect })),
-  setVscodeOpen: (open, paneId) =>
+  setVscodeOpen: (open, paneId) => {
+    if (open && unavailableOverRelay(get().config, 'VS Code')) return;
     set((s) => {
       const vscodePaneId = open && paneId !== undefined ? paneId : s.vscodePaneId;
       return { ...(open && surfacesOff(s, vscodePaneId)), vscodeOpen: open, vscodePaneId };
-    }),
+    });
+  },
   setVscodeRect: (rect) => set((s) => (sameRect(s.vscodeRect, rect) ? s : { vscodeRect: rect })),
-  setBrowserOpen: (open, paneId) =>
+  setBrowserOpen: (open, paneId) => {
+    if (open && unavailableOverRelay(get().config, 'The browser')) return;
     set((s) => {
       const browserPaneId = open && paneId !== undefined ? paneId : s.browserPaneId;
       return { ...(open && surfacesOff(s, browserPaneId)), browserOpen: open, browserPaneId };
-    }),
+    });
+  },
   setBrowserRect: (rect) => set((s) => (sameRect(s.browserRect, rect) ? s : { browserRect: rect })),
   hideEditorSurfaces: (paneId) => set((s) => surfacesOff(s, paneId)),
   showToast: (message, level = 'info', opts) => showNotification({ message, level, ...opts }),
