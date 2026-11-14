@@ -79,7 +79,7 @@ derived from each browser tab's URL, so session navigation is per-tab.
 
    **Broadcast fan-out:** `SessionManager` owns a `tokio::sync::broadcast::Sender<String>` (`events()`) carrying pre-serialized `ServerMessage` JSON. Every control socket subscribes to that stream, so a mutation in one browser tab, a REST/MCP call, a config reload, or an agent notification reaches _all_ tabs. On connect a socket is also sent its current `Config` + `State` directly so it doesn't wait for the next event. `ServerMessage` includes `State { sessions, all_sessions }` (`Vec<SessionSummary>` for the StatusBar/picker + `Vec<SessionSnapshot>` with full window/layout data), `Config`, `Toast`, pane notification/clear messages, and per-request `CommandResult` replies. `request_id` command results go only to the originating socket.
 
-2. **`/ws/pane/{pane_id}?cols=&rows=`** (`src/ws/pane_io.rs`) — one socket **per visible pane**, carrying raw terminal bytes. Binary frames = PTY I/O; a JSON text frame `{type:"resize",cols,rows}` reports the viewer's size and `{type:"claim"}` makes it the size owner; other text frames are ignored. The server sends `{type:"owner",owner}` before the replay and whenever ownership changes. On connect, a checkpoint and journal are replayed, followed by `ready`. The browser accepts input only after this initial replay completes.
+2. **`/ws/pane/{pane_id}?cols=&rows=`** (`src/ws/pane_io.rs`) — one socket **per visible pane**, carrying raw terminal bytes. Binary frames = PTY I/O; a JSON text frame `{type:"resize",cols,rows}` reports the viewer's size and `{type:"claim"}` makes it the size owner; other text frames are ignored. The server sends `{type:"owner",owner}` before the replay and whenever ownership changes. On connect, a checkpoint and journal are replayed, followed by `ready`. The browser accepts input only after this initial replay completes. Runs of output go out merged, up to 1 MiB per frame (`coalesce`). On relayed sockets (btmux connect), output is compressed: a `{type:"compression",format:"deflate-raw"}` frame comes first, then each binary frame is a u32 uncompressed length plus the next sync-flushed piece of one deflate stream (`connect::PaneDeflater`), which `lib/paneSocket.ts` inflates in order with the text frames.
 
    `?mirror=1` creates a read-only attachment for window-grid and agent view thumbnails. Mirrors receive output and ordered size frames but never resize or write to the PTY. A `{type:"current_size",cols,rows}` frame precedes the replay, whose `size` frames walk the pane's resize history; the agent view lays out tiles from that frame and `size` frames after `ready`.
 
@@ -863,6 +863,14 @@ token itself never enters the URL. The desktop picker can start a kept-running d
 server with `--tailscale`, on a saved port (`tailnet-port`, chosen below the
 ephemeral port ranges); its card polls the status while shown.
 Never print credentials, put them in URLs, or bypass this middleware for new APIs.
+
+btmux connect (in progress) reaches servers through a relay. `connect.rs` marks
+relayed requests with `Tunneled`, from the listener that accepted them (for now
+the hidden `--connect-listen`, behind the relay spike's agent), never from a
+header. Relayed tabs get no browser or VS Code surface: their routes return
+403, and `relay_event` rewrites each relayed control socket's config
+(`relayed`, no `browser`, no `vscode` editor), which the store's surface
+setters check. Relayed pane output is compressed (see `/ws/pane`).
 Only one running server may own a persistence profile (held OS file lock).
 
 Control commands may carry `request_id`; each gets a `command_result` with the

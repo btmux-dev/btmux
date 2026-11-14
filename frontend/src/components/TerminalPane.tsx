@@ -18,6 +18,7 @@ import { CONNECTION_STATE_LABEL, type ConnectionState } from '../lib/connectionS
 import { clsx } from 'clsx';
 import { desktopTransparency } from '../lib/desktopTransparency';
 import { hasShaderWallpaper } from '../lib/wallpaperCatalog';
+import { paneMessageHandler } from '../lib/paneSocket';
 import {
   CONFIG_DEFAULTS,
   getAnimations,
@@ -264,14 +265,16 @@ export function TerminalPane({
           attempts = 0;
           setConnectionError(null);
         };
-        socket.onmessage = (ev) => {
-          if (disposed || ws !== socket) return;
-          if (ev.data instanceof ArrayBuffer) {
-            term.write(new Uint8Array(ev.data));
+        const messages = paneMessageHandler({
+          binary: (bytes) => {
+            if (disposed || ws !== socket) return;
+            term.write(bytes);
             latexPokeRef.current();
-          } else {
+          },
+          text: (data) => {
+            if (disposed || ws !== socket) return;
             try {
-              const msg = JSON.parse(ev.data);
+              const msg = JSON.parse(data);
               if (msg.type === 'ready') {
                 ready = true;
                 // wterm paints on the next frame; reveal after it.
@@ -301,9 +304,11 @@ export function TerminalPane({
             } catch {
               /* Unknown protocol frames are not terminal input. */
             }
-          }
-        };
+          },
+        });
+        socket.onmessage = messages.onMessage;
         socket.onclose = () => {
+          messages.dispose();
           if (disposed || ws !== socket) return;
           ws = null;
           ready = false;

@@ -2,6 +2,8 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useStore } from '../state/store';
 import { ClientMessage, NotificationLevel, ServerMessage } from '../protocol/messages';
 import { windowAttended } from '../lib/windowAttention';
+import { openInEditor } from '../lib/openInEditor';
+import { vscodeRequestEditor } from '../lib/vscodeFallback';
 import { atLeast } from '../lib/notifications';
 import { SYSTEM_LIGHT_QUERY, systemColorMode } from '../state/startupTheme';
 
@@ -173,8 +175,14 @@ export function useControlSocket() {
           useStore.getState().navigateToPane(msg.pane_id);
           useStore.getState().setNvimOpen(true, msg.pane_id);
         } else if (msg.type === 'open_vscode') {
-          useStore.getState().navigateToPane(msg.pane_id);
-          useStore.getState().setVscodeOpen(true, msg.pane_id);
+          const store = useStore.getState();
+          const editor = vscodeRequestEditor(store.config, msg.explicit, document.hasFocus());
+          if (editor) {
+            store.navigateToPane(msg.pane_id);
+            // VS Code already has the file; another editor is asked for it here.
+            if (editor === 'vscode') store.setVscodeOpen(true, msg.pane_id);
+            else openInEditor((m) => wsRef.current?.send(JSON.stringify(m)), msg.pane_id, msg.path, msg.line, editor);
+          }
         } else if (msg.type === 'tailscale') {
           useStore.getState().setTailscale(msg.status);
         } else if (msg.type === 'widgets') {

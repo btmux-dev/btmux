@@ -8,6 +8,7 @@ mod auth;
 mod automation;
 mod browser;
 mod config;
+mod connect;
 // The desktop launcher also compiles this shared module.
 #[allow(dead_code)]
 mod discovery;
@@ -474,6 +475,9 @@ async fn main() {
             auth::protect,
         ));
     multipass::set_app(app.clone());
+    if let Some(addr) = &args.connect_listen {
+        connect::listen(addr, app.clone()).await;
+    }
     if let Some(instance) = state.read().await.guest_instance() {
         multipass::restore_bridge(instance);
     }

@@ -4,6 +4,7 @@ use axum::{
         Path, Query, State, WebSocketUpgrade,
     },
     response::IntoResponse,
+    Extension,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -40,14 +41,18 @@ pub async fn handle(
     Path(pane_id): Path<Uuid>,
     Query(params): Query<PaneParams>,
     State(state): State<AppState>,
+    tunneled: Option<Extension<crate::connect::Tunneled>>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
     let cols = params.cols.unwrap_or(config::DEFAULT_PTY_COLS);
     let rows = params.rows.unwrap_or(config::DEFAULT_PTY_ROWS);
     let mirror = is_truthy(&params.mirror);
+    // Relay bandwidth is what compression saves; locally it would only cost CPU.
+    let deflater = tunneled.map(|_| crate::connect::PaneDeflater::new());
 
-    ws.max_message_size(64 * 1024)
-        .on_upgrade(move |socket| handle_socket(socket, pane_id, cols, rows, mirror, state))
+    ws.max_message_size(64 * 1024).on_upgrade(move |socket| {
+        handle_socket(socket, pane_id, cols, rows, mirror, deflater, state)
+    })
 }
 
 /// Serialize a size update for a mirror socket.
@@ -71,6 +76,7 @@ async fn handle_socket(
     cols: u16,
     rows: u16,
     mirror: bool,
+    mut deflater: Option<crate::connect::PaneDeflater>,
     state: AppState,
 ) {
     use crate::pty::replay::Output;
@@ -117,21 +123,32 @@ async fn handle_socket(
         let mut pending = replay;
         let mut replaying = true;
         let mut owner = is_owner(&owner_rx.borrow_and_update());
-        let first = if mirror {
+        let mut first = vec![if mirror {
             current_size_frame(size)
         } else {
             owner_frame(owner)
-        };
-        if !matches!(
-            tokio::time::timeout(std::time::Duration::from_secs(10), ws_tx.send(first)).await,
-            Ok(Ok(()))
-        ) {
-            return;
+        }];
+        if deflater.is_some() {
+            first.insert(
+                0,
+                Message::Text(crate::connect::PANE_COMPRESSION_FRAME.into()),
+            );
+        }
+        for frame in first {
+            if !matches!(
+                tokio::time::timeout(std::time::Duration::from_secs(10), ws_tx.send(frame)).await,
+                Ok(Ok(()))
+            ) {
+                return;
+            }
         }
         loop {
-            for event in pending.drain(..) {
+            for event in coalesce(std::mem::take(&mut pending)) {
                 let frame = match event {
-                    Output::Data(bytes) => Message::Binary(bytes),
+                    Output::Data(bytes) => match deflater.as_mut() {
+                        Some(deflater) => Message::Binary(deflater.frame(&bytes).into()),
+                        None => Message::Binary(bytes),
+                    },
                     Output::Size(cols, rows) => Message::Text(size_frame(cols, rows).into()),
                 };
                 if !matches!(
@@ -222,6 +239,91 @@ async fn handle_socket(
         if let Some(pane) = mgr.find_pane_mut(pane_id) {
             pane.pty.detach_viewer(viewer_id);
         }
+    }
+}
+
+/// Largest frame `coalesce` builds.
+const MAX_FRAME: usize = 1 << 20;
+
+/// Merges runs of output into frames of up to `MAX_FRAME`. A replay is
+/// thousands of small reads, and each frame costs a message, plus a deflate
+/// flush and an inflate step when relayed. Sizes stay between the bytes they
+/// separate.
+fn coalesce(events: Vec<crate::pty::replay::Output>) -> Vec<crate::pty::replay::Output> {
+    use crate::pty::replay::Output;
+    fn flush(out: &mut Vec<Output>, run: &mut Vec<axum::body::Bytes>, len: &mut usize) {
+        match run.len() {
+            0 => {}
+            1 => out.extend(run.pop().map(Output::Data)),
+            _ => {
+                let mut merged = Vec::with_capacity(*len);
+                for bytes in run.drain(..) {
+                    merged.extend_from_slice(&bytes);
+                }
+                out.push(Output::Data(merged.into()));
+            }
+        }
+        *len = 0;
+    }
+    let mut out = Vec::with_capacity(events.len());
+    let (mut run, mut len) = (Vec::new(), 0);
+    for event in events {
+        match event {
+            Output::Data(bytes) => {
+                if len + bytes.len() > MAX_FRAME {
+                    flush(&mut out, &mut run, &mut len);
+                }
+                len += bytes.len();
+                run.push(bytes);
+            }
+            size => {
+                flush(&mut out, &mut run, &mut len);
+                out.push(size);
+            }
+        }
+    }
+    flush(&mut out, &mut run, &mut len);
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pty::replay::Output;
+    use axum::body::Bytes;
+
+    #[test]
+    fn coalesce_merges_output_runs_around_sizes() {
+        let data = |s: &'static [u8]| Output::Data(Bytes::from_static(s));
+        let big = Bytes::from(vec![b'x'; MAX_FRAME - 1]);
+        let merged = coalesce(vec![
+            data(b"a"),
+            data(b"b"),
+            Output::Size(80, 24),
+            data(b"c"),
+            Output::Data(big.clone()),
+            data(b"de"),
+        ]);
+        let shape: Vec<String> = merged
+            .iter()
+            .map(|event| match event {
+                Output::Data(bytes) => format!("data {}", bytes.len()),
+                Output::Size(cols, rows) => format!("size {cols}x{rows}"),
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                "data 2",
+                "size 80x24",
+                format!("data {MAX_FRAME}").as_str(),
+                "data 2"
+            ]
+        );
+        let Output::Data(first) = &merged[0] else {
+            unreachable!()
+        };
+        assert_eq!(&first[..], b"ab");
     }
 }
 
