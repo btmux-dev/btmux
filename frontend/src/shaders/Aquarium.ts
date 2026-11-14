@@ -237,7 +237,8 @@ const body = `
   // Starfish on the sand.
   for (var k = 0u; k < u32(starfish); k = k + 1u) {
     let fk = f32(k);
-    let left = floor(W * (0.06 + 0.88 * ${hash('fk * 4.3 + 61.0')})) - ${Math.floor(STARFISH.width / 2)}.0;
+    // Stationary, so it must fit whole: the grid is at least 32 columns.
+    let left = floor((W - ${STARFISH.width}.0) * ${hash('fk * 4.3 + 61.0')});
     let sx = cell.x - left;
     if (sx < 0.0 || sx >= ${STARFISH.width}.0) {
       continue;

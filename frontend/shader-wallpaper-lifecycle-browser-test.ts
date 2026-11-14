@@ -169,6 +169,74 @@ try {
       }
     }
     console.log('PASS Aquarium pixel size in CSS pixels across device pixel ratios');
+
+    // A starfish never moves, so it must fit whole on a narrow (32-column) canvas.
+    const spans = await page.evaluate(async () => {
+      const { createWallpaperRenderer } = await import('/src/lib/wallpaperRenderer.ts' as string);
+      const { createShaderLayer } = await import('/src/lib/wallpaperCatalog.ts' as string);
+      const render = async (params: Record<string, number>) => {
+        const canvas = document.createElement('canvas');
+        canvas.style.cssText = 'position:fixed;left:0;top:0;width:384px;height:384px';
+        document.body.append(canvas);
+        const renderer = createWallpaperRenderer(
+          canvas,
+          {
+            image: null,
+            layers: [
+              {
+                ...createShaderLayer('aquarium'),
+                params: { speed: 0, 'pixel-size': 16, fish: 0, plants: 0, bubbles: 0, seahorses: 0, jellyfish: 0, ...params },
+              },
+            ],
+            speed: 1,
+            fps: 20,
+            resolution: 1,
+            animated: false,
+            paused: false,
+            followsMouseCursor: false,
+            followsKeyboardInput: false,
+          },
+          () => {},
+        );
+        try {
+          await renderer.initialize();
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          const image = new Image();
+          image.src = canvas.toDataURL();
+          await image.decode();
+          const copy = document.createElement('canvas');
+          copy.width = image.width;
+          copy.height = image.height;
+          const context = copy.getContext('2d')!;
+          context.drawImage(image, 0, 0);
+          return { width: copy.width, pixels: new Uint32Array(context.getImageData(0, 0, copy.width, copy.height).data.buffer) };
+        } finally {
+          renderer.dispose();
+          canvas.remove();
+        }
+      };
+      const spans = [];
+      for (let seed = 0; seed < 6; seed++) {
+        const without = await render({ seed, starfish: 0 });
+        const withStar = await render({ seed, starfish: 1 });
+        let min = Infinity;
+        let max = -Infinity;
+        for (let i = 0; i < without.pixels.length; i++) {
+          if (without.pixels[i] === withStar.pixels[i]) continue;
+          const x = i % without.width;
+          min = Math.min(min, x);
+          max = Math.max(max, x);
+        }
+        spans.push({ seed, width: without.width, min, max });
+      }
+      return spans;
+    });
+    for (const { seed, width, min, max } of spans) {
+      assert.equal(width, 384, 'the narrow canvas must render at DPR 1');
+      // Pixel size is capped at 384 / 32 = 12 CSS pixels; the starfish is 15 cells wide.
+      assert.equal(max - min + 1, 15 * 12, `the starfish must be whole on a 32-column canvas with seed ${seed}`);
+    }
+    console.log('PASS Aquarium starfish fits on a narrow canvas');
   } else console.log('SKIP shader lifecycle checks: the test browser has no usable WebGPU adapter');
 } finally {
   await browser.close();
