@@ -16,6 +16,8 @@ use axum::{
 };
 use serde_json::Value;
 
+pub mod tunnel;
+
 /// Marks requests that arrived through the relay. It comes from the listener
 /// that accepted the connection, never from anything a client sends.
 #[derive(Clone, Copy)]

@@ -488,6 +488,10 @@ pub enum SubCommand {
     /// A sandboxed pane's shell: set up the Multipass instance, then enter it.
     #[command(hide = true)]
     GuestShell(crate::multipass::GuestShellArgs),
+    /// Register with a btmux connect relay, using a self-signed certificate
+    /// (development, until sign-up exists).
+    #[command(hide = true)]
+    ConnectDev(crate::connect::tunnel::DevArgs),
 }
 
 /// The btmux version, taken from `Cargo.toml` at compile time. Shown by the

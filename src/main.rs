@@ -132,6 +132,9 @@ async fn main() {
         Some(config::SubCommand::GuestShell(args)) => {
             std::process::exit(multipass::guest_shell(args.clone()).await)
         }
+        Some(config::SubCommand::ConnectDev(dev)) => {
+            std::process::exit(connect::tunnel::dev_register(dev, args.profile.as_deref()))
+        }
         Some(config::SubCommand::Confirm {
             message,
             default_yes,
@@ -477,6 +480,22 @@ async fn main() {
     multipass::set_app(app.clone());
     if let Some(addr) = &args.connect_listen {
         connect::listen(addr, app.clone()).await;
+    }
+    match state_file
+        .as_deref()
+        .map(connect::tunnel::Registration::load)
+        .transpose()
+    {
+        Ok(Some(Some(registration))) => {
+            let started = auth
+                .allow(&registration.public_url)
+                .and_then(|()| connect::tunnel::spawn(registration, app.clone()));
+            if let Err(error) = started {
+                tracing::error!("btmux connect: {error}");
+            }
+        }
+        Ok(_) => {}
+        Err(error) => tracing::error!("btmux connect: {error}"),
     }
     if let Some(instance) = state.read().await.guest_instance() {
         multipass::restore_bridge(instance);
