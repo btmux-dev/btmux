@@ -46,6 +46,7 @@ import type {
   SearchResult,
 } from '@/protocol/file-messages';
 import type { ClientMessage } from '@/protocol/messages';
+import { openInEditor } from '../lib/openInEditor';
 import { isHtmlFile } from './files/previews/HtmlPreview';
 
 const MEDIA_EXTENSIONS = new Set([
@@ -717,16 +718,9 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       }
       if (isDir) {
         send({ type: 'change_directory', pane_id: paneId, path });
-      } else if (useStore.getState().config?.editor === 'vscode') {
-        send({ type: 'vscode_open', path, line: line ?? null });
-        useStore.getState().setVscodeOpen(true, paneId);
-      } else if (useStore.getState().config?.editor !== 'pane') {
-        send({ type: 'nvim_open', path, line: line ?? null });
-        // Show the surface before closing so the pane doesn't reclaim focus.
-        useStore.getState().setNvimOpen(true, paneId);
       } else {
-        useStore.getState().hideEditorSurfaces(paneId);
-        send({ type: 'open_file', pane_id: paneId, path, line: line ?? null });
+        // Shows the surface before closing, so the pane doesn't reclaim focus.
+        openInEditor(send, paneId, path, line ?? null);
       }
       onClose();
     },

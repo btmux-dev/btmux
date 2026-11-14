@@ -623,7 +623,7 @@ os_client: number | null, } | { "type": "notification", level: NotificationLevel
 /**
  * The client that should show an OS notification; `None` lets every client decide.
  */
-os_client: number | null, } | { "type": "client", id: number, } | { "type": "open_file_browser", pane_id: string, path: string, mode: FileBrowserMode, focus_file: string | null, } | { "type": "focus_pane", pane_id: string, } | { "type": "open_nvim", pane_id: string, } | { "type": "open_vscode", pane_id: string, } | { "type": "tailscale", status: TailscaleStatus, } | { "type": "widgets", widgets: Array<WidgetSummary>, } | { "type": "github", statuses: Array<GithubStatus>, };
+os_client: number | null, } | { "type": "client", id: number, } | { "type": "open_file_browser", pane_id: string, path: string, mode: FileBrowserMode, focus_file: string | null, } | { "type": "focus_pane", pane_id: string, } | { "type": "open_nvim", pane_id: string, } | { "type": "open_vscode", pane_id: string, path: string | null, line: number | null, explicit: boolean, } | { "type": "tailscale", status: TailscaleStatus, } | { "type": "widgets", widgets: Array<WidgetSummary>, } | { "type": "github", statuses: Array<GithubStatus>, };
 
 // prettier-ignore
 export type FileBrowserMode = "files" | "git" | "process";

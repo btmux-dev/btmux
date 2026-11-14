@@ -745,6 +745,7 @@ async fn api_open_editor(
     Path(pane_id): Path<Uuid>,
     Json(body): Json<OpenEditorRequest>,
 ) -> Response {
+    let explicit = body.editor.is_some();
     let editor = {
         let mgr = state.read().await;
         if mgr.find_pane(pane_id).is_none() {
@@ -768,7 +769,12 @@ async fn api_open_editor(
             if let Some(path) = &body.path {
                 crate::vscode::open(path, body.line);
             }
-            ws::control::ServerMessage::OpenVscode { pane_id }
+            ws::control::ServerMessage::OpenVscode {
+                pane_id,
+                path: body.path,
+                line: body.line,
+                explicit,
+            }
         }
     };
     let _ = state
@@ -1318,6 +1324,65 @@ mod pane_notification_tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
+    }
+
+    /// Relayed tabs have no VS Code, so they need the file, the line, and
+    /// whether VS Code was asked for by name to open it elsewhere.
+    #[tokio::test]
+    async fn open_editor_tells_tabs_what_vscode_was_asked_to_open() {
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let (meta_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let mut manager = crate::session::manager::SessionManager::new(
+            "/bin/sh".into(),
+            crate::config::FileConfig {
+                editor: Some(crate::config::Editor::Vscode),
+                ..Default::default()
+            },
+            exit_tx,
+            meta_tx,
+            8004,
+            None,
+        );
+        let session = manager.create_session(None).await;
+        let pane = manager.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        let mut events = manager.events().subscribe();
+        let app = create_app(Arc::new(tokio::sync::RwLock::new(manager)));
+        for (body, path, line, explicit) in [
+            (
+                r#"{}"#,
+                serde_json::Value::Null,
+                serde_json::Value::Null,
+                false,
+            ),
+            (
+                r#"{"path":"/src/main.rs","line":7}"#,
+                "/src/main.rs".into(),
+                7.into(),
+                false,
+            ),
+            (
+                r#"{"editor":"vscode"}"#,
+                serde_json::Value::Null,
+                serde_json::Value::Null,
+                true,
+            ),
+        ] {
+            let request = Request::post(format!("/api/panes/{pane}/open-editor"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body))
+                .unwrap();
+            let response = app.clone().oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{body}");
+            let event: serde_json::Value =
+                serde_json::from_str(&events.try_recv().unwrap()).unwrap();
+            assert_eq!(event["type"], "open_vscode", "{body}");
+            assert_eq!(event["pane_id"], pane.to_string());
+            assert_eq!(event["path"], path, "{body}");
+            assert_eq!(event["line"], line, "{body}");
+            assert_eq!(event["explicit"], explicit, "{body}");
+        }
     }
 
     #[tokio::test]

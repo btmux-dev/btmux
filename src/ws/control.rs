@@ -1104,9 +1104,14 @@ pub enum ServerMessage {
     OpenNvim {
         pane_id: Uuid,
     },
-    /// Show VS Code over the pane's session.
+    /// Show VS Code over the pane's session. Relayed tabs, which have no VS
+    /// Code, open `path` in their fallback editor unless VS Code was asked for
+    /// by name (`explicit`).
     OpenVscode {
         pane_id: Uuid,
+        path: Option<String>,
+        line: Option<u32>,
+        explicit: bool,
     },
     /// Sent on connect and on change while `--tailscale` is on.
     Tailscale {
