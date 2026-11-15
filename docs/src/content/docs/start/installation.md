@@ -158,7 +158,7 @@ default.
 
 ```nix
 {
-  inputs.btmux.url = "github:buntec/btmux";
+  inputs.btmux.url = "github:btmux-dev/btmux";
 
   imports = [ inputs.btmux.homeManagerModules.default ];
 
