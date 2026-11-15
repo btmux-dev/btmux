@@ -104,8 +104,12 @@ try {
   assert.equal(read('a.txt'), 'one\n');
   assert.equal(read('b.txt'), 'staged\n', 'staged changes are kept');
   assert.equal(git('status', '--porcelain'), 'M  b.txt\n?? new.txt\n');
+  // Once the view has the new status: nothing left to discard.
+  await waitForAsync(page, async () => {
+    const { useFileStore } = await import('/src/state/fileStore.ts' as string);
+    return useFileStore.getState().gitStatus?.unstaged.length === 0;
+  });
   await page.getByText('new.txt', { exact: true }).first().waitFor();
-  // Nothing left to discard.
   await page.keyboard.press('D');
   await page.waitForTimeout(100);
   assert.equal(await prompt.count(), 0);
