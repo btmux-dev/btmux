@@ -890,8 +890,12 @@ the tunnel; certificates are reissued when self-signed, from another CA, or at
 a time drawn once in the CA's renewal window (ACME Renewal Info, refreshed as
 its `Retry-After` says; such orders name the certificate they replace, which
 exempts them from rate limits), else at two thirds of their lifetime, and
-saved into the registration; the account is in `state.acme`. Requests have no
-deadline of their own, so each attempt gets 10 minutes.
+saved into the registration with the account they were issued to
+(`issued_to`); the account is in `state.acme`, as is an order being finalized,
+so an interrupted attempt collects its certificate instead of ordering again.
+Requests have no deadline of their own, so each attempt gets 10 minutes; a
+rate limit waits for the CA's `Retry-After`. A registration that changes name
+or CA stops renewal until a restart.
 Until btmux.net is on the Public Suffix List, Let's Encrypt issues at most 50
 new certificates a week for all of it. `connect/mod.rs` marks
 relayed requests with `Tunneled`, from the tunnel or the hidden

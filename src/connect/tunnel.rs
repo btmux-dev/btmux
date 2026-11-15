@@ -46,6 +46,9 @@ pub struct Registration {
     /// as is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acme: Option<String>,
+    /// The ACME account (its URL) `cert` was issued to, saved with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issued_to: Option<String>,
 }
 
 pub fn path(state_file: &Path) -> PathBuf {
@@ -104,7 +107,7 @@ fn spawn_with(
     app: Router,
     limits: Limits,
 ) -> Result<Arc<super::acme::Certificates>, String> {
-    let certificates = Arc::new(super::acme::Certificates::new(&registration)?);
+    let certificates = Arc::new(super::acme::Certificates::load(&registration)?);
     let tls = server_tls(certificates.clone())?;
     let client = quic_client(&registration, limits.streams)?;
     let (up, tunnel_up) = tokio::sync::watch::channel(false);
@@ -541,6 +544,7 @@ pub fn dev_register(args: &DevArgs, profile: Option<&str>) -> i32 {
                 "staging" => super::acme::LETS_ENCRYPT_STAGING.to_owned(),
                 url => url.to_owned(),
             }),
+            issued_to: None,
         };
         if let Some(dir) = state_file.parent() {
             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -632,6 +636,7 @@ mod tests {
             cert: machine_pem,
             key: machine_key,
             acme: None,
+            issued_to: None,
         };
         TestRelay {
             endpoint,
@@ -900,6 +905,7 @@ mod tests {
             cert,
             key,
             acme: Some(super::super::acme::LETS_ENCRYPT_STAGING.into()),
+            issued_to: None,
         };
         registration.save(&state).unwrap();
         registration.save(&state).unwrap();

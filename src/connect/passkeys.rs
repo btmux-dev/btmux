@@ -919,6 +919,7 @@ mod tests {
             cert: String::new(),
             key: String::new(),
             acme: None,
+            issued_to: None,
         };
         Passkeys::new(&registration, &dir.join("state.json"), None).unwrap()
     }
