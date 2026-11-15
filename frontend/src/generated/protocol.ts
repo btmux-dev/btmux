@@ -567,6 +567,57 @@ export type HealthStatus = "ok" | "missing" | "warning" | "error";
 export type TailscaleStatus = { "state": "starting" } | { "state": "serving", url: string, } | { "state": "error", message: string, };
 
 // prettier-ignore
+export type ConnectStatus = { hostname: string, public_url: string, relay: string, tunnel: TunnelState,
+/**
+ * `None` until a usable certificate loads.
+ */
+certificate: CertificateInfo | null,
+/**
+ * Set when certificates come from an ACME CA.
+ */
+acme: AcmeStatus | null, passkeys: Array<PasskeySummary>, };
+
+// prettier-ignore
+export type TunnelState = { "state": "connecting" } | { "state": "up" } | { "state": "down", error: string, } | { "state": "replaced" } | { "state": "failed", error: string, };
+
+// prettier-ignore
+export type CertificateInfo = {
+/**
+ * The issuer's organization, else its common name.
+ */
+issuer: string, self_signed: boolean,
+/**
+ * Unix seconds.
+ */
+not_after: number, };
+
+// prettier-ignore
+export type AcmeStatus = {
+/**
+ * The CA, by name when known.
+ */
+directory: string,
+/**
+ * The last attempt's failure, until one succeeds.
+ */
+error: string | null,
+/**
+ * When the certificate is to be renewed (unix seconds).
+ */
+renews_at: number | null,
+/**
+ * The registration changed; renewal waits for a restart.
+ */
+stopped: boolean, };
+
+// prettier-ignore
+export type PasskeySummary = { id: string, label: string,
+/**
+ * Unix seconds.
+ */
+created: number, last_used: number | null, };
+
+// prettier-ignore
 export type PickItem = { label: string, description: string | null, };
 
 // prettier-ignore
@@ -623,7 +674,7 @@ os_client: number | null, } | { "type": "notification", level: NotificationLevel
 /**
  * The client that should show an OS notification; `None` lets every client decide.
  */
-os_client: number | null, } | { "type": "client", id: number, } | { "type": "open_file_browser", pane_id: string, path: string, mode: FileBrowserMode, focus_file: string | null, } | { "type": "focus_pane", pane_id: string, } | { "type": "open_nvim", pane_id: string, } | { "type": "open_vscode", pane_id: string, path: string | null, line: number | null, explicit: boolean, } | { "type": "tailscale", status: TailscaleStatus, } | { "type": "widgets", widgets: Array<WidgetSummary>, } | { "type": "github", statuses: Array<GithubStatus>, };
+os_client: number | null, } | { "type": "client", id: number, } | { "type": "open_file_browser", pane_id: string, path: string, mode: FileBrowserMode, focus_file: string | null, } | { "type": "focus_pane", pane_id: string, } | { "type": "open_nvim", pane_id: string, } | { "type": "open_vscode", pane_id: string, path: string | null, line: number | null, explicit: boolean, } | { "type": "tailscale", status: TailscaleStatus, } | { "type": "connect", status: ConnectStatus, } | { "type": "widgets", widgets: Array<WidgetSummary>, } | { "type": "github", statuses: Array<GithubStatus>, };
 
 // prettier-ignore
 export type FileBrowserMode = "files" | "git" | "process";

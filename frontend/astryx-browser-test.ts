@@ -738,6 +738,54 @@ try {
   await setCliShell('/bin/sh');
   console.log('PASS shell selection');
 
+  // Connect's relative times follow the clock, and a pushed time reads
+  // against the current one, not the one the panel opened with.
+  const clocked = await context.newPage();
+  await clocked.clock.install();
+  await clocked.goto(url);
+  const clockedSettings = clocked.getByRole('button', { name: 'Settings', exact: true }).first();
+  await clockedSettings.waitFor();
+  const pushConnect = (lastUsed: number, renewsAt: number) =>
+    clocked.evaluate(
+      async ([lastUsed, renewsAt]) => {
+        const { useStore } = await import('/src/state/store.tsx' as string);
+        useStore.getState().setConnect({
+          hostname: 'laptop.test',
+          public_url: 'https://laptop.test',
+          relay: 'relay.test',
+          tunnel: { state: 'up' },
+          certificate: { issuer: 'Test CA', self_signed: false, not_after: renewsAt + 86400 },
+          acme: { directory: "Let's Encrypt", error: null, renews_at: renewsAt, stopped: false },
+          passkeys: [{ id: 'phone', label: 'Phone', created: lastUsed, last_used: lastUsed }],
+        });
+      },
+      [lastUsed, renewsAt],
+    );
+  const browserNow = () => clocked.evaluate(() => Math.floor(Date.now() / 1000));
+  const until = async (check: () => Promise<boolean>, message: string) => {
+    for (let i = 0; !(await check()); i++) {
+      assert(i < 100, message);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  };
+  const opened = await browserNow();
+  await pushConnect(opened, opened + 600);
+  await clockedSettings.click();
+  const connectPanel = clocked.getByRole('tabpanel', { name: 'Connect' });
+  await clocked.getByRole('tab', { name: 'Connect', exact: true }).click();
+  const renews = connectPanel.getByText(/^Renews /);
+  const renewsBefore = await renews.innerText();
+  assert.match(renewsBefore, /^Renews in \d+ minutes$/);
+  await clocked.clock.fastForward('02:00');
+  await until(async () => (await renews.innerText()) !== renewsBefore, 'the renewal time stayed put');
+  const signedIn = await browserNow();
+  await pushConnect(signedIn, opened + 600);
+  const lastUsed = connectPanel.getByText(/last used/);
+  await until(async () => /last used now/.test(await lastUsed.innerText()), 'a new sign-in read as not now');
+  assert.doesNotMatch(await lastUsed.innerText(), /last used in /);
+  await clocked.close();
+  console.log('PASS connect times follow the clock');
+
   await page.getByRole('button', { name: 'Commands', exact: true }).click();
   await toastIsOnTop('Toast before settings');
   const confirmationLabel = await page.evaluate(async () => {

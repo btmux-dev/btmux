@@ -1,6 +1,5 @@
-import { useEffect, useMemo, useState, type SVGProps } from 'react';
+import { useEffect, useState, type SVGProps } from 'react';
 import { Copy } from 'lucide-react';
-import { encode } from 'uqr';
 import { Popover } from '@astryxdesign/core/Popover';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
@@ -8,6 +7,7 @@ import { Text } from '@astryxdesign/core/Text';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
 import type { TailscaleStatus } from '../generated/protocol';
 import { useStore } from '../state/store';
+import { QrCode } from './QrCode';
 
 // Tailscale's nine-dot mark. Sized in em: WebKit collapses an unsized SVG flex item to 0x0.
 function TailscaleGlyph(props: SVGProps<SVGSVGElement>) {
@@ -17,21 +17,6 @@ function TailscaleGlyph(props: SVGProps<SVGSVGElement>) {
       {Array.from({ length: 9 }, (_, i) => (
         <circle key={i} cx={4 + (i % 3) * 8} cy={4 + Math.floor(i / 3) * 8} r={3} fillOpacity={lit.has(i) ? 1 : 0.3} />
       ))}
-    </svg>
-  );
-}
-
-// Dark modules on white: many scanners reject inverted codes.
-function QrCode({ text }: { text: string }) {
-  const { size, path } = useMemo(() => {
-    const { data, size } = encode(text, { ecc: 'M', border: 2 });
-    let path = '';
-    data.forEach((row, y) => row.forEach((dark, x) => dark && (path += `M${x} ${y}h1v1h-1z`)));
-    return { size, path };
-  }, [text]);
-  return (
-    <svg viewBox={`0 0 ${size} ${size}`} shapeRendering="crispEdges" className="size-48 rounded-md bg-white">
-      <path d={path} fill="black" />
     </svg>
   );
 }

@@ -97,8 +97,13 @@ const LIMITS: Limits = Limits {
 };
 
 /// Connects to the relay in the background and keeps reconnecting.
-pub fn spawn(registration: Registration, state_file: &Path, app: Router) -> Result<Tunnel, String> {
-    spawn_with(registration, state_file, app, LIMITS).map(|(tunnel, _)| tunnel)
+pub fn spawn(
+    registration: Registration,
+    state_file: &Path,
+    app: Router,
+    status: Arc<super::status::Status>,
+) -> Result<Tunnel, String> {
+    spawn_with(registration, state_file, app, LIMITS, status).map(|(tunnel, _)| tunnel)
 }
 
 /// The running tunnel; dropping it leaves the tunnel running.
@@ -126,6 +131,7 @@ fn spawn_with(
     state_file: &Path,
     app: Router,
     limits: Limits,
+    status: Arc<super::status::Status>,
 ) -> Result<(Tunnel, Arc<super::acme::Certificates>), String> {
     let certificates = Arc::new(super::acme::Certificates::load(&registration)?);
     let tls = server_tls(certificates.clone())?;
@@ -139,6 +145,7 @@ fn spawn_with(
                 state_file.to_owned(),
                 certificates.clone(),
                 tunnel_up,
+                status.clone(),
             )
             .run(),
         );
@@ -150,7 +157,7 @@ fn spawn_with(
         tls,
         super::app(app),
         limits,
-        up,
+        Reports { up, status },
         closing_rx,
     ));
     Ok((Tunnel { closing, task }, certificates))
@@ -166,13 +173,42 @@ const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// Bounds `Tunnel::close`, which waits for the relay to see the close.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// Where the tunnel reports whether it's up: the ACME maintainer, which
+/// waits for it, and Settings.
+struct Reports {
+    up: tokio::sync::watch::Sender<bool>,
+    status: Arc<super::status::Status>,
+}
+
+impl Reports {
+    fn up(&self) {
+        self.up.send_replace(true);
+        self.status
+            .update(|s| s.tunnel = super::status::TunnelState::Up);
+    }
+
+    fn down(&self, ended: Option<&Ended>) {
+        self.up.send_replace(false);
+        if let Some(ended) = ended {
+            let tunnel = if ended.replaced {
+                super::status::TunnelState::Replaced
+            } else {
+                super::status::TunnelState::Down {
+                    error: ended.error.clone(),
+                }
+            };
+            self.status.update(|s| s.tunnel = tunnel);
+        }
+    }
+}
+
 async fn run(
     registration: Registration,
     client: quinn::ClientConfig,
     tls: tokio_rustls::TlsAcceptor,
     app: Router,
     limits: Limits,
-    up: tokio::sync::watch::Sender<bool>,
+    reports: Reports,
     mut closing: tokio::sync::watch::Receiver<bool>,
 ) {
     let mut backoff = MIN_BACKOFF;
@@ -187,14 +223,15 @@ async fn run(
             &tls,
             &app,
             limits,
-            &up,
+            &reports,
             &mut closing,
         )
         .await;
-        up.send_replace(false);
         if *closing.borrow() {
+            reports.down(None);
             return;
         }
+        reports.down(Some(&ended));
         if started.elapsed() > MAX_BACKOFF {
             backoff = MIN_BACKOFF;
         }
@@ -277,7 +314,7 @@ async fn connect(
     tls: &tokio_rustls::TlsAcceptor,
     app: &Router,
     limits: Limits,
-    up: &tokio::sync::watch::Sender<bool>,
+    reports: &Reports,
     closing: &mut tokio::sync::watch::Receiver<bool>,
 ) -> Ended {
     let result = async {
@@ -313,7 +350,7 @@ async fn connect(
             relay = registration.relay,
             "btmux connect tunnel up"
         );
-        up.send_replace(true);
+        reports.up();
         loop {
             tokio::select! {
                 accepted = connection.accept_bi() => {
@@ -749,6 +786,10 @@ mod tests {
         )
     }
 
+    fn status(relay: &TestRelay) -> Arc<super::super::status::Status> {
+        super::super::status::Status::new(&relay.registration, None)
+    }
+
     /// Accepts the machine's tunnel and its registration.
     async fn accept_tunnel(relay: &quinn::Endpoint) -> quinn::Connection {
         let connection = relay.accept().await.unwrap().await.unwrap();
@@ -799,7 +840,13 @@ mod tests {
     #[tokio::test]
     async fn serves_relayed_streams_through_the_app() {
         let relay = test_relay();
-        spawn(relay.registration.clone(), Path::new("unused"), probe_app()).unwrap();
+        spawn(
+            relay.registration.clone(),
+            Path::new("unused"),
+            probe_app(),
+            status(&relay),
+        )
+        .unwrap();
         let connection = accept_tunnel(&relay.endpoint).await;
         let response = get_through(&connection, &relay.machine, "/probe").await;
         assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
@@ -823,6 +870,7 @@ mod tests {
             Path::new("unused"),
             probe_app(),
             limits,
+            status(&relay),
         )
         .unwrap();
         let connection = accept_tunnel(&relay.endpoint).await;
@@ -912,7 +960,13 @@ mod tests {
     #[tokio::test]
     async fn a_replaced_tunnel_backs_off() {
         let relay = test_relay();
-        spawn(relay.registration.clone(), Path::new("unused"), probe_app()).unwrap();
+        spawn(
+            relay.registration.clone(),
+            Path::new("unused"),
+            probe_app(),
+            status(&relay),
+        )
+        .unwrap();
         let connection = accept_tunnel(&relay.endpoint).await;
         connection.close(0u32.into(), b"restarting");
         let again = tokio::time::timeout(Duration::from_secs(3), accept_tunnel(&relay.endpoint));
@@ -925,11 +979,49 @@ mod tests {
         );
     }
 
+    /// Settings sees the tunnel come up, and why it went down.
+    #[tokio::test]
+    async fn reports_its_state() {
+        use super::super::status::TunnelState;
+        let relay = test_relay();
+        let status = status(&relay);
+        let _tunnel = spawn(
+            relay.registration.clone(),
+            Path::new("unused"),
+            probe_app(),
+            status.clone(),
+        )
+        .unwrap();
+        let reported = |want: TunnelState| {
+            let status = status.clone();
+            async move {
+                tokio::time::timeout(Duration::from_secs(3), async {
+                    while status.get().tunnel != want {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                })
+                .await
+                .is_ok()
+            }
+        };
+        assert!(status.get().tunnel == TunnelState::Connecting);
+        let connection = accept_tunnel(&relay.endpoint).await;
+        assert!(reported(TunnelState::Up).await, "never up");
+        connection.close(REPLACED.into(), b"replaced");
+        assert!(reported(TunnelState::Replaced).await, "never replaced");
+    }
+
     /// Closing tells the relay at once, and the tunnel doesn't come back.
     #[tokio::test]
     async fn closing_tells_the_relay() {
         let relay = test_relay();
-        let tunnel = spawn(relay.registration.clone(), Path::new("unused"), probe_app()).unwrap();
+        let tunnel = spawn(
+            relay.registration.clone(),
+            Path::new("unused"),
+            probe_app(),
+            status(&relay),
+        )
+        .unwrap();
         let connection = accept_tunnel(&relay.endpoint).await;
         let started = Instant::now();
         tunnel.close().await;
@@ -951,7 +1043,13 @@ mod tests {
     #[tokio::test]
     async fn closing_while_registering_tells_the_relay() {
         let relay = test_relay();
-        let tunnel = spawn(relay.registration.clone(), Path::new("unused"), probe_app()).unwrap();
+        let tunnel = spawn(
+            relay.registration.clone(),
+            Path::new("unused"),
+            probe_app(),
+            status(&relay),
+        )
+        .unwrap();
         let connection = relay.endpoint.accept().await.unwrap().await.unwrap();
         let (send, recv) = connection.accept_bi().await.unwrap();
         let mut hello = String::new();
@@ -974,7 +1072,13 @@ mod tests {
     #[tokio::test]
     async fn closing_before_the_tunnel_is_up_never_registers() {
         let relay = test_relay();
-        let tunnel = spawn(relay.registration.clone(), Path::new("unused"), probe_app()).unwrap();
+        let tunnel = spawn(
+            relay.registration.clone(),
+            Path::new("unused"),
+            probe_app(),
+            status(&relay),
+        )
+        .unwrap();
         tunnel.close().await;
         let registered = tokio::time::timeout(Duration::from_secs(1), async {
             let connection = relay.endpoint.accept().await?.await.ok()?;
@@ -998,6 +1102,7 @@ mod tests {
             Path::new("unused"),
             probe_app(),
             LIMITS,
+            status(&relay),
         )
         .unwrap();
         let connection = accept_tunnel(&relay.endpoint).await;

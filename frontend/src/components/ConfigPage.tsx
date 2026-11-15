@@ -31,6 +31,7 @@ import {
   getWallpaperSpeed,
 } from '../state/configDefaults';
 import { useStore } from '../state/store';
+import { ConnectSettings } from './ConnectSettings';
 import { Button } from '@astryxdesign/core/Button';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { NumberInput } from '@astryxdesign/core/NumberInput';
@@ -392,9 +393,12 @@ const TAB_LABELS = {
   wallpaper: 'Wallpaper',
   terminal: 'Terminal',
   effects: 'Effects',
+  connect: 'Connect',
 };
 type SettingsTab = keyof typeof TAB_LABELS;
 const SETTINGS_TABS = Object.keys(TAB_LABELS) as SettingsTab[];
+// Connect only with a registration.
+const LOCAL_TABS = SETTINGS_TABS.filter((tab) => tab !== 'connect');
 
 const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock']);
 
@@ -476,6 +480,8 @@ function KeyBindField({ label, value, onChange }: { label: string; value: string
 export function ConfigPage({ config, send, request }: Props) {
   const isNarrow = useMediaQuery(NARROW_QUERY);
   const [tab, setTab] = useState<SettingsTab>('general');
+  const connect = useStore((state) => state.connect);
+  const tabs = connect ? SETTINGS_TABS : LOCAL_TABS;
   const setConfigPreview = useStore((state) => state.setConfigPreview);
   const setSettingsOpen = useStore((state) => state.setSettingsOpen);
   const toast = useToast();
@@ -751,7 +757,7 @@ export function ConfigPage({ config, send, request }: Props) {
       // Clicking text keeps focus here, so Tab still reaches the handler.
       tabIndex={-1}
       onKeyDown={(e) => {
-        if (!cycleTabs(e, SETTINGS_TABS, tab, setTab)) enterTabPanel(e);
+        if (!cycleTabs(e, tabs, tab, setTab)) enterTabPanel(e);
       }}
     >
       <Layout
@@ -777,7 +783,7 @@ export function ConfigPage({ config, send, request }: Props) {
                   hasDivider
                   isFullBleed
                 >
-                  {SETTINGS_TABS.map((value) => (
+                  {tabs.map((value) => (
                     <Tab key={value} value={value} label={TAB_LABELS[value]} panelId={`settings-${value}`} />
                   ))}
                 </TabList>
@@ -1014,6 +1020,11 @@ export function ConfigPage({ config, send, request }: Props) {
                       ) : osPermission === 'unsupported' ? (
                         <Text color="secondary">This browser does not support notifications.</Text>
                       ) : null}
+                    </VStack>
+                  )}
+                  {tab === 'connect' && connect && (
+                    <VStack gap={4} id="settings-connect" role="tabpanel" aria-label={TAB_LABELS.connect}>
+                      <ConnectSettings status={connect} />
                     </VStack>
                   )}
                   {tab === 'logging' && (

@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { chromium, type Page } from 'playwright';
+import { chromium, type CDPSession, type Page } from 'playwright';
 
 const root = path.dirname(import.meta.dir);
 const binary = path.resolve(root, process.env.CARGO_TARGET_DIR ?? 'target', 'debug', 'btmux');
@@ -72,8 +72,8 @@ try {
   const cdp = await context.newCDPSession(page);
   await cdp.send('WebAuthn.enable');
   // A new authenticator stands for another device: one passkey each.
-  const newDevice = async () => {
-    const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
+  const newDevice = async (session: CDPSession = cdp) => {
+    const { authenticatorId } = await session.send('WebAuthn.addVirtualAuthenticator', {
       options: {
         protocol: 'ctap2',
         transport: 'internal',
@@ -122,6 +122,65 @@ try {
     cookies.some((c) => c.name === '__Host-btmux_session' && c.httpOnly && c.secure && c.sameSite === 'Strict'),
     'expected a Strict, HttpOnly, Secure __Host- session cookie',
   );
+
+  // Settings → Connect: this machine's status, and its passkeys managed from the app.
+  await page.getByRole('button', { name: 'Settings', exact: true }).first().click();
+  const settings = page.getByRole('dialog', { name: 'Settings' });
+  await settings.getByRole('tab', { name: 'Connect' }).click();
+  const panel = settings.getByRole('tabpanel', { name: 'Connect' });
+  await panel.getByText(origin, { exact: true }).waitFor();
+  // The relay CA here is random bytes, so the tunnel can't start.
+  await panel.getByText("Couldn't start").waitFor();
+  await panel.getByText('Self-signed').waitFor();
+  const listed = panel.getByRole('listitem');
+  const awaitListed = async (count: number, when: string) => {
+    for (let i = 0; (await listed.count()) !== count; i++) {
+      assert(i < 100, `${when}: ${await listed.count()} passkeys listed, not ${count}`);
+      await Bun.sleep(100);
+    }
+  };
+  await awaitListed(1, 'after enrolling');
+  // A link from the app enrolls another device, here a browser of its own.
+  await panel.getByRole('button', { name: 'Add a passkey' }).click();
+  const fromApp = (await panel.getByText('/connect/enroll#code=').innerText()).trim();
+  assert(fromApp.startsWith(`${origin}/connect/enroll#code=`), `unexpected link ${fromApp}`);
+  const other = await browser.newContext();
+  const otherPage = await other.newPage();
+  const otherCdp = await other.newCDPSession(otherPage);
+  await otherCdp.send('WebAuthn.enable');
+  await newDevice(otherCdp);
+  await otherPage.goto(fromApp);
+  await otherPage.getByRole('button', { name: 'Create a passkey' }).click();
+  await otherPage.waitForURL(`${origin}/`);
+  // Pushed to the open Settings, which drops the used link.
+  await awaitListed(2, 'after enrolling from the app');
+  assert(!(await panel.getByText('/connect/enroll#code=').isVisible()), 'the used link stayed up');
+  // Removing the new passkey signs that browser out, not this one.
+  await listed.nth(1).getByRole('button', { name: /^Remove / }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Remove passkey' }).click();
+  await awaitListed(1, 'after removing');
+  const removedStatus = await otherPage.evaluate(() => fetch('/api/sessions', { cache: 'no-store' }).then((r) => r.status));
+  assert(removedStatus === 401, `a removed passkey's browser answered ${removedStatus}`);
+  await other.close();
+  // A stale sign-in is asked to sign in again (the server's answer, stubbed).
+  const signOutRoute = '**/api/connect/sign-out-everywhere';
+  await page.route(signOutRoute, (route) =>
+    route.fulfill({ status: 403, body: 'Sign in again at /connect/login?reauth, then try again.' }),
+  );
+  const signOutEverywhere = async () => {
+    await panel.getByRole('button', { name: 'Sign out everywhere' }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Sign out everywhere' }).click();
+  };
+  await signOutEverywhere();
+  await panel.getByText('Sign in again to change passkeys').waitFor();
+  await page.unroute(signOutRoute);
+  // Signing out everywhere from the app ends this browser's session too.
+  await signOutEverywhere();
+  await signIn(page).waitFor({ timeout: 10_000 });
+  const signedOut = await page.evaluate(() => fetch('/api/sessions', { cache: 'no-store' }).then((r) => r.status));
+  assert(signedOut === 401, `signed out everywhere, a request answered ${signedOut}`);
+  await signIn(page).click();
+  await page.getByLabel('Terminal').first().waitFor({ state: 'attached', timeout: 15_000 });
 
   // The link worked once.
   const code = new URL(link).hash.slice('#code='.length);
@@ -196,7 +255,7 @@ try {
   await page.getByLabel('Terminal').first().waitFor({ state: 'attached', timeout: 15_000 });
 
   console.log(
-    'PASS passkey enrollment, sign-in, reauth, single-use links, token refusal, revocation of live terminals, and the passkey cap over the relay',
+    'PASS passkey enrollment, sign-in, Settings management, reauth, single-use links, token refusal, revocation of live terminals, and the passkey cap over the relay',
   );
 } catch (error) {
   console.error(`FAIL ${error instanceof Error ? error.stack : error}`);

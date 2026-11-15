@@ -19,6 +19,7 @@ use serde_json::Value;
 pub mod acme;
 pub mod passkeys;
 pub mod session;
+pub mod status;
 pub mod tunnel;
 
 /// Replaces `path` atomically with an owner-only file holding `contents`,

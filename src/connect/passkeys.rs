@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -78,7 +79,10 @@ pub struct Passkeys {
     /// Sign-in ceremonies already finished, until they expire.
     used: Mutex<HashMap<String, u64>>,
     starts: Mutex<(Instant, u32)>,
-    events: Option<tokio::sync::broadcast::Sender<String>>,
+    /// Settings' view, and the events toasts go out on.
+    status: Option<Arc<super::status::Status>>,
+    /// Numbers the passkey lists published to `status`.
+    revision: AtomicU64,
     /// Sign-in state is sealed for this process only, so a restart or an
     /// upgrade can't make a finished sign-in usable again.
     salt: [u8; 16],
@@ -100,7 +104,7 @@ impl Passkeys {
     pub fn new(
         registration: &super::tunnel::Registration,
         state_file: &Path,
-        events: Option<tokio::sync::broadcast::Sender<String>>,
+        status: Option<Arc<super::status::Status>>,
     ) -> Result<Self, String> {
         let origin = Url::parse(&registration.public_url).map_err(|e| e.to_string())?;
         // User verification is always required; no subdomains, no other ports.
@@ -141,10 +145,31 @@ impl Passkeys {
             registrations: Mutex::default(),
             used: Mutex::default(),
             starts: Mutex::new((Instant::now(), 0)),
-            events,
+            status,
+            revision: AtomicU64::default(),
             salt,
             connections: Mutex::default(),
-        })
+        }
+        .published())
+    }
+
+    /// Publishes the passkey list to Settings.
+    fn published(self) -> Self {
+        self.publish();
+        self
+    }
+
+    fn publish(&self) {
+        if let Some(status) = &self.status {
+            // Numbered under the store's lock, so a slower publisher can't
+            // replace a newer list with its older one.
+            let (revision, passkeys) = {
+                let store = self.store.lock().unwrap();
+                let revision = self.revision.fetch_add(1, Ordering::Relaxed) + 1;
+                (revision, summaries(&store))
+            };
+            status.publish_passkeys(revision, passkeys);
+        }
     }
 
     fn save(&self, store: &Store) -> Result<(), String> {
@@ -309,6 +334,7 @@ impl Passkeys {
             }
         }
         tracing::info!(label, "btmux connect: passkey enrolled");
+        self.publish();
         self.notify(format!("A passkey was added: {label}"));
         Ok(self
             .keys
@@ -395,6 +421,7 @@ impl Passkeys {
             tracing::warn!("btmux connect: {error}");
         }
         drop(store);
+        self.publish();
         tracing::info!(label, "btmux connect: signed in");
         Ok(self
             .keys
@@ -404,18 +431,7 @@ impl Passkeys {
     }
 
     pub fn list(&self) -> Vec<PasskeySummary> {
-        self.store
-            .lock()
-            .unwrap()
-            .credentials
-            .iter()
-            .map(|c| PasskeySummary {
-                id: c.id.clone(),
-                label: c.label.clone(),
-                created: c.created,
-                last_used: c.last_used,
-            })
-            .collect()
+        summaries(&self.store.lock().unwrap())
     }
 
     pub fn remove(&self, id: &str) -> Result<bool, String> {
@@ -433,6 +449,7 @@ impl Passkeys {
             let digest = session::credential_digest(&id);
             self.cut(|s| s.credential == digest);
         }
+        self.publish();
         self.notify(format!("A passkey was removed: {}", removed.label));
         Ok(true)
     }
@@ -454,7 +471,7 @@ impl Passkeys {
     }
 
     fn notify(&self, message: String) {
-        if let Some(events) = &self.events {
+        if let Some(events) = self.status.as_ref().and_then(|s| s.events()) {
             let toast = crate::ws::control::ServerMessage::Toast {
                 message,
                 level: crate::session::NotificationLevel::Attention,
@@ -497,11 +514,28 @@ struct Ceremony {
     state: PasskeyAuthentication,
 }
 
-#[derive(Serialize)]
+fn summaries(store: &Store) -> Vec<PasskeySummary> {
+    store
+        .credentials
+        .iter()
+        .map(|c| PasskeySummary {
+            id: c.id.clone(),
+            label: c.label.clone(),
+            created: c.created,
+            last_used: c.last_used,
+        })
+        .collect()
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct PasskeySummary {
     pub id: String,
     pub label: String,
+    /// Unix seconds.
+    #[cfg_attr(test, ts(type = "number"))]
     pub created: u64,
+    #[cfg_attr(test, ts(type = "number | null"))]
     pub last_used: Option<u64>,
 }
 
