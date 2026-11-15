@@ -1,4 +1,5 @@
 // Generates the home and desktop pages from README.md and desktop/README.md.
+import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,7 +29,7 @@ const demoNames = {
   "Shader wallpapers": "shaders",
 };
 const video = (name, mode, hide) =>
-  `<video class="${hide}:sl-hidden" poster="/demos/${name}-${mode}.jpg" controls muted loop playsinline preload="none">` +
+  `<video${hide === "none" ? "" : ` class="${hide}:sl-hidden"`} poster="/demos/${name}-${mode}.jpg" controls muted loop playsinline preload="none">` +
   `<source src="/demos/${name}-${mode}.webm" type="video/webm"><source src="/demos/${name}-${mode}.mp4" type="video/mp4"></video>`;
 const videos = (body) => {
   let heading = "";
@@ -39,7 +40,16 @@ const videos = (body) => {
       const name = demoNames[heading];
       if (!name)
         throw new Error(`README: no demo for the video under "${heading}"`);
-      return video(name, "dark", "light") + "\n" + video(name, "light", "dark");
+      const has = (mode) =>
+        existsSync(
+          join(root, "docs", "public", "demos", `${name}-${mode}.mp4`),
+        );
+      if (has("dark") && has("light"))
+        return (
+          video(name, "dark", "light") + "\n" + video(name, "light", "dark")
+        );
+      // One mode, or none yet (the player then shows nothing): no theme switch.
+      return video(name, has("light") ? "light" : "dark", "none");
     },
   );
 };
