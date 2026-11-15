@@ -46,7 +46,13 @@ function cli(...args: string[]) {
 }
 
 // The sign-up service, with one invite. No relay is reached: the relayed
-// listener below takes its place, and its CA is random bytes.
+// listener below takes its place. Its CA is a certificate of no use.
+const relayCa = spawnSync(
+  'openssl',
+  ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', '/dev/null', '-subj', '/CN=relay.test', '-days', '1', '-outform', 'DER'],
+  { encoding: 'buffer' },
+);
+assert(relayCa.status === 0, `openssl: ${relayCa.stderr}`);
 const invites = new Set(['btmi_test']);
 const service = Bun.serve({
   hostname: '127.0.0.1',
@@ -60,7 +66,7 @@ const service = Bun.serve({
         token: 'btmr_test',
         relay: '127.0.0.1:9',
         relay_name: 'relay.test',
-        relay_ca: randomBytes(64).toString('base64'),
+        relay_ca: relayCa.stdout.toString('base64'),
         public_url: origin,
       },
       { status: 201 },
@@ -179,8 +185,8 @@ try {
   await settings.getByRole('tab', { name: 'Connect' }).click();
   const panel = settings.getByRole('tabpanel', { name: 'Connect' });
   await panel.getByText(origin, { exact: true }).waitFor();
-  // The relay CA here is random bytes, so the tunnel can't start.
-  await panel.getByText("Couldn't start").waitFor();
+  // No relay listens, so the tunnel keeps trying.
+  await panel.getByText(/^(Connecting to relay\.test…|Can't reach relay\.test; retrying)$/).waitFor();
   await panel.getByText('Self-signed').waitFor();
   const listed = panel.getByRole('listitem');
   const awaitListed = async (count: number, when: string) => {

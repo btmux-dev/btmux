@@ -337,6 +337,20 @@ export function ConnectSetup() {
   const [agreed, setAgreed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A server without a state file can't keep a registration.
+  const [available, setAvailable] = useState(true);
+  useEffect(() => {
+    let current = true;
+    fetch('/api/connect/register', { cache: 'no-store' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body: { available?: boolean } | null) => {
+        if (current && body?.available === false) setAvailable(false);
+      })
+      .catch(() => {});
+    return () => {
+      current = false;
+    };
+  }, []);
   const connect = async () => {
     setBusy(true);
     setError(null);
@@ -364,20 +378,27 @@ export function ConnectSetup() {
           through without decrypting them.
         </Text>
       </VStack>
+      {!available && (
+        <Banner
+          status="info"
+          title="Sign-up needs a state directory"
+          description="btmux found none (XDG_STATE_HOME or HOME) to keep this server's registration in."
+        />
+      )}
       {error && <Banner status="error" title={error} />}
       <TextInput
         label="Invite code"
         placeholder="btmi_…"
         value={invite}
         onChange={(value) => setInvite(value)}
-        isDisabled={busy}
+        isDisabled={busy || !available}
       />
       <VStack gap={1}>
         <CheckboxInput
           label="I agree to Let's Encrypt's Subscriber Agreement"
           value={agreed}
           onChange={(checked) => setAgreed(checked)}
-          isDisabled={busy}
+          isDisabled={busy || !available}
         />
         <Text type="supporting" color="secondary">
           Let&apos;s Encrypt issues this machine&apos;s certificate:{' '}
@@ -392,7 +413,7 @@ export function ConnectSetup() {
           label="Connect"
           variant="primary"
           isLoading={busy}
-          isDisabled={!invite.trim() || !agreed}
+          isDisabled={!invite.trim() || !agreed || !available}
           onClick={() => void connect()}
         />
       </HStack>

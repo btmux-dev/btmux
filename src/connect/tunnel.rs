@@ -67,6 +67,33 @@ impl Registration {
         }
     }
 
+    /// Whether it can start: the relay's CA and address, and an origin at
+    /// `hostname` that passkeys can be bound to.
+    pub fn check(&self) -> Result<(), String> {
+        quic_client(self, 1)?;
+        rustls::pki_types::ServerName::try_from(self.relay_name.as_str())
+            .map_err(|e| format!("relay_name: {e}"))?;
+        let port = self
+            .relay
+            .rsplit_once(':')
+            .map(|(host, port)| (host, port.parse::<u16>()));
+        if !matches!(port, Some((host, Ok(_))) if !host.is_empty()) {
+            return Err(format!("relay {:?}: expected host:port", self.relay));
+        }
+        rustls::pki_types::DnsName::try_from(self.hostname.as_str())
+            .map_err(|e| format!("hostname: {e}"))?;
+        crate::auth::parse_origin(&self.public_url)?;
+        let url = reqwest::Url::parse(&self.public_url).map_err(|e| e.to_string())?;
+        if url.host_str() != Some(self.hostname.as_str()) {
+            return Err(format!(
+                "public_url {:?} isn't at the hostname",
+                self.public_url
+            ));
+        }
+        super::passkeys::webauthn(self)?;
+        Ok(())
+    }
+
     /// Replaces the registration atomically, owner-only.
     pub fn save(&self, state_file: &Path) -> Result<(), String> {
         let json = serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?;

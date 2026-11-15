@@ -111,6 +111,14 @@ impl Status {
         self.events.as_ref()
     }
 
+    /// Broadcasts the status as it is, as on start.
+    pub fn publish(&self) {
+        if let Some(events) = &self.events {
+            let status = self.get();
+            let _ = events.send(serde_json::to_string(&ServerMessage::Connect { status }).unwrap());
+        }
+    }
+
     /// Applies `change`, broadcasting the result if it changed anything.
     pub fn update(&self, change: impl FnOnce(&mut ConnectStatus)) {
         let mut current = self.current.lock().unwrap();

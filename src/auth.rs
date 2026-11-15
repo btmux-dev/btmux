@@ -38,7 +38,7 @@ const COOKIE_MAX_AGE: u32 = 400 * 24 * 60 * 60;
 const PAIRING_CODE_TTL: Duration = Duration::from_secs(120);
 const MAX_PAIRING_CODES: usize = 16;
 
-fn parse_origin(value: &str) -> Result<String, String> {
+pub(crate) fn parse_origin(value: &str) -> Result<String, String> {
     let url = reqwest::Url::parse(value).map_err(|e| e.to_string())?;
     if !matches!(url.scheme(), "http" | "https")
         || url.host_str().is_none()

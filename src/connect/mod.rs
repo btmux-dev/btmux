@@ -38,7 +38,8 @@ pub struct Server {
 }
 
 static SERVER: OnceLock<Arc<Server>> = OnceLock::new();
-static TUNNEL: Mutex<Option<tunnel::Tunnel>> = Mutex::new(None);
+/// The tunnel, until shutdown takes it; `None` inside once shut down.
+static TUNNEL: Mutex<Option<Option<tunnel::Tunnel>>> = Mutex::new(Some(None));
 
 pub fn install(server: Server) {
     let _ = SERVER.set(Arc::new(server));
@@ -61,12 +62,28 @@ pub fn start(registration: tunnel::Registration) -> Result<(), String> {
 
 fn start_with(server: &Server, registration: tunnel::Registration) -> Result<(), String> {
     let status = status::Status::new(&registration, Some(server.events.clone()));
-    server.auth.set_relayed_origin(&registration.public_url)?;
-    server.auth.set_passkeys(passkeys::Passkeys::new(
-        &registration,
-        &server.state_file,
-        Some(status.clone()),
-    )?);
+    server
+        .status
+        .set(status.clone())
+        .map_err(|_| "btmux connect is already running".to_owned())?;
+    // Replaces Settings' sign-up form.
+    status.publish();
+    let failed = |error: String| {
+        status.update(|s| {
+            s.tunnel = status::TunnelState::Failed {
+                error: error.clone(),
+            }
+        });
+        error
+    };
+    server
+        .auth
+        .set_relayed_origin(&registration.public_url)
+        .map_err(failed)?;
+    server.auth.set_passkeys(
+        passkeys::Passkeys::new(&registration, &server.state_file, Some(status.clone()))
+            .map_err(failed)?,
+    );
     // Expired sessions lose their connections within a minute.
     if let Some(passkeys) = server.auth.passkeys().cloned() {
         tokio::spawn(async move {
@@ -77,14 +94,19 @@ fn start_with(server: &Server, registration: tunnel::Registration) -> Result<(),
             }
         });
     }
-    let _ = server.status.set(status.clone());
+    // Under the lock, so a sign-up that finishes during shutdown starts no
+    // tunnel that shutdown would miss.
+    let mut slot = TUNNEL.lock().unwrap();
+    let Some(slot) = slot.as_mut() else {
+        return Ok(());
+    };
     match tunnel::spawn(
         registration,
         &server.state_file,
         server.app.clone(),
         status.clone(),
     ) {
-        Ok(tunnel) => *TUNNEL.lock().unwrap() = Some(tunnel),
+        Ok(tunnel) => *slot = Some(tunnel),
         Err(error) => {
             tracing::error!("btmux connect: {error}");
             status.update(|s| s.tunnel = status::TunnelState::Failed { error });
@@ -95,14 +117,23 @@ fn start_with(server: &Server, registration: tunnel::Registration) -> Result<(),
 
 /// Closes the tunnel, so the relay drops the route at once.
 pub async fn shutdown() {
-    let tunnel = TUNNEL.lock().unwrap().take();
+    let tunnel = TUNNEL.lock().unwrap().take().flatten();
     if let Some(tunnel) = tunnel {
         tunnel.close().await;
     }
 }
 
 pub fn routes() -> Router {
-    Router::new().route("/api/connect/register", axum::routing::post(register))
+    Router::new().route(
+        "/api/connect/register",
+        axum::routing::get(available).post(register),
+    )
+}
+
+/// Whether this server can sign up: it needs a state file to keep the
+/// registration in.
+async fn available() -> axum::Json<Value> {
+    axum::Json(serde_json::json!({ "available": SERVER.get().is_some() }))
 }
 
 #[derive(serde::Deserialize)]
@@ -165,12 +196,22 @@ async fn redeem(
     invite: String,
 ) -> Result<Value, (StatusCode, String)> {
     let _signing_up = SIGNING_UP.lock().await;
+    if server.status.get().is_some() {
+        return Err((
+            StatusCode::CONFLICT,
+            "This server is already connected.".into(),
+        ));
+    }
+    // One that didn't start, which a new one would replace.
     match tunnel::Registration::load(&server.state_file) {
         Ok(None) => {}
         Ok(Some(_)) => {
             return Err((
                 StatusCode::CONFLICT,
-                "This server is already connected.".into(),
+                format!(
+                    "This server has a registration that didn't start ({}); see its log.",
+                    tunnel::path(&server.state_file).display()
+                ),
             ))
         }
         Err(error) => return Err((StatusCode::INTERNAL_SERVER_ERROR, error)),
@@ -236,7 +277,8 @@ pub async fn connect_cli(args: &ConnectArgs, profile: Option<&str>) -> i32 {
         reqwest::Method::POST,
         "/api/connect/register",
         Some(serde_json::json!({ "invite": invite, "accept_acme_terms": true })),
-        std::time::Duration::from_secs(40),
+        // Sign-up retries the service for a minute.
+        std::time::Duration::from_secs(90),
     )
     .await;
     let url = match registered {
@@ -250,7 +292,10 @@ pub async fn connect_cli(args: &ConnectArgs, profile: Option<&str>) -> i32 {
         }
     };
     eprintln!("btmux: connected; this machine is {url}");
-    eprintln!("Browsers sign in there with a passkey. Add the first one:");
+    eprintln!(
+        "Let's Encrypt issues its certificate within a minute or two; until then, browsers warn \
+         about the address. Browsers sign in there with a passkey. Add the first one:"
+    );
     passkeys::enroll_cli(profile).await
 }
 
@@ -531,7 +576,6 @@ mod tests {
     /// lose the machine: the registration is saved and connect started.
     #[tokio::test]
     async fn sign_up_finishes_when_the_client_leaves() {
-        use base64::Engine;
         use std::sync::Arc;
         use tokio::sync::Notify;
         let (redeemed, release) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
@@ -544,14 +588,7 @@ mod tests {
                     release.notified().await;
                     (
                         StatusCode::CREATED,
-                        axum::Json(serde_json::json!({
-                            "hostname": "abcd1234.btmux.test",
-                            "token": "btmr_token",
-                            "relay": "127.0.0.1:9",
-                            "relay_name": "relay.btmux.test",
-                            "relay_ca": base64::engine::general_purpose::STANDARD.encode(b"ca"),
-                            "public_url": "https://abcd1234.btmux.test",
-                        })),
+                        axum::Json(signup::test_answer("abcd1234.btmux.test")),
                     )
                 }),
             )
@@ -570,7 +607,8 @@ mod tests {
             state_file: state_file.clone(),
             status: OnceLock::new(),
         });
-        let client = tokio::spawn(sign_up(server.clone(), service, "good".into()));
+        let mut events = server.events.subscribe();
+        let client = tokio::spawn(sign_up(server.clone(), service.clone(), "good".into()));
         redeemed.notified().await;
         client.abort();
         release.notify_one();
@@ -591,6 +629,16 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
         assert!(server.auth.passkeys().is_some(), "not started");
+        // Settings' form gets the status at once, not when the tunnel is up.
+        let event = tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(event.contains("abcd1234.btmux.test"), "{event}");
+        // Running, so another sign-up is refused, even without the file.
+        std::fs::remove_file(tunnel::path(&state_file)).unwrap();
+        let again = redeem(server.clone(), service, "good".into()).await;
+        assert_eq!(again.err().unwrap().0, StatusCode::CONFLICT);
         std::fs::remove_dir_all(dir).unwrap();
     }
     use crate::config::{ColorMode, Editor, FileConfig};

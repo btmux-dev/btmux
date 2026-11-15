@@ -870,8 +870,10 @@ comes from sign-up: `btmux connect [INVITE]` or Settings → Connect post an
 invite code to `POST /api/connect/register`, which redeems it with the relay's
 sign-up API (`connect/signup.rs`, `https://connect.btmux.net/v1/machines`; the
 hidden `BTMUX_CONNECT_SERVICE`, `BTMUX_CONNECT_SERVICE_CA`, and
-`BTMUX_CONNECT_ACME` = `none`/`staging`/URL override it for tests), saves the
-registration with a self-signed placeholder and Let's Encrypt as its CA (the
+`BTMUX_CONNECT_ACME` = `none`/`staging`/URL override it for tests; a lost
+answer is retried under the same random request ID, for which the relay gives
+the same machine), saves the registration, once `Registration::check` finds it
+can start, with a self-signed placeholder and Let's Encrypt as its CA (the
 owner agrees to its terms there), and calls `connect::start`, which startup
 calls too: relayed sign-in, the status, and the tunnel come up without a
 restart. The hidden `btmux connect-dev` writes a registration by hand for

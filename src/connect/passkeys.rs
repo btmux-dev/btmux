@@ -100,17 +100,23 @@ fn b64() -> base64::engine::GeneralPurpose {
     base64::engine::general_purpose::URL_SAFE_NO_PAD
 }
 
+/// The relying party for `registration`'s hostname and origin.
+pub fn webauthn(registration: &super::tunnel::Registration) -> Result<(Webauthn, Url), String> {
+    let origin = Url::parse(&registration.public_url).map_err(|e| e.to_string())?;
+    // User verification is always required; no subdomains, no other ports.
+    let webauthn = WebauthnBuilder::new(&registration.hostname, &origin)
+        .and_then(|builder| builder.rp_name("btmux").build())
+        .map_err(|e| format!("passkeys for {}: {e}", registration.hostname))?;
+    Ok((webauthn, origin))
+}
+
 impl Passkeys {
     pub fn new(
         registration: &super::tunnel::Registration,
         state_file: &Path,
         status: Option<Arc<super::status::Status>>,
     ) -> Result<Self, String> {
-        let origin = Url::parse(&registration.public_url).map_err(|e| e.to_string())?;
-        // User verification is always required; no subdomains, no other ports.
-        let webauthn = WebauthnBuilder::new(&registration.hostname, &origin)
-            .and_then(|builder| builder.rp_name("btmux").build())
-            .map_err(|e| format!("passkeys for {}: {e}", registration.hostname))?;
+        let (webauthn, origin) = webauthn(registration)?;
         let rp_id = registration.hostname.clone();
         let path = store_path(state_file);
         let store = match crate::discovery::read_private_file(&path, 1024 * 1024) {
