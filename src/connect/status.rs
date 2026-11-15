@@ -71,6 +71,8 @@ pub struct AcmeStatus {
 pub struct Status {
     current: Mutex<ConnectStatus>,
     events: Option<broadcast::Sender<String>>,
+    /// The newest passkey list's revision (`publish_passkeys`).
+    passkeys_revision: Mutex<u64>,
 }
 
 static INSTANCE: OnceLock<Arc<Status>> = OnceLock::new();
@@ -109,6 +111,7 @@ impl Status {
                 passkeys: Vec::new(),
             }),
             events,
+            passkeys_revision: Mutex::default(),
         })
     }
 
@@ -132,6 +135,18 @@ impl Status {
             let status = current.clone();
             let _ = events.send(serde_json::to_string(&ServerMessage::Connect { status }).unwrap());
         }
+    }
+
+    /// Shows the passkeys as of `revision`, unless a later list was shown
+    /// already: publishers number their lists in the order of changes, but
+    /// may arrive out of it.
+    pub fn publish_passkeys(&self, revision: u64, passkeys: Vec<PasskeySummary>) {
+        let mut newest = self.passkeys_revision.lock().unwrap();
+        if revision <= *newest {
+            return;
+        }
+        *newest = revision;
+        self.update(|s| s.passkeys = passkeys);
     }
 
     /// Applies `change` to the ACME status, if certificates come from a CA.
@@ -220,6 +235,25 @@ mod tests {
             serde_json::from_str(&received.try_recv().unwrap()).unwrap();
         assert_eq!(second["status"]["acme"]["error"], "refused");
         assert!(received.try_recv().is_err(), "an unchanged update was sent");
+    }
+
+    /// A publisher that numbered its list first but arrives last doesn't
+    /// bring back a removed passkey.
+    #[test]
+    fn older_passkey_lists_arriving_late_are_ignored() {
+        let status = Status::new(&registration(String::new(), String::new()), None);
+        let passkey = |id: &str| PasskeySummary {
+            id: id.into(),
+            label: "Phone".into(),
+            created: 1,
+            last_used: None,
+        };
+        // Revision 1 lists X; revision 2, after X's removal, doesn't.
+        status.publish_passkeys(2, vec![passkey("y")]);
+        status.publish_passkeys(1, vec![passkey("x"), passkey("y")]);
+        assert_eq!(status.get().passkeys, vec![passkey("y")]);
+        status.publish_passkeys(3, vec![]);
+        assert!(status.get().passkeys.is_empty());
     }
 
     #[test]

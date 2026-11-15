@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -80,6 +81,8 @@ pub struct Passkeys {
     starts: Mutex<(Instant, u32)>,
     /// Settings' view, and the events toasts go out on.
     status: Option<Arc<super::status::Status>>,
+    /// Numbers the passkey lists published to `status`.
+    revision: AtomicU64,
     /// Sign-in state is sealed for this process only, so a restart or an
     /// upgrade can't make a finished sign-in usable again.
     salt: [u8; 16],
@@ -143,6 +146,7 @@ impl Passkeys {
             used: Mutex::default(),
             starts: Mutex::new((Instant::now(), 0)),
             status,
+            revision: AtomicU64::default(),
             salt,
             connections: Mutex::default(),
         }
@@ -157,8 +161,14 @@ impl Passkeys {
 
     fn publish(&self) {
         if let Some(status) = &self.status {
-            let passkeys = self.list();
-            status.update(|s| s.passkeys = passkeys);
+            // Numbered under the store's lock, so a slower publisher can't
+            // replace a newer list with its older one.
+            let (revision, passkeys) = {
+                let store = self.store.lock().unwrap();
+                let revision = self.revision.fetch_add(1, Ordering::Relaxed) + 1;
+                (revision, summaries(&store))
+            };
+            status.publish_passkeys(revision, passkeys);
         }
     }
 
@@ -421,18 +431,7 @@ impl Passkeys {
     }
 
     pub fn list(&self) -> Vec<PasskeySummary> {
-        self.store
-            .lock()
-            .unwrap()
-            .credentials
-            .iter()
-            .map(|c| PasskeySummary {
-                id: c.id.clone(),
-                label: c.label.clone(),
-                created: c.created,
-                last_used: c.last_used,
-            })
-            .collect()
+        summaries(&self.store.lock().unwrap())
     }
 
     pub fn remove(&self, id: &str) -> Result<bool, String> {
@@ -515,7 +514,20 @@ struct Ceremony {
     state: PasskeyAuthentication,
 }
 
-#[derive(Clone, PartialEq, Serialize)]
+fn summaries(store: &Store) -> Vec<PasskeySummary> {
+    store
+        .credentials
+        .iter()
+        .map(|c| PasskeySummary {
+            id: c.id.clone(),
+            label: c.label.clone(),
+            created: c.created,
+            last_used: c.last_used,
+        })
+        .collect()
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct PasskeySummary {
     pub id: String,

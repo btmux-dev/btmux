@@ -37,6 +37,14 @@ function Row({ label, dot, text, detail }: { label: string; dot: Dot; text: stri
   );
 }
 
+/**
+ * A relative time that keeps up with the clock. Timestamp compares with the
+ * clock it read when mounted, so a new value remounts it.
+ */
+function LiveTimestamp({ value, format }: { value: number; format: 'relative' | 'auto' }) {
+  return <Timestamp key={value} value={value} format={format} isLive type="inherit" color="inherit" />;
+}
+
 function Tunnel({ status }: { status: ConnectStatus }) {
   const { tunnel, relay } = status;
   switch (tunnel.state) {
@@ -108,7 +116,7 @@ function Certificate({ status }: { status: ConnectStatus }) {
               <Text color="secondary">{acme.error}</Text>
             ) : acme.renews_at !== null ? (
               <Text color="secondary">
-                Renews <Timestamp value={acme.renews_at} format="relative" type="inherit" color="inherit" />
+                Renews <LiveTimestamp value={acme.renews_at} format="relative" />
               </Text>
             ) : null
           }
@@ -162,8 +170,7 @@ function EnrollmentLink({ url, expires, onExpired }: { url: string; expires: num
       </HStack>
       <Text color="secondary">
         Open it on the device that gets the passkey, or scan it there. It works once and expires{' '}
-        <Timestamp value={expires} format="relative" isLive type="inherit" color="inherit" />. Anyone with this link
-        gets a shell on this machine.
+        <LiveTimestamp value={expires} format="relative" />. Anyone with this link gets a shell on this machine.
       </Text>
     </VStack>
   );
@@ -259,7 +266,7 @@ export function ConnectSettings({ status }: { status: ConnectStatus }) {
                     {passkey.last_used !== null && (
                       <>
                         {' · last used '}
-                        <Timestamp value={passkey.last_used} type="inherit" color="inherit" />
+                        <LiveTimestamp value={passkey.last_used} format="auto" />
                       </>
                     )}
                   </Text>
