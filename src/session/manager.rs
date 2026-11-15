@@ -960,8 +960,11 @@ impl SessionManager {
             .find_and_split(pane_id, new_pane_id, direction);
         window.panes.push(new_pane);
         if select {
+            window.prev_pane = Some(window.active_pane);
             window.active_pane = window.panes.len() - 1;
         }
+        // As in tmux, a split unzooms so the new pane is visible.
+        window.zoomed_pane = None;
         // A manual split breaks the preset arrangement; next-layout cycles fresh.
         window.last_preset = None;
         Some(new_pane_id)
@@ -1971,6 +1974,29 @@ mod pane_tests {
         mgr.zoom_pane(session_id, second);
         mgr.select_pane(session_id, second);
         assert_eq!(mgr.sessions[0].windows[0].zoomed_pane, Some(second));
+    }
+
+    #[tokio::test]
+    async fn splitting_a_zoomed_pane_unzooms_and_selects_the_new_pane() {
+        let (exit_tx, _exit_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (meta_tx, _meta_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut mgr = SessionManager::new(
+            "/bin/sh".to_string(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        let session_id = mgr.create_session(None).await;
+        let first = mgr.sessions[0].windows[0].panes[0].id;
+        mgr.zoom_pane(session_id, first);
+
+        let second = mgr.split_pane(first, "v", None, true).await.unwrap();
+        let window = &mgr.sessions[0].windows[0];
+        assert_eq!(window.zoomed_pane, None);
+        assert_eq!(window.panes[window.active_pane].id, second);
+        assert_eq!(window.prev_pane, Some(0));
     }
 
     #[tokio::test]
