@@ -1245,8 +1245,12 @@ pub(super) mod tests {
         change_registration(&state_file, |r| r.issued_to = Some(MOCK_ACCOUNT.into()));
 
         // A window tomorrow: ask again when the CA says, not hours later.
-        let wait = maintainer.step().await.ok().unwrap();
-        assert_eq!(wait, Some(Duration::from_secs(90)));
+        // The CA's 90 s, less the moment since the client read it.
+        let wait = maintainer.step().await.ok().unwrap().unwrap();
+        assert!(
+            wait > Duration::from_secs(85) && wait <= Duration::from_secs(90),
+            "{wait:?}"
+        );
         let at = maintainer.scheduled.as_ref().unwrap().at;
         let acme = maintainer.status.get().acme.unwrap();
         assert_eq!(acme.renews_at, Some(super::super::status::seconds(at)));
