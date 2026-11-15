@@ -16,12 +16,33 @@ const rebase = (body, from, to) =>
     return `](${posix.relative(posix.dirname(to), resolved)})`;
   });
 
-// GitHub renders bare user-attachment URLs as players; do the same here.
-const videos = (body) =>
-  body.replace(
-    /^(https:\/\/github\.com\/user-attachments\/assets\/[\w-]+)$/gm,
-    '<video src="$1" controls muted playsinline style="width:100%"></video>',
+// GitHub serves README videos (user-attachments) only to signed-in viewers,
+// so each becomes the site's own recording (just docs-demos-fetch), picked by
+// the heading above it, in the theme's mode.
+const demoNames = {
+  "Sessions, windows, and panes": "panes",
+  "File browser, Git mode, and process viewer": "files",
+  "Neovim GUI": "nvim",
+  "Coding agents": "agents",
+  "LaTeX overlay": "latex",
+  "Shader wallpapers": "shaders",
+};
+const video = (name, mode, hide) =>
+  `<video class="${hide}:sl-hidden" poster="/demos/${name}-${mode}.jpg" controls muted loop playsinline preload="none">` +
+  `<source src="/demos/${name}-${mode}.webm" type="video/webm"><source src="/demos/${name}-${mode}.mp4" type="video/mp4"></video>`;
+const videos = (body) => {
+  let heading = "";
+  return body.replace(
+    /^### (.+)$|^https:\/\/github\.com\/user-attachments\/assets\/[\w-]+$/gm,
+    (line, h) => {
+      if (h) return ((heading = h), line);
+      const name = demoNames[heading];
+      if (!name)
+        throw new Error(`README: no demo for the video under "${heading}"`);
+      return video(name, "dark", "light") + "\n" + video(name, "light", "dark");
+    },
   );
+};
 
 const frontmatter = (fm) =>
   `---\n${Object.entries(fm)

@@ -248,6 +248,30 @@ docs-dev:
 docs-build:
     cd docs && bun install && bun run build
 
+# Encode recorded demos (just record-desktop-demo) into docs/public/demos
+docs-demos-encode in=".":
+    scripts/encode-demos.sh {{in}} docs/public/demos
+
+# Upload the encoded demos to the "media" prerelease
+docs-demos-upload:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # A prerelease, so releases/latest (update check, install script) never resolves to it.
+    if ! gh release view media >/dev/null 2>&1; then
+        gh release create media --prerelease --latest=false --title "Website media" \
+            --notes "Demo videos for btmux.dev, made with just record-desktop-demo and just docs-demos-encode. Not a btmux release."
+    fi
+    [[ "$(gh release view media --json isPrerelease -q .isPrerelease)" == true ]] || {
+        echo "The media release must be a prerelease" >&2
+        exit 1
+    }
+    gh release upload media --clobber docs/public/demos/*
+
+# Download the demos from the "media" release into docs/public/demos
+docs-demos-fetch:
+    mkdir -p docs/public/demos
+    gh release download media --dir docs/public/demos --clobber
+
 # Run backend regression tests
 test:
     cargo test

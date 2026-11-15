@@ -4,3 +4,4 @@ dist/
 # Generated from the READMEs by scripts/sync-readmes.mjs
 src/content/docs/index.md
 src/content/docs/project/desktop.md
+public/demos/

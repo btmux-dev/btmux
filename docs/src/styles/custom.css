@@ -14,3 +14,10 @@
   letter-spacing: 0;
   color: var(--sl-color-white);
 }
+
+/* No display here: it would beat Starlight's layered light:/dark:sl-hidden. */
+.sl-markdown-content video {
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--sl-color-gray-5);
+}
