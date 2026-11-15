@@ -3,16 +3,19 @@ import { Trash2 } from 'lucide-react';
 import { AlertDialog } from '@astryxdesign/core/AlertDialog';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
+import { CheckboxInput } from '@astryxdesign/core/CheckboxInput';
 import { EmptyState } from '@astryxdesign/core/EmptyState';
 import { Heading } from '@astryxdesign/core/Heading';
 import { useClipboard } from '@astryxdesign/core/hooks';
 import { Icon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
+import { Link } from '@astryxdesign/core/Link';
 import { List, ListItem } from '@astryxdesign/core/List';
 import { MetadataList, MetadataListItem } from '@astryxdesign/core/MetadataList';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { Text } from '@astryxdesign/core/Text';
+import { TextInput } from '@astryxdesign/core/TextInput';
 import { Timestamp } from '@astryxdesign/core/Timestamp';
 import type { ConnectStatus, PasskeySummary } from '../generated/protocol';
 import { useStore } from '../state/store';
@@ -322,6 +325,77 @@ export function ConnectSettings({ status }: { status: ConnectStatus }) {
         isActionLoading={busy === 'sign-out'}
         onAction={() => void signOut()}
       />
+    </VStack>
+  );
+}
+
+const LETS_ENCRYPT_TERMS = 'https://letsencrypt.org/repository/';
+
+/** Sign-up with an invite code, for a server not yet on btmux connect. */
+export function ConnectSetup() {
+  const [invite, setInvite] = useState('');
+  const [agreed, setAgreed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const connect = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch('/api/connect/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invite: invite.trim(), accept_acme_terms: agreed }),
+        cache: 'no-store',
+      });
+      // On success, the pushed status replaces this form.
+      if (!response.ok) setError((await response.text()) || response.statusText);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'The request failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <VStack gap={4}>
+      <VStack gap={1}>
+        <Heading level={3}>btmux connect</Heading>
+        <Text color="secondary">
+          Reach this server from anywhere at its own address, signed in with a passkey. The relay passes connections
+          through without decrypting them.
+        </Text>
+      </VStack>
+      {error && <Banner status="error" title={error} />}
+      <TextInput
+        label="Invite code"
+        placeholder="btmi_…"
+        value={invite}
+        onChange={(value) => setInvite(value)}
+        isDisabled={busy}
+      />
+      <VStack gap={1}>
+        <CheckboxInput
+          label="I agree to Let's Encrypt's Subscriber Agreement"
+          value={agreed}
+          onChange={(checked) => setAgreed(checked)}
+          isDisabled={busy}
+        />
+        <Text type="supporting" color="secondary">
+          Let&apos;s Encrypt issues this machine&apos;s certificate:{' '}
+          <Link href={LETS_ENCRYPT_TERMS} isExternalLink>
+            its Subscriber Agreement
+          </Link>
+          .
+        </Text>
+      </VStack>
+      <HStack>
+        <Button
+          label="Connect"
+          variant="primary"
+          isLoading={busy}
+          isDisabled={!invite.trim() || !agreed}
+          onClick={() => void connect()}
+        />
+      </HStack>
     </VStack>
   );
 }

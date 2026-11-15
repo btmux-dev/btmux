@@ -1,6 +1,6 @@
-//! Connections that reach the server through a btmux connect relay. Until the
-//! tunnel client lands, the hidden `--connect-listen` listener stands in for
-//! it, behind a proxy such as the relay spike's agent.
+//! Connections that reach the server through a btmux connect relay: the
+//! tunnel (`tunnel.rs`), or the hidden `--connect-listen` listener, which
+//! tests use in its place.
 //!
 //! Relayed tabs get no browser or VS Code surface: the browser streams a JPEG
 //! per paint, which the relay can't afford, and `code tunnel` already covers
@@ -19,8 +19,207 @@ use serde_json::Value;
 pub mod acme;
 pub mod passkeys;
 pub mod session;
+pub mod signup;
 pub mod status;
 pub mod tunnel;
+
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, OnceLock};
+
+/// What starting btmux connect needs from the running server; installed at
+/// startup, so sign-up can start it later too.
+pub struct Server {
+    pub app: Router,
+    pub auth: Arc<crate::auth::Auth>,
+    pub events: tokio::sync::broadcast::Sender<String>,
+    pub state_file: PathBuf,
+}
+
+static SERVER: OnceLock<Server> = OnceLock::new();
+static TUNNEL: Mutex<Option<tunnel::Tunnel>> = Mutex::new(None);
+
+pub fn install(server: Server) {
+    let _ = SERVER.set(server);
+}
+
+/// Brings up btmux connect for `registration`: relayed sign-in, Settings'
+/// status, and the tunnel. Before any relayed listener: without the
+/// registration's origin, relayed requests are refused.
+pub fn start(registration: tunnel::Registration) -> Result<(), String> {
+    let server = SERVER.get().ok_or("btmux connect needs a state file")?;
+    let status = status::Status::new(&registration, Some(server.events.clone()));
+    server.auth.set_relayed_origin(&registration.public_url)?;
+    server.auth.set_passkeys(passkeys::Passkeys::new(
+        &registration,
+        &server.state_file,
+        Some(status.clone()),
+    )?);
+    // Expired sessions lose their connections within a minute.
+    if let Some(passkeys) = server.auth.passkeys().cloned() {
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                tick.tick().await;
+                passkeys.cut_expired();
+            }
+        });
+    }
+    status::install(status.clone());
+    match tunnel::spawn(
+        registration,
+        &server.state_file,
+        server.app.clone(),
+        status.clone(),
+    ) {
+        Ok(tunnel) => *TUNNEL.lock().unwrap() = Some(tunnel),
+        Err(error) => {
+            tracing::error!("btmux connect: {error}");
+            status.update(|s| s.tunnel = status::TunnelState::Failed { error });
+        }
+    }
+    Ok(())
+}
+
+/// Closes the tunnel, so the relay drops the route at once.
+pub async fn shutdown() {
+    let tunnel = TUNNEL.lock().unwrap().take();
+    if let Some(tunnel) = tunnel {
+        tunnel.close().await;
+    }
+}
+
+pub fn routes() -> Router {
+    Router::new().route("/api/connect/register", axum::routing::post(register))
+}
+
+#[derive(serde::Deserialize)]
+struct SignUp {
+    invite: String,
+    #[serde(default)]
+    accept_acme_terms: bool,
+}
+
+/// One sign-up at a time, so two can't both register.
+static SIGNING_UP: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Redeems an invite for a registration and starts btmux connect with it.
+async fn register(
+    tunneled: Option<Extension<Tunneled>>,
+    axum::Json(sign_up): axum::Json<SignUp>,
+) -> Response {
+    if tunneled.is_some() {
+        return (StatusCode::FORBIDDEN, "Sign up on the machine itself.").into_response();
+    }
+    if !sign_up.accept_acme_terms {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Agree to Let's Encrypt's Subscriber Agreement ({}), which issues this \
+                 machine's certificate.",
+                acme::LETS_ENCRYPT_TERMS
+            ),
+        )
+            .into_response();
+    }
+    let Some(server) = SERVER.get() else {
+        return (
+            StatusCode::CONFLICT,
+            "This server keeps no state, so it can't hold a registration.",
+        )
+            .into_response();
+    };
+    let _signing_up = SIGNING_UP.lock().await;
+    match tunnel::Registration::load(&server.state_file) {
+        Ok(None) => {}
+        Ok(Some(_)) => {
+            return (StatusCode::CONFLICT, "This server is already connected.").into_response()
+        }
+        Err(error) => return (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+    }
+    let registered = match signup::service() {
+        Ok(service) => signup::register(&service, &sign_up.invite, &server.state_file).await,
+        Err(failure) => Err(failure),
+    };
+    let registration = match registered {
+        Ok(registration) => registration,
+        Err(failure) => return (failure.status, failure.message).into_response(),
+    };
+    let answer = serde_json::json!({
+        "hostname": registration.hostname,
+        "public_url": registration.public_url,
+    });
+    tracing::info!(hostname = registration.hostname, "btmux connect: signed up");
+    match start(registration) {
+        Ok(()) => axum::Json(answer).into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+    }
+}
+
+/// `btmux connect`: sign up with an invite code.
+#[derive(clap::Args, Clone, Debug)]
+pub struct ConnectArgs {
+    /// An invite code (`btmi_…`); asked for if not given.
+    invite: Option<String>,
+    /// Agree to Let's Encrypt's Subscriber Agreement
+    /// (https://letsencrypt.org/repository/), which issues this machine's
+    /// certificate, without being asked.
+    #[arg(long)]
+    accept_acme_terms: bool,
+}
+
+pub async fn connect_cli(args: &ConnectArgs, profile: Option<&str>) -> i32 {
+    use std::io::{BufRead, Write};
+    let ask = |prompt: &str| -> Option<String> {
+        eprint!("{prompt}");
+        let _ = std::io::stderr().flush();
+        let mut line = String::new();
+        std::io::stdin().lock().read_line(&mut line).ok()?;
+        Some(line.trim().to_owned())
+    };
+    let invite = match &args.invite {
+        Some(invite) => invite.clone(),
+        None => match ask("Invite code: ") {
+            Some(invite) if !invite.is_empty() => invite,
+            _ => {
+                eprintln!("btmux: btmux connect needs an invite code");
+                return 1;
+            }
+        },
+    };
+    if !args.accept_acme_terms {
+        eprintln!(
+            "Let's Encrypt issues this machine's certificate; its Subscriber Agreement is at {}",
+            acme::LETS_ENCRYPT_TERMS
+        );
+        let agreed = ask("Do you agree to it? [y/N] ")
+            .is_some_and(|answer| matches!(answer.to_ascii_lowercase().as_str(), "y" | "yes"));
+        if !agreed {
+            eprintln!("btmux: not connected");
+            return 1;
+        }
+    }
+    let registered = crate::api_client::request(
+        profile,
+        reqwest::Method::POST,
+        "/api/connect/register",
+        Some(serde_json::json!({ "invite": invite, "accept_acme_terms": true })),
+        std::time::Duration::from_secs(40),
+    )
+    .await;
+    let url = match registered {
+        Ok(body) => serde_json::from_str::<Value>(&body)
+            .ok()
+            .and_then(|body| body["public_url"].as_str().map(str::to_owned))
+            .unwrap_or_default(),
+        Err(error) => {
+            eprintln!("btmux: {error}");
+            return 1;
+        }
+    };
+    eprintln!("btmux: connected; this machine is {url}");
+    eprintln!("Browsers sign in there with a passkey. Add the first one:");
+    passkeys::enroll_cli(profile).await
+}
 
 /// Replaces `path` atomically with an owner-only file holding `contents`,
 /// synced before the rename so a crash leaves the old file or the new one.

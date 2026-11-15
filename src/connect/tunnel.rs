@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 /// A machine's registration with a relay, kept owner-only beside the state
-/// file. `btmux connect-dev` writes one until sign-up exists.
+/// file. Sign-up (`signup.rs`) writes one; `btmux connect-dev` by hand.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Registration {
     /// The relay's tunnel endpoint, `host:port` (UDP).

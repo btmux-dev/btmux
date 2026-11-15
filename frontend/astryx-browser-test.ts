@@ -636,7 +636,7 @@ try {
   await page.keyboard.press('Shift+Tab');
   assert.equal(await settingsTab(), firstTab, 'Shift+Tab selects the previous tab');
   await page.keyboard.press('Shift+Tab');
-  assert.equal(await settingsTab(), 'Effects', 'Shift+Tab wraps to the last tab');
+  assert.equal(await settingsTab(), 'Connect', 'Shift+Tab wraps to the last tab');
   await page.keyboard.press('Tab');
   // ArrowDown enters the panel, where Tab moves between its controls.
   await page.keyboard.press('ArrowDown');

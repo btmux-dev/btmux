@@ -132,6 +132,9 @@ async fn main() {
         Some(config::SubCommand::GuestShell(args)) => {
             std::process::exit(multipass::guest_shell(args.clone()).await)
         }
+        Some(config::SubCommand::Connect(connect)) => {
+            std::process::exit(connect::connect_cli(connect, args.profile.as_deref()).await)
+        }
         Some(config::SubCommand::ConnectDev(dev)) => {
             std::process::exit(connect::tunnel::dev_register(dev, args.profile.as_deref()))
         }
@@ -480,75 +483,32 @@ async fn main() {
         .merge(server::info_routes(info))
         .merge(auth::routes(auth.clone()))
         .merge(connect::passkeys::routes(auth.clone()))
+        .merge(connect::routes())
         .layer(axum::middleware::from_fn_with_state(
             auth.clone(),
             auth::protect,
         ));
     multipass::set_app(app.clone());
-    // Before any relayed listener: without the registration's origin, relayed
-    // requests are refused.
-    let registration = match state_file
-        .as_deref()
-        .map(connect::tunnel::Registration::load)
-        .transpose()
-    {
-        Ok(Some(Some(registration))) => {
-            let events = state.read().await.events().clone();
-            let state_file = state_file
-                .as_deref()
-                .expect("a registration needs a state file");
-            let status = connect::status::Status::new(&registration, Some(events));
-            let configured = auth
-                .set_relayed_origin(&registration.public_url)
-                .and_then(|()| {
-                    connect::passkeys::Passkeys::new(
-                        &registration,
-                        state_file,
-                        Some(status.clone()),
-                    )
-                })
-                .map(|passkeys| auth.set_passkeys(passkeys));
-            match configured {
-                Ok(()) => {
-                    // Expired sessions lose their connections within a minute.
-                    if let Some(passkeys) = auth.passkeys().cloned() {
-                        tokio::spawn(async move {
-                            let mut tick = tokio::time::interval(Duration::from_secs(60));
-                            loop {
-                                tick.tick().await;
-                                passkeys.cut_expired();
-                            }
-                        });
-                    }
-                    connect::status::install(status.clone());
-                    Some((registration, status))
-                }
-                Err(error) => {
+    if let Some(state_file) = state_file.as_deref() {
+        connect::install(connect::Server {
+            app: app.clone(),
+            auth: auth.clone(),
+            events: state.read().await.events().clone(),
+            state_file: state_file.to_owned(),
+        });
+        match connect::tunnel::Registration::load(state_file) {
+            Ok(Some(registration)) => {
+                if let Err(error) = connect::start(registration) {
                     tracing::error!("btmux connect: {error}");
-                    None
                 }
             }
+            Ok(None) => {}
+            Err(error) => tracing::error!("btmux connect: {error}"),
         }
-        Ok(_) => None,
-        Err(error) => {
-            tracing::error!("btmux connect: {error}");
-            None
-        }
-    };
+    }
     if let Some(addr) = &args.connect_listen {
         connect::listen(addr, app.clone()).await;
     }
-    let tunnel = match (registration, state_file.as_deref()) {
-        (Some((registration, status)), Some(state_file)) => {
-            connect::tunnel::spawn(registration, state_file, app.clone(), status.clone())
-                .map_err(|error| {
-                    tracing::error!("btmux connect: {error}");
-                    status.update(|s| s.tunnel = connect::status::TunnelState::Failed { error });
-                })
-                .ok()
-        }
-        _ => None,
-    };
     if let Some(instance) = state.read().await.guest_instance() {
         multipass::restore_bridge(instance);
     }
@@ -632,9 +592,7 @@ async fn main() {
             tokio::time::sleep(drain_timeout).await;
         } => tracing::warn!("timed out waiting for connections to close"),
     }
-    if let Some(tunnel) = tunnel {
-        tunnel.close().await;
-    }
+    connect::shutdown().await;
     ws::nvim::shutdown().await;
     vscode::shutdown().await;
     browser::shutdown().await;
