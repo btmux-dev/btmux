@@ -4,7 +4,13 @@ import type { PaneTerminal as Terminal } from '../lib/paneTerminal';
 import { SessionState, SessionSummary, ClientConfig, LayoutRect, Overlay } from './types';
 import type { ClientMessage, NotificationLevel } from '../protocol/messages';
 import type { ConnectionState } from '../lib/connectionState';
-import type { AgentTelemetry, GithubStatus, TailscaleStatus, WidgetSummary } from '../generated/protocol';
+import type {
+  AgentTelemetry,
+  ConnectStatus,
+  GithubStatus,
+  TailscaleStatus,
+  WidgetSummary,
+} from '../generated/protocol';
 import { mergeTelemetry } from '../lib/agentUsage';
 import { cacheThemes } from './startupTheme';
 
@@ -43,6 +49,8 @@ interface AppStore {
   updateAgentTelemetry: (panes: AgentTelemetry[], replace?: boolean, removed?: string[]) => void;
   // The server's `--tailscale` status; null without it.
   tailscale: TailscaleStatus | null;
+  // The server's btmux connect status; null without a registration.
+  connect: ConnectStatus | null;
   // display-panes (prefix + q): briefly overlays each pane's index on the active
   // window. While true the keybinding hook captures digit presses to select a
   // pane by number (and any other key dismisses it); it auto-hides on a timer.
@@ -107,6 +115,7 @@ interface AppStore {
   setAgentPanes: (paneIds: string[]) => void;
   setWidgets: (widgets: WidgetSummary[]) => void;
   setTailscale: (status: TailscaleStatus | null) => void;
+  setConnect: (status: ConnectStatus | null) => void;
   setPaneNumbersVisible: (visible: boolean) => void;
   setSwitcherOpen: (open: boolean) => void;
   showToast: (
@@ -189,6 +198,7 @@ export const useStore = create<AppStore>((set, get) => ({
       return { agentTelemetry };
     }),
   tailscale: null,
+  connect: null,
   paneNumbersVisible: false,
   switcherOpen: false,
   nvimOpen: false,
@@ -247,6 +257,7 @@ export const useStore = create<AppStore>((set, get) => ({
   setAgentPanes: (paneIds) => set({ agentPanes: new Set(paneIds) }),
   setWidgets: (widgets) => set({ widgets }),
   setTailscale: (tailscale) => set({ tailscale }),
+  setConnect: (connect) => set({ connect }),
   setPaneNumbersVisible: (visible) => set({ paneNumbersVisible: visible }),
   setSwitcherOpen: (open) => set({ switcherOpen: open }),
   // One surface per pane: opening one over another's pane closes the other.

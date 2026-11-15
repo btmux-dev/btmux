@@ -934,6 +934,12 @@ tabs get no browser or VS Code surface: their routes return
 403, and `relay_event` rewrites each relayed control socket's config
 (`relayed`, no `browser`, no `vscode` editor), which the store's surface
 setters check. Relayed pane output is compressed (see `/ws/pane`).
+`connect/status.rs` keeps what Settings' Connect tab shows (`ConnectStatus`:
+the tunnel's state, the certificate, ACME renewal, the passkeys), updated by
+the tunnel, the ACME maintainer, and `Passkeys`, and pushed as
+`ServerMessage::Connect` on connect and on change. The tab manages passkeys
+through the `/api/connect/*` routes the CLI uses; over the relay, a 403 asking
+for a fresh sign-in shows a link to `/connect/login?reauth`.
 Only one running server may own a persistence profile (held OS file lock).
 
 Control commands may carry `request_id`; each gets a `command_result` with the

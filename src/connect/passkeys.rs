@@ -78,7 +78,8 @@ pub struct Passkeys {
     /// Sign-in ceremonies already finished, until they expire.
     used: Mutex<HashMap<String, u64>>,
     starts: Mutex<(Instant, u32)>,
-    events: Option<tokio::sync::broadcast::Sender<String>>,
+    /// Settings' view, and the events toasts go out on.
+    status: Option<Arc<super::status::Status>>,
     /// Sign-in state is sealed for this process only, so a restart or an
     /// upgrade can't make a finished sign-in usable again.
     salt: [u8; 16],
@@ -100,7 +101,7 @@ impl Passkeys {
     pub fn new(
         registration: &super::tunnel::Registration,
         state_file: &Path,
-        events: Option<tokio::sync::broadcast::Sender<String>>,
+        status: Option<Arc<super::status::Status>>,
     ) -> Result<Self, String> {
         let origin = Url::parse(&registration.public_url).map_err(|e| e.to_string())?;
         // User verification is always required; no subdomains, no other ports.
@@ -141,10 +142,24 @@ impl Passkeys {
             registrations: Mutex::default(),
             used: Mutex::default(),
             starts: Mutex::new((Instant::now(), 0)),
-            events,
+            status,
             salt,
             connections: Mutex::default(),
-        })
+        }
+        .published())
+    }
+
+    /// Publishes the passkey list to Settings.
+    fn published(self) -> Self {
+        self.publish();
+        self
+    }
+
+    fn publish(&self) {
+        if let Some(status) = &self.status {
+            let passkeys = self.list();
+            status.update(|s| s.passkeys = passkeys);
+        }
     }
 
     fn save(&self, store: &Store) -> Result<(), String> {
@@ -309,6 +324,7 @@ impl Passkeys {
             }
         }
         tracing::info!(label, "btmux connect: passkey enrolled");
+        self.publish();
         self.notify(format!("A passkey was added: {label}"));
         Ok(self
             .keys
@@ -395,6 +411,7 @@ impl Passkeys {
             tracing::warn!("btmux connect: {error}");
         }
         drop(store);
+        self.publish();
         tracing::info!(label, "btmux connect: signed in");
         Ok(self
             .keys
@@ -433,6 +450,7 @@ impl Passkeys {
             let digest = session::credential_digest(&id);
             self.cut(|s| s.credential == digest);
         }
+        self.publish();
         self.notify(format!("A passkey was removed: {}", removed.label));
         Ok(true)
     }
@@ -454,7 +472,7 @@ impl Passkeys {
     }
 
     fn notify(&self, message: String) {
-        if let Some(events) = &self.events {
+        if let Some(events) = self.status.as_ref().and_then(|s| s.events()) {
             let toast = crate::ws::control::ServerMessage::Toast {
                 message,
                 level: crate::session::NotificationLevel::Attention,
@@ -497,11 +515,15 @@ struct Ceremony {
     state: PasskeyAuthentication,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct PasskeySummary {
     pub id: String,
     pub label: String,
+    /// Unix seconds.
+    #[cfg_attr(test, ts(type = "number"))]
     pub created: u64,
+    #[cfg_attr(test, ts(type = "number | null"))]
     pub last_used: Option<u64>,
 }
 

@@ -90,6 +90,9 @@ fn initial_messages(mgr: &crate::session::manager::SessionManager) -> Vec<String
     if let Some(status) = crate::tailscale::status() {
         messages.push(serde_json::to_string(&ServerMessage::Tailscale { status }).unwrap());
     }
+    if let Some(status) = crate::connect::status::current() {
+        messages.push(serde_json::to_string(&ServerMessage::Connect { status }).unwrap());
+    }
     // Sent when empty too, replacing what a tab kept from before.
     let statuses = crate::github::statuses();
     messages.push(serde_json::to_string(&ServerMessage::Github { statuses }).unwrap());
@@ -1116,6 +1119,10 @@ pub enum ServerMessage {
     /// Sent on connect and on change while `--tailscale` is on.
     Tailscale {
         status: crate::tailscale::TailscaleStatus,
+    },
+    /// Sent on connect and on change while btmux connect is set up.
+    Connect {
+        status: crate::connect::status::ConnectStatus,
     },
     /// All open pane widgets; sent on connect and on change.
     Widgets {

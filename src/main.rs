@@ -497,10 +497,15 @@ async fn main() {
             let state_file = state_file
                 .as_deref()
                 .expect("a registration needs a state file");
+            let status = connect::status::Status::new(&registration, Some(events));
             let configured = auth
                 .set_relayed_origin(&registration.public_url)
                 .and_then(|()| {
-                    connect::passkeys::Passkeys::new(&registration, state_file, Some(events))
+                    connect::passkeys::Passkeys::new(
+                        &registration,
+                        state_file,
+                        Some(status.clone()),
+                    )
                 })
                 .map(|passkeys| auth.set_passkeys(passkeys));
             match configured {
@@ -515,7 +520,8 @@ async fn main() {
                             }
                         });
                     }
-                    Some(registration)
+                    connect::status::install(status.clone());
+                    Some((registration, status))
                 }
                 Err(error) => {
                     tracing::error!("btmux connect: {error}");
@@ -533,9 +539,12 @@ async fn main() {
         connect::listen(addr, app.clone()).await;
     }
     let tunnel = match (registration, state_file.as_deref()) {
-        (Some(registration), Some(state_file)) => {
-            connect::tunnel::spawn(registration, state_file, app.clone())
-                .map_err(|error| tracing::error!("btmux connect: {error}"))
+        (Some((registration, status)), Some(state_file)) => {
+            connect::tunnel::spawn(registration, state_file, app.clone(), status.clone())
+                .map_err(|error| {
+                    tracing::error!("btmux connect: {error}");
+                    status.update(|s| s.tunnel = connect::status::TunnelState::Failed { error });
+                })
                 .ok()
         }
         _ => None,

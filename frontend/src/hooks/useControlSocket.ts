@@ -111,6 +111,7 @@ export function useControlSocket() {
           useStore.getState().updateAgentTelemetry([], true);
           // Sent again after it on connect, if the server has it.
           useStore.getState().setTailscale(null);
+          useStore.getState().setConnect(null);
           reportFocus();
         } else if (msg.type === 'state') {
           setSessions(msg.sessions);
@@ -186,6 +187,8 @@ export function useControlSocket() {
           }
         } else if (msg.type === 'tailscale') {
           useStore.getState().setTailscale(msg.status);
+        } else if (msg.type === 'connect') {
+          useStore.getState().setConnect(msg.status);
         } else if (msg.type === 'widgets') {
           useStore.getState().setWidgets(msg.widgets);
         } else if (msg.type === 'github') {

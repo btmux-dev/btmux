@@ -276,6 +276,8 @@ pub struct Maintainer {
     http: Option<Arc<CaHttp>>,
     /// The account, kept until an attempt fails.
     session: Option<Session>,
+    /// Settings' view.
+    status: Arc<super::status::Status>,
 }
 
 struct Session {
@@ -413,6 +415,7 @@ impl Maintainer {
         state_file: PathBuf,
         certificates: Arc<Certificates>,
         up: watch::Receiver<bool>,
+        status: Arc<super::status::Status>,
     ) -> Self {
         Self {
             directory,
@@ -424,6 +427,7 @@ impl Maintainer {
             attempt: ATTEMPT,
             http: None,
             session: None,
+            status,
         }
     }
 
@@ -435,10 +439,12 @@ impl Maintainer {
             }
             let wait = match self.attempt().await {
                 Ok(Some(next)) => {
+                    self.status.update_acme(|acme| acme.error = None);
                     retry = MIN_RETRY;
                     next
                 }
                 Ok(None) => {
+                    self.status.update_acme(|acme| acme.stopped = true);
                     tracing::info!(
                         hostname = self.hostname,
                         "btmux connect certificate: the registration changed; restart btmux"
@@ -446,6 +452,8 @@ impl Maintainer {
                     return;
                 }
                 Err(failure) => {
+                    self.status
+                        .update_acme(|acme| acme.error = Some(failure.message.clone()));
                     // Starts over from what's saved.
                     self.session = None;
                     let wait = match failure.retry_after {
@@ -522,10 +530,15 @@ impl Maintainer {
         };
         let reason = match plan.due {
             Due::Now(reason) => reason,
-            Due::At(at) => match at.duration_since(SystemTime::now()) {
-                Ok(wait) if !wait.is_zero() => return Ok(Some(wait.min(plan.recheck))),
-                _ => "renewal time",
-            },
+            Due::At(at) => {
+                self.status.update_acme(|acme| {
+                    acme.renews_at = Some(super::status::seconds(at));
+                });
+                match at.duration_since(SystemTime::now()) {
+                    Ok(wait) if !wait.is_zero() => return Ok(Some(wait.min(plan.recheck))),
+                    _ => "renewal time",
+                }
+            }
         };
         tracing::info!(
             hostname = self.hostname,
@@ -557,6 +570,13 @@ impl Maintainer {
             self.save_pending(None)?;
             return Ok(None);
         };
+        let certificate = super::status::certificate_info(&chain);
+        self.status.update(|s| {
+            s.certificate = certificate;
+            if let Some(acme) = &mut s.acme {
+                acme.renews_at = None;
+            }
+        });
         registration.cert = chain;
         registration.key = key;
         registration.issued_to = Some(account.id().to_owned());
@@ -1179,6 +1199,7 @@ pub(super) mod tests {
             state_file.to_owned(),
             certificates,
             up,
+            super::super::status::Status::new(&registration, None),
         );
         if directory.starts_with(CA) {
             maintainer.http = Some(CaHttp::new(ca.clone()));
@@ -1227,6 +1248,8 @@ pub(super) mod tests {
         let wait = maintainer.step().await.ok().unwrap();
         assert_eq!(wait, Some(Duration::from_secs(90)));
         let at = maintainer.scheduled.as_ref().unwrap().at;
+        let acme = maintainer.status.get().acme.unwrap();
+        assert_eq!(acme.renews_at, Some(super::super::status::seconds(at)));
         for _ in 0..5 {
             maintainer.step().await.ok().unwrap();
             assert_eq!(maintainer.scheduled.as_ref().unwrap().at, at);
@@ -1346,6 +1369,10 @@ pub(super) mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(served.cert[0], der);
+        // Settings shows the CA's certificate.
+        let certificate = maintainer.status.get().certificate.unwrap();
+        assert_eq!(certificate.issuer, "test CA");
+        assert!(!certificate.self_signed);
         std::fs::remove_dir_all(state_file.parent().unwrap()).unwrap();
     }
 }
