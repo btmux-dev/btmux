@@ -29,7 +29,12 @@ export default defineConfig({
       title: "btmux",
       description:
         "A browser-based tmux: terminal emulator and session manager.",
-      logo: { src: "./src/assets/logo.svg" },
+      customCss: [
+        "@fontsource-variable/geist",
+        "@fontsource-variable/geist-mono",
+        "@fontsource-variable/geist-pixel/elsh.css",
+        "./src/styles/custom.css",
+      ],
       social: [{ icon: "github", label: "GitHub", href: repo }],
       editLink: { baseUrl: `${repo}/edit/main/docs/` },
       sidebar: Object.entries(groups).map(([label, directory]) => ({

@@ -1,0 +1,16 @@
+:root {
+  --sl-font: "Geist Variable", var(--sl-font-system);
+  --sl-font-mono: "Geist Mono Variable", var(--sl-font-system-mono);
+}
+
+/* The wordmark, as in the app: Geist Pixel's "Grid" instance. */
+.site-title {
+  font-family: "Geist Pixel Variable", var(--sl-font);
+  font-variation-settings: "ELSH" 40;
+  font-weight: 400;
+  /* Below 40px it loses its pixel grid. */
+  font-size: 40px;
+  line-height: 1;
+  letter-spacing: 0;
+  color: var(--sl-color-white);
+}
