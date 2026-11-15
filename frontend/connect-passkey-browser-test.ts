@@ -151,11 +151,11 @@ try {
   assert(again.status !== 0 && again.stderr.includes('already connected'), `a second sign-up: ${again.stderr}`);
   await localContext.close();
 
-  // Before any passkey: a page load gets the sign-in page, which has nothing to offer.
+  // Before any passkey: a page load gets the sign-in page, which points to enrolling instead.
   const first = await page.goto(`${origin}/`);
   assert(first?.status() === 401, `expected the sign-in page, got ${first?.status()}`);
-  await page.getByRole('button', { name: 'Sign in with a passkey' }).click();
-  await page.waitForFunction(() => document.querySelector('#status')?.textContent?.includes('No passkey'));
+  await page.getByText('No passkey is enrolled on this machine yet.', { exact: false }).waitFor();
+  assert((await signIn(page).count()) === 0, 'the sign-in page offered a sign-in with no passkey');
 
   // The token never works over the relay, in any form.
   const bearer = await fetch(`${origin}/api/sessions`, { headers: { Authorization: `Bearer ${token}` } });
@@ -270,11 +270,12 @@ try {
   assert(page.url().startsWith(`${deep}/`), `signed in at ${page.url()}, not under ${deep}`);
 
   // Ending a session cuts the terminal it has open: what's typed after never runs.
-  const revoked = async (revoke: () => void, marker: string) => {
+  const noPasskey = (page: Page) => page.getByText('No passkey is enrolled on this machine yet.', { exact: false });
+  const revoked = async (revoke: () => void, marker: string, landing = signIn) => {
     await page.locator('.wterm').first().click();
     revoke();
     await page.keyboard.type(`echo ${marker}-$((40 + 2))\n`);
-    await signIn(page).waitFor({ timeout: 10_000 });
+    await landing(page).waitFor({ timeout: 10_000 });
     assert(!paneText().includes(`${marker}-42`), `${marker}: a revoked session's terminal ran a command`);
     const status = await page.evaluate(() => fetch('/api/sessions', { cache: 'no-store' }).then((r) => r.status));
     assert(status === 401, `${marker}: a revoked session's request answered ${status}`);
@@ -285,7 +286,8 @@ try {
   const [passkey] = JSON.parse(cli('connect-passkeys')) as { id: string }[];
   assert(passkey, 'expected one enrolled passkey');
   // IDs are base64url and may start with `-`.
-  await revoked(() => cli('connect-passkeys', '--remove', passkey.id), 'after-removal');
+  // The last one: the sign-in page then points to enrolling.
+  await revoked(() => cli('connect-passkeys', '--remove', passkey.id), 'after-removal', noPasskey);
 
   // Up to ten passkeys, and signing in with the last still fits the request limit.
   for (let enrolled = 0; enrolled < 10; enrolled++) {
