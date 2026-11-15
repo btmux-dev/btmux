@@ -90,7 +90,7 @@ fn initial_messages(mgr: &crate::session::manager::SessionManager) -> Vec<String
     if let Some(status) = crate::tailscale::status() {
         messages.push(serde_json::to_string(&ServerMessage::Tailscale { status }).unwrap());
     }
-    if let Some(status) = crate::connect::status::current() {
+    if let Some(status) = crate::connect::status() {
         messages.push(serde_json::to_string(&ServerMessage::Connect { status }).unwrap());
     }
     // Sent when empty too, replacing what a tab kept from before.

@@ -1,7 +1,7 @@
 //! What Settings shows about btmux connect: the tunnel, the certificate, and
 //! the passkeys. Pushed to every control socket on connect and on change.
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use serde::Serialize;
@@ -75,18 +75,6 @@ pub struct Status {
     passkeys_revision: Mutex<u64>,
 }
 
-static INSTANCE: OnceLock<Arc<Status>> = OnceLock::new();
-
-/// Makes `status` the one control sockets get on connect.
-pub fn install(status: Arc<Status>) {
-    let _ = INSTANCE.set(status);
-}
-
-/// The installed status, if btmux connect is set up.
-pub fn current() -> Option<ConnectStatus> {
-    INSTANCE.get().map(|status| status.get())
-}
-
 impl Status {
     pub fn new(
         registration: &Registration,
@@ -121,6 +109,14 @@ impl Status {
 
     pub fn events(&self) -> Option<&broadcast::Sender<String>> {
         self.events.as_ref()
+    }
+
+    /// Broadcasts the status as it is, as on start.
+    pub fn publish(&self) {
+        if let Some(events) = &self.events {
+            let status = self.get();
+            let _ = events.send(serde_json::to_string(&ServerMessage::Connect { status }).unwrap());
+        }
     }
 
     /// Applies `change`, broadcasting the result if it changed anything.

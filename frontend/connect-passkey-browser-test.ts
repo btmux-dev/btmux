@@ -1,9 +1,10 @@
-// btmux connect passkey sign-in, end to end in Chromium with a virtual
-// authenticator. Starts its own backend: a registration for `localhost` (no
-// relay; the hidden --connect-listen listener stands in for the tunnel).
+// btmux connect sign-up and passkey sign-in, end to end in Chromium with a
+// virtual authenticator. Starts its own backend and a fake sign-up service,
+// which registers `localhost` (no relay; the hidden --connect-listen listener
+// stands in for the tunnel).
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -44,10 +45,34 @@ function cli(...args: string[]) {
   return result.stdout.trim();
 }
 
-// No relay is reached: the relayed listener below takes its place.
-const relayCa = path.join(dir, 'relay-ca.der');
-writeFileSync(relayCa, randomBytes(64));
-cli('connect-dev', '--relay', '127.0.0.1:9', '--relay-name', 'relay.test', '--relay-ca', relayCa, '--hostname', 'localhost', '--public-url', origin);
+// The sign-up service, with one invite. No relay is reached: the relayed
+// listener below takes its place. Its CA is a certificate of no use.
+const relayCa = spawnSync(
+  'openssl',
+  ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', '/dev/null', '-subj', '/CN=relay.test', '-days', '1', '-outform', 'DER'],
+  { encoding: 'buffer' },
+);
+assert(relayCa.status === 0, `openssl: ${relayCa.stderr}`);
+const invites = new Set(['btmi_test']);
+const service = Bun.serve({
+  hostname: '127.0.0.1',
+  port: 0,
+  async fetch(request) {
+    const { invite } = (await request.json()) as { invite: string };
+    if (!invites.delete(invite)) return Response.json({ error: "This invite code isn't valid." }, { status: 403 });
+    return Response.json(
+      {
+        hostname: 'localhost',
+        token: 'btmr_test',
+        relay: '127.0.0.1:9',
+        relay_name: 'relay.test',
+        relay_ca: relayCa.stdout.toString('base64'),
+        public_url: origin,
+      },
+      { status: 201 },
+    );
+  },
+});
 
 let backend: ChildProcess | undefined;
 const browser = await chromium.launch();
@@ -55,7 +80,15 @@ try {
   backend = spawn(
     binary,
     ['--no-browser', '--host', '127.0.0.1', '--port', String(port), '--connect-listen', `127.0.0.1:${relayedPort}`, '--shell', '/bin/sh'],
-    { env: { ...env, BTMUX_AUTH_TOKEN: token }, stdio: ['ignore', 'ignore', 'inherit'] },
+    {
+      env: {
+        ...env,
+        BTMUX_AUTH_TOKEN: token,
+        BTMUX_CONNECT_SERVICE: `http://127.0.0.1:${service.port}`,
+        BTMUX_CONNECT_ACME: 'none',
+      },
+      stdio: ['ignore', 'ignore', 'inherit'],
+    },
   );
   for (let i = 0; ; i++) {
     const ready = await fetch(`http://127.0.0.1:${port}/`).then(
@@ -95,6 +128,29 @@ try {
   /** What the pane shows, read on the machine rather than through the relay. */
   const paneText = () => cli('capture-pane', '-t', '0', '-S', '-');
 
+  // Sign up from Settings on the machine itself, where the token works.
+  const localOrigin = `http://127.0.0.1:${port}`;
+  const localContext = await browser.newContext({
+    // The browser's own prompt: any user name, the token as the password.
+    httpCredentials: { username: 'btmux', password: token, origin: localOrigin },
+  });
+  const local = await localContext.newPage();
+  await local.goto(`${localOrigin}/`);
+  await local.getByRole('button', { name: 'Settings', exact: true }).first().click();
+  await local.getByRole('tab', { name: 'Connect', exact: true }).click();
+  const setup = local.getByRole('tabpanel', { name: 'Connect' });
+  await setup.getByLabel('Invite code').fill('btmi_wrong');
+  await setup.getByLabel(/Subscriber Agreement/).check();
+  await setup.getByRole('button', { name: 'Connect', exact: true }).click();
+  await setup.getByText("This invite code isn't valid.").waitFor();
+  await setup.getByLabel('Invite code').fill('btmi_test');
+  await setup.getByRole('button', { name: 'Connect', exact: true }).click();
+  // Connected without a restart: the status replaces the form.
+  await setup.getByText(origin, { exact: true }).waitFor();
+  const again = spawnSync(binary, ['connect', 'btmi_other', '--accept-acme-terms'], { env, encoding: 'utf8' });
+  assert(again.status !== 0 && again.stderr.includes('already connected'), `a second sign-up: ${again.stderr}`);
+  await localContext.close();
+
   // Before any passkey: a page load gets the sign-in page, which has nothing to offer.
   const first = await page.goto(`${origin}/`);
   assert(first?.status() === 401, `expected the sign-in page, got ${first?.status()}`);
@@ -129,8 +185,8 @@ try {
   await settings.getByRole('tab', { name: 'Connect' }).click();
   const panel = settings.getByRole('tabpanel', { name: 'Connect' });
   await panel.getByText(origin, { exact: true }).waitFor();
-  // The relay CA here is random bytes, so the tunnel can't start.
-  await panel.getByText("Couldn't start").waitFor();
+  // No relay listens, so the tunnel keeps trying.
+  await panel.getByText(/^(Connecting to relay\.test…|Can't reach relay\.test; retrying)$/).waitFor();
   await panel.getByText('Self-signed').waitFor();
   const listed = panel.getByRole('listitem');
   const awaitListed = async (count: number, when: string) => {
@@ -255,13 +311,14 @@ try {
   await page.getByLabel('Terminal').first().waitFor({ state: 'attached', timeout: 15_000 });
 
   console.log(
-    'PASS passkey enrollment, sign-in, Settings management, reauth, single-use links, token refusal, revocation of live terminals, and the passkey cap over the relay',
+    'PASS sign-up from Settings, passkey enrollment, sign-in, Settings management, reauth, single-use links, token refusal, revocation of live terminals, and the passkey cap over the relay',
   );
 } catch (error) {
   console.error(`FAIL ${error instanceof Error ? error.stack : error}`);
   process.exitCode = 1;
 } finally {
   await browser.close();
+  service.stop(true);
   backend?.kill('SIGTERM');
   if (!process.exitCode) rmSync(dir, { recursive: true, force: true });
   else console.error(`logs and state in ${dir}`);

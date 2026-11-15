@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 /// A machine's registration with a relay, kept owner-only beside the state
-/// file. `btmux connect-dev` writes one until sign-up exists.
+/// file. Sign-up (`signup.rs`) writes one; `btmux connect-dev` by hand.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Registration {
     /// The relay's tunnel endpoint, `host:port` (UDP).
@@ -65,6 +65,33 @@ impl Registration {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(format!("{}: {e}", path.display())),
         }
+    }
+
+    /// Whether it can start: the relay's CA and address, and an origin at
+    /// `hostname` that passkeys can be bound to.
+    pub fn check(&self) -> Result<(), String> {
+        quic_client(self, 1)?;
+        rustls::pki_types::ServerName::try_from(self.relay_name.as_str())
+            .map_err(|e| format!("relay_name: {e}"))?;
+        let port = self
+            .relay
+            .rsplit_once(':')
+            .map(|(host, port)| (host, port.parse::<u16>()));
+        if !matches!(port, Some((host, Ok(_))) if !host.is_empty()) {
+            return Err(format!("relay {:?}: expected host:port", self.relay));
+        }
+        rustls::pki_types::DnsName::try_from(self.hostname.as_str())
+            .map_err(|e| format!("hostname: {e}"))?;
+        crate::auth::parse_origin(&self.public_url)?;
+        let url = reqwest::Url::parse(&self.public_url).map_err(|e| e.to_string())?;
+        if url.host_str() != Some(self.hostname.as_str()) {
+            return Err(format!(
+                "public_url {:?} isn't at the hostname",
+                self.public_url
+            ));
+        }
+        super::passkeys::webauthn(self)?;
+        Ok(())
     }
 
     /// Replaces the registration atomically, owner-only.

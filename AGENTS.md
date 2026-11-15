@@ -864,10 +864,20 @@ server with `--tailscale`, on a saved port (`tailnet-port`, chosen below the
 ephemeral port ranges); its card polls the status while shown.
 Never print credentials, put them in URLs, or bypass this middleware for new APIs.
 
-btmux connect (in progress) reaches servers through a relay that routes by TLS
-SNI and never decrypts. With a registration beside the state file
-(`state.connect`, owner-only; the hidden `btmux connect-dev` writes one with a
-self-signed certificate until sign-up exists), `connect/tunnel.rs` keeps one
+btmux connect reaches servers through a relay that routes by TLS SNI and never
+decrypts. A registration beside the state file (`state.connect`, owner-only)
+comes from sign-up: `btmux connect [INVITE]` or Settings → Connect post an
+invite code to `POST /api/connect/register`, which redeems it with the relay's
+sign-up API (`connect/signup.rs`, `https://connect.btmux.net/v1/machines`; the
+hidden `BTMUX_CONNECT_SERVICE`, `BTMUX_CONNECT_SERVICE_CA`, and
+`BTMUX_CONNECT_ACME` = `none`/`staging`/URL override it for tests; a lost
+answer is retried under the same random request ID, for which the relay gives
+the same machine), saves the registration, once `Registration::check` finds it
+can start, with a self-signed placeholder and Let's Encrypt as its CA (the
+owner agrees to its terms there), and calls `connect::start`, which startup
+calls too: relayed sign-in, the status, and the tunnel come up without a
+restart. The hidden `btmux connect-dev` writes a registration by hand for
+development. `connect/tunnel.rs` keeps one
 outbound QUIC connection to the relay (ALPN `btmux-tunnel/1`, verified against
 the relay's tunnel CA, `relay_ca`, so renewing its certificate breaks nothing),
 registers its hostname (one JSON line, answered `ok`; the relay is
