@@ -1,5 +1,7 @@
 ---
 title: "Installation"
+sidebar:
+  order: 1
 ---
 
 ## Release installer
@@ -78,75 +80,13 @@ scrollback; if it reports that the running server can't take over (it predates
 the command, or the upgrade format changed), run `btmux restart` instead, which
 ends running pane processes. It refuses while the built-in Neovim has unsaved
 changes, and exits with status 3 when the server keeps running the old version.
-[How in-place upgrades work](upgrade.md) explains the mechanism. Without either the service keeps the old version,
+[How in-place upgrades work](../internals/upgrade.md) explains the mechanism. Without either the service keeps the old version,
 and the desktop app shows
 a version-mismatch warning (**About btmux** lists both versions). A service
 installed from Homebrew points at the version-independent
 `<prefix>/opt/btmux/bin/btmux`, so it survives upgrades; if you installed it
 with an older btmux, re-run `btmux install` once. Quit the desktop app before
 upgrading the cask.
-
-## Access tokens and reverse proxies
-
-### First sign-in
-
-Start `btmux`, then open `http://127.0.0.1:8004`. Access requires a token even
-on localhost. Unless `BTMUX_AUTH_TOKEN` is set, btmux creates an owner-only
-`state.token` beside the profile's `state.json` and prints its path on startup.
-
-| Instance                        | Default token file                      |
-| ------------------------------- | --------------------------------------- |
-| `btmux`                         | `~/.local/state/btmux/state.token`      |
-| `btmux --profile NAME`          | `~/.local/state/btmux/NAME/state.token` |
-| `just dev` / `just dev-backend` | `~/.local/state/btmux/dev/state.token`  |
-
-These paths apply on both macOS and Linux. On Windows, `%LOCALAPPDATA%`
-replaces `~/.local/state` (`%LOCALAPPDATA%\btmux\state.token`). If
-`XDG_STATE_HOME` is set, it replaces either. For the default instance, read the
-token with:
-
-```sh
-cat "${XDG_STATE_HOME:-$HOME/.local/state}/btmux/state.token"
-```
-
-or, in PowerShell on Windows:
-
-```powershell
-Get-Content "$env:LOCALAPPDATA\btmux\state.token"
-```
-
-Enter `btmux` as the browser username and the file's contents as the password.
-The development frontend at `http://localhost:5173` instead shows an access-token
-form; paste the `dev` profile's token there. A background service uses the same
-file locations, so you can retrieve its token without reading service logs.
-
-### Token management
-
-Tokens survive restarts. To rotate a generated token, stop the server, delete
-its token file, and restart it to generate a new one. Alternatively, start the
-server with `BTMUX_AUTH_TOKEN` set to at least 4 ASCII letters, digits, `-`, or
-`_`; this overrides the token file.
-
-The token grants access to the instance's shells, sessions, and files available
-to the btmux user. Never put credentials in URLs. The browser session uses an
-HttpOnly, SameSite=Strict cookie; HTTPS public URLs use Secure cookies.
-See [Automation authentication](automation.md#authentication) for API, MCP,
-and agent-hook clients.
-
-Run concurrent instances with different `--profile` names. A file lock prevents
-two instances from overwriting the same saved sessions. `just dev` and
-`just dev-backend` use the `dev` profile automatically.
-
-### Remote access
-
-For a remote deployment, terminate HTTPS at a trusted reverse proxy and pass its
-external origin explicitly, for example `--public-url https://terminal.example.com`.
-Preserve the public Host header (or use the configured backend authority) and
-forward WebSocket upgrades. Forwarded headers never implicitly grant trust.
-Plain HTTP does not encrypt the access token or terminal traffic.
-
-To reach btmux from your other devices without a proxy, see
-[Phones, tablets, and Tailscale](phones-and-tailscale.md).
 
 ## Background service
 
@@ -239,7 +179,7 @@ default.
 ```
 
 Set `service.tailscale = true` to start the service with `--tailscale` (see
-[Tailscale](phones-and-tailscale.md#tailscale)). `services.btmux` is accepted as an alias for `programs.btmux`. The service uses
+[Tailscale](../features/phones-and-tailscale.md#tailscale)). `services.btmux` is accepted as an alias for `programs.btmux`. The service uses
 the same launchd label and systemd unit as `btmux install`, so `btmux restart`
 works with it. When only the package changes, activation runs `btmux upgrade`,
 so running shells survive; it falls back to a restart if the running server
@@ -250,9 +190,9 @@ unsaved Neovim buffers), activation only warns; run `btmux upgrade` later. If yo
 starting it. Override `package` to use a different build or package source, or
 set it to `null` (with the service disabled) to only write the configuration.
 When `programs.fish.enable` is set, the module also installs the btmux fish
-integration (see [Configuration](configuration.md#fish-integration)); set
+integration (see [Configuration](../features/fish.md)); set
 `enableFishIntegration = false` to skip it, or `fishPickMenus = true` to use
-[`btmux pick` menus](configuration.md#fish-integration) for Tab, `Ctrl-R`, and `cdh`.
+[`btmux pick` menus](../features/fish.md) for Tab, `Ctrl-R`, and `cdh`.
 The module installs bash, fish, and zsh completions when the selected package
 supports `btmux completions`. The bundled fallback package currently uses an
 older release, so completions become available after selecting a newer package
@@ -275,5 +215,3 @@ Both packages support Apple Silicon macOS and x86-64/ARM64 Linux. Override
 `desktop.package` to select another desktop build. On macOS, Home Manager
 makes the app available in `~/Applications/Home Manager Apps`; on Linux, it installs a
 desktop menu entry. You can also launch it with `btmux-desktop`.
-
-[Back to the README](../../../../README.md)

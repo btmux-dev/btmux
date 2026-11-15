@@ -1,10 +1,12 @@
 ---
 title: "Editors"
+sidebar:
+  order: 4
 ---
 
 `<prefix> + e` opens the configured `editor` over the active pane, and the file
 browser and Git mode open files there. Set `editor` in
-[`config.toml`](configuration.md):
+[`config.toml`](../configuration/index.md):
 
 - `"neovim"`: a Neovim GUI drawn by btmux, with your config and with its command
   line, completion menu, messages, LSP signature help, and floating windows

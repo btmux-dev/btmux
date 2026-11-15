@@ -1,5 +1,7 @@
 ---
 title: "VS Code"
+sidebar:
+  order: 6
 ---
 
 With `editor = "vscode"`, `<prefix> + e` toggles VS Code over the active pane,
@@ -55,7 +57,7 @@ When btmux's `PATH` lacks the server, as a service's may, VS Code runs with your
 shell's, so extensions find the same tools as your panes.
 
 User data and extensions are kept per profile, in a `vscode` directory beside
-the [profile's state file](configuration.md#profiles-and-persistence).
+the [profile's state file](../configuration/profiles.md).
 
 ## Sharing desktop settings and extensions
 

@@ -1,5 +1,7 @@
 ---
 title: "Shader wallpapers"
+sidebar:
+  order: 2
 ---
 
 Shader wallpapers use the MIT-licensed [Shaders](https://shaders.com/docs/guide)

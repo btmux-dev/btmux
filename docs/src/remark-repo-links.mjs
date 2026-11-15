@@ -17,12 +17,13 @@ export function remarkRepoLinks({ repo }) {
       const anchor = hash ? `#${hash}` : "";
       const target = resolve(dirname(file.path), path);
       const rel = relative(content, target);
-      if (rel.endsWith(".md") && !rel.startsWith("..") && !rel.includes("/")) {
-        node.url = `/${rel.slice(0, -3)}/${anchor}`;
+      if (rel.endsWith(".md") && !rel.startsWith("..")) {
+        const slug = rel.slice(0, -3).replace(/(^|\/)index$/, "");
+        node.url = `/${slug}${slug ? "/" : ""}${anchor}`;
       } else if (resolve(target) === resolve(root, "README.md")) {
         node.url = `/${anchor}`;
       } else if (resolve(target) === resolve(root, "desktop", "README.md")) {
-        node.url = `/desktop/${anchor}`;
+        node.url = `/project/desktop/${anchor}`;
       } else {
         const kind = statSync(target, { throwIfNoEntry: false })?.isDirectory()
           ? "tree"

@@ -9,11 +9,11 @@ const repo = "https://github.com/buntec/btmux";
 
 // Re-bases relative links onto the content directory; remark-repo-links
 // turns them into routes or GitHub URLs from there.
-const rebase = (body, from) =>
+const rebase = (body, from, to) =>
   body.replace(/\]\(([^)\s]+)\)/g, (m, target) => {
     if (/^[a-z]+:|^#/.test(target)) return m;
     const resolved = posix.join(posix.dirname(from), target);
-    return `](${posix.relative(content, resolved)})`;
+    return `](${posix.relative(posix.dirname(to), resolved)})`;
   });
 
 // GitHub renders bare user-attachment URLs as players; do the same here.
@@ -33,7 +33,7 @@ async function page(from, name, extra = {}) {
   const match = src.match(/^# (.+)\n+/);
   if (!match) throw new Error(`${from}: expected a leading "# Title"`);
   let body = src.slice(match[0].length);
-  let fm = { title: match[1], editUrl: `${repo}/edit/main/${from}` };
+  let fm = { title: match[1], editUrl: `${repo}/edit/main/${from}`, ...extra };
   if (name === "index") {
     // The intro becomes the hero; the sidebar replaces the link list.
     const intro = body.match(/^([\s\S]+?)\n\n/)[1];
@@ -48,15 +48,22 @@ async function page(from, name, extra = {}) {
           .replace(/\n/g, " ")
           .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>'),
         actions: [
-          { text: "Install", link: "/installation/", icon: "right-arrow" },
+          {
+            text: "Install",
+            link: "/start/installation/",
+            icon: "right-arrow",
+          },
           { text: "GitHub", link: repo, icon: "github", variant: "minimal" },
         ],
       },
     };
   }
-  const out = join(root, content, `${name}.md`);
-  await writeFile(out, frontmatter(fm) + videos(rebase(body, from)));
+  const to = `${content}/${name}.md`;
+  await writeFile(
+    join(root, to),
+    frontmatter(fm) + videos(rebase(body, from, to)),
+  );
 }
 
 await page("README.md", "index");
-await page("desktop/README.md", "desktop");
+await page("desktop/README.md", "project/desktop", { sidebar: { order: 1 } });

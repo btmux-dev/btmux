@@ -1,5 +1,7 @@
 ---
 title: "How in-place upgrades work"
+sidebar:
+  order: 1
 ---
 
 `btmux upgrade` swaps in a new btmux binary without killing your shells. The
@@ -104,4 +106,4 @@ the file's exact shape in `src/handoff.schema` and fails if the shape changes
 without a version bump. That stops a new binary from misreading an old server's
 handoff.
 
-The implementation lives in [`src/handoff.rs`](../../../../src/handoff.rs).
+The implementation lives in [`src/handoff.rs`](../../../../../src/handoff.rs).

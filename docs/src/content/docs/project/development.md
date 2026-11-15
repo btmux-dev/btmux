@@ -1,5 +1,7 @@
 ---
 title: "Development"
+sidebar:
+  order: 3
 ---
 
 Requires [Rust](https://rustup.rs), [Bun](https://bun.sh), and [`just`](https://github.com/casey/just).

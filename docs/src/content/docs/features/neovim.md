@@ -1,5 +1,7 @@
 ---
 title: "Neovim GUI"
+sidebar:
+  order: 5
 ---
 
 `<prefix> + e` opens a Neovim GUI over the active pane; the other panes stay

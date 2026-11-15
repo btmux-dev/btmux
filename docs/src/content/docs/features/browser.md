@@ -1,5 +1,7 @@
 ---
 title: "Browser"
+sidebar:
+  order: 7
 ---
 
 `<prefix> + b` toggles a browser over the active pane, and from another pane

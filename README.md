@@ -67,9 +67,9 @@ curl -fsSL https://raw.githubusercontent.com/buntec/btmux/main/scripts/install.s
 # or: brew install buntec/btmux/btmux
 ```
 
-**Browser / CLI** on Windows: [download the release binary](docs/src/content/docs/installation.md#windows) and put it on your `PATH`.
+**Browser / CLI** on Windows: [download the release binary](docs/src/content/docs/start/installation.md#windows) and put it on your `PATH`.
 
-Homebrew, background services, and Home Manager are covered in [Installation](docs/src/content/docs/installation.md).
+Homebrew, background services, and Home Manager are covered in [Installation](docs/src/content/docs/start/installation.md).
 
 ## Quick start
 
@@ -79,27 +79,27 @@ connects, with no sign-in. If it finds other btmux servers, it
 
 **Browser / CLI**: run `btmux`. It opens `http://127.0.0.1:8004` and prints the
 path of its access token file. Sign in with username `btmux` and the file's
-contents as the password (see [Access tokens](docs/src/content/docs/installation.md#access-tokens-and-reverse-proxies)).
+contents as the password (see [Access tokens](docs/src/content/docs/start/sign-in.md)).
 
 Key bindings start with a prefix, as in tmux, by default `C-a` (Ctrl+A). Press
 `<prefix> + ?` to see them all, or `<prefix> + :` to open the command palette.
 
 ## Learn more
 
-- [Installation](docs/src/content/docs/installation.md): Windows, services, tokens, remote access, and shell completions
-- [Phones, tablets, and Tailscale](docs/src/content/docs/phones-and-tailscale.md): serving over HTTPS on your tailnet, QR sign-in, and touch screens
-- [In-place upgrades](docs/src/content/docs/upgrade.md): how `btmux upgrade` keeps shells running across a new binary
-- [Configuration](docs/src/content/docs/configuration.md): `~/.config/btmux/config.toml` (`%APPDATA%\btmux\config.toml` on Windows), themes, and profiles
-- [Shader wallpapers](docs/src/content/docs/shaders.md): WebGPU generators, parameters, and randomization
-- [btmux for tmux users](docs/src/content/docs/tmux.md): where keys and behavior differ from tmux
-- [Comparison](docs/src/content/docs/competitors.md): feature matrix of btmux versus similar projects
-- [Editors](docs/src/content/docs/editors.md): choosing what `<prefix> + e` and the file browser open
-- [Neovim GUI](docs/src/content/docs/neovim.md): the Neovim GUI, its plugin, and config tips
-- [VS Code](docs/src/content/docs/vscode.md): VS Code over a pane, its server, and sharing desktop settings and extensions
-- [Browser](docs/src/content/docs/browser.md): a server-side Chrome or Chromium over a pane
-- [Sandboxed sessions](docs/src/content/docs/sandbox.md): shells and agents in a shared Multipass VM
-- [Automation and AI agents](docs/src/content/docs/automation.md): tmux-style commands, agent skill, REST API, MCP, and agent notifications
-- [Development](docs/src/content/docs/development.md): building and running btmux from a checkout
+- [Installation](docs/src/content/docs/start/installation.md): Windows, services, tokens, remote access, and shell completions
+- [Phones, tablets, and Tailscale](docs/src/content/docs/features/phones-and-tailscale.md): serving over HTTPS on your tailnet, QR sign-in, and touch screens
+- [In-place upgrades](docs/src/content/docs/internals/upgrade.md): how `btmux upgrade` keeps shells running across a new binary
+- [Configuration](docs/src/content/docs/configuration/index.md): `~/.config/btmux/config.toml` (`%APPDATA%\btmux\config.toml` on Windows), themes, and profiles
+- [Shader wallpapers](docs/src/content/docs/features/shaders.md): WebGPU generators, parameters, and randomization
+- [btmux for tmux users](docs/src/content/docs/start/tmux.md): where keys and behavior differ from tmux
+- [Comparison](docs/src/content/docs/project/competitors.md): feature matrix of btmux versus similar projects
+- [Editors](docs/src/content/docs/features/editors.md): choosing what `<prefix> + e` and the file browser open
+- [Neovim GUI](docs/src/content/docs/features/neovim.md): the Neovim GUI, its plugin, and config tips
+- [VS Code](docs/src/content/docs/features/vscode.md): VS Code over a pane, its server, and sharing desktop settings and extensions
+- [Browser](docs/src/content/docs/features/browser.md): a server-side Chrome or Chromium over a pane
+- [Sandboxed sessions](docs/src/content/docs/features/sandbox.md): shells and agents in a shared Multipass VM
+- [Automation and AI agents](docs/src/content/docs/automation/index.md): tmux-style commands, agent skill, REST API, MCP, and agent notifications
+- [Development](docs/src/content/docs/project/development.md): building and running btmux from a checkout
 
 ## License
 

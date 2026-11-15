@@ -1,5 +1,7 @@
 ---
 title: "Phones, tablets, and Tailscale"
+sidebar:
+  order: 9
 ---
 
 ## Tailscale
@@ -34,7 +36,7 @@ it while open. The token never appears in the link.
 This needs the `tailscale` CLI (on macOS, the app's bundled CLI also works),
 [MagicDNS](https://tailscale.com/kb/1081/magicdns), and
 [HTTPS certificates](https://tailscale.com/kb/1153/enabling-https) enabled for
-the tailnet. Sign in with the [access token](installation.md#first-sign-in); browsers keep the login for
+the tailnet. Sign in with the [access token](../start/sign-in.md#first-sign-in); browsers keep the login for
 400 days. HTTPS matters even though the tailnet is encrypted: browsers allow
 the clipboard, notifications, and WebGPU shader wallpapers only on secure
 origins.
@@ -42,7 +44,7 @@ origins.
 In the desktop app, a desktop server kept running after the app quits can
 also be shared this way: check **Share it on my tailnet** before starting it.
 It then keeps its port across starts, so its tailnet URL stays the same.
-The app can also [connect to btmux servers on other machines](../../../../desktop/README.md).
+The app can also [connect to btmux servers on other machines](../../../../../desktop/README.md).
 
 ## Phones and tablets
 
