@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use axum::Router;
 use base64::Engine;
-use rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
+use rustls::pki_types::{pem::PemObject, CertificateDer};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -41,6 +41,14 @@ pub struct Registration {
     /// This machine's certificate chain and key for `hostname` (PEM).
     pub cert: String,
     pub key: String,
+    /// The ACME directory that issues and renews `cert` (`acme.rs`); set
+    /// only with the owner's agreement to its terms. Unset, `cert` is used
+    /// as is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acme: Option<String>,
+    /// The ACME account (its URL) `cert` was issued to, saved with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issued_to: Option<String>,
 }
 
 pub fn path(state_file: &Path) -> PathBuf {
@@ -89,15 +97,34 @@ const LIMITS: Limits = Limits {
 };
 
 /// Connects to the relay in the background and keeps reconnecting.
-pub fn spawn(registration: Registration, app: Router) -> Result<(), String> {
-    spawn_with(registration, app, LIMITS)
+pub fn spawn(registration: Registration, state_file: &Path, app: Router) -> Result<(), String> {
+    spawn_with(registration, state_file, app, LIMITS).map(drop)
 }
 
-fn spawn_with(registration: Registration, app: Router, limits: Limits) -> Result<(), String> {
-    let tls = server_tls(&registration)?;
+fn spawn_with(
+    registration: Registration,
+    state_file: &Path,
+    app: Router,
+    limits: Limits,
+) -> Result<Arc<super::acme::Certificates>, String> {
+    let certificates = Arc::new(super::acme::Certificates::load(&registration)?);
+    let tls = server_tls(certificates.clone())?;
     let client = quic_client(&registration, limits.streams)?;
-    tokio::spawn(run(registration, client, tls, super::app(app), limits));
-    Ok(())
+    let (up, tunnel_up) = tokio::sync::watch::channel(false);
+    if let Some(directory) = registration.acme.clone() {
+        tokio::spawn(
+            super::acme::Maintainer::new(
+                directory,
+                registration.hostname.clone(),
+                state_file.to_owned(),
+                certificates.clone(),
+                tunnel_up,
+            )
+            .run(),
+        );
+    }
+    tokio::spawn(run(registration, client, tls, super::app(app), limits, up));
+    Ok(certificates)
 }
 
 /// The tunnel protocol, offered as ALPN.
@@ -114,11 +141,13 @@ async fn run(
     tls: tokio_rustls::TlsAcceptor,
     app: Router,
     limits: Limits,
+    up: tokio::sync::watch::Sender<bool>,
 ) {
     let mut backoff = MIN_BACKOFF;
     loop {
         let started = Instant::now();
-        let ended = connect(&registration, &client, &tls, &app, limits).await;
+        let ended = connect(&registration, &client, &tls, &app, limits, &up).await;
+        up.send_replace(false);
         if started.elapsed() > MAX_BACKOFF {
             backoff = MIN_BACKOFF;
         }
@@ -178,6 +207,7 @@ async fn connect(
     tls: &tokio_rustls::TlsAcceptor,
     app: &Router,
     limits: Limits,
+    up: &tokio::sync::watch::Sender<bool>,
 ) -> Ended {
     let result = async {
         let addresses: Vec<_> = tokio::net::lookup_host(&registration.relay)
@@ -199,6 +229,7 @@ async fn connect(
             relay = registration.relay,
             "btmux connect tunnel up"
         );
+        up.send_replace(true);
         loop {
             let (send, recv) = connection.accept_bi().await?;
             tokio::spawn(serve(
@@ -333,6 +364,13 @@ async fn serve(
         }
     };
     accepted.store(true, std::sync::atomic::Ordering::Relaxed);
+    if stream.get_ref().1.alpn_protocol() == Some(super::acme::ACME_TLS_ALPN) {
+        // A CA validating the challenge certificate (RFC 8737): nothing
+        // more to say.
+        let mut stream = stream;
+        let _ = tokio::io::AsyncWriteExt::shutdown(&mut stream).await;
+        return;
+    }
     super::serve(stream, app).await;
 }
 
@@ -391,23 +429,20 @@ impl tokio::io::AsyncWrite for RelayStream {
 }
 
 /// Explicit, since other dependencies enable ring too.
-fn provider() -> Arc<rustls::crypto::CryptoProvider> {
+pub(super) fn provider() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(rustls::crypto::aws_lc_rs::default_provider())
 }
 
-fn server_tls(registration: &Registration) -> Result<tokio_rustls::TlsAcceptor, String> {
-    let certs = CertificateDer::pem_slice_iter(registration.cert.as_bytes())
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("the registration's certificate: {e}"))?;
-    let key = PrivateKeyDer::from_pem_slice(registration.key.as_bytes())
-        .map_err(|e| format!("the registration's key: {e}"))?;
+/// TLS for browsers, and for an ACME CA validating the machine.
+fn server_tls(
+    certificates: Arc<super::acme::Certificates>,
+) -> Result<tokio_rustls::TlsAcceptor, String> {
     let mut config = rustls::ServerConfig::builder_with_provider(provider())
         .with_safe_default_protocol_versions()
         .map_err(|e| e.to_string())?
         .with_no_client_auth()
-        .with_single_cert(certs, key)
-        .map_err(|e| format!("the registration's certificate: {e}"))?;
-    config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        .with_cert_resolver(certificates);
+    config.alpn_protocols = vec![b"http/1.1".to_vec(), super::acme::ACME_TLS_ALPN.to_vec()];
     Ok(tokio_rustls::TlsAcceptor::from(Arc::new(config)))
 }
 
@@ -459,10 +494,26 @@ pub struct DevArgs {
     /// The relay's credential for this machine.
     #[arg(long, env = "BTMUX_CONNECT_TOKEN", hide_env_values = true)]
     token: String,
+    /// Get the machine's certificate from an ACME CA through the relay:
+    /// `production` or `staging` (Let's Encrypt), or a directory URL.
+    /// Unset, the self-signed certificate stays.
+    #[arg(long)]
+    acme: Option<String>,
+    /// Agree to the ACME CA's terms (Let's Encrypt's Subscriber Agreement,
+    /// https://letsencrypt.org/repository/).
+    #[arg(long)]
+    accept_acme_terms: bool,
 }
 
 pub fn dev_register(args: &DevArgs, profile: Option<&str>) -> i32 {
     let result = (|| {
+        if args.acme.is_some() && !args.accept_acme_terms {
+            return Err(format!(
+                "--acme needs --accept-acme-terms, your agreement to the CA's terms \
+                 (Let's Encrypt: {})",
+                super::acme::LETS_ENCRYPT_TERMS
+            ));
+        }
         let state_file = crate::persistence::state_path(profile)?
             .ok_or("no state directory: set XDG_STATE_HOME or HOME")?;
         let relay_ca = std::fs::read(&args.relay_ca)
@@ -488,6 +539,12 @@ pub fn dev_register(args: &DevArgs, profile: Option<&str>) -> i32 {
             token: args.token.clone(),
             cert: cert.cert.pem(),
             key: cert.signing_key.serialize_pem(),
+            acme: args.acme.as_deref().map(|acme| match acme {
+                "production" => super::acme::LETS_ENCRYPT.to_owned(),
+                "staging" => super::acme::LETS_ENCRYPT_STAGING.to_owned(),
+                url => url.to_owned(),
+            }),
+            issued_to: None,
         };
         if let Some(dir) = state_file.parent() {
             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -514,6 +571,7 @@ pub fn dev_register(args: &DevArgs, profile: Option<&str>) -> i32 {
 mod tests {
     use super::*;
     use axum::{routing::get, Extension};
+    use rustls::pki_types::PrivateKeyDer;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     fn self_signed(name: &str) -> (String, String, CertificateDer<'static>) {
@@ -577,6 +635,8 @@ mod tests {
             token: "secret-token".into(),
             cert: machine_pem,
             key: machine_key,
+            acme: None,
+            issued_to: None,
         };
         TestRelay {
             endpoint,
@@ -650,7 +710,7 @@ mod tests {
     #[tokio::test]
     async fn serves_relayed_streams_through_the_app() {
         let relay = test_relay();
-        spawn(relay.registration.clone(), probe_app()).unwrap();
+        spawn(relay.registration.clone(), Path::new("unused"), probe_app()).unwrap();
         let connection = accept_tunnel(&relay.endpoint).await;
         let response = get_through(&connection, &relay.machine, "/probe").await;
         assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
@@ -669,7 +729,13 @@ mod tests {
             handshake: Duration::from_millis(300),
             ..LIMITS
         };
-        spawn_with(relay.registration.clone(), probe_app(), limits).unwrap();
+        spawn_with(
+            relay.registration.clone(),
+            Path::new("unused"),
+            probe_app(),
+            limits,
+        )
+        .unwrap();
         let connection = accept_tunnel(&relay.endpoint).await;
         let mut stalled = Vec::new();
         for _ in 0..limits.streams {
@@ -757,7 +823,7 @@ mod tests {
     #[tokio::test]
     async fn a_replaced_tunnel_backs_off() {
         let relay = test_relay();
-        spawn(relay.registration.clone(), probe_app()).unwrap();
+        spawn(relay.registration.clone(), Path::new("unused"), probe_app()).unwrap();
         let connection = accept_tunnel(&relay.endpoint).await;
         connection.close(0u32.into(), b"restarting");
         let again = tokio::time::timeout(Duration::from_secs(3), accept_tunnel(&relay.endpoint));
@@ -768,6 +834,58 @@ mod tests {
             again.await.is_err(),
             "reconnected right after being replaced"
         );
+    }
+
+    /// A CA validating TLS-ALPN-01 through the relay gets the challenge
+    /// certificate, and its connection never reaches the app.
+    #[tokio::test]
+    async fn answers_acme_challenges_through_the_relay() {
+        use super::super::acme::{tests::AcceptAny, ACME_TLS_ALPN};
+        let relay = test_relay();
+        let certificates = spawn_with(
+            relay.registration.clone(),
+            Path::new("unused"),
+            probe_app(),
+            LIMITS,
+        )
+        .unwrap();
+        let connection = accept_tunnel(&relay.endpoint).await;
+        let challenge = super::super::acme::tests::challenge("laptop.test");
+        certificates.set_challenge(Some(challenge.clone()));
+
+        let mut config = rustls::ClientConfig::builder_with_provider(provider())
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(AcceptAny))
+            .with_no_client_auth();
+        config.alpn_protocols = vec![ACME_TLS_ALPN.to_vec()];
+        let (send, recv) = connection.open_bi().await.unwrap();
+        let mut stream = tokio_rustls::TlsConnector::from(Arc::new(config))
+            .connect(
+                "laptop.test".try_into().unwrap(),
+                tokio::io::join(recv, send),
+            )
+            .await
+            .unwrap();
+        let (_, session) = stream.get_ref();
+        assert_eq!(session.alpn_protocol(), Some(ACME_TLS_ALPN));
+        assert_eq!(session.peer_certificates().unwrap()[0], challenge.cert[0]);
+        // An HTTP request gets no answer: the machine just closes.
+        let _ = stream
+            .write_all(b"GET /probe HTTP/1.1\r\nHost: laptop.test\r\n\r\n")
+            .await;
+        let mut response = Vec::new();
+        let _ = stream.read_to_end(&mut response).await;
+        assert!(
+            response.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&response)
+        );
+
+        // Browsers still get the machine's certificate.
+        let response = get_through(&connection, &relay.machine, "/probe").await;
+        assert!(response.ends_with("tunneled"), "{response}");
     }
 
     #[test]
@@ -786,11 +904,17 @@ mod tests {
             token: "t".into(),
             cert,
             key,
+            acme: Some(super::super::acme::LETS_ENCRYPT_STAGING.into()),
+            issued_to: None,
         };
         registration.save(&state).unwrap();
         registration.save(&state).unwrap();
         let loaded = Registration::load(&state).unwrap().unwrap();
         assert_eq!(loaded.hostname, "laptop.test");
+        assert_eq!(
+            loaded.acme.as_deref(),
+            Some(super::super::acme::LETS_ENCRYPT_STAGING)
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

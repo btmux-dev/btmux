@@ -532,8 +532,8 @@ async fn main() {
     if let Some(addr) = &args.connect_listen {
         connect::listen(addr, app.clone()).await;
     }
-    if let Some(registration) = registration {
-        if let Err(error) = connect::tunnel::spawn(registration, app.clone()) {
+    if let (Some(registration), Some(state_file)) = (registration, state_file.as_deref()) {
+        if let Err(error) = connect::tunnel::spawn(registration, state_file, app.clone()) {
             tracing::error!("btmux connect: {error}");
         }
     }

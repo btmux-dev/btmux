@@ -16,6 +16,7 @@ use axum::{
 };
 use serde_json::Value;
 
+pub mod acme;
 pub mod passkeys;
 pub mod session;
 pub mod tunnel;

@@ -880,7 +880,24 @@ FIN. It tries the relay's addresses staggered (RFC 8305) and reconnects with
 backoff, including after an upgrade's exec; the relay closes a hostname's old
 tunnel when it registers again, with code `0x10`, on which the client waits
 the longest backoff (30 s), as two copies of a registration would otherwise
-take turns. `connect/mod.rs` marks
+take turns. With `acme` in the registration (`connect-dev --acme
+staging|production|URL --accept-acme-terms`), `connect/acme.rs` gets the
+machine's certificate from that CA by TLS-ALPN-01 through the relay: the CA
+connects to the hostname with ALPN `acme-tls/1`, the relay routes it here by
+name, and the tunnel's cert resolver (`Certificates`) answers with the
+challenge certificate; such connections never reach the app. Orders wait for
+the tunnel; certificates are reissued when self-signed, from another CA, or at
+a time drawn once in the CA's renewal window (ACME Renewal Info, refreshed as
+its `Retry-After` says; such orders name the certificate they replace, which
+exempts them from rate limits), else at two thirds of their lifetime, and
+saved into the registration with the account they were issued to
+(`issued_to`); the account is in `state.acme`, as is an order being finalized,
+so an interrupted attempt collects its certificate instead of ordering again.
+Requests have no deadline of their own, so each attempt gets 10 minutes; a
+rate limit waits for the CA's `Retry-After`. A registration that changes name
+or CA stops renewal until a restart.
+Until btmux.net is on the Public Suffix List, Let's Encrypt issues at most 50
+new certificates a week for all of it. `connect/mod.rs` marks
 relayed requests with `Tunneled`, from the tunnel or the hidden
 `--connect-listen` listener that accepted them, never from a header.
 `protect_relayed` never accepts the access token in any form (Bearer, Basic,
