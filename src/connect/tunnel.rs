@@ -110,9 +110,14 @@ pub struct Tunnel {
 impl Tunnel {
     /// Closes the tunnel, so the relay drops this hostname's route at once
     /// rather than after its idle timeout.
-    pub async fn close(self) {
+    pub async fn close(mut self) {
         self.closing.send_replace(true);
-        let _ = tokio::time::timeout(CLOSE_TIMEOUT, self.task).await;
+        if tokio::time::timeout(CLOSE_TIMEOUT, &mut self.task)
+            .await
+            .is_err()
+        {
+            self.task.abort();
+        }
     }
 }
 
@@ -172,6 +177,9 @@ async fn run(
 ) {
     let mut backoff = MIN_BACKOFF;
     loop {
+        if *closing.borrow() {
+            return;
+        }
         let started = Instant::now();
         let ended = connect(
             &registration,
@@ -220,10 +228,23 @@ async fn closed(closing: &mut tokio::sync::watch::Receiver<bool>) {
     }
 }
 
+/// Closes the tunnel for shutdown, waiting until the close is sent.
+async fn shut(endpoint: &quinn::Endpoint, connection: &quinn::Connection) -> Ended {
+    connection.close(0u32.into(), b"shutting down");
+    endpoint.wait_idle().await;
+    Ended::closed()
+}
+
 /// Why a tunnel ended.
 struct Ended {
     error: String,
     replaced: bool,
+}
+
+impl Ended {
+    fn closed() -> Self {
+        "closed".to_owned().into()
+    }
 }
 
 impl From<String> for Ended {
@@ -260,20 +281,33 @@ async fn connect(
     closing: &mut tokio::sync::watch::Receiver<bool>,
 ) -> Ended {
     let result = async {
-        let addresses: Vec<_> = tokio::net::lookup_host(&registration.relay)
-            .await
-            .map_err(|e| e.to_string())?
-            .collect();
+        let addresses: Vec<_> = tokio::select! {
+            resolved = tokio::net::lookup_host(&registration.relay) => {
+                resolved.map_err(|e| e.to_string())?.collect()
+            }
+            () = closed(closing) => return Err(Ended::closed()),
+        };
         // The endpoint must outlive the connection.
-        let (endpoint, connection) =
-            connect_any(&addresses, &registration.relay_name, client, limits).await?;
-        // A close during registration surfaces as a read error; its reason
-        // is the connection's.
-        register(&connection, registration).await.map_err(|e| {
-            connection
-                .close_reason()
-                .map_or(Ended::from(e), Ended::from)
-        })?;
+        let (endpoint, connection) = tokio::select! {
+            connected = connect_any(&addresses, &registration.relay_name, client, limits) => {
+                connected?
+            }
+            () = closed(closing) => return Err(Ended::closed()),
+        };
+        // The relay publishes the route before it answers, so a close
+        // while registering must reach it too.
+        tokio::select! {
+            registered = register(&connection, registration) => {
+                // A close during registration surfaces as a read error; its
+                // reason is the connection's.
+                registered.map_err(|e| {
+                    connection
+                        .close_reason()
+                        .map_or(Ended::from(e), Ended::from)
+                })?;
+            }
+            () = closed(closing) => return Err(shut(&endpoint, &connection).await),
+        }
         tracing::info!(
             hostname = registration.hostname,
             relay = registration.relay,
@@ -292,12 +326,7 @@ async fn connect(
                         limits.handshake,
                     ));
                 }
-                () = closed(closing) => {
-                    connection.close(0u32.into(), b"shutting down");
-                    // Until the close is sent.
-                    endpoint.wait_idle().await;
-                    return Err(Ended::from("closed".to_owned()));
-                }
+                () = closed(closing) => return Err(shut(&endpoint, &connection).await),
             }
         }
     }
@@ -915,6 +944,47 @@ mod tests {
         assert!(started.elapsed() < CLOSE_TIMEOUT, "{:?}", started.elapsed());
         let again = tokio::time::timeout(Duration::from_secs(2), relay.endpoint.accept());
         assert!(again.await.is_err(), "reconnected after closing");
+    }
+
+    /// The relay publishes the route before answering, so a close while
+    /// registering reaches it too.
+    #[tokio::test]
+    async fn closing_while_registering_tells_the_relay() {
+        let relay = test_relay();
+        let tunnel = spawn(relay.registration.clone(), Path::new("unused"), probe_app()).unwrap();
+        let connection = relay.endpoint.accept().await.unwrap().await.unwrap();
+        let (send, recv) = connection.accept_bi().await.unwrap();
+        let mut hello = String::new();
+        BufReader::new(recv).read_line(&mut hello).await.unwrap();
+        assert!(!hello.is_empty());
+        // No answer.
+        tunnel.close().await;
+        let reason = tokio::time::timeout(Duration::from_millis(500), connection.closed())
+            .await
+            .expect("close() returned while registration was still pending");
+        assert!(
+            matches!(&reason, quinn::ConnectionError::ApplicationClosed(close)
+                if close.error_code == quinn::VarInt::from_u32(0)),
+            "{reason}"
+        );
+        drop(send);
+    }
+
+    /// A tunnel closed before it's up never registers.
+    #[tokio::test]
+    async fn closing_before_the_tunnel_is_up_never_registers() {
+        let relay = test_relay();
+        let tunnel = spawn(relay.registration.clone(), Path::new("unused"), probe_app()).unwrap();
+        tunnel.close().await;
+        let registered = tokio::time::timeout(Duration::from_secs(1), async {
+            let connection = relay.endpoint.accept().await?.await.ok()?;
+            connection.accept_bi().await.ok()
+        })
+        .await;
+        assert!(
+            !matches!(registered, Ok(Some(_))),
+            "registered after closing"
+        );
     }
 
     /// A CA validating TLS-ALPN-01 through the relay gets the challenge
