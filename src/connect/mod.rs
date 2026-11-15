@@ -33,20 +33,33 @@ pub struct Server {
     pub auth: Arc<crate::auth::Auth>,
     pub events: tokio::sync::broadcast::Sender<String>,
     pub state_file: PathBuf,
+    /// Set once connect starts.
+    pub status: OnceLock<Arc<status::Status>>,
 }
 
-static SERVER: OnceLock<Server> = OnceLock::new();
+static SERVER: OnceLock<Arc<Server>> = OnceLock::new();
 static TUNNEL: Mutex<Option<tunnel::Tunnel>> = Mutex::new(None);
 
 pub fn install(server: Server) {
-    let _ = SERVER.set(server);
+    let _ = SERVER.set(Arc::new(server));
+}
+
+/// What Settings shows, once btmux connect started.
+pub fn status() -> Option<status::ConnectStatus> {
+    Some(SERVER.get()?.status.get()?.get())
 }
 
 /// Brings up btmux connect for `registration`: relayed sign-in, Settings'
 /// status, and the tunnel. Before any relayed listener: without the
 /// registration's origin, relayed requests are refused.
 pub fn start(registration: tunnel::Registration) -> Result<(), String> {
-    let server = SERVER.get().ok_or("btmux connect needs a state file")?;
+    start_with(
+        SERVER.get().ok_or("btmux connect needs a state file")?,
+        registration,
+    )
+}
+
+fn start_with(server: &Server, registration: tunnel::Registration) -> Result<(), String> {
     let status = status::Status::new(&registration, Some(server.events.clone()));
     server.auth.set_relayed_origin(&registration.public_url)?;
     server.auth.set_passkeys(passkeys::Passkeys::new(
@@ -64,7 +77,7 @@ pub fn start(registration: tunnel::Registration) -> Result<(), String> {
             }
         });
     }
-    status::install(status.clone());
+    let _ = server.status.set(status.clone());
     match tunnel::spawn(
         registration,
         &server.state_file,
@@ -105,12 +118,12 @@ static SIGNING_UP: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// Redeems an invite for a registration and starts btmux connect with it.
 async fn register(
     tunneled: Option<Extension<Tunneled>>,
-    axum::Json(sign_up): axum::Json<SignUp>,
+    axum::Json(request): axum::Json<SignUp>,
 ) -> Response {
     if tunneled.is_some() {
         return (StatusCode::FORBIDDEN, "Sign up on the machine itself.").into_response();
     }
-    if !sign_up.accept_acme_terms {
+    if !request.accept_acme_terms {
         return (
             StatusCode::BAD_REQUEST,
             format!(
@@ -128,31 +141,51 @@ async fn register(
         )
             .into_response();
     };
+    let service = match signup::service() {
+        Ok(service) => service,
+        Err(failure) => return (failure.status, failure.message).into_response(),
+    };
+    sign_up(server.clone(), service, request.invite).await
+}
+
+/// Runs the sign-up in a task of its own and waits for it: a client that
+/// leaves can't cancel it after the service redeemed the invite, which it
+/// would refuse a second time.
+async fn sign_up(server: Arc<Server>, service: String, invite: String) -> Response {
+    match tokio::spawn(redeem(server, service, invite)).await {
+        Ok(Ok(answer)) => axum::Json(answer).into_response(),
+        Ok(Err((status, message))) => (status, message).into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+    }
+}
+
+async fn redeem(
+    server: Arc<Server>,
+    service: String,
+    invite: String,
+) -> Result<Value, (StatusCode, String)> {
     let _signing_up = SIGNING_UP.lock().await;
     match tunnel::Registration::load(&server.state_file) {
         Ok(None) => {}
         Ok(Some(_)) => {
-            return (StatusCode::CONFLICT, "This server is already connected.").into_response()
+            return Err((
+                StatusCode::CONFLICT,
+                "This server is already connected.".into(),
+            ))
         }
-        Err(error) => return (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
+        Err(error) => return Err((StatusCode::INTERNAL_SERVER_ERROR, error)),
     }
-    let registered = match signup::service() {
-        Ok(service) => signup::register(&service, &sign_up.invite, &server.state_file).await,
-        Err(failure) => Err(failure),
-    };
-    let registration = match registered {
-        Ok(registration) => registration,
-        Err(failure) => return (failure.status, failure.message).into_response(),
-    };
+    let registration = signup::register(&service, &invite, &server.state_file)
+        .await
+        .map_err(|failure| (failure.status, failure.message))?;
     let answer = serde_json::json!({
         "hostname": registration.hostname,
         "public_url": registration.public_url,
     });
     tracing::info!(hostname = registration.hostname, "btmux connect: signed up");
-    match start(registration) {
-        Ok(()) => axum::Json(answer).into_response(),
-        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error).into_response(),
-    }
+    start_with(&server, registration)
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    Ok(answer)
 }
 
 /// `btmux connect`: sign up with an invite code.
@@ -493,6 +526,73 @@ pub fn relay_event(json: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A client that leaves after the service redeemed its invite doesn't
+    /// lose the machine: the registration is saved and connect started.
+    #[tokio::test]
+    async fn sign_up_finishes_when_the_client_leaves() {
+        use base64::Engine;
+        use std::sync::Arc;
+        use tokio::sync::Notify;
+        let (redeemed, release) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+        let app = {
+            let (redeemed, release) = (redeemed.clone(), release.clone());
+            Router::new().route(
+                "/v1/machines",
+                axum::routing::post(move || async move {
+                    redeemed.notify_one();
+                    release.notified().await;
+                    (
+                        StatusCode::CREATED,
+                        axum::Json(serde_json::json!({
+                            "hostname": "abcd1234.btmux.test",
+                            "token": "btmr_token",
+                            "relay": "127.0.0.1:9",
+                            "relay_name": "relay.btmux.test",
+                            "relay_ca": base64::engine::general_purpose::STANDARD.encode(b"ca"),
+                            "public_url": "https://abcd1234.btmux.test",
+                        })),
+                    )
+                }),
+            )
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let service = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await });
+
+        let dir = std::env::temp_dir().join(format!("btmux-sign-up-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let state_file = dir.join("state.json");
+        let server = Arc::new(Server {
+            app: Router::new(),
+            auth: Arc::new(crate::auth::Auth::new("t".repeat(32), "127.0.0.1", 8004, &[]).unwrap()),
+            events: tokio::sync::broadcast::channel(16).0,
+            state_file: state_file.clone(),
+            status: OnceLock::new(),
+        });
+        let client = tokio::spawn(sign_up(server.clone(), service, "good".into()));
+        redeemed.notified().await;
+        client.abort();
+        release.notify_one();
+        let mut saved = None;
+        for _ in 0..100 {
+            saved = tunnel::Registration::load(&state_file).unwrap();
+            if saved.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert_eq!(saved.expect("not saved").hostname, "abcd1234.btmux.test");
+        // And started: relayed sign-in now knows the machine's origin.
+        for _ in 0..100 {
+            if server.auth.passkeys().is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(server.auth.passkeys().is_some(), "not started");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     use crate::config::{ColorMode, Editor, FileConfig};
     use crate::ws::control::ServerMessage;
 

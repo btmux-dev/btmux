@@ -495,6 +495,7 @@ async fn main() {
             auth: auth.clone(),
             events: state.read().await.events().clone(),
             state_file: state_file.to_owned(),
+            status: std::sync::OnceLock::new(),
         });
         match connect::tunnel::Registration::load(state_file) {
             Ok(Some(registration)) => {
