@@ -488,13 +488,26 @@ impl Passkeys {
     }
 
     pub fn login_page(&self) -> Response {
+        let hostname = escape(&self.hostname);
+        // Without a passkey, signing in can't work; enrolling one can.
+        if self.store.lock().unwrap().credentials.is_empty() {
+            return page(
+                "Add a passkey",
+                &format!(
+                    "<h1>Add a passkey for {hostname}</h1>\
+                     <p>No passkey is enrolled on this machine yet. Open the enrollment link \
+                     that <code>btmux connect</code> printed, or make a new one on the machine: \
+                     run <code>btmux connect-enroll</code>, or use Settings → Connect → Add a \
+                     passkey.</p>"
+                ),
+            );
+        }
         page(
             "Sign in",
             &format!(
-                "<h1>Sign in to {}</h1>\
+                "<h1>Sign in to {hostname}</h1>\
                  <p>Use a passkey enrolled on this machine.</p>\
-                 <button id=\"login\" type=\"button\">Sign in with a passkey</button>",
-                escape(&self.hostname)
+                 <button id=\"login\" type=\"button\">Sign in with a passkey</button>"
             ),
         )
     }
@@ -617,7 +630,7 @@ const STYLE: &str = "body{font:16px/1.5 system-ui,sans-serif;margin:0;min-height
     main{max-width:26rem;padding:1.5rem}h1{font-size:1.4rem;margin:0 0 .5rem}\
     button{font:inherit;padding:.6rem 1.1rem;border-radius:.5rem;border:0;\
     background:#3b6fd8;color:#fff;cursor:pointer}button:disabled{opacity:.6}\
-    #status{min-height:1.5em;opacity:.8}";
+    #status{min-height:1.5em;opacity:.8}code{font-size:.9em}";
 
 /// Paths a relayed browser reaches before signing in.
 pub fn public_route(method: &axum::http::Method, path: &str) -> bool {

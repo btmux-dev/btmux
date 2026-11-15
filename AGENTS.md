@@ -934,7 +934,7 @@ within the 64 KiB request limit. Relayed connections are served by
 connection with `Passkeys::track`, and removing its passkey, signing out
 everywhere, or expiry (checked each minute) cuts it, ending the WebSockets
 (terminals) it carries. Without a session, page loads get the sign-in page
-(401) at their own URL and other requests a 401 marked `X-Btmux-Login:
+(401) at their own URL, which points to enrolling while no passkey is, and other requests a 401 marked `X-Btmux-Login:
 passkey`, on which the app reloads; `/connect/login` itself goes home once
 signed in, and `?reauth` signs in again despite a session. Over the relay,
 enrolling, removing passkeys (`btmux connect-passkeys`), and signing out
