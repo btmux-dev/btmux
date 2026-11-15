@@ -1,4 +1,6 @@
-# Development
+---
+title: "Development"
+---
 
 Requires [Rust](https://rustup.rs), [Bun](https://bun.sh), and [`just`](https://github.com/casey/just).
 On macOS, install Xcode Command Line Tools (`xcode-select --install`): socket

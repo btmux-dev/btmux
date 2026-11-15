@@ -1,4 +1,6 @@
-# Shader wallpapers
+---
+title: "Shader wallpapers"
+---
 
 Shader wallpapers use the MIT-licensed [Shaders](https://shaders.com/docs/guide)
 components, bundled locally with btmux. A wallpaper is a stack of up to 8 layers,

@@ -1,4 +1,6 @@
-# VS Code
+---
+title: "VS Code"
+---
 
 With `editor = "vscode"`, `<prefix> + e` toggles VS Code over the active pane,
 opened in the pane's Git worktree (its root, not the subfolder the pane is in),

@@ -241,6 +241,13 @@ kill-dev:
 run: build
     ./target/release/btmux
 
+# Docs site (Starlight)
+docs-dev:
+    cd docs && bun install && bun run dev
+
+docs-build:
+    cd docs && bun install && bun run build
+
 # Run backend regression tests
 test:
     cargo test

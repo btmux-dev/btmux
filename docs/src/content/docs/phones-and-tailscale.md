@@ -1,4 +1,6 @@
-# Phones, tablets, and Tailscale
+---
+title: "Phones, tablets, and Tailscale"
+---
 
 ## Tailscale
 
@@ -40,7 +42,7 @@ origins.
 In the desktop app, a desktop server kept running after the app quits can
 also be shared this way: check **Share it on my tailnet** before starting it.
 It then keeps its port across starts, so its tailnet URL stays the same.
-The app can also [connect to btmux servers on other machines](../desktop/README.md).
+The app can also [connect to btmux servers on other machines](../../../../desktop/README.md).
 
 ## Phones and tablets
 

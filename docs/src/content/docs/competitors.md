@@ -1,4 +1,6 @@
-# Comparison with other projects
+---
+title: "Comparison with other projects"
+---
 
 Data collected on November 2, 2026.
 
@@ -32,7 +34,7 @@ Named clients and integrations may require extra installation or setup.
 
 | Project                  | Agent status                                                               | Git integration                                        | Graphical code editor                                                                                        | Embedded web browser                  | Terminal automation                                                                                                | License                                                                                     |
 | ------------------------ | -------------------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
-| **btmux**                | [Detection / hooks](automation.md#semantic-agent-status)                   | GUI, worktrees                                         | [Neovim / VS Code](editors.md) [^editors]                                                                    | [macOS / Linux](browser.md)[^browser] | [CLI, REST, MCP](automation.md)                                                                                    | [MIT](../LICENSE)                                                                           |
+| **btmux**                | [Detection / hooks](automation.md#semantic-agent-status)                   | GUI, worktrees                                         | [Neovim / VS Code](editors.md) [^editors]                                                                    | [macOS / Linux](browser.md)[^browser] | [CLI, REST, MCP](automation.md)                                                                                    | [MIT](../../../../LICENSE)                                                                           |
 | [herdr TUI][herdr]       | Detection / hooks                                                          | Worktree tracking                                      | —                                                                                                            | —                                     | [CLI, socket API](https://herdr.dev/tui/docs/socket-api/)                                                          | [Apache-2.0](https://github.com/herdrdev/herdr/blob/master/LICENSE)                         |
 | [herdr app][herdr-app]   | OSC 7501[^herdr-app]                                                       | Worktrees, repo status                                 | Mod API only[^herdr-app]                                                                                     | —                                     | [CLI, core API](https://herdr.dev/core/)                                                                           | [Apache-2.0](https://github.com/herdrdev/herdr-app/blob/master/LICENSE)                     |
 | [cmux][cmux]             | [Agent hooks](https://cmux.com/docs/notifications)                         | Branch/PR metadata                                     | [Text editor (macOS)](https://cmux.com/docs/changelog/0.64.23)                                               | Yes                                   | [CLI, socket API](https://cmux.com/docs/api)                                                                       | [GPL-3.0-or-later / BUSL-1.1](https://github.com/manaflow-ai/cmux/blob/main/LICENSE)[^cmux] |
@@ -48,45 +50,45 @@ Named clients and integrations may require extra installation or setup.
 | [Warp][warp]             | [CLI agent integration](https://docs.warp.dev/agents/cli-agents/overview/) | [Code review](https://docs.warp.dev/code/code-review/) | Built in                                                                                                     | ?                                     | [`warpctrl` CLI](https://docs.warp.dev/changelog/2026/)                                                            | [AGPL-3.0 / MIT](https://github.com/warpdotdev/warp#licensing)                              |
 
 [^detached]:
-    Running shells and programs survive the client disconnecting or exiting
+    ../../../Running shells and programs survive the client disconnecting or exiting
     while their server stays running. Restoring layouts, scrollback, or an
     agent conversation after a restart is a separate feature.
 
 [^herdr-app]:
-    herdr-app uses herdr-core, separate from herdr TUI's server. Agent status
+    ../../../herdr-app uses herdr-core, separate from herdr TUI's server. Agent status
     requires programs to report OSC 7501. Its mod API exposes editor widgets;
     the published [Code layout](https://herdr.dev/layouts/herdrdev/code/) is a
     read-only example.
 
 [^cmux]:
-    cmux has a macOS app and a separate [cross-platform TUI](https://cmux.com/docs/tui).
+    ../../../cmux has a macOS app and a separate [cross-platform TUI](https://cmux.com/docs/tui).
     Detached sessions, multiple clients, and native Windows support here refer
     to the TUI and its [daemon](https://github.com/manaflow-ai/cmux/blob/main/cmux-tui/docs/remote.md).
     Apps and the TUI use GPL-3.0-or-later; the server components listed in cmux's
     license use BUSL-1.1.
 
 [^herdr-clients]:
-    herdr-gpui and Ovis are separate clients of Herdr backends. herdr-gpui also
+    ../../../herdr-gpui and Ovis are separate clients of Herdr backends. herdr-gpui also
     supports herdr-core terminals. Its VS Code tab embeds a separate VS Code
     server; its embedded web views are available on macOS and Windows.
     [Ovis's guide](https://github.com/devswha/ovis/blob/main/docs/guide.md)
     describes its shared terminal views and pane splitting.
 
 [^editors]:
-    btmux renders a Neovim GUI or embeds VS Code; the corresponding editor must
+    ../../../btmux renders a Neovim GUI or embeds VS Code; the corresponding editor must
     be installed separately. Terminal editors can run in every project listed.
 
 [^browser]:
-    btmux shows a Chrome or Chromium running headless on its server, so the page
+    ../../../btmux shows a Chrome or Chromium running headless on its server, so the page
     works in every client and `localhost` means the server. The browser must be
     installed separately.
 
 [^wave-status]:
-    Wave's official Claude Code integration uses `wsh badge` and configured
+    ../../../Wave's official Claude Code integration uses `wsh badge` and configured
     lifecycle hooks to show permission requests, questions, and completed turns.
 
 [^warp-sharing]:
-    Warp's [agent session sharing](https://docs.warp.dev/agents/local-agents/session-sharing/)
+    ../../../Warp's [agent session sharing](https://docs.warp.dev/agents/local-agents/session-sharing/)
     and [Remote Control](https://docs.warp.dev/agents/cli-agents/remote-control)
     let browser and mobile clients view and steer agent sessions through Warp's
     cloud service. The desktop app must remain running for local execution.

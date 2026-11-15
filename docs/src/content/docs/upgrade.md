@@ -1,4 +1,6 @@
-# How in-place upgrades work
+---
+title: "How in-place upgrades work"
+---
 
 `btmux upgrade` swaps in a new btmux binary without killing your shells. The
 server process turns itself into the new program but keeps the same process ID,
@@ -102,4 +104,4 @@ the file's exact shape in `src/handoff.schema` and fails if the shape changes
 without a version bump. That stops a new binary from misreading an old server's
 handoff.
 
-The implementation lives in [`src/handoff.rs`](../src/handoff.rs).
+The implementation lives in [`src/handoff.rs`](../../../../src/handoff.rs).

@@ -1,0 +1,34 @@
+// Rewrites relative links, written to work on GitHub, for the site: pages
+// in the content directory become routes, other repo files GitHub URLs.
+import { statSync } from "node:fs";
+import { dirname, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { visit } from "unist-util-visit";
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const content = resolve(root, "docs", "src", "content", "docs");
+
+export function remarkRepoLinks({ repo }) {
+  return (tree, file) => {
+    if (!file.path) return;
+    visit(tree, ["link", "definition"], (node) => {
+      if (/^[a-z]+:|^[#/]/.test(node.url)) return;
+      const [path, hash] = node.url.split("#");
+      const anchor = hash ? `#${hash}` : "";
+      const target = resolve(dirname(file.path), path);
+      const rel = relative(content, target);
+      if (rel.endsWith(".md") && !rel.startsWith("..") && !rel.includes("/")) {
+        node.url = `/${rel.slice(0, -3)}/${anchor}`;
+      } else if (resolve(target) === resolve(root, "README.md")) {
+        node.url = `/${anchor}`;
+      } else if (resolve(target) === resolve(root, "desktop", "README.md")) {
+        node.url = `/desktop/${anchor}`;
+      } else {
+        const kind = statSync(target, { throwIfNoEntry: false })?.isDirectory()
+          ? "tree"
+          : "blob";
+        node.url = `${repo}/${kind}/main/${relative(root, target)}${anchor}`;
+      }
+    });
+  };
+}

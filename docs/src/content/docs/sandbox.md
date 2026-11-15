@@ -1,4 +1,6 @@
-# Sandboxed sessions
+---
+title: "Sandboxed sessions"
+---
 
 A session can run its shells in a [Multipass](https://multipass.run) Ubuntu VM
 instead of on the server, so coding agents in it see only the directory you

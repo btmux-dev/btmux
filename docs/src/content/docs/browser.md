@@ -1,4 +1,6 @@
-# Browser
+---
+title: "Browser"
+---
 
 `<prefix> + b` toggles a browser over the active pane, and from another pane
 moves it there. The other panes stay visible. Pressing Esc twice quickly also

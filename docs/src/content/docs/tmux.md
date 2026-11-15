@@ -1,4 +1,6 @@
-# btmux for tmux users
+---
+title: "btmux for tmux users"
+---
 
 The default prefix is `C-a`, the most common tmux remap (set `prefix = "C-b"`
 for stock tmux). Most default keys match tmux. Press `<prefix> + ?` for the

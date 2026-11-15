@@ -1,4 +1,6 @@
-# Editors
+---
+title: "Editors"
+---
 
 `<prefix> + e` opens the configured `editor` over the active pane, and the file
 browser and Git mode open files there. Set `editor` in

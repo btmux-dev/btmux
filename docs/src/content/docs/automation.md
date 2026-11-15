@@ -1,4 +1,6 @@
-# Automation and AI agents
+---
+title: "Automation and AI agents"
+---
 
 The REST API, MCP server, and web UI share the same host and port (by default,
 `127.0.0.1:8004`). No separate process is required.
@@ -180,7 +182,7 @@ btmux kill-pane -t "$pane"
 | `remove-worktree`            | `-t`                             |
 | `display-popup` (`popup`)    | `-t -d -e -T -E`; see [Popups](#popups) |
 
-For coding agents, [`skills/btmux`](../skills/btmux/SKILL.md) is an
+For coding agents, [`skills/btmux`](../../../../skills/btmux/SKILL.md) is an
 [Agent Skill](https://agentskills.io) that teaches these commands. Install it
 with `npx skills add buntec/btmux`, or copy the folder into your agent's skills
 directory (`~/.claude/skills/` for Claude Code).
@@ -597,7 +599,7 @@ btmux install-gemini-cli-hooks
 The Codex installer uses `$CODEX_HOME/hooks.json` when `CODEX_HOME` is set,
 otherwise `~/.codex/hooks.json`.
 
-The same snippets are available in [`extras/`](../extras/). Other command-hook
+The same snippets are available in [`extras/`](../../../../extras/). Other command-hook
 harnesses can POST their JSON hook payload to the authenticated endpoint:
 
 ```sh
@@ -791,4 +793,4 @@ preferences. Inside a btmux pane it targets that pane's server; elsewhere, the
 running server of `--profile` (or the default profile). It wraps
 `POST /api/notify`, which takes `title`, optional `body`, and `level`.
 
-[Back to the README](../README.md)
+[Back to the README](../../../../README.md)

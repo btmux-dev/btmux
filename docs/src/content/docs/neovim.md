@@ -1,4 +1,6 @@
-# Neovim GUI
+---
+title: "Neovim GUI"
+---
 
 `<prefix> + e` opens a Neovim GUI over the active pane; the other panes stay
 visible, and zooming the pane (`<prefix> + z`) makes Neovim fill the window. btmux draws the

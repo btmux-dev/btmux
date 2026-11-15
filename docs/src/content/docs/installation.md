@@ -1,4 +1,6 @@
-# Installation
+---
+title: "Installation"
+---
 
 ## Release installer
 
@@ -274,4 +276,4 @@ Both packages support Apple Silicon macOS and x86-64/ARM64 Linux. Override
 makes the app available in `~/Applications/Home Manager Apps`; on Linux, it installs a
 desktop menu entry. You can also launch it with `btmux-desktop`.
 
-[Back to the README](../README.md)
+[Back to the README](../../../../README.md)
