@@ -532,11 +532,14 @@ async fn main() {
     if let Some(addr) = &args.connect_listen {
         connect::listen(addr, app.clone()).await;
     }
-    if let (Some(registration), Some(state_file)) = (registration, state_file.as_deref()) {
-        if let Err(error) = connect::tunnel::spawn(registration, state_file, app.clone()) {
-            tracing::error!("btmux connect: {error}");
+    let tunnel = match (registration, state_file.as_deref()) {
+        (Some(registration), Some(state_file)) => {
+            connect::tunnel::spawn(registration, state_file, app.clone())
+                .map_err(|error| tracing::error!("btmux connect: {error}"))
+                .ok()
         }
-    }
+        _ => None,
+    };
     if let Some(instance) = state.read().await.guest_instance() {
         multipass::restore_bridge(instance);
     }
@@ -619,6 +622,9 @@ async fn main() {
             let _ = shutdown_rx.await;
             tokio::time::sleep(drain_timeout).await;
         } => tracing::warn!("timed out waiting for connections to close"),
+    }
+    if let Some(tunnel) = tunnel {
+        tunnel.close().await;
     }
     ws::nvim::shutdown().await;
     vscode::shutdown().await;

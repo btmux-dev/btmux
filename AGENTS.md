@@ -880,7 +880,9 @@ FIN. It tries the relay's addresses staggered (RFC 8305) and reconnects with
 backoff, including after an upgrade's exec; the relay closes a hostname's old
 tunnel when it registers again, with code `0x10`, on which the client waits
 the longest backoff (30 s), as two copies of a registration would otherwise
-take turns. With `acme` in the registration (`connect-dev --acme
+take turns. Shutdown closes the tunnel (code 0, waiting up to 1 s for the
+relay to see it), so the relay drops the route at once rather than after its
+idle timeout. With `acme` in the registration (`connect-dev --acme
 staging|production|URL --accept-acme-terms`), `connect/acme.rs` gets the
 machine's certificate from that CA by TLS-ALPN-01 through the relay: the CA
 connects to the hostname with ALPN `acme-tls/1`, the relay routes it here by
