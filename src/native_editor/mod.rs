@@ -15,7 +15,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use buffer::{Buffer, DiskStatus, LineEnding, SaveError, Update};
+use buffer::{Buffer, DiskStatus, LineEnding, OnDisk, SaveError, Update};
 
 /// Messages a socket may queue before it is dropped as lagging; the tab
 /// reconnects and catches up.
@@ -524,35 +524,47 @@ impl Hub {
         edit: Value,
         expect: Option<(Uuid, u64)>,
     ) -> Result<(), String> {
-        let mut files: Vec<(String, Vec<Value>)> = Vec::new();
+        // Each file's edits, and the version they were made against, if given.
+        let mut files: Vec<(String, Vec<Value>, Option<u64>)> = Vec::new();
         if let Some(changes) = edit["changes"].as_object() {
             for (uri, edits) in changes {
-                files.push((uri.clone(), edits.as_array().cloned().unwrap_or_default()));
+                let edits = edits.as_array().cloned().unwrap_or_default();
+                files.push((uri.clone(), edits, None));
             }
         }
         for change in edit["documentChanges"].as_array().into_iter().flatten() {
             if change.get("kind").is_some() {
                 return Err("Creating, renaming, or deleting files isn't supported".into());
             }
-            let uri = change["textDocument"]["uri"].as_str().unwrap_or_default();
+            let document = &change["textDocument"];
+            let uri = document["uri"].as_str().unwrap_or_default();
+            let version = match &document["version"] {
+                Value::Null => None,
+                v => Some(v.as_u64().ok_or("Invalid document version")?),
+            };
             let edits = change["edits"].as_array().cloned().unwrap_or_default();
-            files.push((uri.to_owned(), edits));
+            files.push((uri.to_owned(), edits, version));
         }
         let mut targets = Vec::new();
-        for (uri, edits) in files {
+        for (uri, edits, version) in files {
             let path = lsp::config::path(&uri).ok_or_else(|| format!("Cannot edit {uri}"))?;
             let path = resolve(&path.to_string_lossy())?;
-            targets.push((self.load_buffer(path).await?, edits));
+            targets.push((self.load_buffer(path).await?, edits, version));
         }
         let mut inner = self.inner.lock().unwrap();
-        if let Some((buffer, version)) = expect {
-            if inner.buffers.get(&buffer).map(|b| b.version) != Some(version) {
-                return Err("The file changed meanwhile".into());
-            }
+        // Edits made against an older version would land in the wrong place.
+        let stale =
+            |id: &Uuid, version: u64| inner.buffers.get(id).map(|b| b.version) != Some(version);
+        if expect.is_some_and(|(id, version)| stale(&id, version))
+            || targets
+                .iter()
+                .any(|(id, _, version)| version.is_some_and(|v| stale(id, v)))
+        {
+            return Err("The file changed meanwhile".into());
         }
         // Check every file's edits before changing any.
         let mut planned = Vec::new();
-        for (id, edits) in targets {
+        for (id, edits, _) in targets {
             let b = inner.buffers.get(&id).ok_or("A file closed meanwhile")?;
             let mut changes = Vec::with_capacity(edits.len());
             for edit in &edits {
@@ -722,13 +734,14 @@ impl Hub {
             return;
         }
         match change {
-            Some(loaded) if !b.dirty() => inner.reload(id, loaded),
-            Some(_) => {
+            OnDisk::Changed(Ok(loaded)) if !b.dirty() => inner.reload(id, loaded),
+            // Dirty, or not text any more: keep the buffer, flag the file.
+            OnDisk::Changed(_) => {
                 b.disk_status = DiskStatus::Changed;
                 let state = state_message(b);
                 inner.send_to_followers(id, &state);
             }
-            None => {
+            OnDisk::Deleted => {
                 b.disk_status = DiskStatus::Deleted;
                 let state = state_message(b);
                 inner.send_to_followers(id, &state);
@@ -951,5 +964,54 @@ mod watch {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn refuses_edits_to_older_versions() {
+        let dir = std::env::temp_dir().join(format!("btmux-edit-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("f.txt");
+        std::fs::write(&path, "abc\n").unwrap();
+        let path = resolve(&path.to_string_lossy()).unwrap();
+        let id = hub().load_buffer(path.clone()).await.unwrap();
+        // Version 1, typed meanwhile.
+        hub()
+            .inner
+            .lock()
+            .unwrap()
+            .buffers
+            .get_mut(&id)
+            .unwrap()
+            .edit(&[text::Change {
+                from: 0,
+                to: 0,
+                insert: "X".into(),
+            }]);
+        let uri = lsp::config::uri(&path);
+        let edit = |version: u64| {
+            json!({ "documentChanges": [{
+                "textDocument": { "uri": uri, "version": version },
+                "edits": [{ "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end": { "line": 0, "character": 1 },
+                }, "newText": "A" }],
+            }] })
+        };
+        let text = || hub().inner.lock().unwrap().buffers[&id].rope.to_string();
+        assert!(hub().apply_edit(edit(0), None).await.is_err());
+        assert_eq!(text(), "Xabc\n");
+        hub().apply_edit(edit(1), None).await.unwrap();
+        assert_eq!(text(), "Aabc\n");
+        let mut inner = hub().inner.lock().unwrap();
+        inner.buffers.remove(&id);
+        inner.by_path.remove(&path);
+        drop(inner);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

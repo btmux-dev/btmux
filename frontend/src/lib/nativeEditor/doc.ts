@@ -3,6 +3,7 @@ import {
   EditorSelection,
   EditorState,
   type Extension,
+  type Text,
   type Transaction,
   type TransactionSpec,
 } from '@codemirror/state';
@@ -10,7 +11,9 @@ import type { EditorView } from '@codemirror/view';
 import type { StateEffect } from '@codemirror/state';
 import { collab, getSyncedVersion, receiveUpdates, sendableUpdates } from '@codemirror/collab';
 import type { BufferInfo, DiskStatus, LineEnding, Update } from '../../generated/protocol';
+import { useStore } from '../../state/store';
 import { editorConnection, type BufferListener } from './connection';
+import { rebase } from './rebase';
 
 /**
  * Which of `count` updates starting at `version` are new to an editor synced
@@ -47,6 +50,8 @@ export class Doc implements BufferListener {
   servers: number[] = [];
   status: DocStatus = { ready: false, error: null, dirty: false, disk: 'same', lineEnding: 'lf' };
   private ownState: EditorState | null = null;
+  /** The document at the synced version: what unconfirmed changes apply to. */
+  private synced: Text | null = null;
   /** Where the view was scrolled when this doc was last shown. */
   private scroll: StateEffect<unknown> | null = null;
   /** Updates already pushed; all unconfirmed ones go with each push, and the server skips repeats. */
@@ -90,10 +95,12 @@ export class Doc implements BufferListener {
     return true;
   }
 
-  /** Change the state, shown or not. */
+  /** Change the state, shown or not, sending any edit. */
   update(spec: TransactionSpec) {
     const state = this.state;
-    if (state) this.apply(state.update(spec));
+    if (!state) return;
+    this.apply(state.update(spec));
+    this.push();
   }
 
   private setStatus(status: Partial<DocStatus>) {
@@ -108,6 +115,14 @@ export class Doc implements BufferListener {
 
   opened(info: BufferInfo) {
     const old = this.state;
+    const base = this.synced;
+    // Changes the server never got (typed while disconnected): they go on
+    // top of its text rather than being lost.
+    const unconfirmed = old ? sendableUpdates(old) : [];
+    const local =
+      base && unconfirmed.length
+        ? unconfirmed.reduce((set, u) => set.compose(u.changes), ChangeSet.empty(base.length))
+        : null;
     const head = Math.min(old?.selection.main.head ?? 0, info.text.length);
     // Before the state: its extensions read them.
     this.buffer = info.id;
@@ -119,10 +134,23 @@ export class Doc implements BufferListener {
       selection: EditorSelection.single(head),
       extensions: [this.extensions(this, info.text), collab({ startVersion: info.version, clientID: this.clientID })],
     });
+    this.synced = state.doc;
     this.sent = new WeakSet();
     if (this.view) this.view.setState(state);
     else this.ownState = state;
     this.setStatus({ ready: true, error: null, dirty: info.dirty, disk: info.disk, lineEnding: info.line_ending });
+    // Already there: the server applied them before the connection dropped.
+    if (!old || !base || !local || old.doc.eq(state.doc)) return;
+    const merged = rebase(base, local, state.doc);
+    this.update({
+      changes: merged.changes,
+      selection: EditorSelection.single(merged.after.mapPos(old.selection.main.head)),
+      userEvent: 'input',
+    });
+    if (!merged.exact)
+      useStore.getState().showToast('Merged edits made while disconnected', 'attention', {
+        body: `${this.path} changed meanwhile; check the result.`,
+      });
   }
 
   resumed() {
@@ -139,14 +167,10 @@ export class Doc implements BufferListener {
       editorConnection.reopen(this);
       return;
     }
-    const fresh = updates.slice(from);
+    const fresh = updates.slice(from).map((u) => ({ changes: ChangeSet.fromJSON(u.changes), clientID: u.client_id }));
     if (fresh.length) {
-      this.apply(
-        receiveUpdates(
-          state,
-          fresh.map((u) => ({ changes: ChangeSet.fromJSON(u.changes), clientID: u.client_id })),
-        ),
-      );
+      if (this.synced) this.synced = fresh.reduce((doc, u) => u.changes.apply(doc), this.synced);
+      this.apply(receiveUpdates(state, fresh));
     }
     // Others' changes rebase ours, which then go again.
     this.push();
@@ -165,6 +189,7 @@ export class Doc implements BufferListener {
     this.setStatus({ error, ready: false });
   }
 
+  /** Edits go on meanwhile; a resume or a reopen (`opened`) sends them. */
   disconnected() {
     this.setStatus({ ready: false });
   }

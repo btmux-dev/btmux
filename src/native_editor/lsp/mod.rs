@@ -359,6 +359,10 @@ impl Inner {
     /// Give a newly loaded buffer its servers, starting them as needed.
     pub(super) fn lsp_attach(&mut self, buffer: Uuid, target: config::Target) {
         let config = config::current();
+        // `did_open` reads it.
+        if let Some(b) = self.buffers.get_mut(&buffer) {
+            b.language_id = Some(target.language_id);
+        }
         let mut ids = Vec::new();
         for (name, root) in target.servers {
             let Some(server_config) = config.servers.get(&name).cloned() else {
@@ -416,7 +420,6 @@ impl Inner {
             ids.push(id);
         }
         if let Some(b) = self.buffers.get_mut(&buffer) {
-            b.language_id = Some(target.language_id);
             b.servers = ids;
         }
         self.send_lsp_statuses();
@@ -889,6 +892,11 @@ impl super::Hub {
         tracing::info!(server = server.name, "{}", exit.message);
         server.handle = None;
         server.progress.clear();
+        // The process's registrations and prompts went with it; a restarted
+        // one registers again, under its own generation.
+        server.watchers.clear();
+        server.root_watch = None;
+        server.prompts.clear();
         let now = Instant::now();
         server.crashes.push_back(now);
         while server

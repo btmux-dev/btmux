@@ -6,7 +6,7 @@
 // - definition: WORD's first line in other.fake beside the document
 // - rename: every WORD in the .fake files of the document's directory,
 //   open or not (as edits to the open text or the file on disk)
-// - formatting: trailing spaces removed
+// - formatting: trailing spaces removed, 700 ms late for text with "slow"
 // - pulled diagnostics: an error on every "worse"
 // - semantic tokens: every "thing" is a function
 // - inlay hints: ": hint" after every "let NAME"
@@ -14,8 +14,9 @@
 // - code lenses: "fake.ask" on line 1, which asks the user (showMessageRequest)
 // - code actions: replace "bad" with "good"
 // - folding: the first three lines; selection ranges: word, then line
-// - watched files: **/*.fake, logged
-import { appendFileSync, readdirSync, readFileSync } from 'node:fs';
+// - watched files: **/*.fake, logged; a new crash.fake makes it exit, once
+// - opened documents: logged with their language id
+import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 type Position = { line: number; character: number };
@@ -234,6 +235,7 @@ function notify(msg: any) {
   const p = msg.params;
   switch (msg.method) {
     case 'textDocument/didOpen':
+      log(`open ${pathOf(p.textDocument.uri)} ${p.textDocument.languageId}`);
       docs.set(p.textDocument.uri, { text: p.textDocument.text, version: p.textDocument.version });
       publish(p.textDocument.uri);
       break;
@@ -285,7 +287,14 @@ process.stdin.on('data', (chunk: Buffer) => {
       continue;
     }
     log(msg.method ?? 'response');
-    if (msg.method === 'workspace/didChangeWatchedFiles') log(`watched ${JSON.stringify(msg.params.changes)}`);
+    if (msg.method === 'workspace/didChangeWatchedFiles') {
+      log(`watched ${JSON.stringify(msg.params.changes)}`);
+      const marker = join(process.env.BTMUX_FAKE_LSP ?? '/nonexistent', 'crashed');
+      if (msg.params.changes.some((c: { uri: string }) => c.uri.endsWith('/crash.fake')) && !existsSync(marker)) {
+        writeFileSync(marker, '');
+        process.exit(1);
+      }
+    }
     if (msg.method === 'initialized')
       request('client/registerCapability', {
         registrations: [
@@ -298,11 +307,15 @@ process.stdin.on('data', (chunk: Buffer) => {
       });
     if (msg.id !== undefined && msg.method) {
       const result = handle(msg);
-      send(
-        result === undefined
-          ? { jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: msg.method } }
-          : { jsonrpc: '2.0', id: msg.id, result },
-      );
+      const reply = () =>
+        send(
+          result === undefined
+            ? { jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: msg.method } }
+            : { jsonrpc: '2.0', id: msg.id, result },
+        );
+      if (msg.method === 'textDocument/formatting' && text(msg.params.textDocument.uri).includes('slow'))
+        setTimeout(reply, 700);
+      else reply();
     } else if (msg.method) notify(msg);
   }
 });

@@ -170,6 +170,27 @@ try {
   await waitForText(page, paneId, 'theirs\n');
   console.log('PASS the editor view survives a reload');
 
+  // Edits typed while disconnected survive the server dropping the clean
+  // buffer, and merge with the file changing meanwhile.
+  await other.context().close();
+  await input.click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.evaluate(async () => {
+    const { editorConnection } = await import('/src/lib/nativeEditor/connection.ts' as string);
+    (editorConnection as any).ws.close();
+  });
+  await page.keyboard.type('UNSENT');
+  await page.waitForTimeout(300);
+  writeFileSync(fileA, 'outside\ntheirs\n');
+  await waitForText(page, paneId, 'outside\ntheirs\nUNSENT');
+  await page.getByText('Merged edits made while disconnected', { exact: true }).waitFor();
+  await page.locator('[aria-label="Unsaved"]').first().waitFor();
+  await input.click();
+  await page.keyboard.press('ControlOrMeta+s');
+  await page.locator('[aria-label="Unsaved"]').first().waitFor({ state: 'detached' });
+  assert.equal(readFileSync(fileA, 'utf8'), 'outside\ntheirs\nUNSENT');
+  console.log('PASS edits made while disconnected survive a reopen');
+
   // Language servers, with a fake one (test-bin/fake-lsp).
   const lspDir = process.env.BTMUX_TEST_LSP;
   const configHome = process.env.BTMUX_TEST_CONFIG_HOME;
@@ -298,6 +319,26 @@ try {
     assert.equal(readFileSync(main, 'utf8'), 'let bad = 1;\nuse item;\nfakeCompletion\nend');
     assert.match(readFileSync(join(lspDir, 'log'), 'utf8'), /textDocument\/didSave/);
     console.log('PASS format on save');
+
+    // A format answered after switching files changes the file it was for.
+    const slow = join(dir, 'slow.fake');
+    const two = join(dir, 'two.fake');
+    writeFileSync(slow, 'slow   \n');
+    writeFileSync(two, 'two\n');
+    await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: slow, line: null, editor: 'native' });
+    await waitForText(page, paneId, 'slow   \n');
+    const formats = () => (readFileSync(join(lspDir, 'log'), 'utf8').match(/^textDocument\/formatting$/gm) ?? []).length;
+    const asked = formats();
+    await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+    await page.keyboard.press('ControlOrMeta+s');
+    for (let i = 0; i < 100 && formats() === asked; i++) await page.waitForTimeout(20);
+    await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: two, line: null, editor: 'native' });
+    await waitForText(page, paneId, 'two\n');
+    for (let i = 0; i < 100 && readFileSync(slow, 'utf8') !== 'slow\n'; i++) await page.waitForTimeout(50);
+    assert.equal(readFileSync(slow, 'utf8'), 'slow\n');
+    assert.equal(await editorText(page, paneId), 'two\n');
+    assert.equal(readFileSync(two, 'utf8'), 'two\n');
+    console.log('PASS formatting follows its file when the view switches');
 
     // A server that isn't installed shows in the status line, and its features stay off.
     writeFileSync(

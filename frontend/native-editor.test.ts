@@ -6,6 +6,7 @@ import { freshFrom } from './src/lib/nativeEditor/doc';
 import { detectIndent } from './src/lib/nativeEditor/languages';
 import { decodeTokens } from './src/lib/nativeEditor/features';
 import { fuzzyMatch } from './src/lib/nativeEditor/picker';
+import { diff, rebase } from './src/lib/nativeEditor/rebase';
 
 test('updates are skipped up to the synced version, and a gap is detected', () => {
   expect(freshFrom(3, 3)).toBe(0);
@@ -64,4 +65,39 @@ test('the picker matches characters in order', () => {
   expect(fuzzyMatch('workspaceSymbols', 'wsym')).toBe(true);
   expect(fuzzyMatch('workspaceSymbols', 'mys')).toBe(false);
   expect(fuzzyMatch('Thing', 'thi')).toBe(true);
+});
+
+const text = (s: string) => Text.of(s.split('\n'));
+
+test('line diffs turn one text into the other, touching only changed lines', () => {
+  const cases = [
+    ['a\nb\nc\n', 'a\nB\nc\n'],
+    ['a\nb\nc\n', 'x\na\nc\ny\n'],
+    ['', 'new\n'],
+    ['old', ''],
+    ['same\n', 'same\n'],
+    ['1\n2\n3\n4\n5\n6\n', '1\n3\n4\nX\n5\n'],
+  ];
+  for (const [a, b] of cases) expect(diff(text(a), text(b)).apply(text(a)).toString()).toBe(b);
+  const changed: string[] = [];
+  diff(text('a\nb\nc\nd\n'), text('a\nB\nc\nD\n')).iterChanges((fa, ta) =>
+    changed.push(text('a\nb\nc\nd\n').sliceString(fa, ta)),
+  );
+  expect(changed).toEqual(['b\n', 'd\n']);
+});
+
+test('edits made while disconnected rebase onto the reopened text', () => {
+  const base = text('one\ntwo\nthree\n');
+  // Typed at the end of "two".
+  const local = ChangeSet.of({ from: 7, insert: ' UNSENT' }, base.length);
+  const same = rebase(base, local, base);
+  expect(same.exact).toBe(true);
+  expect(same.changes.apply(base).toString()).toBe('one\ntwo UNSENT\nthree\n');
+  // The file changed on disk meanwhile, above and below.
+  const server = text('zero\none\ntwo\nthree\nfour\n');
+  const merged = rebase(base, local, server);
+  expect(merged.exact).toBe(false);
+  expect(merged.changes.apply(server).toString()).toBe('zero\none\ntwo UNSENT\nthree\nfour\n');
+  // The cursor, after the typed text, stays after it.
+  expect(merged.after.mapPos(14)).toBe(19);
 });

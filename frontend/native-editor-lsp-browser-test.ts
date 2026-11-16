@@ -191,6 +191,11 @@ try {
   await until('other.fake', async () => (await lines(page, paneId)) === 'thing defined here\n');
   console.log('PASS workspace symbols');
 
+  // Files opened before and after the server is ready both have its language.
+  assert.match(log(), new RegExp(`^open ${main} fake$`, 'm'));
+  assert.match(log(), new RegExp(`^open ${join(dir, 'other.fake')} fake$`, 'm'));
+  console.log('PASS language ids');
+
   // The command palette runs them too.
   await page.keyboard.press('Control+a');
   await page.keyboard.press(':');
@@ -233,6 +238,14 @@ try {
   const buffers = await call('editor_buffers', {});
   assert(buffers.some((b: any) => b.path === main && b.language === 'fake'), JSON.stringify(buffers));
   console.log('PASS MCP editor tools');
+
+  // A restarted server's watches work too.
+  const count = (re: RegExp) => (log().match(re) ?? []).length;
+  writeFileSync(join(dir, 'crash.fake'), 'x\n');
+  await until('the restart', () => count(/^answer client\/registerCapability/gm) === 2);
+  writeFileSync(join(dir, 'after.fake'), 'x\n');
+  await until('the watched file after the restart', () => /watched .*after\.fake/.test(log()));
+  console.log('PASS watched files after a restart');
 } catch (error) {
   const shot = process.env.TEST_SHOT;
   if (shot) for (const context of browser.contexts()) await context.pages()[0]?.screenshot({ path: shot });

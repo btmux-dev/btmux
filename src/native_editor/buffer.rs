@@ -97,6 +97,16 @@ pub fn load(path: &Path) -> Result<Loaded, String> {
         }
         Err(e) => return Err(format!("Cannot read {}: {e}", path.display())),
     };
+    let bytes = read(path, &meta)?;
+    let disk = Disk {
+        stamp: Some(Stamp::of(&meta)),
+        hash: Some(hash(&bytes)),
+    };
+    decode(&bytes, disk).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// The bytes of the file `meta` describes, if it can be opened at all.
+fn read(path: &Path, meta: &std::fs::Metadata) -> Result<Vec<u8>, String> {
     if meta.is_dir() {
         return Err(format!("{} is a directory", path.display()));
     }
@@ -107,12 +117,7 @@ pub fn load(path: &Path) -> Result<Loaded, String> {
             MAX_FILE_BYTES >> 20
         ));
     }
-    let bytes = std::fs::read(path).map_err(|e| format!("Cannot read {}: {e}", path.display()))?;
-    let disk = Disk {
-        stamp: Some(Stamp::of(&meta)),
-        hash: Some(hash(&bytes)),
-    };
-    decode(&bytes, disk).map_err(|e| format!("{}: {e}", path.display()))
+    std::fs::read(path).map_err(|e| format!("Cannot read {}: {e}", path.display()))
 }
 
 fn decode(bytes: &[u8], disk: Disk) -> Result<Loaded, String> {
@@ -153,22 +158,39 @@ fn encode(text: &str, line_ending: LineEnding, bom: bool) -> Vec<u8> {
     out
 }
 
-/// The disk state if it differs from `known`: `None` if unchanged, else the
-/// new state, with the file's text when it exists.
-pub fn changed_on_disk(path: &Path, known: Disk) -> Option<Option<Loaded>> {
+/// The file on disk, when it differs from `known`.
+pub enum OnDisk {
+    Deleted,
+    /// Its text, or why it can't be opened (binary, too large): still a
+    /// change, which a save must not overwrite unasked.
+    Changed(Result<Loaded, String>),
+}
+
+/// How the file differs from `known`, if it does. Compares bytes, not
+/// text, so a replacement that can't be decoded still counts.
+pub fn changed_on_disk(path: &Path, known: Disk) -> Option<OnDisk> {
     let meta = match std::fs::metadata(path) {
         Ok(meta) => meta,
-        Err(_) => return known.stamp.map(|_| None),
+        Err(_) => return known.stamp.map(|_| OnDisk::Deleted),
     };
     let stamp = Stamp::of(&meta);
     if known.stamp == Some(stamp) {
         return None;
     }
-    let loaded = load(path).ok()?;
-    if loaded.disk.hash == known.hash {
+    let bytes = match read(path, &meta) {
+        Ok(bytes) => bytes,
+        Err(e) => return Some(OnDisk::Changed(Err(e))),
+    };
+    let hash = hash(&bytes);
+    if known.hash == Some(hash) {
         return None;
     }
-    Some(Some(loaded))
+    let disk = Disk {
+        stamp: Some(stamp),
+        hash: Some(hash),
+    };
+    let loaded = decode(&bytes, disk).map_err(|e| format!("{}: {e}", path.display()));
+    Some(OnDisk::Changed(loaded))
 }
 
 /// Write `text` to `path` unless the file changed since `known` (or `force`).
@@ -182,7 +204,7 @@ pub fn save(
     force: bool,
 ) -> Result<Disk, SaveError> {
     if !force {
-        if let Some(Some(_)) = changed_on_disk(path, known) {
+        if let Some(OnDisk::Changed(_)) = changed_on_disk(path, known) {
             return Err(SaveError::Conflict);
         }
     }
@@ -498,8 +520,20 @@ mod tests {
             save(&path, "four\n", LineEnding::Lf, false, disk, false),
             Err(SaveError::Conflict)
         ));
-        save(&path, "four\n", LineEnding::Lf, false, disk, true).unwrap();
+        let disk = save(&path, "four\n", LineEnding::Lf, false, disk, true).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "four\n");
+        // Replaced by something that isn't text: still a conflict.
+        let binary = [0u8, 1, 2, 3, 4, 5, 6];
+        std::fs::write(&path, binary).unwrap();
+        assert!(matches!(
+            changed_on_disk(&path, disk),
+            Some(OnDisk::Changed(Err(_)))
+        ));
+        assert!(matches!(
+            save(&path, "five\n", LineEnding::Lf, false, disk, false),
+            Err(SaveError::Conflict)
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), binary);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

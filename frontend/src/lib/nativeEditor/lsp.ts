@@ -1,6 +1,5 @@
 import {
   findReferencesKeymap,
-  formatKeymap,
   hoverTooltips,
   jumpToDefinition,
   jumpToDefinitionKeymap,
@@ -249,9 +248,11 @@ type TextEdit = { range: PublishParams['diagnostics'][number]['range']; newText:
 /** Format with the language server, if it can; resolves once applied. */
 export async function format(view: EditorView) {
   const plugin = LSPPlugin.get(view);
-  if (!plugin || (plugin.client as any).hasCapability('documentFormattingProvider') === false) return;
+  const doc = viewDocs.get(view);
+  if (!plugin || !doc || (plugin.client as any).hasCapability('documentFormattingProvider') === false) return;
   plugin.client.sync();
   const uri = plugin.uri;
+  const start = view.state.doc;
   await plugin.client.withMapping(async (mapping) => {
     const edits = await plugin.client.request<unknown, TextEdit[] | null>('textDocument/formatting', {
       textDocument: { uri },
@@ -261,6 +262,19 @@ export async function format(view: EditorView) {
       },
     });
     if (!edits?.length) return;
+    // The view is shared: it may show another file by now, or this one
+    // through a new plugin, which the mapping doesn't follow.
+    if (LSPPlugin.get(view) !== plugin) {
+      // Still the formatted text: apply it there, shown or not.
+      if (doc.state?.doc !== start) return;
+      const changes = edits.map((e) => ({
+        from: offset(start, e.range.start),
+        to: offset(start, e.range.end),
+        insert: e.newText,
+      }));
+      doc.update({ changes, userEvent: 'format' });
+      return;
+    }
     const changed = mapping.getMapping(uri);
     const changes = [];
     for (const edit of edits) {
@@ -277,6 +291,13 @@ export async function format(view: EditorView) {
     view.dispatch({ changes, userEvent: 'format' });
   });
 }
+
+/** Instead of `formatKeymap`, whose command would format whatever file the view shows by then. */
+const formatCommand = (view: EditorView) => {
+  if (!LSPPlugin.get(view)) return false;
+  format(view).catch((error) => toast('Formatting failed', error));
+  return true;
+};
 
 const clients = new Map<number, LSPClient>();
 
@@ -323,7 +344,7 @@ function client(server: number): LSPClient {
       hoverTooltips(),
       signatureHelp(),
       keymap.of([
-        ...formatKeymap,
+        { key: 'Shift-Alt-f', run: formatCommand, preventDefault: true },
         ...jumpToDefinitionKeymap,
         ...findReferencesKeymap,
         { key: 'F2', run: startRename, preventDefault: true },
