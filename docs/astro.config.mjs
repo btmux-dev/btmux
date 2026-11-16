@@ -2,6 +2,7 @@ import { defineConfig } from "astro/config";
 import { unified } from "@astrojs/markdown-remark";
 import starlight from "@astrojs/starlight";
 import starlightLinksValidator from "starlight-links-validator";
+import starlightLlmsTxt from "starlight-llms-txt";
 import { remarkRepoLinks } from "./src/remark-repo-links.mjs";
 
 const repo = "https://github.com/buntec/btmux";
@@ -25,7 +26,15 @@ export default defineConfig({
   },
   integrations: [
     starlight({
-      plugins: [starlightLinksValidator()],
+      plugins: [
+        starlightLinksValidator(),
+        // /llms.txt, /llms-full.txt, and /llms-small.txt (https://llmstxt.org).
+        starlightLlmsTxt({
+          projectName: "btmux",
+          description:
+            "btmux is a terminal emulator and tmux-style session manager that runs in the browser, a desktop app, and on phones. A Rust server owns the shells; clients attach over WebSockets. It tracks coding agents, and has a REST API, an MCP server, and a tmux-style CLI.",
+        }),
+      ],
       title: "btmux",
       description:
         "A browser-based tmux: terminal emulator and session manager.",
