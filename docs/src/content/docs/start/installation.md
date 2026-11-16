@@ -39,18 +39,9 @@ brew upgrade --cask buntec/btmux/btmux     # desktop app
 btmux upgrade                              # keeps running pane processes
 ```
 
-Skipping `brew update` can leave a stale tap that doesn't list the new release.
-`btmux upgrade` re-executes the running server in place, keeping its shells and
-scrollback; if it reports that the running server can't take over (it predates
-the command, or the upgrade format changed), run `btmux restart` instead, which
-ends running pane processes. It refuses while the built-in Neovim has unsaved
-changes, and exits with status 3 when the server keeps running the old version.
-[How in-place upgrades work](../internals/upgrade.md) explains the mechanism. Without either the service keeps the old version,
-and the desktop app shows
-a version-mismatch warning (**About btmux** lists both versions). A service
-installed from Homebrew points at the version-independent
-`<prefix>/opt/btmux/bin/btmux`, so it survives upgrades; if you installed it
-with an older btmux, re-run `btmux install` once. Quit the desktop app before
+Without `brew update`, the tap may not list the new release. `btmux upgrade`
+keeps shells and scrollback; if it can't, run `btmux restart`, which ends them
+([how upgrades work](../internals/upgrade.md)). Quit the desktop app before
 upgrading the cask.
 
 ## Background service
