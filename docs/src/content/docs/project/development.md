@@ -20,4 +20,5 @@ just check  # type-check Rust and TypeScript
 ```
 
 Run `just` to list all recipes. The dev server uses the `dev` profile and the
-fixed access token `1234`.
+fixed access token `1234`, which the frontend at `http://localhost:5173` asks for
+in a form.

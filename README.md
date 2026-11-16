@@ -79,7 +79,7 @@ connects, with no sign-in. If it finds other btmux servers, it
 
 **Browser / CLI**: run `btmux`. It opens `http://127.0.0.1:8004` and prints the
 path of its access token file. Sign in with username `btmux` and the file's
-contents as the password (see [Access tokens](docs/src/content/docs/start/sign-in.md)).
+contents as the password (see [Access tokens](docs/src/content/docs/start/sign-in.mdx)).
 
 Key bindings start with a prefix, as in tmux, by default `C-a` (Ctrl+A). Press
 `<prefix> + ?` to see them all, or `<prefix> + :` to open the command palette.
@@ -87,7 +87,7 @@ Key bindings start with a prefix, as in tmux, by default `C-a` (Ctrl+A). Press
 ## Learn more
 
 - [Installation](docs/src/content/docs/start/installation.mdx): Windows, services, tokens, remote access, and shell completions
-- [Phones, tablets, and Tailscale](docs/src/content/docs/features/phones-and-tailscale.md): serving over HTTPS on your tailnet, QR sign-in, and touch screens
+- [Phones, tablets, and Tailscale](docs/src/content/docs/features/phones-and-tailscale.mdx): serving over HTTPS on your tailnet, QR sign-in, and touch screens
 - [In-place upgrades](docs/src/content/docs/internals/upgrade.md): how `btmux upgrade` keeps shells running across a new binary
 - [Configuration](docs/src/content/docs/configuration/index.md): `~/.config/btmux/config.toml` (`%APPDATA%\btmux\config.toml` on Windows), themes, and profiles
 - [Shader wallpapers](docs/src/content/docs/features/shaders.md): WebGPU generators, parameters, and randomization

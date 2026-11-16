@@ -22,3 +22,6 @@ indices, and each pane's last-known working directory. Running shell processes
 and scrollback do not survive a btmux restart. Restored panes lazily start fresh
 shells in their saved working directories. `btmux upgrade` moves a running
 server to a new binary without a restart, keeping both.
+
+A file lock keeps two instances from using the same profile. Each profile has
+its own [access token](access.md#token-files).

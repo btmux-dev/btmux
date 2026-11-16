@@ -4,16 +4,37 @@ sidebar:
   order: 9
 ---
 
+import { Steps } from "@astrojs/starlight/components";
+
 ## Tailscale
 
-To reach btmux from other devices on your
-[tailnet](https://tailscale.com), including phones, start it with
-`--tailscale`:
+To reach btmux from other devices on your [tailnet](https://tailscale.com),
+including phones:
 
-```sh
-btmux --tailscale                        # https://<machine>.<tailnet>.ts.net:8004
-btmux --tailscale install                # the same, as a background service
-```
+<Steps>
+
+1. Install Tailscale and enable [MagicDNS](https://tailscale.com/kb/1081/magicdns)
+   and [HTTPS certificates](https://tailscale.com/kb/1153/enabling-https) for the
+   tailnet. btmux needs the `tailscale` CLI; on macOS, the app's bundled CLI also
+   works.
+
+2. Start btmux with `--tailscale`:
+
+   ```sh
+   btmux --tailscale                        # https://<machine>.<tailnet>.ts.net:8004
+   btmux --tailscale install                # the same, as a background service
+   ```
+
+3. Open the URL it prints, also shown by the status bar's tailnet button, and
+   [sign in](../start/sign-in.mdx) with the access token. Browsers keep the login
+   for 400 days.
+
+4. To sign in a phone or tablet, open the tailnet button's popover and scan its
+   QR code. It signs that browser in without the token.
+
+</Steps>
+
+### How it works
 
 btmux runs `tailscale serve --bg --https=<port>`, which serves the machine's
 tailnet name over HTTPS with a Tailscale certificate and proxies to btmux on
@@ -28,16 +49,10 @@ it's gone, for example after Tailscale restarts.
 The status bar's tailnet button shows the URL, with a copy button, or the
 last error.
 
-While its popover is open, it also shows a QR code of a sign-in link for that
-URL. Scanning it on a phone or tablet signs that browser in without the access
-token. Each code works once and expires after two minutes; the popover renews
+The QR code is a sign-in link for that URL. Each code works once and expires after two minutes; the popover renews
 it while open. The token never appears in the link.
 
-This needs the `tailscale` CLI (on macOS, the app's bundled CLI also works),
-[MagicDNS](https://tailscale.com/kb/1081/magicdns), and
-[HTTPS certificates](https://tailscale.com/kb/1153/enabling-https) enabled for
-the tailnet. Sign in with the [access token](../start/sign-in.md#first-sign-in); browsers keep the login for
-400 days. HTTPS matters even though the tailnet is encrypted: browsers allow
+HTTPS matters even though the tailnet is encrypted: browsers allow
 the clipboard, notifications, and WebGPU shader wallpapers only on secure
 origins.
 

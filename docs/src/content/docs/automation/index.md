@@ -19,7 +19,7 @@ export BTMUX_AUTH_TOKEN="$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/btmux/stat
 ```
 
 For a named profile or development instance, use its
-[profile-specific token file](../start/sign-in.md#first-sign-in). If the server was
+[profile-specific token file](../configuration/access.md#token-files). If the server was
 started with `BTMUX_AUTH_TOKEN` set, use that value instead.
 
 Send `Authorization: Bearer $BTMUX_AUTH_TOKEN` with every request. Existing MCP
