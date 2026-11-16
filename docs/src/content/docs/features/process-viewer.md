@@ -9,6 +9,9 @@ process and listening port, and how much CPU, memory, and disk each session,
 window, and pane is using. Use it to find the dev server holding a port, or
 the pane whose build is eating the machine.
 
+![The process viewer scoped to one session: its processes on the left, and per-pane usage with a listening port on the right](../../../assets/screenshots/process-viewer-dark.png)
+![The process viewer scoped to one session: its processes on the left, and per-pane usage with a listening port on the right](../../../assets/screenshots/process-viewer-light.png)
+
 It has two sides, the process or port list and per-pane usage, and `Tab`
 switches between them. Its keys work without the prefix:
 

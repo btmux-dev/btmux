@@ -63,7 +63,9 @@ regenerate rather than edit them: `just docs-config` (All options, from
 `generate-config`), `just docs-cli` (All commands, from `--help`; a new command
 needs a group in `docs/scripts/cli-reference.mjs`), and `just docs-screenshots`
 (`frontend/docs-screenshots.ts`, demo sessions on a browser-test stack; it
-must show nothing of the host, so no process viewer).
+must show nothing of the host, so the process viewer shot is scoped to the
+demo session with the user's name masked; its Neovim shots use rust-analyzer,
+which needs `RUST_SRC_PATH` set to the standard library's sources).
 
 `CHANGELOG.md` at the repo root is the changelog's only source: the docs'
 Changelog page is generated from it when the site loads its config. A change a

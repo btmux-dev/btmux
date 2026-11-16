@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { chromium, type Page } from 'playwright';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import { waitForAsync } from './browser-test-utils';
 
@@ -47,7 +47,7 @@ write(
 write('.gitignore', 'node_modules\n.env\n');
 write(
   'src/server.ts',
-  `import { health } from './routes/health';\nimport { users } from './routes/users';\n\nconst routes = [health, users];\n\nexport function handle(request: Request): Response | Promise<Response> {\n  const { pathname } = new URL(request.url);\n  for (const route of routes) {\n    const match = route.pattern.exec(pathname);\n    if (match) return route.handler(request, match);\n  }\n  return new Response('Not found', { status: 404 });\n}\n\nBun.serve({ port: 3000, fetch: handle });\n`,
+  `import { health } from './routes/health';\nimport { users } from './routes/users';\n\nconst routes = [health, users];\n\nexport function handle(request: Request): Response {\n  const { pathname } = new URL(request.url);\n  for (const route of routes) {\n    const match = route.pattern.exec(pathname);\n    if (match) return route.handler(request, match);\n  }\n  return new Response('Not found', { status: 404 });\n}\n\nBun.serve({ port: 3000, fetch: handle });\n`,
 );
 write(
   'src/routes/health.ts',
@@ -80,7 +80,7 @@ git('merge', '--no-ff', '-m', 'Merge orders', 'orders');
 // Work in progress: one staged, one unstaged, one untracked.
 write(
   'src/server.ts',
-  `import { health } from './routes/health';\nimport { orders } from './routes/orders';\nimport { users } from './routes/users';\n\nconst routes = [health, users, orders];\n\nexport function handle(request: Request): Response | Promise<Response> {\n  const { pathname } = new URL(request.url);\n  for (const route of routes) {\n    const match = route.pattern.exec(pathname);\n    if (match) return route.handler(request, match);\n  }\n  return Response.json({ error: 'not found' }, { status: 404 });\n}\n\nBun.serve({ port: Number(process.env.PORT ?? 3000), fetch: handle });\n`,
+  `import { health } from './routes/health';\nimport { orders } from './routes/orders';\nimport { users } from './routes/users';\n\nconst routes = [health, users, orders];\n\nexport function handle(request: Request): Response {\n  const { pathname } = new URL(request.url);\n  for (const route of routes) {\n    const match = route.pattern.exec(pathname);\n    if (match) return route.handler(request, match);\n  }\n  return Response.json({ error: 'not found' }, { status: 404 });\n}\n\nBun.serve({ port: Number(process.env.PORT ?? 3000), fetch: handle });\n`,
 );
 git('add', 'src/server.ts');
 write(
@@ -88,37 +88,98 @@ write(
   '# acme-api\n\nThe Acme HTTP API.\n\n## Develop\n\n```sh\nbun install\nbun dev\n```\n\nSet `PORT` to listen elsewhere.\n\n## Routes\n\n- `GET /health`\n- `GET /users/:id`\n- `POST /orders`\n',
 );
 write('tests/orders.test.ts', `import { expect, test } from 'bun:test';\n\ntest.todo('creates an order');\n`);
-// Types for the runtime globals, so the language server reports no errors.
-write(
-  'src/globals.d.ts',
-  'declare const Bun: { serve(options: { port: number; fetch: (request: Request) => Response | Promise<Response> }): void };\ndeclare const process: { env: Record<string, string | undefined>; uptime(): number };\n',
-);
-write(
-  'tsconfig.json',
-  '{\n  "compilerOptions": { "target": "esnext", "module": "esnext", "moduleResolution": "bundler" },\n  "include": ["src"]\n}\n',
-);
-git('add', 'src/globals.d.ts', 'tsconfig.json');
-git('commit', '-m', 'Declare runtime globals');
+// A small Rust server: the program the server window runs (a listening port
+// for the process viewer) and the file the Neovim shots edit. rust-analyzer
+// needs the standard library's sources, which a toolchain without `rust-src`
+// lacks: point RUST_SRC_PATH at them.
+assert(process.env.RUST_SRC_PATH, 'RUST_SRC_PATH is required (the Rust standard library sources)');
+const router = path.join(home, 'router');
+mkdirSync(path.join(router, 'src'), { recursive: true });
+writeFileSync(path.join(router, 'Cargo.toml'), '[package]\nname = "router"\nversion = "0.1.0"\nedition = "2024"\n');
+writeFileSync(
+  path.join(router, 'src', 'main.rs'),
+  String.raw`use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Write};
+use std::net::{TcpListener, TcpStream};
 
-// A language server for the Neovim shots, outside the demo repo, and a Neovim
-// config that uses it with native completion, as the Neovim page suggests.
-const tools = path.join(home, 'tools');
-mkdirSync(tools);
-writeFileSync(path.join(tools, 'package.json'), '{}\n');
-execFileSync('bun', ['add', 'typescript-language-server', 'typescript@5'], { cwd: tools, stdio: 'ignore' });
+/// A parsed HTTP request.
+struct Request {
+    method: String,
+    path: String,
+    headers: HashMap<String, String>,
+}
+
+impl Request {
+    /// Reads the request line and headers from a connection.
+    fn read(stream: &TcpStream) -> Option<Request> {
+        let mut lines = BufReader::new(stream).lines();
+        let first = lines.next()?.ok()?;
+        let mut parts = first.split_whitespace();
+        let method = parts.next()?.to_string();
+        let path = parts.next()?.to_string();
+        let mut headers = HashMap::new();
+        for line in lines {
+            let line = line.ok()?;
+            let Some((name, value)) = line.split_once(": ") else {
+                break;
+            };
+            headers.insert(name.to_lowercase(), value.to_string());
+        }
+        Some(Request { method, path, headers })
+    }
+
+    /// The value of a header, by lowercase name.
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).map(String::as_str)
+    }
+}
+
+/// The status and body to answer a request with.
+fn respond(request: &Request) -> (u16, String) {
+    match (request.method.as_str(), request.path.as_str()) {
+        ("GET", "/health") => (200, "ok".to_string()),
+        ("GET", "/agent") => {
+            let agent = request.header("user-agent").unwrap_or("unknown");
+            (200, agent.to_string())
+        }
+        _ => (404, "not found".to_string()),
+    }
+}
+
+fn main() -> std::io::Result<()> {
+    let listener = TcpListener::bind("127.0.0.1:8089")?;
+    for stream in listener.incoming() {
+        let mut stream = stream?;
+        let Some(request) = Request::read(&stream) else {
+            continue;
+        };
+        let (status, body) = respond(&request);
+        write!(stream, "HTTP/1.1 {status} OK\r\ncontent-length: {}\r\n\r\n{body}", body.len())?;
+    }
+    Ok(())
+}
+`,
+);
+// Neovim config for the stack: rust-analyzer with native completion, as the
+// Neovim page suggests.
 mkdirSync(path.join(configHome, 'nvim'), { recursive: true });
 writeFileSync(
   path.join(configHome, 'nvim', 'init.lua'),
   `vim.o.number = true
+-- A half-typed line is an error; the shots are about completion.
+vim.diagnostic.enable(false)
+vim.o.statusline = '%<%f %h%w%m%r%=%-14.(%l,%c%V%) %P'
 vim.o.signcolumn = 'no'
 vim.o.autocomplete = true
 vim.o.completeopt = 'menuone,noselect,fuzzy,popup'
-vim.lsp.config('ts', {
-  cmd = { ${JSON.stringify(path.join(tools, 'node_modules', '.bin', 'typescript-language-server'))}, '--stdio' },
-  filetypes = { 'typescript' },
-  root_markers = { 'package.json' },
+vim.lsp.config('rust_analyzer', {
+  cmd = { 'rust-analyzer' },
+  cmd_env = { RUST_SRC_PATH = ${JSON.stringify(process.env.RUST_SRC_PATH)} },
+  filetypes = { 'rust' },
+  root_markers = { 'Cargo.toml' },
+  settings = { ['rust-analyzer'] = { checkOnSave = false } },
 })
-vim.lsp.enable('ts')
+vim.lsp.enable('rust_analyzer')
 vim.api.nvim_create_autocmd('LspAttach', {
   callback = function(ev)
     vim.lsp.completion.enable(true, ev.data.client_id, ev.buf, { autotrigger = true })
@@ -159,7 +220,7 @@ const prompt = (pane: string) => run(pane, "PS1='$ '; clear");
 const dev = btmux('new-session', '-s', 'acme-api', '-n', 'dev', '-c', repo);
 const side = btmux('split-window', '-t', dev, '-h', '-d', '-c', repo);
 const below = btmux('split-window', '-t', side, '-v', '-d', '-c', repo);
-const server = btmux('new-window', '-t', 'acme-api', '-n', 'server', '-d', '-c', repo);
+const server = btmux('new-window', '-t', 'acme-api', '-n', 'server', '-d', '-c', router);
 const web = btmux('new-session', '-s', 'website', '-n', 'site', '-c', site);
 const agents = [
   ['orders-api', 'claude', 'working', 'Add pagination to GET /orders'],
@@ -181,7 +242,7 @@ for (const [pane, command] of [
   [dev, 'git log --oneline --graph'],
   [side, 'cat src/routes/health.ts'],
   [below, 'ls src tests'],
-  [server, 'cat package.json'],
+  [server, 'cargo build -q && ./target/debug/router'],
   [web, 'cat notes.md'],
   [dev, 'git status --short'],
 ]) {
@@ -297,7 +358,32 @@ try {
       () => store('setFileBrowserOpen(false)'),
       1800,
     );
-    // No process viewer: it lists the host's own processes, users, and paths.
+    // The process viewer lists the host's processes, so the shot shows only
+    // the demo session's, with the user's name and home masked.
+    await shot(
+      'process-viewer',
+      async () => {
+        await overlay('process');
+        // Ports arrive with every third sample.
+        await page.waitForTimeout(4500);
+        await page.keyboard.press('Tab');
+        await page.waitForTimeout(600);
+        await page.keyboard.press('l');
+        await page.waitForTimeout(1500);
+        await page.evaluate(
+          ({ user, home }) => {
+            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+            for (let node = walker.nextNode(); node; node = walker.nextNode())
+              if (node.nodeValue!.includes(user))
+                node.nodeValue = node.nodeValue!.replaceAll(home, '/home/ada').replaceAll(user, 'ada');
+            for (const element of document.querySelectorAll('[title]')) element.setAttribute('title', '');
+          },
+          { user: userInfo().username, home: homedir() },
+        );
+      },
+      escape,
+      300,
+    );
     await shot(
       'agent-view',
       () => store('setAgentGridOpen(true)'),
@@ -358,19 +444,35 @@ try {
         await page.keyboard.press('Escape');
         await page.waitForTimeout(600);
       };
-      await command('e! src/server.ts');
-      // The language server starts and loads the project.
-      await page.waitForTimeout(scheme === 'dark' ? 12_000 : 3000);
-      // LSP completion of a route's members, inside the loop of handle().
-      await page.keyboard.type('9Goroute.');
-      await page.waitForTimeout(2500);
-      await page.keyboard.press('Control+n');
+      await command(`cd ${router}`);
+      await command('e! src/main.rs');
+      // rust-analyzer loads the crate and the standard library.
+      if (scheme === 'dark') await page.waitForTimeout(20_000);
+      // LSP completion of the request's members in respond(), retried until
+      // the server answers.
+      let completed = false;
+      for (let attempt = 0; attempt < 12 && !completed; attempt++) {
+        await page.waitForTimeout(3000);
+        await command("call search('^fn respond')");
+        // At the top of the window, so the menu opens below the cursor.
+        await page.keyboard.type('ztorequest.');
+        await page.waitForTimeout(2500);
+        await page.keyboard.press('Control+n');
+        await page.waitForTimeout(500);
+        completed = (await page.locator('[aria-current="true"]').count()) > 0;
+        if (!completed) {
+          await escape();
+          await command('e!');
+        }
+      }
+      assert(completed, 'no completion menu from rust-analyzer');
       await save('neovim-completion');
       await escape();
       await command('e!');
-      // LSP hover on handle.
-      await page.keyboard.type('7G2wK');
-      await page.waitForTimeout(1500);
+      // LSP hover on Request::read.
+      await command("call search('read(&stream')");
+      await page.keyboard.type('zzK');
+      await page.waitForTimeout(2000);
       await save('neovim-hover');
       await page.keyboard.type('j');
       await page.waitForTimeout(400);
