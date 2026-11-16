@@ -375,6 +375,9 @@ impl SessionManager {
                 changed |= agent.observe_background(revision);
                 continue;
             }
+            if agent.program_suspended() {
+                changed |= agent.resume_program(pane.pty.program_summary().as_ref(), now);
+            }
             if reload {
                 agent.invalidate_screen();
             }
@@ -391,7 +394,8 @@ impl SessionManager {
 
     /// Applies changed OSC 7501 records, first dropping those of programs
     /// that exited. A report gives a pane without an agent one; records that
-    /// only ended, such as a done record outliving its program, don't.
+    /// only ended don't, and results no agent shows are forgotten, so a later
+    /// report doesn't bring them back.
     pub fn sync_program_status(&mut self, now: Instant) -> bool {
         let mut changed = false;
         let panes = self
@@ -401,24 +405,36 @@ impl SessionManager {
             .flat_map(|window| &window.panes);
         for pane in panes {
             pane.pty.drop_exited_programs();
-            let Some(change) = pane.pty.take_program_status() else {
-                continue;
-            };
-            match self.agents.get_mut(&pane.id) {
-                Some(agent) if agent.is_active() => {
+            let agent = self
+                .agents
+                .get_mut(&pane.id)
+                .filter(|agent| agent.is_active());
+            let change = pane.pty.take_program_status();
+            match (agent, change) {
+                (Some(agent), Some(change)) => {
                     changed |= agent.observe_program(change.summary.as_ref(), now);
                 }
-                _ if change.reported => {
+                (Some(_), None) => {}
+                (None, Some(change)) if change.reported => {
                     if let Some(summary) = change.summary {
                         self.agents
                             .insert(pane.id, AgentLifecycle::program(&summary, now));
                         changed = true;
                     }
                 }
-                _ => {}
+                (None, _) => pane.pty.forget_program_results(),
             }
         }
         changed
+    }
+
+    /// Records await `sync_program_status`.
+    pub fn program_status_pending(&self) -> bool {
+        self.sessions
+            .iter()
+            .flat_map(|session| &session.windows)
+            .flat_map(|window| &window.panes)
+            .any(|pane| pane.pty.program_status_pending())
     }
 
     /// Ends hook-only agents once their pane is back at the shell prompt:
@@ -1009,6 +1025,10 @@ impl SessionManager {
         if agent.status.state == AgentState::Done {
             agent.status.state = AgentState::Idle;
             agent.status.message = None;
+            // Seen, so later records can't bring the result back.
+            if let Some(pane) = self.find_pane(pane_id) {
+                pane.pty.forget_program_results();
+            }
             return true;
         }
         unread
@@ -2603,8 +2623,10 @@ mod agent_tests {
         let pane_id = mgr.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
         let pane = mgr.find_pane_mut(pane_id).unwrap();
         pane.pty.ensure_spawned(80, 24).unwrap();
-        // "deploy?" in base64.
-        let report = b"printf '\\033]7501;state=blocked:app=deploy:msg=ZGVwbG95Pw\\033\\\\'\n";
+        // A program in the foreground reports "deploy?" in base64, then clears.
+        let report =
+            b"sh -c 'printf \"\\033]7501;state=blocked:app=deploy:msg=ZGVwbG95Pw\\033\\\\\\\\\"; \
+            read x; printf \"\\033]7501;state=clear\\007\"; read x'\n";
         pane.pty.input_tx.send(report.to_vec()).unwrap();
         let state = |mgr: &mut SessionManager| {
             mgr.sync_program_status(Instant::now());
@@ -2620,26 +2642,23 @@ mod agent_tests {
         assert_eq!(status.message.as_deref(), Some("deploy?"));
         assert!(!mgr.sync_program_status(Instant::now()));
 
-        let clear = b"printf '\\033]7501;state=clear\\007'\n";
-        mgr.find_pane(pane_id)
-            .unwrap()
-            .pty
-            .input_tx
-            .send(clear.to_vec())
-            .unwrap();
+        let input = |mgr: &SessionManager, bytes: &[u8]| {
+            mgr.find_pane(pane_id)
+                .unwrap()
+                .pty
+                .input_tx
+                .send(bytes.to_vec())
+                .unwrap()
+        };
+        input(&mgr, b"\n");
         while state(&mut mgr).is_some() && Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert_eq!(state(&mut mgr), None);
+        input(&mgr, b"\n");
 
         // A result outlives the program at the prompt until acknowledged.
-        let done = b"printf '\\033]7501;state=done:app=build\\007'\n";
-        mgr.find_pane(pane_id)
-            .unwrap()
-            .pty
-            .input_tx
-            .send(done.to_vec())
-            .unwrap();
+        input(&mgr, b"printf '\\033]7501;state=done:app=build\\007'\n");
         while state(&mut mgr).is_none() && Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -2648,6 +2667,8 @@ mod agent_tests {
         assert!(!mgr.end_agents_at_prompt(later, grace));
         assert_eq!(state(&mut mgr).unwrap().state, AgentState::Done);
         assert!(mgr.acknowledge_pane(pane_id));
+        // Acknowledged, it is gone from the records too.
+        assert_eq!(mgr.find_pane(pane_id).unwrap().pty.program_summary(), None);
         assert!(mgr.end_agents_at_prompt(later, grace));
         assert_eq!(state(&mut mgr), None);
     }

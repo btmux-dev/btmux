@@ -190,7 +190,8 @@ mod windows {
     use super::Pid;
     use std::collections::HashMap;
     use windows_sys::Win32::Foundation::{
-        CloseHandle, FILETIME, INVALID_HANDLE_VALUE, WAIT_TIMEOUT,
+        CloseHandle, GetLastError, ERROR_ACCESS_DENIED, FILETIME, INVALID_HANDLE_VALUE,
+        WAIT_TIMEOUT,
     };
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
@@ -254,7 +255,8 @@ mod windows {
         unsafe {
             let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid as u32);
             if handle.is_null() {
-                return false;
+                // A protected process exists, like EPERM on Unix.
+                return GetLastError() == ERROR_ACCESS_DENIED;
             }
             let running = WaitForSingleObject(handle, 0) == WAIT_TIMEOUT;
             CloseHandle(handle);

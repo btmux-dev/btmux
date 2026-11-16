@@ -34,6 +34,16 @@ pub fn foreground(probe: &Probe) -> Option<Pid> {
     }
 }
 
+/// The foreground group of a program attached to the terminal; `None` while
+/// the shell itself is in the foreground, as at its prompt.
+pub fn attached(probe: &Probe) -> Option<Pid> {
+    let group = foreground(probe)?;
+    // The shell can exec another program in its group (`exec nvim`).
+    let shell = group == probe.shell
+        && (probe.prompt.is_some() || crate::process::name(group).is_none_or(|n| is_shell(&n)));
+    (!shell).then_some(group)
+}
+
 pub fn resize_master(master: &Master, cols: u16, rows: u16) {
     set_size(master.as_raw_fd(), cols, rows);
 }

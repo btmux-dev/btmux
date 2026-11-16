@@ -276,6 +276,9 @@ pub struct AgentLifecycle {
     named_by_report: bool,
     /// The name came from OSC 7501 records, which process and hook names outrank.
     named_by_program: bool,
+    /// The program left the foreground while its records set the state;
+    /// they set it again when it returns.
+    program_suspended: bool,
     last_seen: Instant,
     ended: bool,
     ended_process: Option<AgentProcess>,
@@ -368,6 +371,7 @@ impl AgentLifecycle {
             observed_name: None,
             named_by_report: false,
             named_by_program: false,
+            program_suspended: false,
             last_seen: now,
             ended: false,
             ended_process: None,
@@ -491,6 +495,7 @@ impl AgentLifecycle {
         self.detection = None;
         let previous = self.status.clone();
         self.status.background = None;
+        self.program_suspended |= self.authority == Authority::Program;
         if self.authority != Authority::Explicit {
             self.status.state = AgentState::Unknown;
             self.status.source = Some("process".into());
@@ -615,7 +620,7 @@ impl AgentLifecycle {
     /// Takes the state the pane's OSC 7501 records now report. Without
     /// records, other evidence decides again.
     pub fn observe_program(&mut self, summary: Option<&Summary>, now: Instant) -> bool {
-        if self.authority == Authority::Explicit {
+        if self.authority == Authority::Explicit || self.program_suspended {
             return false;
         }
         let previous = self.status.clone();
@@ -646,6 +651,15 @@ impl AgentLifecycle {
             None => {}
         }
         self.status != previous
+    }
+
+    pub fn program_suspended(&self) -> bool {
+        self.program_suspended
+    }
+
+    /// Back in the foreground: the records' current `summary` applies again.
+    pub fn resume_program(&mut self, summary: Option<&Summary>, now: Instant) -> bool {
+        std::mem::take(&mut self.program_suspended) && self.observe_program(summary, now)
     }
 
     /// Ignores screen and OSC evidence produced before `revision`.
@@ -891,6 +905,8 @@ impl AgentLifecycle {
             self.status.source = report.source;
             self.authority = Authority::Hook;
             self.suppress_old_screen(revision);
+            // A new instance takes over from a suspended program too.
+            self.program_suspended &= !(different_session || restarted);
         }
         Some(self.status != previous)
     }
@@ -924,6 +940,7 @@ impl AgentLifecycle {
         self.authority = Authority::Process;
         self.named_by_report = false;
         self.named_by_program = false;
+        self.program_suspended = false;
         self.turn_id = None;
         self.turn_complete = true;
         self.blocked_tool = None;
@@ -1358,6 +1375,34 @@ mod tests {
         assert!(agent.observe_program(Some(&summary(State::Working)), now));
         agent.apply(report(AgentEvent::SessionStart, "s2", None), 4, now);
         assert_eq!(agent.status.state, AgentState::Idle);
+        assert_eq!(agent.authority(), Authority::Hook);
+        assert!(agent.observe_program(Some(&summary(State::Working)), now));
+        assert_eq!(agent.authority(), Authority::Program);
+    }
+
+    #[test]
+    fn suspended_programs_get_their_status_back() {
+        use program_status::State;
+        let now = Instant::now();
+        let mut agent = claude(now);
+        agent.apply(report(AgentEvent::SessionStart, "s", None), 0, now);
+        let blocked = summary(State::Blocked);
+        agent.observe_program(Some(&blocked), now);
+        assert!(agent.observe_background(1));
+        assert_eq!(agent.status.state, AgentState::Unknown);
+        // Records changing meanwhile wait for the foreground.
+        assert!(!agent.observe_program(Some(&summary(State::Working)), now));
+        assert!(agent.program_suspended());
+        assert!(agent.resume_program(Some(&blocked), now));
+        assert_eq!(agent.status.state, AgentState::Blocked);
+        assert_eq!(agent.authority(), Authority::Program);
+        assert!(!agent.program_suspended());
+
+        // A new hook session in between takes over.
+        agent.observe_background(2);
+        agent.apply(report(AgentEvent::SessionStart, "s2", None), 3, now);
+        assert!(!agent.program_suspended());
+        assert!(!agent.resume_program(Some(&blocked), now));
         assert_eq!(agent.authority(), Authority::Hook);
     }
 

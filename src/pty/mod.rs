@@ -20,12 +20,12 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 #[cfg(unix)]
-use unix::{foreground, resize_master, Master, Probe, Stopping};
+use unix::{attached, foreground, resize_master, Master, Probe, Stopping};
 #[cfg(unix)]
 pub use unix::{hang_up, set_cloexec, Handoff};
 use uuid::Uuid;
 #[cfg(windows)]
-use windows::{foreground, resize_master, Master, Probe};
+use windows::{attached, foreground, resize_master, Master, Probe};
 
 /// Largest single write to a PTY's input queue.
 pub const MAX_INPUT: usize = 64 * 1024;
@@ -383,6 +383,20 @@ impl PtyHandle {
     /// What the OSC 7501 records say, if they changed since the last call.
     pub fn take_program_status(&self) -> Option<program_status::Change> {
         self.program_status.lock().unwrap().take_change()
+    }
+
+    /// OSC 7501 records changed since `take_program_status`.
+    pub fn program_status_pending(&self) -> bool {
+        self.program_status.lock().unwrap().pending()
+    }
+
+    pub fn program_summary(&self) -> Option<program_status::Summary> {
+        self.program_status.lock().unwrap().summary()
+    }
+
+    /// Drops OSC 7501 done and error records.
+    pub fn forget_program_results(&self) {
+        self.program_status.lock().unwrap().forget_results();
     }
 
     /// Drops OSC 7501 records of programs that exited.
@@ -811,9 +825,14 @@ impl OutputPipeline {
         let mut changed = false;
         for mut event in self.osc_parser.program.drain(..) {
             if let program_status::Event::Report(program_status::Report::Set(record)) = &mut event {
-                record.group = *group.get_or_insert_with(|| {
-                    self.probe.lock().unwrap().as_ref().and_then(foreground)
-                });
+                let group = *group
+                    .get_or_insert_with(|| self.probe.lock().unwrap().as_ref().and_then(attached));
+                // With the shell in the foreground, the reporter exited or
+                // runs in the background, and nothing would end the record.
+                if group.is_none() && program_status::transient(record.state) {
+                    continue;
+                }
+                record.group = group;
             }
             changed |= status.apply(event);
         }
@@ -1136,8 +1155,29 @@ mod lifecycle_tests {
     async fn program_status_ends_with_its_program() {
         let mut pane = pane("/bin/bash");
         pane.ensure_spawned(80, 24).unwrap();
+        // From the shell itself, only results are kept: nothing would end
+        // the rest.
         pane.input_tx
-            .send(b"sh -c 'printf \"\\033]7501;state=working\\007\"; exec sleep 30'\r".to_vec())
+            .send(
+                b"printf '\\033]7501;state=working:id=a\\007\\033]7501;state=done:id=b\\007'\r"
+                    .to_vec(),
+            )
+            .unwrap();
+        wait_until(&pane, |pane| {
+            !pane.program_status.lock().unwrap().records().is_empty()
+        })
+        .await;
+        let ids: Vec<_> = pane
+            .program_status
+            .lock()
+            .unwrap()
+            .records()
+            .iter()
+            .map(|r| r.id.clone())
+            .collect();
+        assert_eq!(ids, ["b"]);
+        pane.input_tx
+            .send(b"printf '\\033]7501;state=clear\\007'; sh -c 'printf \"\\033]7501;state=working\\007\"; exec sleep 30'\r".to_vec())
             .unwrap();
         let state = |pane: &PtyHandle| {
             pane.drop_exited_programs();

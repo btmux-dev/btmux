@@ -3,6 +3,7 @@
 //! programs report about themselves, one per id.
 
 use crate::process::Pid;
+use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 
@@ -11,14 +12,20 @@ pub const QUERY_REPLY: &[u8] =
     b"7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth";
 
 const MAX_SEQUENCE: usize = 4096;
-/// `ESC ] 7501 ;` and `ESC \`.
-const FRAMING: usize = 8;
+/// `ESC ] 7501 ;` and `ESC \`, the longer terminator.
+const FRAMING: usize = 9;
 const MAX_KEY: usize = 16;
 const MAX_APP: usize = 32;
 const MAX_ID: usize = 128;
 const MAX_SEGMENT: usize = 32;
 const MAX_DEPTH: usize = 8;
 const MAX_RECORDS: usize = 256;
+
+/// Padded or not.
+const BASE64: GeneralPurpose = GeneralPurpose::new(
+    &base64::alphabet::STANDARD,
+    GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
+);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS), ts(rename = "ProgramState"))]
@@ -178,12 +185,7 @@ fn decode(value: Option<&str>, encoded: usize, decoded: usize) -> Option<Option<
     if value.len() > encoded {
         return None;
     }
-    let engine = base64::engine::GeneralPurpose::new(
-        &base64::alphabet::STANDARD,
-        base64::engine::GeneralPurposeConfig::new()
-            .with_decode_padding_mode(base64::engine::DecodePaddingMode::Indifferent),
-    );
-    let bytes = engine.decode(value).ok()?;
+    let bytes = BASE64.decode(value).ok()?;
     if bytes.len() > decoded {
         return None;
     }
@@ -239,27 +241,17 @@ impl ProgramStatus {
     pub fn apply(&mut self, event: Event) -> bool {
         let before = self.records.len();
         let changed = match event {
+            // Even an unchanged record is a report: it makes the record the
+            // most recent, and the program's status outranks others again.
             Event::Report(Report::Set(record)) => {
-                let index = self.records.iter().position(|r| r.id == record.id);
-                if let Some(index) = index.filter(|&i| self.records[i] == record) {
-                    // Most recent all the same, which can pick another
-                    // summary among equals.
-                    let before = self.summary();
-                    let record = self.records.remove(index);
-                    self.records.push(record);
-                    let changed = self.summary() != before;
-                    self.reported |= changed;
-                    changed
-                } else {
-                    if let Some(index) = index {
-                        self.records.remove(index);
-                    } else if self.records.len() >= MAX_RECORDS {
-                        self.records.remove(0);
-                    }
-                    self.records.push(record);
-                    self.reported = true;
-                    true
+                if let Some(index) = self.records.iter().position(|r| r.id == record.id) {
+                    self.records.remove(index);
+                } else if self.records.len() >= MAX_RECORDS {
+                    self.records.remove(0);
                 }
+                self.records.push(record);
+                self.reported = true;
+                true
             }
             Event::Report(Report::Clear(None)) | Event::Reset => {
                 self.records.clear();
@@ -291,6 +283,17 @@ impl ProgramStatus {
             self.revision += 1;
         }
         changed
+    }
+
+    /// Drops done and error records: their results were seen, or nothing
+    /// shows them. Not a change.
+    pub fn forget_results(&mut self) {
+        self.records.retain(|r| transient(r.state));
+    }
+
+    /// Changed since the last `take_change`.
+    pub fn pending(&self) -> bool {
+        self.synced != self.revision
     }
 
     pub fn take_change(&mut self) -> Option<Change> {
@@ -341,7 +344,7 @@ impl ProgramStatus {
 }
 
 /// Dropped when the program exits or a prompt starts; done and error stay.
-fn transient(state: State) -> bool {
+pub fn transient(state: State) -> bool {
     matches!(state, State::Idle | State::Working | State::Blocked)
 }
 
@@ -421,6 +424,10 @@ mod tests {
             assert_eq!(parse(data.as_bytes()), None, "{data}");
         }
         assert_eq!(set("state=done:msg=aGk").msg.as_deref(), Some("hi"));
+        // The cap counts the longer terminator.
+        let at_cap = format!("state=done:x={}", "a".repeat(MAX_SEQUENCE - FRAMING - 13));
+        assert!(parse(at_cap.as_bytes()).is_some());
+        assert_eq!(parse(format!("{at_cap}a").as_bytes()), None);
         // Invisible formatting is removed.
         let record = set(&format!("state=done:title={}", b64("a\u{202e}b\u{200b}")));
         assert_eq!(record.title.as_deref(), Some("ab"));
@@ -442,7 +449,7 @@ mod tests {
             Some(10)
         ));
         assert!(report(&mut store, "state=done:id=us", Some(10)));
-        assert!(!report(&mut store, "state=done:id=us", Some(10)));
+        assert!(report(&mut store, "state=done:id=us", Some(10)));
         let summary = store.summary().unwrap();
         assert_eq!(summary.state, State::Blocked);
         assert_eq!(summary.app.as_deref(), Some("deploy"));
@@ -462,10 +469,17 @@ mod tests {
         assert!(report(&mut store, "state=working:id=us/x", Some(11)));
         assert!(store.apply(Event::Prompt));
         assert_eq!(store.records().len(), 1);
+        // Seen results go, without a change.
+        report(&mut store, "state=working:id=w", Some(11));
+        store.take_change();
+        store.forget_results();
+        let ids: Vec<_> = store.records().iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, ["w"]);
+        assert!(!store.pending());
         assert!(store.apply(Event::Reset));
         let change = store.take_change().unwrap();
         assert_eq!(change.summary, None);
-        assert!(change.reported);
+        assert!(!change.reported);
 
         // Clearing takes the subtree, not siblings that share a prefix.
         for id in ["a", "a/b", "a/b/c", "ab"] {
@@ -502,7 +516,9 @@ mod tests {
         // An identical report makes `a` the most recent.
         assert!(report(&mut store, "state=blocked:id=a:msg=QQ", None));
         assert_eq!(text(store.take_change()).as_deref(), Some("A"));
-        assert!(!report(&mut store, "state=blocked:id=a:msg=QQ", None));
+        // And it is reported again, to take over from other sources.
+        assert!(report(&mut store, "state=blocked:id=a:msg=QQ", None));
+        assert!(store.take_change().unwrap().reported);
         assert_eq!(store.take_change(), None);
 
         // A child inherits its parent's current app.

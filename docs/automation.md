@@ -485,9 +485,10 @@ The record most in need of attention sets the state: `blocked`, then
 shown as `done` with an `Error:` message, and `kind` describes a blocked
 record without a message. As the spec says, `working`, `blocked`, and `idle`
 records end when their program's process group exits or a shell prompt starts
-(OSC 133 `A`), and RIS clears all of them. An idle record does not acknowledge
-`done`, and a `done` or `error` result stays at the shell prompt until it is
-acknowledged or cleared. Records survive `btmux upgrade`.
+(OSC 133 `A`), and RIS clears all of them. Reported from the shell itself, with
+no program in the foreground, they are ignored. An idle record does not
+acknowledge `done`, and a `done` or `error` result stays at the shell prompt
+until it is acknowledged or cleared. Records survive `btmux upgrade`.
 
 When the sources disagree, the more reliable evidence wins:
 

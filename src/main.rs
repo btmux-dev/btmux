@@ -792,9 +792,14 @@ fn spawn_meta_change_handler(
             // Drain burst, then broadcast once.
             tokio::time::sleep(Duration::from_millis(100)).await;
             while meta_rx.try_recv().is_ok() {}
-            let mut mgr = state.write().await;
-            mgr.sync_program_status(std::time::Instant::now());
-            ws::control::broadcast_state(&mgr);
+            // Most changes are titles and cwds, which need no write lock.
+            if state.read().await.program_status_pending() {
+                let mut mgr = state.write().await;
+                mgr.sync_program_status(std::time::Instant::now());
+                ws::control::broadcast_state(&mgr);
+            } else {
+                ws::control::broadcast_state(&*state.read().await);
+            }
         }
     });
 }

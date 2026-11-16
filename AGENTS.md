@@ -204,14 +204,19 @@ and touch screens get a `MobileKeyBar` inside it, since the dialog is modal.
   OSC 7501 program status (`pty/program_status.rs`): the support query is
   answered the same way; reports pass through and become per-pane records,
   stamped with the foreground group, which the agent tick drops when the
-  group exits, as OSC 133 `A` does, and RIS clears. Changed records reach the
-  pane's `AgentLifecycle` as `Authority::Program`, above hooks and screens and
-  below explicit `agent-status`; a pane without an agent gets one. Only
-  changes are synced, so the prompt reaper (`end_agents_at_prompt`) leaves a
-  non-idle program agent to its records' lifetimes, and a repeated report
-  counts as a change when its new recency picks another summary. Names
-  from records follow them; process and hook names outrank them. They are in
-  the handoff file.
+  group exits, as OSC 133 `A` does, and RIS clears. With the shell in the
+  foreground, only done and error reports are kept, since nothing would end
+  the others. Changed records reach the pane's `AgentLifecycle` as
+  `Authority::Program`, above hooks and screens and below explicit
+  `agent-status`; a pane without an agent gets one. Only changes are synced,
+  so the prompt reaper (`end_agents_at_prompt`) leaves a non-idle program
+  agent to its records' lifetimes; every report counts as one, taking over
+  again from hooks. A program in the background is suspended
+  (`observe_background`) and gets the records' summary back in the
+  foreground. Acknowledging a result drops done and error records, as does
+  the sync for panes without an active agent, so later reports and upgrades
+  don't bring them back. Names from records follow them; process and hook
+  names outrank them. They are in the handoff file.
 - **Termios** is set manually on the PTY master (`configure_termios`: `IUTF8`, `ECHOK`, `IMAXBEL`) because `portable-pty` opens the PTY with NULL termios; without `IUTF8`, fish misbehaves.
 - **Working directory**: shells report it with OSC 7. On Unix, until one does,
   the reader takes it from the OS (`/proc/<pid>/cwd`, `proc_pidinfo`) after each

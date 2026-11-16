@@ -32,6 +32,12 @@ pub fn foreground(probe: &Probe) -> Option<Pid> {
     }
 }
 
+/// The foreground program attached to the terminal; `None` while the shell
+/// itself is in the foreground.
+pub fn attached(probe: &Probe) -> Option<Pid> {
+    foreground(probe).filter(|&pid| pid != probe.shell)
+}
+
 /// Report PowerShell's location with OSC 7 before each prompt, wrapping the
 /// prompt from the user's profile. PowerShell starts in `$PSHOME` when its
 /// directory's name has wildcards (`[1]`).
