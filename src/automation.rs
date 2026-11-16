@@ -758,6 +758,8 @@ mod tests {
         let (state, pane_id) = pane().await;
         detected(&state, pane_id, "claude").await;
         turn_start(&state, pane_id).await;
+        // Typed ahead, the paste is echoed twice: by the tty, then by readline.
+        screen_contains(&state, pane_id, "$").await;
         // The shell echoes the paste, which reads as a dialog.
         let prompt = "echo do you want to continue? yes";
         let error = send_prompt(&state, pane_id, prompt, false, DEFAULT_WAIT).await;
