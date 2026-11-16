@@ -12,8 +12,8 @@ export function vscodeRequestEditor(
   config: Pick<ClientConfig, 'relayed' | 'editor'> | null,
   explicit: boolean,
   focused: boolean,
-): 'vscode' | 'neovim' | 'pane' | null {
+): 'vscode' | 'native' | 'neovim' | 'pane' | null {
   if (!config?.relayed || explicit) return 'vscode';
-  if (config.editor === 'neovim') return 'neovim';
+  if (config.editor === 'native' || config.editor === 'neovim') return config.editor;
   return focused ? 'pane' : null;
 }

@@ -58,6 +58,7 @@ webauthn-rs = { version = "0.6", features = ["danger-allow-state-serialisation"]
 aws-lc-rs = "1"
 tokio-util = "0.7"
 tower = { version = "0.5.3", features = ["util"] }
+ropey = "1.6"
 
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = ["term"] }

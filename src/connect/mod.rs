@@ -553,17 +553,14 @@ pub fn relay_event(json: String) -> String {
     };
     config.insert("relayed".into(), true.into());
     config.insert("browser".into(), false.into());
-    let mut neovim = false;
     if let Some(editors) = config.get_mut("editors").and_then(Value::as_array_mut) {
         editors.retain(|editor| editor != "vscode");
-        neovim = editors.iter().any(|editor| editor == "neovim");
     }
     if config
         .get("editor")
         .is_some_and(|editor| editor == "vscode")
     {
-        let editor = if neovim { "neovim" } else { "pane" };
-        config.insert("editor".into(), editor.into());
+        config.insert("editor".into(), "native".into());
     }
     message.to_string()
 }
@@ -657,18 +654,17 @@ mod tests {
 
     #[test]
     fn relayed_config_drops_the_heavy_surfaces() {
-        let json = config_event(Editor::Vscode, vec![Editor::Neovim, Editor::Vscode]);
+        let json = config_event(
+            Editor::Vscode,
+            vec![Editor::Native, Editor::Neovim, Editor::Vscode],
+        );
         assert!(json.starts_with(CONFIG_PREFIX));
         let relayed: Value = serde_json::from_str(&relay_event(json)).unwrap();
         let config = &relayed["config"];
         assert_eq!(config["relayed"], true);
         assert_eq!(config["browser"], false);
-        assert_eq!(config["editors"], serde_json::json!(["neovim"]));
-        assert_eq!(config["editor"], "neovim");
-
-        let json = config_event(Editor::Vscode, vec![Editor::Vscode]);
-        let relayed: Value = serde_json::from_str(&relay_event(json)).unwrap();
-        assert_eq!(relayed["config"]["editor"], "pane");
+        assert_eq!(config["editors"], serde_json::json!(["native", "neovim"]));
+        assert_eq!(config["editor"], "native");
 
         let state = r#"{"type":"state","sessions":[]}"#.to_string();
         assert_eq!(relay_event(state.clone()), state);

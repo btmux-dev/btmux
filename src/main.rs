@@ -29,6 +29,7 @@ mod handoff;
 mod health;
 mod mcp;
 mod multipass;
+mod native_editor;
 mod pane_git;
 mod paste_image;
 mod persistence;

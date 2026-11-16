@@ -126,6 +126,16 @@ url: string, pr: PullRequest | null,
 checks: Checks | null, };
 
 // prettier-ignore
+export type PaneEditor = { shown: boolean,
+/**
+ * Open files (absolute paths), in tab order.
+ */
+files: Array<string>, active: string | null, };
+
+// prettier-ignore
+export type EditorViewOp = { "kind": "show" } | { "kind": "hide" } | { "kind": "toggle" } | { "kind": "open", path: string, line: number | null, } | { "kind": "close", path: string, } | { "kind": "activate", path: string, } | { "kind": "move", path: string, index: number, };
+
+// prettier-ignore
 export type PaneSnapshot = { id: string, title: string | null, cwd: string | null,
 /**
  * `cwd` is on another host.
@@ -134,7 +144,7 @@ cwd_remote: boolean, agent_status: AgentStatus,
 /**
  * Names the running agent instance, so a client can target it.
  */
-agent_id: number | null, unread: PaneAlert | null, git: PaneGit | null, };
+agent_id: number | null, unread: PaneAlert | null, git: PaneGit | null, editor: PaneEditor, };
 
 // prettier-ignore
 export type WindowSnapshot = { id: string, name: string, panes: Array<PaneSnapshot>, active_pane: number, layout: Layout, zoomed_pane: string | null, };
@@ -169,7 +179,7 @@ export type SessionSort = "created" | "mru" | "alphabetical";
 export type WindowSort = "created" | "mru" | "alphabetical";
 
 // prettier-ignore
-export type Editor = "pane" | "neovim" | "vscode";
+export type Editor = "native" | "pane" | "neovim" | "vscode";
 
 // prettier-ignore
 export type Appearance = "auto" | "dark" | "light";
@@ -502,6 +512,38 @@ export type VscodeStatus = { "state": "ready" } | { "state": "license" } | { "st
 export type EditorsStatus = { running: Array<Editor>, };
 
 // prettier-ignore
+export type Update = { client_id: string,
+/**
+ * `ChangeSet.toJSON()`.
+ */
+changes: unknown, };
+
+// prettier-ignore
+export type LineEnding = "lf" | "crlf";
+
+// prettier-ignore
+export type DiskStatus = "same" | "changed" | "deleted";
+
+// prettier-ignore
+export type Resume = { buffer: string, version: number, };
+
+// prettier-ignore
+export type BufferInfo = { id: string, path: string, text: string, version: number, dirty: boolean, disk: DiskStatus, line_ending: LineEnding, };
+
+// prettier-ignore
+export type BufferSummary = { id: string, path: string, dirty: boolean, };
+
+// prettier-ignore
+export type EditorClientMessage = { "type": "open", req: number, path: string, resume: Resume | null, } | { "type": "release", buffer: string, } | { "type": "push", buffer: string, version: number, updates: Array<Update>, } | { "type": "save", req: number, buffer: string, force: boolean, } | { "type": "revert", req: number, buffer: string, };
+
+// prettier-ignore
+export type EditorServerMessage = { "type": "opened", req: number, buffer: BufferInfo, } | { "type": "resumed", req: number, buffer: string, } | { "type": "updates", buffer: string, version: number, updates: Array<Update>, } | { "type": "buffer_state", buffer: string, dirty: boolean, disk: DiskStatus, } | { "type": "buffers", buffers: Array<BufferSummary>, } | { "type": "result", req: number, error: string | null,
+/**
+ * The file changed on disk since it was loaded or saved.
+ */
+conflict: boolean, };
+
+// prettier-ignore
 export type BrowserClientMessage = { "type": "ack" } | { "type": "resize", width: number, height: number, } | { "type": "key", down: boolean, key: string, code: string, key_code: number, text: string | null, modifiers: number, repeat: boolean, } | { "type": "mouse",
 /**
  * CDP's `mousePressed`, `mouseReleased`, `mouseMoved`, or `mouseWheel`.
@@ -684,7 +726,7 @@ runtime: Runtime | null, } | { "type": "rename_session", session_id: string, nam
 /**
  * The workspace of the window to open it in; all windows without one.
  */
-folder: string | null, } | { "type": "shut_down_editor", editor: Editor, } | { "type": "run_command", command: string, session_id: string, } | { "type": "create_worktree", pane_id: string, branch: string, } | { "type": "remove_worktree", pane_id: string, } | { "type": "update_config", update: ConfigUpdate, } | { "type": "save_config", update: ConfigUpdate, } | { "type": "reset_config" };
+folder: string | null, } | { "type": "editor_view", pane_id: string, op: EditorViewOp, } | { "type": "shut_down_editor", editor: Editor, } | { "type": "run_command", command: string, session_id: string, } | { "type": "create_worktree", pane_id: string, branch: string, } | { "type": "remove_worktree", pane_id: string, } | { "type": "update_config", update: ConfigUpdate, } | { "type": "save_config", update: ConfigUpdate, } | { "type": "reset_config" };
 
 // prettier-ignore
 export type ServerMessage = { "type": "agent_telemetry", panes: Array<AgentTelemetry>, removed_panes: Array<string>, replace: boolean, } | { "type": "command_result", request_id: string | null, error: string | null, } | { "type": "state", sessions: Array<SessionSummary>, all_sessions: Array<SessionSnapshot>, agent_panes: Array<string>, } | { "type": "config", config: ClientConfig, } | { "type": "toast", message: string, level: NotificationLevel,
@@ -699,7 +741,7 @@ os_client: number | null, } | { "type": "notification", level: NotificationLevel
 /**
  * The client that should show an OS notification; `None` lets every client decide.
  */
-os_client: number | null, } | { "type": "client", id: number, } | { "type": "open_file_browser", pane_id: string, path: string, mode: FileBrowserMode, focus_file: string | null, } | { "type": "focus_pane", pane_id: string, } | { "type": "open_nvim", pane_id: string, } | { "type": "open_vscode", pane_id: string, path: string | null, line: number | null, explicit: boolean, } | { "type": "editor_shut_down", editor: Editor, id: string | null, replay: boolean, } | { "type": "tailscale", status: TailscaleStatus, } | { "type": "connect", status: ConnectStatus, } | { "type": "widgets", widgets: Array<WidgetSummary>, } | { "type": "popups", popups: Array<PopupSummary>, } | { "type": "github", statuses: Array<GithubStatus>, };
+os_client: number | null, } | { "type": "client", id: number, } | { "type": "open_file_browser", pane_id: string, path: string, mode: FileBrowserMode, focus_file: string | null, } | { "type": "focus_pane", pane_id: string, } | { "type": "editor_reveal", pane_id: string, path: string, line: number, } | { "type": "open_nvim", pane_id: string, } | { "type": "open_vscode", pane_id: string, path: string | null, line: number | null, explicit: boolean, } | { "type": "editor_shut_down", editor: Editor, id: string | null, replay: boolean, } | { "type": "tailscale", status: TailscaleStatus, } | { "type": "connect", status: ConnectStatus, } | { "type": "widgets", widgets: Array<WidgetSummary>, } | { "type": "popups", popups: Array<PopupSummary>, } | { "type": "github", statuses: Array<GithubStatus>, };
 
 // prettier-ignore
 export type FileBrowserMode = "files" | "git" | "process";

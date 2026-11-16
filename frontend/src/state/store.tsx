@@ -192,6 +192,33 @@ function unavailableOverRelay(config: ClientConfig | null, name: string): boolea
   return true;
 }
 
+/** The pane's snapshot, from any session. */
+export function findPaneState(s: { allSessions: SessionState[] }, paneId: string | null | undefined) {
+  if (!paneId) return undefined;
+  for (const session of s.allSessions)
+    for (const win of session.windows) {
+      const pane = win.panes.find((p) => p.id === paneId);
+      if (pane) return pane;
+    }
+  return undefined;
+}
+
+/** Whether the native editor is shown over the pane (shared server state). */
+export const editorShown = (s: { allSessions: SessionState[] }, paneId: string | null | undefined) =>
+  !!findPaneState(s, paneId)?.editor.shown;
+
+/** The native editor is what this tab shows over the pane: no local surface covers it. */
+export const nativeEditorOver = (s: AppStore, paneId: string | null | undefined) =>
+  !!paneId &&
+  editorShown(s, paneId) &&
+  !(s.nvimOpen && s.nvimPaneId === paneId) &&
+  !(s.vscodeOpen && s.vscodePaneId === paneId) &&
+  !(s.browserOpen && s.browserPaneId === paneId);
+
+/** The native editor's input over the pane. */
+export const nativeEditorInput = (paneId: string) =>
+  document.querySelector(`[data-native-editor][data-pane-id="${CSS.escape(paneId)}"]`);
+
 export const useStore = create<AppStore>((set, get) => ({
   sessions: [],
   allSessions: [],

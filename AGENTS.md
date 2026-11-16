@@ -89,7 +89,9 @@ derived from each browser tab's URL, so session navigation is per-tab.
 
 5. **`/ws/nvim`** (`src/ws/nvim.rs`) — a byte proxy between the browser and a new connection to the shared built-in Neovim's RPC socket. The browser speaks msgpack-RPC itself; see *Built-in Neovim* below.
 
-6. **`/ws/browser`** (`src/browser.rs`) — the shared server-side Chromium: JPEG frames as binary messages and page state as JSON, with input and navigation coming back as JSON. See *Browser surface* below.
+6. **`/ws/editor`** (`src/ws/editor.rs`) — the native editor's buffers: open, collab pushes and updates, save, revert. See *Native editor* below.
+
+7. **`/ws/browser`** (`src/browser.rs`) — the shared server-side Chromium: JPEG frames as binary messages and page state as JSON, with input and navigation coming back as JSON. See *Browser surface* below.
 
 REST handlers and MCP tools share the same `SessionManager`; structural mutations must call `broadcast_state` so browser tabs stay synchronized. REST lives under `/api` and includes session/window/pane/layout operations, pane input/output, notifications, and raw local-file serving. `GET /api/system` (`system_info.rs`) reports the server host fastfetch-style (`sysinfo`, plus `ioreg` for the Mac model name and the shell's `--version`) for the About dialog's System tab and the `system_info` MCP tool, which adds what the browser reports about its own machine (`lib/clientInfo.ts`). `GET /api/health` (`health.rs`) finds the optional programs btmux uses and runs each one's version command in its own process group (a job on Windows), killed whole on timeout or cancellation since wrappers wait on children, for the About dialog's Health tab, which adds what the browser supports. MCP is mounted at `/mcp`, with rmcp's own Host check off in favor of `auth.rs`; tools cover session/window/pane lifecycle, `send_keys` (text plus tmux-style key names), `read_pane_output` (the rendered screen or scrollback), `run_command`, `system_info`, and agents (`list_agents`, `wait_for_agent`, `send_prompt`). `automation.rs` implements the pane and agent operations that REST, MCP, and the `btmux agents`/`wait` commands share; waits recheck agent status on each state broadcast. `run_command` appends Enter, captures ANSI-stripped output until 400 ms of quiet by default, and has a 15 s default timeout; quiet output does not prove process exit.
 
@@ -444,6 +446,34 @@ Cmd-click (Ctrl elsewhere) opens without reaching the application. The desktop
 app opens `window.open` URLs in the default browser. Theme, font, and
 transparency are CSS variables and classes on the element.
 
+### Native editor
+
+`editor = "native"` (the default) is btmux's own editor: CodeMirror 6 views
+(`components/NativeEditor.tsx`, the CodeMirror code in `lib/nativeEditor/`,
+lazy-loaded) over any number of panes, editing buffers the server owns
+(`src/native_editor/`). Each pane's editor is shared state on the pane
+(`PaneEditor { shown, files, active }` in `PaneSnapshot`, persisted and handed
+off), changed by the `editor_view` control command (`native_editor::view`,
+also `btmux open-editor` and file browser opens); `open` with a line also
+broadcasts `editor_reveal`. Cursor and scroll stay per tab. `SessionPane`
+renders one per pane with files or shown; this tab's Neovim, VS Code, or
+browser over the pane hides it locally (`nativeEditorOver`).
+
+The `Hub` (one per server) keeps one `Buffer` per canonical path: a `ropey`
+rope, a version, and a bounded update log. Tabs sync through
+`@codemirror/collab` with the server as the authority: a push on the current
+version is applied and echoed to every follower (the sender's echo confirms
+it), a stale push is dropped and the tab rebases on the updates it gets. Changes
+are `ChangeSet.toJSON()` in UTF-16 code units (`text.rs`). A reconnecting tab
+resumes from its version when the log still reaches it, else reopens. Buffers
+hold `\n` only; the file's line ending and BOM are kept for saving. Files must
+be UTF-8 text under 16 MiB. Saving writes atomically (`fs_ops::write_atomic`)
+and refuses if the file changed on disk since it was loaded or saved, unless
+forced. A watcher on open files' directories reloads a clean buffer as one
+minimal update and marks a dirty one changed or deleted. Buffers nobody follows
+are dropped unless dirty; dirty ones stay, listed by the `buffers` message, and
+`btmux upgrade` refuses while any exist (they aren't handed off yet).
+
 ### Built-in Neovim
 
 `prefix + e` (`editor` action) opens the `editor` setting. With `neovim`, it toggles a Neovim GUI over the active pane
@@ -531,7 +561,7 @@ such glyphs render outside the grid too. These
 detects plugins and settings that duplicate or break this UI; the plugin
 toasts once after the first `UIEnter` if it finds any.
 
-The `editor` setting (default `neovim` if `nvim` 0.12+ is on `PATH`, else `pane`) makes file browser and Git mode opens send
+The `editor` setting (default `native`; see *Native editor*) with `neovim` makes file browser and Git mode opens send
 `nvim_open`, which opens the file via `--remote-expr` on the shared socket;
 `vscode` sends `vscode_open`; `pane` keeps the older `open_file` path (the
 pane's foreground Neovim, else `$EDITOR` in its shell), which `prefix + e`
@@ -541,7 +571,7 @@ and broadcasts `open_nvim` to show the surface; otherwise, or outside btmux, it
 execs `$EDITOR`.
 `ClientConfig.editors` lists the editors the server can run (`nvim::available`,
 `vscode::available`); the status bar shows a button for each, after the
-configured one, and the unbound `editor-neovim`/`editor-vscode` actions toggle
+configured one, and the unbound `editor-native`/`editor-neovim`/`editor-vscode` actions toggle
 one regardless of `editor`. A built-in editor's button opens a menu to show or
 hide it or shut its server down (`shut_down_editor`, also the unbound
 `shut-down-neovim`/`shut-down-vscode` actions; Neovim refuses with unsaved

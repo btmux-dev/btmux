@@ -1,0 +1,209 @@
+import type {
+  BufferInfo,
+  BufferSummary,
+  DiskStatus,
+  EditorClientMessage,
+  EditorServerMessage,
+  Update,
+} from '../../generated/protocol';
+
+const RECONNECT_MS = 2000;
+
+/** What a document following a buffer hears from the server. */
+export interface BufferListener {
+  readonly path: string;
+  /** The buffer and version to resume from after a reconnect, if any. */
+  resume(): { buffer: string; version: number } | null;
+  opened(info: BufferInfo): void;
+  resumed(): void;
+  updates(version: number, updates: Update[]): void;
+  bufferState(dirty: boolean, disk: DiskStatus): void;
+  failed(error: string): void;
+  /** The socket dropped; unconfirmed pushes are lost. */
+  disconnected(): void;
+}
+
+export interface SaveResult {
+  error: string | null;
+  conflict: boolean;
+}
+
+type Pending = { listener?: BufferListener; done?: (result: SaveResult) => void };
+
+/** The tab's `/ws/editor` socket, shared by every editor view. */
+class EditorConnection {
+  private ws: WebSocket | null = null;
+  private nextReq = 1;
+  private pending = new Map<number, Pending>();
+  private listeners = new Set<BufferListener>();
+  /** Listeners by buffer id, once opened. */
+  private byBuffer = new Map<string, Set<BufferListener>>();
+  private bufferOf = new Map<BufferListener, string>();
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private summaryListeners = new Set<(buffers: BufferSummary[]) => void>();
+  buffers: BufferSummary[] = [];
+
+  private url() {
+    return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/editor`;
+  }
+
+  private connect() {
+    this.reconnectTimer = null;
+    if (this.ws || this.listeners.size === 0) return;
+    const ws = new WebSocket(this.url());
+    this.ws = ws;
+    ws.onopen = () => {
+      for (const listener of this.listeners) this.sendOpen(listener);
+    };
+    ws.onmessage = (event) => {
+      if (typeof event.data === 'string') this.receive(JSON.parse(event.data) as EditorServerMessage);
+    };
+    ws.onclose = () => {
+      if (this.ws !== ws) return;
+      this.ws = null;
+      for (const p of this.pending.values()) p.done?.({ error: 'The editor connection closed', conflict: false });
+      this.pending.clear();
+      this.byBuffer.clear();
+      this.bufferOf.clear();
+      for (const listener of this.listeners) listener.disconnected();
+      if (this.listeners.size > 0) this.reconnectTimer = setTimeout(() => this.connect(), RECONNECT_MS);
+    };
+  }
+
+  private send(msg: EditorClientMessage): boolean {
+    if (this.ws?.readyState !== WebSocket.OPEN) return false;
+    this.ws.send(JSON.stringify(msg));
+    return true;
+  }
+
+  private sendOpen(listener: BufferListener) {
+    const req = this.nextReq++;
+    this.pending.set(req, { listener });
+    this.send({ type: 'open', req, path: listener.path, resume: listener.resume() });
+  }
+
+  private follow(listener: BufferListener, buffer: string) {
+    this.bufferOf.set(listener, buffer);
+    let set = this.byBuffer.get(buffer);
+    if (!set) this.byBuffer.set(buffer, (set = new Set()));
+    set.add(listener);
+  }
+
+  private receive(msg: EditorServerMessage) {
+    switch (msg.type) {
+      case 'opened':
+      case 'resumed': {
+        const pending = this.pending.get(msg.req);
+        this.pending.delete(msg.req);
+        const listener = pending?.listener;
+        if (!listener || !this.listeners.has(listener)) {
+          // Closed while opening.
+          const buffer = msg.type === 'opened' ? msg.buffer.id : msg.buffer;
+          if (!this.byBuffer.has(buffer)) this.send({ type: 'release', buffer });
+          return;
+        }
+        if (msg.type === 'opened') {
+          this.follow(listener, msg.buffer.id);
+          listener.opened(msg.buffer);
+        } else {
+          this.follow(listener, msg.buffer);
+          listener.resumed();
+        }
+        return;
+      }
+      case 'updates':
+        for (const l of this.byBuffer.get(msg.buffer) ?? []) l.updates(msg.version, msg.updates);
+        return;
+      case 'buffer_state':
+        for (const l of this.byBuffer.get(msg.buffer) ?? []) l.bufferState(msg.dirty, msg.disk);
+        return;
+      case 'buffers':
+        this.buffers = msg.buffers;
+        for (const fn of this.summaryListeners) fn(msg.buffers);
+        return;
+      case 'result': {
+        const pending = this.pending.get(msg.req);
+        this.pending.delete(msg.req);
+        if (pending?.listener) {
+          if (msg.error) pending.listener.failed(msg.error);
+        } else pending?.done?.({ error: msg.error, conflict: msg.conflict });
+        return;
+      }
+    }
+  }
+
+  /** Follow `listener.path`; `opened` or `resumed` follows. */
+  open(listener: BufferListener) {
+    this.listeners.add(listener);
+    if (this.reconnectTimer === null && !this.ws) this.connect();
+    else if (this.ws?.readyState === WebSocket.OPEN) this.sendOpen(listener);
+  }
+
+  /** Reopen after the server lost track (a gap in updates). */
+  reopen(listener: BufferListener) {
+    const buffer = this.bufferOf.get(listener);
+    if (buffer) this.unfollow(listener, buffer);
+    if (this.ws?.readyState === WebSocket.OPEN) this.sendOpen(listener);
+  }
+
+  private unfollow(listener: BufferListener, buffer: string) {
+    this.bufferOf.delete(listener);
+    const set = this.byBuffer.get(buffer);
+    set?.delete(listener);
+    if (set?.size === 0) {
+      this.byBuffer.delete(buffer);
+      return true;
+    }
+    return false;
+  }
+
+  close(listener: BufferListener) {
+    this.listeners.delete(listener);
+    const buffer = this.bufferOf.get(listener);
+    if (buffer && this.unfollow(listener, buffer)) this.send({ type: 'release', buffer });
+    if (this.listeners.size === 0 && this.summaryListeners.size === 0) this.shutdown();
+  }
+
+  private shutdown() {
+    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    const ws = this.ws;
+    this.ws = null;
+    ws?.close();
+  }
+
+  push(buffer: string, version: number, updates: Update[]): boolean {
+    return this.send({ type: 'push', buffer, version, updates });
+  }
+
+  private request(build: (req: number) => EditorClientMessage): Promise<SaveResult> {
+    return new Promise((resolve) => {
+      const req = this.nextReq++;
+      if (!this.send(build(req))) {
+        resolve({ error: 'The editor is not connected', conflict: false });
+        return;
+      }
+      this.pending.set(req, { done: resolve });
+    });
+  }
+
+  save(buffer: string, force: boolean) {
+    return this.request((req) => ({ type: 'save', req, buffer, force }));
+  }
+
+  revert(buffer: string) {
+    return this.request((req) => ({ type: 'revert', req, buffer }));
+  }
+
+  /** Every buffer on the server, while subscribed. */
+  subscribeBuffers(fn: (buffers: BufferSummary[]) => void): () => void {
+    this.summaryListeners.add(fn);
+    fn(this.buffers);
+    return () => {
+      this.summaryListeners.delete(fn);
+      if (this.listeners.size === 0 && this.summaryListeners.size === 0) this.shutdown();
+    };
+  }
+}
+
+export const editorConnection = new EditorConnection();

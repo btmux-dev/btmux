@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { PaneTerminal as Terminal } from '../lib/paneTerminal';
 import { Dialog } from '@astryxdesign/core/Dialog';
 import { TerminalPane } from './TerminalPane';
+import { NativeEditor } from './NativeEditor';
 import { FileBrowserOverlay } from './FileBrowserOverlay';
 import { PopupDialog } from './PopupDialog';
 import { wideDialogProps } from '../lib/wideDialog';
@@ -135,7 +136,11 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
     // Don't steal focus into the terminal while the file browser occupies that pane.
     const browserOwnsActivePane = fileBrowserOpen && fileBrowserPaneId === focusId;
     // Neovim takes focus itself when it covers the active pane.
-    const nvimOwnsActivePane = nvimPaneId === focusId || vscodePaneId === focusId || browserPaneId === focusId;
+    const nvimOwnsActivePane =
+      nvimPaneId === focusId ||
+      vscodePaneId === focusId ||
+      browserPaneId === focusId ||
+      !!activeWindow?.panes.find((p) => p.id === focusId)?.editor.shown;
     if (
       settingsOpen ||
       overlay ||
@@ -171,6 +176,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
     nvimPaneId,
     vscodePaneId,
     browserPaneId,
+    focusedPane?.editor.shown,
     isActiveSession,
     settingsOpen,
     previewConfig,
@@ -309,13 +315,31 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
             // When a pane is zoomed, hide all other active-window panes so their
             // borders don't show behind the zoomed overlay.
             const visible = isActiveSession && inActiveWindow && (!zoomedPaneId || isZoomed);
-            return (
+            const paneRect = isZoomed ? { ...HIDDEN, paneId: pane.id } : (rect ?? { ...HIDDEN, paneId: pane.id });
+            const isActive = visible && (zoomedPaneId ? isZoomed : pane.id === activePaneId);
+            // This tab's Neovim, VS Code, or browser over the pane hides its editor here.
+            const coveredLocally = pane.id === nvimPaneId || pane.id === vscodePaneId || pane.id === browserPaneId;
+            const editor = (pane.editor.shown || pane.editor.files.length > 0) && (
+              <NativeEditor
+                key={`editor-${pane.id}`}
+                paneId={pane.id}
+                state={pane.editor}
+                rect={paneRect}
+                visible={visible && pane.editor.shown && !coveredLocally}
+                focused={isActive}
+                zoomed={isZoomed}
+                config={config}
+                send={send}
+                onActivate={() => send({ type: 'select_pane', session_id: sessionId, pane_id: pane.id })}
+              />
+            );
+            return [
               <TerminalPane
                 key={pane.id}
                 sessionId={sessionId}
                 paneId={pane.id}
-                rect={isZoomed ? { ...HIDDEN, paneId: pane.id } : (rect ?? { ...HIDDEN, paneId: pane.id })}
-                isActive={visible && (zoomedPaneId ? isZoomed : pane.id === activePaneId)}
+                rect={paneRect}
+                isActive={isActive}
                 title={pane.title}
                 cwd={pane.cwd}
                 agentStatus={pane.agent_status}
@@ -326,8 +350,9 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
                 previewConfig={previewConfig}
                 registry={registryRef.current}
                 send={send}
-              />
-            );
+              />,
+              editor,
+            ];
           }),
         )}
       {!zoomedPaneId &&

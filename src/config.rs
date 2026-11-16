@@ -357,9 +357,9 @@ pub enum SubCommand {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 0..)]
         args: Vec<std::ffi::OsString>,
     },
-    /// Open FILE (or just the editor), jumping to LINE. In a btmux pane with
-    /// `editor = "neovim"` or `"vscode"`, this opens that editor over the
-    /// pane; otherwise `$EDITOR` (falling back to `vi`).
+    /// Open FILE (or just the editor), jumping to LINE. In a btmux pane, this
+    /// opens the `editor` setting's editor over the pane; with `editor =
+    /// "pane"`, or outside btmux, `$EDITOR` (falling back to `vi`).
     OpenEditor {
         file: Option<String>,
         line: Option<u32>,
@@ -575,11 +575,13 @@ impl Appearance {
 }
 
 /// The editor `prefix + e`, the file browser, Git mode, and `btmux open-editor`
-/// open. Unset, it is the built-in Neovim when a usable `nvim` is on `PATH`.
+/// open. Unset, it is the native editor.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub enum Editor {
+    /// btmux's own editor.
+    Native,
     /// The pane's foreground Neovim, or `$EDITOR` in its shell.
     Pane,
     /// The built-in Neovim.
@@ -708,17 +710,6 @@ fn search_url<'de, D: serde::Deserializer<'de>>(
         ));
     }
     Ok(Some(url))
-}
-
-impl Editor {
-    /// The default: Neovim if the built-in one can start, else the pane.
-    fn detect() -> Self {
-        if crate::ws::nvim::available() {
-            Self::Neovim
-        } else {
-            Self::Pane
-        }
-    }
 }
 
 /// Log level configuration. Both fields accept standard tracing directives
@@ -1431,7 +1422,8 @@ pub struct ClientConfig {
 /// Canonical tmux-style default binds: (key, action). Actions map 1:1 to a
 /// frontend handler. Note `0-9` window-select is special-cased in the frontend
 /// and intentionally absent here, as are `kill-session`, `last-window`,
-/// `editor-neovim`, `editor-vscode`, `shut-down-neovim`, and `shut-down-vscode`
+/// `editor-native`, `editor-neovim`, `editor-vscode`, `shut-down-neovim`, and
+/// `shut-down-vscode`
 /// (unbound by default).
 const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("%", "split-vertical"),
@@ -1888,10 +1880,11 @@ pub fn generate_config_toml() -> String {
 # window-sort = "alphabetical"
 
 # The editor prefix + e, the file browser, and Git mode open.
-# "neovim" = your Neovim in btmux's GUI (default if Neovim 0.12+ is on PATH),
+# "native" = btmux's own editor (default),
+# "neovim" = your Neovim in btmux's GUI (needs Neovim 0.12+),
 # "vscode" = VS Code in the browser,
 # "pane" = the terminal: the pane's running Neovim, else $EDITOR in its shell.
-# editor = "neovim"
+# editor = "native"
 
 # How many recently-viewed windows the window-grid (prefix + w) shows as live
 # thumbnails, laid out on a square-ish grid.
@@ -2266,8 +2259,9 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         pane_switch_border_speed,
         session_sort: file.session_sort.clone(),
         window_sort: file.window_sort.clone(),
-        editor: file.editor.unwrap_or_else(Editor::detect),
+        editor: file.editor.unwrap_or(Editor::Native),
         editors: [
+            (Editor::Native, true),
             (Editor::Neovim, crate::ws::nvim::available()),
             (Editor::Vscode, crate::vscode::available(file.vscode.server)),
         ]
@@ -2898,7 +2892,7 @@ palette:
         assert_eq!(resolved.window_grid_count, 4);
         assert_eq!(resolved.window_sort, WindowSort::Alphabetical);
         assert_eq!(resolved.session_sort, SessionSort::Mru);
-        assert_eq!(resolved.editor, Editor::detect());
+        assert_eq!(resolved.editor, Editor::Native);
         assert_eq!(resolved.pane_switch_border.as_deref(), Some("wipe"));
         assert_eq!(resolved.pane_switch_border_speed, 0.15);
         assert_eq!(resolved.terminal.scrollback, Some(100_000));

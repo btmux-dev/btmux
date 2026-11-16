@@ -66,6 +66,7 @@ const KEY_SECTIONS: { title: string; actions: string[] }[] = [
       'git-view',
       'process-view',
       'editor',
+      'editor-native',
       'editor-neovim',
       'editor-vscode',
       'shut-down-neovim',

@@ -1,12 +1,21 @@
-import { useStore } from '../state/store';
+import { findPaneState, nativeEditorOver, useStore } from '../state/store';
 
-/** Open file mode; if the built-in Neovim is shown over the pane or the pane runs Neovim, start in the current buffer's directory focused on it. */
+/**
+ * Open file mode; if an editor is shown over the pane (native or the built-in
+ * Neovim) or the pane runs Neovim, start in the current file's directory focused on it.
+ */
 export async function openFileBrowserFiles(paneId: string | null, cwd: string | null) {
   let dir = cwd;
   let focus: string | null = null;
-  const { nvimOpen, nvimPaneId } = useStore.getState();
+  const state = useStore.getState();
+  const { nvimOpen, nvimPaneId } = state;
   const builtin = nvimOpen && paneId !== null && nvimPaneId === paneId;
-  if (paneId) {
+  const native = nativeEditorOver(state, paneId) ? findPaneState(state, paneId)?.editor.active : null;
+  if (native) {
+    const slash = native.lastIndexOf('/');
+    dir = native.slice(0, slash) || '/';
+    focus = native.slice(slash + 1);
+  } else if (paneId) {
     try {
       const url = builtin ? '/api/nvim/file' : `/api/panes/${encodeURIComponent(paneId)}/editor-file`;
       const res = await fetch(url, { cache: 'no-store' });

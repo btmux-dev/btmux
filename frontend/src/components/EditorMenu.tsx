@@ -12,7 +12,7 @@ export function EditorMenu({
   onToggle,
   onShutDown,
 }: {
-  editor: Exclude<Editor, 'pane'>;
+  editor: Exclude<Editor, 'pane' | 'native'>;
   /** The active pane, which the surface toggles over. */
   paneId: string | undefined;
   onToggle: () => void;

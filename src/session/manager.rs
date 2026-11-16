@@ -1803,7 +1803,9 @@ impl SessionManager {
                     self.scrollback_lines(),
                 )
                 .with_guest(self.guest(runtime));
-                Pane::new(p.id, pty)
+                let mut pane = Pane::new(p.id, pty);
+                pane.editor = p.editor;
+                pane
             })
             .collect();
         if panes.is_empty() {
@@ -2026,6 +2028,7 @@ impl SessionManager {
                             agent_id: self.agent_id(p.id),
                             unread: p.unread.clone(),
                             git: p.pty.local_cwd().and_then(|cwd| self.git.lookup(&cwd)),
+                            editor: p.editor.clone(),
                         })
                         .collect(),
                     active_pane: w.active_pane,

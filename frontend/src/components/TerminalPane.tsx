@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PaneTerminal, PaneTerminalOptions } from '../lib/paneTerminal';
 import { usePaneTerminal } from '../hooks/usePaneTerminal';
-import { useStore } from '../state/store';
+import { editorShown, useStore } from '../state/store';
 import { AgentStatus, LayoutRect, ClientConfig } from '../state/types';
 import { ClientMessage } from '../protocol/messages';
 import { STARTUP_THEME } from '../state/startupTheme';
@@ -132,12 +132,13 @@ export function TerminalPane({
   const settingsOpen = useStore((s) => s.settingsOpen);
   // A popup over this pane's window owns the keyboard.
   const popupShown = useStore((s) => s.popupShown !== null);
-  // Whether a Neovim, VS Code, or browser surface is pinned over this pane.
+  // Whether an editor or browser surface covers this pane.
   const nvimOpen = useStore(
     (s) =>
       (s.nvimOpen && s.nvimPaneId === paneId) ||
       (s.vscodeOpen && s.vscodePaneId === paneId) ||
-      (s.browserOpen && s.browserPaneId === paneId),
+      (s.browserOpen && s.browserPaneId === paneId) ||
+      editorShown(s, paneId),
   );
   const fileBrowserOpen = useStore((s) => s.fileBrowserOpen && s.fileBrowserPaneId === paneId);
   const termOptions = useTerminalOptions(config);
