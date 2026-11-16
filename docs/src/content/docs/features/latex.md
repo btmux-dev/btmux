@@ -12,6 +12,10 @@ title bar (or its top-right corner when title bars are off).
 
 Click the chip, press `<prefix> + m`, or run `latex: toggle overlay` from the
 command palette to open a side panel with the formulas rendered by KaTeX.
+
+![A pane printing LaTeX source, with the overlay showing three rendered formulas](../../../assets/screenshots/latex-dark.png)
+![A pane printing LaTeX source, with the overlay showing three rendered formulas](../../../assets/screenshots/latex-light.png)
+
 Hovering a formula highlights its source in the terminal. Rebind the key with
 `toggle-latex` under `[keys]`.
 

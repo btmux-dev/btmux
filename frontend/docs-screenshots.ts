@@ -5,7 +5,7 @@
  * docs/src/assets/screenshots.
  */
 import assert from 'node:assert/strict';
-import { chromium } from 'playwright';
+import { chromium, type Page } from 'playwright';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,7 +19,8 @@ assert(url && token && configHome, 'run through browser-test-stack.ts');
 const root = path.dirname(import.meta.dir);
 const out = path.join(root, 'docs', 'src', 'assets', 'screenshots');
 mkdirSync(out, { recursive: true });
-const only = process.argv.slice(2);
+// DOCS_SHOTS=latex,git-mode retakes only those.
+const only = (process.env.DOCS_SHOTS ?? '').split(',').filter(Boolean);
 
 // A short path, since the UI shows it.
 const home = process.platform === 'win32' ? path.join(tmpdir(), 'btmux-demo') : '/tmp/btmux-demo';
@@ -90,6 +91,17 @@ write('tests/orders.test.ts', `import { expect, test } from 'bun:test';\n\ntest.
 const site = path.join(home, 'website');
 mkdirSync(site);
 writeFileSync(path.join(site, 'index.html'), '<h1>Acme</h1>\n');
+writeFileSync(
+  path.join(site, 'notes.md'),
+  String.raw`Retry delay with exponential backoff and jitter:
+
+$$d_n = \min\left(d_{\max},\; d_0 \cdot 2^n\right) \cdot (1 + \epsilon)$$
+
+where $\epsilon \sim U(0, 0.25)$. The expected total wait is
+
+\[ E[T] = \sum_{n=0}^{N} d_0 \, 2^n \left(1 + \tfrac{1}{8}\right) \]
+`,
+);
 
 // The CLI finds the stack's server through its state directory.
 const btmux = (...args: string[]) =>
@@ -131,7 +143,7 @@ for (const [pane, command] of [
   [side, 'cat src/routes/health.ts'],
   [below, 'ls src tests'],
   [server, 'cat package.json'],
-  [web, 'ls'],
+  [web, 'cat notes.md'],
   [dev, 'git status --short'],
 ]) {
   run(pane, command);
@@ -188,14 +200,17 @@ try {
     };
     const escape = () => page.keyboard.press('Escape');
 
-    await page.goto(`${url}/s/acme-api`);
-    await page.getByLabel('Access token').fill(token);
-    await page.getByRole('button', { name: 'Connect', exact: true }).click();
-    await waitForAsync(page, async () => {
-      const { useStore } = await import('/src/state/store.tsx' as string);
-      return !!useStore.getState().config;
-    });
-    await page.waitForTimeout(2500);
+    const signIn = async (page: Page, session: string) => {
+      await page.goto(`${url}/s/${session}`);
+      await page.getByLabel('Access token').fill(token);
+      await page.getByRole('button', { name: 'Connect', exact: true }).click();
+      await waitForAsync(page, async () => {
+        const { useStore } = await import('/src/state/store.tsx' as string);
+        return !!useStore.getState().config;
+      });
+      await page.waitForTimeout(2500);
+    };
+    await signIn(page, 'acme-api');
 
     await shot(
       'panes',
@@ -256,6 +271,78 @@ try {
       () => store('setSettingsOpen(false)'),
     );
     await context.close();
+
+    // Close-ups: a small window, so text is large on the page.
+    const closeUp = async (
+      session: string,
+      names: string[],
+      take: (page: Page, save: (name: string) => Promise<void>) => Promise<void>,
+    ) => {
+      if (only.length && !names.some((name) => only.includes(name))) return;
+      const small = await browser.newContext({
+        viewport: { width: 960, height: 600 },
+        deviceScaleFactor: 2,
+        colorScheme: scheme,
+      });
+      const page = await small.newPage();
+      try {
+        await signIn(page, session);
+        await take(page, async (name) => {
+          await page.waitForTimeout(1200);
+          await page.screenshot({ path: path.join(out, `${name}-${scheme}.png`) });
+          console.log(`shot ${name}-${scheme}`);
+        });
+      } catch (error) {
+        console.error(`FAILED ${names}-${scheme}: ${error}`);
+        process.exitCode = 1;
+      }
+      await small.close();
+    };
+
+    // Neovim over the single pane of the server window, without user config.
+    btmux('select-window', '-t', 'acme-api:server');
+    await closeUp('acme-api', ['neovim-completion', 'neovim-cmdline'], async (page, save) => {
+      await page.evaluate(async (pane) => {
+        const { useStore } = await import('/src/state/store.tsx' as string);
+        useStore.getState().setNvimOpen(true, pane);
+      }, server);
+      await page.locator('[data-nvim-input]').waitFor({ state: 'attached' });
+      await page.waitForTimeout(2500);
+      await page.locator('[data-nvim-input]').focus();
+      const command = async (text: string) => {
+        await page.keyboard.type(`:${text}`);
+        await page.keyboard.press('Enter');
+        await page.waitForTimeout(300);
+      };
+      await command('e! src/server.ts');
+      await command('set number completeopt=menuone,noselect,popup');
+      // Keyword completion on a new line inside handle().
+      await page.keyboard.type('9Goro');
+      await page.keyboard.press('Control+n');
+      await save('neovim-completion');
+      // One Escape: a second within 300 ms hides the surface.
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(600);
+      await command('e!');
+      await page.keyboard.type(':set fold');
+      await page.keyboard.press('Tab');
+      await save('neovim-cmdline');
+      await page.keyboard.press('Escape');
+      await page.evaluate(async () => {
+        const { useStore } = await import('/src/state/store.tsx' as string);
+        useStore.getState().setNvimOpen(false);
+      });
+    });
+    btmux('select-window', '-t', 'acme-api:dev');
+
+    await closeUp('website', ['latex'], async (page, save) => {
+      await page.evaluate(async (pane) => {
+        const { useStore } = await import('/src/state/store.tsx' as string);
+        useStore.getState().toggleLatex(pane);
+      }, web);
+      await page.waitForTimeout(2500);
+      await save('latex');
+    });
   }
 } finally {
   await browser.close();
