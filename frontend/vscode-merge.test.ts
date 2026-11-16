@@ -50,4 +50,19 @@ test('keybindings added here stay, and shared ones follow the shared file', () =
   const mine = { key: 'ctrl+m', command: 'm' };
   expect(mergeKeybindings(undefined, [x, y], [mine, x])).toEqual([mine, x, y]);
   expect(mergeKeybindings([x, y], [y, z], [x, mine, y])).toEqual([mine, y, z]);
+  // Removed here, it stays removed; a later one added here stays last.
+  expect(mergeKeybindings([x, y], [x, y, z], [y, mine])).toEqual([y, z, mine]);
+  // An unchanged shared file leaves the order here.
+  expect(mergeKeybindings([x, y], [x, y], [y, x])).toEqual([y, x]);
+});
+
+test('keybindings follow the shared order, which decides precedence', () => {
+  const a = { key: 'ctrl+k', command: 'first' };
+  const b = { key: 'ctrl+k', command: 'second' };
+  const c = { key: 'ctrl+k', command: 'third' };
+  const mine = { key: 'ctrl+m', command: 'm' };
+  expect(mergeKeybindings([a, b], [b, a], [a, b])).toEqual([b, a]);
+  // Inserted before a conflicting binding, it doesn't take precedence.
+  expect(mergeKeybindings([a], [c, a], [a])).toEqual([c, a]);
+  expect(mergeKeybindings([a, b], [b, a], [a, mine, b])).toEqual([mine, b, a]);
 });

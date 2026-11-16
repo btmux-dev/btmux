@@ -73,6 +73,14 @@ test('the prefix key becomes a press and release', () => {
   expect(up).toMatchObject({ type: 'key', down: false, key: 'a', modifiers: 2 });
   expect(prefixKeyMessages({ ctrl: true, alt: false, key: ' ' })[0]).toMatchObject({ code: 'Space', key_code: 32 });
   expect(prefixKeyMessages({ ctrl: false, alt: true, key: 'Enter' })[0]).toMatchObject({ code: 'Enter', key_code: 13, modifiers: 1 });
+  // Punctuation and function keys too, which xterm.js reads by key code.
+  expect(prefixKeyMessages({ ctrl: true, alt: false, key: '[' })[0]).toMatchObject({ code: 'BracketLeft', key_code: 219, modifiers: 2 });
+  expect(prefixKeyMessages({ ctrl: false, alt: false, key: 'F5' })[0]).toMatchObject({ code: 'F5', key_code: 116, modifiers: 0 });
+  expect(prefixKeyMessages({ ctrl: true, alt: false, key: '\\' })[0]).toMatchObject({ code: 'Backslash', key_code: 220 });
+  // Shifted symbols and letters press Shift, except Ctrl+letter.
+  expect(prefixKeyMessages({ ctrl: true, alt: false, key: '_' })[0]).toMatchObject({ code: 'Minus', key_code: 189, modifiers: 10 });
+  expect(prefixKeyMessages({ ctrl: false, alt: true, key: 'A' })[0]).toMatchObject({ code: 'KeyA', key_code: 65, modifiers: 9 });
+  expect(prefixKeyMessages({ ctrl: true, alt: false, key: 'A' })[0]).toMatchObject({ modifiers: 2 });
 });
 
 test('keys get a key code from their name when they have none', () => {
@@ -81,7 +89,8 @@ test('keys get a key code from their name when they have none', () => {
   expect(keyMessage({ ...synthetic, key: 'Backspace' }, true)).toMatchObject({ key_code: 8 });
   expect(keyMessage({ ...synthetic, key: 'a' }, true)).toMatchObject({ key_code: 65 });
   expect(keyMessage({ ...synthetic, key: '7' }, true)).toMatchObject({ key_code: 55 });
-  expect(keyMessage({ ...synthetic, key: '@' }, true)).toMatchObject({ key_code: 0 });
+  expect(keyMessage({ ...synthetic, key: '@' }, true)).toMatchObject({ key_code: 50 });
+  expect(keyMessage({ ...synthetic, key: 'é' }, true)).toMatchObject({ key_code: 0 });
   expect(keyMessage({ ...synthetic, key: 'a', keyCode: 90 }, true)).toMatchObject({ key_code: 90 });
 });
 

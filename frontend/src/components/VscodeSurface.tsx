@@ -177,6 +177,7 @@ export function VscodeSurface({
           code: down.code,
           ctrlKey: prefix.ctrl,
           altKey: prefix.alt,
+          shiftKey: (down.modifiers & 8) !== 0,
           bubbles: true,
           cancelable: true,
           composed: true,

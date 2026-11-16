@@ -3,7 +3,9 @@
 //   {"type":"user","settings":{…}|null,"keybindings":[…]|null}
 //   {"type":"style","palette":{base00…base0F[, base10…base17]},
 //    "font":{"family":"Geist Mono","size":18,"weight":200}}
-//   {"type":"open","path":"/abs/file","line":12,"folder":"/abs"|null}
+//   {"type":"open","id":1,"path":"/abs/file","line":12,"folder":"/abs"|null}
+// A window showing an open's folder replies {"type":"opened","id":1}, so btmux
+// stops replaying it to windows that connect later.
 const net = require('net');
 const vscode = require('vscode');
 const { parseJsonc, mergeSettings, mergeKeybindings, same } = require('./merge');
@@ -46,7 +48,8 @@ function activate(context) {
   let retry = null;
   let disposed = false;
   const connect = () => {
-    socket = net.createConnection(path);
+    const conn = net.createConnection(path);
+    socket = conn;
     socket.setEncoding('utf8');
     let buffer = '';
     // In order, so the user settings are in place before the style applies.
@@ -58,7 +61,8 @@ function activate(context) {
         const line = buffer.slice(0, end);
         buffer = buffer.slice(end + 1);
         const message = JSON.parse(line);
-        queue = queue.then(() => handle(message)).catch((e) => console.error('btmux:', e));
+        const reply = (answer) => conn.write(`${JSON.stringify(answer)}\n`);
+        queue = queue.then(() => handle(message, reply)).catch((e) => console.error('btmux:', e));
       }
     });
     socket.on('error', () => {});
@@ -83,7 +87,7 @@ function activate(context) {
   );
 }
 
-async function handle(message) {
+async function handle(message, reply) {
   if (message.type === 'user') {
     await applyUser(message);
   } else if (message.type === 'style') {
@@ -92,6 +96,7 @@ async function handle(message) {
   } else if (message.type === 'open') {
     // Opened in the windows showing its folder; the others ignore it.
     if (message.folder && !showsFolder(message.folder)) return;
+    reply({ type: 'opened', id: message.id });
     const options = { preview: false };
     if (message.line) {
       const position = new vscode.Position(Math.max(message.line - 1, 0), 0);

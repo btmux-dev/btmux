@@ -16,7 +16,7 @@
 use std::ffi::OsString;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{LazyLock, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -31,7 +31,7 @@ use hyper_util::rt::TokioIo;
 use rust_embed::Embed;
 use serde::Serialize;
 #[cfg(unix)]
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::NamedPipeClient as UnixStream;
 #[cfg(unix)]
@@ -81,11 +81,11 @@ static SHARED: LazyLock<watch::Sender<Shared>> =
 static STYLE: LazyLock<watch::Sender<Option<String>>> = LazyLock::new(|| watch::channel(None).0);
 /// `open` messages for connected extension hosts.
 static OPENS: LazyLock<broadcast::Sender<String>> = LazyLock::new(|| broadcast::channel(16).0);
-/// The latest `open`. It's replayed to hosts that connect before any host
-/// received it, as VS Code may still be waiting on its license or starting,
-/// and soon after, as it may be reloading into another folder.
+/// The latest `open`. It's replayed to hosts that connect before a window
+/// showing its folder opened it, as VS Code may still be waiting on its license,
+/// starting, or reloading into that folder, and soon after, for other windows.
 static LAST_OPEN: std::sync::Mutex<Option<PendingOpen>> = std::sync::Mutex::new(None);
-/// How long after an extension host received it.
+/// How long after a window opened it.
 const OPEN_REPLAY: Duration = Duration::from_secs(30);
 /// How long it waits for a first one: a license prompt or first start
 /// (`code serve-web` downloads the server).
@@ -94,6 +94,7 @@ const OPEN_PENDING: Duration = Duration::from_secs(300);
 const RELINK_DEBOUNCE: Duration = Duration::from_secs(1);
 
 struct PendingOpen {
+    id: u64,
     message: String,
     created: Instant,
     delivered: Option<Instant>,
@@ -314,14 +315,18 @@ pub fn configure(config: &ClientConfig) {
 /// Open `path` in the VS Code windows showing `folder` (all, without one). The
 /// browser shows the surface, starting VS Code if needed.
 pub fn open(path: &str, line: Option<u32>, folder: Option<&str>) {
+    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let message = serde_json::json!({
         "type": "open",
+        "id": id,
         "path": path,
         "line": line,
         "folder": folder,
     })
     .to_string();
     *LAST_OPEN.lock().unwrap() = Some(PendingOpen {
+        id,
         message: message.clone(),
         created: Instant::now(),
         delivered: None,
@@ -432,8 +437,12 @@ fn microsoft_only(manifest: &serde_json::Value) -> bool {
 
 /// The extension folders in `source`: itself if it is one, else those its
 /// `extensions.json` (or `registry`, a profile's) registers (as desktop VS Code
-/// and Home Manager keep them), else its subfolders.
+/// and Home Manager keep them), else its subfolders. A profile without a
+/// registry has none, as in VS Code.
 fn find_extensions(source: &Path, registry: Option<&Path>) -> std::io::Result<Vec<PathBuf>> {
+    if registry.is_some_and(|registry| !registry.is_file()) {
+        return Ok(Vec::new());
+    }
     if registry.is_none() && source.join("package.json").is_file() {
         return Ok(vec![source.to_owned()]);
     }
@@ -667,7 +676,7 @@ fn listen_for_extension(path: &Path) -> Result<JoinHandle<()>, String> {
 /// change, until it disconnects.
 #[cfg(unix)]
 async fn serve_extension(stream: UnixStream) {
-    let (mut reader, mut writer) = stream.into_split();
+    let (reader, mut writer) = stream.into_split();
     let mut shared = SHARED.subscribe();
     let current = shared.borrow_and_update().clone();
     let user = user_message(&current).await;
@@ -684,7 +693,7 @@ async fn serve_extension(stream: UnixStream) {
         .chain(style.borrow_and_update().clone())
         .chain(recent)
         .collect();
-    let mut buf = [0u8; 64];
+    let mut lines = BufReader::new(reader).lines();
     loop {
         for message in pending.drain(..) {
             if writer
@@ -693,11 +702,6 @@ async fn serve_extension(stream: UnixStream) {
                 .is_err()
             {
                 return;
-            }
-            if let Some(open) = LAST_OPEN.lock().unwrap().as_mut() {
-                if open.message == message {
-                    open.delivered.get_or_insert_with(Instant::now);
-                }
             }
         }
         tokio::select! {
@@ -719,11 +723,26 @@ async fn serve_extension(stream: UnixStream) {
                 Err(broadcast::error::RecvError::Lagged(_)) => {}
                 Err(broadcast::error::RecvError::Closed) => return,
             },
-            read = reader.read(&mut buf) => {
-                if !matches!(read, Ok(n) if n > 0) {
-                    return;
-                }
-            }
+            line = lines.next_line() => match line {
+                Ok(Some(line)) => opened(&line),
+                _ => return,
+            },
+        }
+    }
+}
+
+/// A window showing its folder opened the `open` in `line`, an `opened` reply.
+#[cfg(unix)]
+fn opened(line: &str) {
+    let Ok(reply) = serde_json::from_str::<serde_json::Value>(line) else {
+        return;
+    };
+    if reply["type"] != "opened" {
+        return;
+    }
+    if let Some(open) = LAST_OPEN.lock().unwrap().as_mut() {
+        if reply["id"] == open.id {
+            open.delivered.get_or_insert_with(Instant::now);
         }
     }
 }
@@ -869,39 +888,50 @@ fn server_command(kind: Kind, data: &Path) -> Result<Command, String> {
 /// Link shared extension folders again whenever they or the configured ones
 /// change, as desktop VS Code installs, updates, and removes them.
 #[cfg(unix)]
-fn watch_extensions(extensions: PathBuf, linked: PathBuf, kind: Kind) -> JoinHandle<()> {
-    use notify::event::{EventKind, ModifyKind};
-    use notify::{RecursiveMode, Watcher};
+fn watch_extensions(
+    extensions: PathBuf,
+    linked: PathBuf,
+    kind: Kind,
+    mut shared: watch::Receiver<Shared>,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
-        let mut shared = SHARED.subscribe();
         shared.borrow_and_update();
+        // `spawn` has just linked them.
+        let mut relink = false;
         loop {
             let sources = shared.borrow().extensions.clone();
+            // A registry is replaced, not written in place: watch its folder.
+            let registries = sources
+                .iter()
+                .filter_map(|source| source.registry.as_deref()?.parent());
+            let (mut present, mut ancestors, mut missing) = (Vec::new(), Vec::new(), Vec::new());
+            for path in sources.iter().map(|s| s.path.as_path()).chain(registries) {
+                if path.exists() {
+                    present.push(path.to_owned());
+                } else if let Some((ancestor, names)) = missing_watch(path) {
+                    ancestors.push(ancestor);
+                    missing.extend(names);
+                }
+            }
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            // Not reads (or atime), which linking does itself.
-            let watcher =
-                notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-                    if event.is_ok_and(|event| match event.kind {
-                        EventKind::Modify(ModifyKind::Metadata(_)) => false,
-                        EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => true,
-                        _ => false,
-                    }) {
-                        let _ = tx.send(());
-                    }
+            // Watched before linking, so nothing changed meanwhile is missed.
+            let _watchers = (
+                watch_paths(&present, tx.clone(), |_| true),
+                // Only what leads to a missing folder, as one is created.
+                watch_paths(&ancestors, tx, move |path| {
+                    missing.iter().any(|entry| path.starts_with(entry))
+                }),
+            );
+            if relink {
+                let sources = sources.clone();
+                let (extensions, linked) = (extensions.clone(), linked.clone());
+                let linking = tokio::task::spawn_blocking(move || {
+                    link_extensions(&extensions, &linked, &sources, kind)
                 });
-            let _watcher = watcher
-                .inspect_err(|e| tracing::warn!("VS Code extensions: cannot watch: {e}"))
-                .ok()
-                .map(|mut watcher| {
-                    // A registry is replaced, not written in place: watch its folder.
-                    let registries = sources
-                        .iter()
-                        .filter_map(|source| source.registry.as_deref()?.parent());
-                    for path in sources.iter().map(|s| s.path.as_path()).chain(registries) {
-                        let _ = watcher.watch(path, RecursiveMode::NonRecursive);
-                    }
-                    watcher
-                });
+                if let Ok(Err(error)) = linking.await {
+                    tracing::warn!("VS Code extensions: {error}");
+                }
+            }
             tokio::select! {
                 changed = shared.changed() => if changed.is_err() {
                     return;
@@ -910,16 +940,54 @@ fn watch_extensions(extensions: PathBuf, linked: PathBuf, kind: Kind) -> JoinHan
                     while let Ok(Some(())) = tokio::time::timeout(RELINK_DEBOUNCE, rx.recv()).await {}
                 }
             }
-            let sources = shared.borrow().extensions.clone();
-            let (extensions, linked) = (extensions.clone(), linked.clone());
-            let linking = tokio::task::spawn_blocking(move || {
-                link_extensions(&extensions, &linked, &sources, kind)
-            });
-            if let Ok(Err(error)) = linking.await {
-                tracing::warn!("VS Code extensions: {error}");
-            }
+            relink = true;
         }
     })
+}
+
+/// Where to watch for `path` to be created: its nearest existing ancestor,
+/// and the entry there leading to `path`, as events name it: as given and
+/// with symlinks resolved (as FSEvents reports it).
+#[cfg(unix)]
+fn missing_watch(path: &Path) -> Option<(PathBuf, [PathBuf; 2])> {
+    let ancestor = path.ancestors().skip(1).find(|dir| dir.is_dir())?;
+    let next = path.strip_prefix(ancestor).ok()?.components().next()?;
+    let resolved = std::fs::canonicalize(ancestor).ok()?.join(next);
+    Some((ancestor.to_owned(), [ancestor.join(next), resolved]))
+}
+
+/// Watch `paths`, signaling `tx` on changes to any path `wanted` accepts.
+#[cfg(unix)]
+fn watch_paths(
+    paths: &[PathBuf],
+    tx: tokio::sync::mpsc::UnboundedSender<()>,
+    wanted: impl Fn(&Path) -> bool + Send + 'static,
+) -> Option<notify::RecommendedWatcher> {
+    use notify::event::{EventKind, ModifyKind};
+    use notify::{RecursiveMode, Watcher};
+    if paths.is_empty() {
+        return None;
+    }
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        // Not reads (or atime), which linking does itself.
+        if event.is_ok_and(|event| {
+            matches!(
+                event.kind,
+                EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+            ) && !matches!(event.kind, EventKind::Modify(ModifyKind::Metadata(_)))
+                && (event.paths.is_empty() || event.paths.iter().any(|path| wanted(path)))
+        }) {
+            let _ = tx.send(());
+        }
+    })
+    .inspect_err(|e| tracing::warn!("VS Code extensions: cannot watch: {e}"))
+    .ok()?;
+    for path in paths {
+        if let Err(e) = watcher.watch(path, RecursiveMode::NonRecursive) {
+            tracing::debug!("VS Code extensions: cannot watch {}: {e}", path.display());
+        }
+    }
+    Some(watcher)
 }
 
 #[cfg(windows)]
@@ -1015,7 +1083,7 @@ fn spawn(kind: Kind, path: Option<OsString>) -> Result<Server, String> {
         child,
         directory,
         extension_listener,
-        extension_watcher: watch_extensions(extensions, linked, kind),
+        extension_watcher: watch_extensions(extensions, linked, kind, SHARED.subscribe()),
         _lifeline: lifeline,
         output,
         readers,
@@ -1512,6 +1580,10 @@ mod tests {
             find_extensions(&shared, Some(&registry)).unwrap(),
             [shared.join("a.b-1.0.0")]
         );
+        // A profile without a registry has no extensions, not every shared one.
+        let empty = root.join("empty/extensions.json");
+        std::fs::create_dir_all(empty.parent().unwrap()).unwrap();
+        assert!(find_extensions(&shared, Some(&empty)).unwrap().is_empty());
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1541,6 +1613,7 @@ mod tests {
             return;
         };
         let open = |created: Instant, delivered: Option<Instant>| PendingOpen {
+            id: 0,
             message: String::new(),
             created,
             delivered,
@@ -1549,5 +1622,94 @@ mod tests {
         assert!(!open(past, None).current());
         assert!(open(past, Some(now)).current());
         assert!(!open(now, Some(now - OPEN_REPLAY)).current());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn links_the_first_extension_installed_into_a_missing_folder() {
+        let root =
+            std::env::temp_dir().join(format!("btmux-vscode-{}", uuid::Uuid::new_v4().simple()));
+        let extensions = root.join("data/extensions");
+        std::fs::create_dir_all(&extensions).unwrap();
+        let source = root.join("home/.vscode/extensions");
+        std::fs::create_dir_all(root.join("home")).unwrap();
+        let shared = Shared {
+            extensions: vec![Source {
+                path: source.clone(),
+                explicit: false,
+                registry: None,
+            }],
+            ..Shared::default()
+        };
+        let (_tx, rx) = watch::channel(shared);
+        let watcher = watch_extensions(
+            extensions.clone(),
+            root.join("data/linked-extensions.json"),
+            Kind::Code,
+            rx,
+        );
+        // Let it watch first.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        write_extension(&source.join("pub.first-1.0.0"), "pub", "first", "1.0.0");
+        let found = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let ids: Vec<_> = read_registry(&extensions.join("extensions.json"))
+                    .iter()
+                    .map(|entry| entry["identifier"]["id"].clone())
+                    .collect();
+                if ids.contains(&"pub.first".into()) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await;
+        watcher.abort();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(found.is_ok());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn opens_wait_for_a_window_showing_their_folder() {
+        // An extension host that has received the open.
+        async fn host() -> tokio::net::unix::OwnedWriteHalf {
+            let (server, client) = UnixStream::pair().unwrap();
+            tokio::spawn(serve_extension(server));
+            let (read, write) = client.into_split();
+            let mut lines = BufReader::new(read).lines();
+            loop {
+                let line = tokio::time::timeout(Duration::from_secs(5), lines.next_line())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+                if line.contains(r#""type":"open""#) {
+                    tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
+                    return write;
+                }
+            }
+        }
+        let delivered = || LAST_OPEN.lock().unwrap().as_ref().unwrap().delivered;
+
+        open("/repo/src/main.rs", Some(3), Some("/repo"));
+        let id = LAST_OPEN.lock().unwrap().as_ref().unwrap().id;
+        // A window showing another folder ignores it.
+        let _other = host().await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(delivered().is_none());
+        // So the one showing it, starting later, still gets it.
+        let mut matching = host().await;
+        matching
+            .write_all(format!("{{\"type\":\"opened\",\"id\":{id}}}\n").as_bytes())
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while delivered().is_none() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
     }
 }

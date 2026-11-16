@@ -533,8 +533,8 @@ data and extensions are per profile (`<state dir>/vscode`, the same layout for
 both servers). The iframe is same-origin,
 so the surface replays its keydowns to the keybinding hook and swallows those
 btmux handles; `prefix prefix` dispatches the prefix to VS Code's focused
-element (`sendPrefixToVscode`), with the legacy key codes VS Code and xterm.js
-read. Webviews come from another origin (`vscode-cdn.net` for `code
+element (`sendPrefixToVscode`), with the US-layout `code`, Shift, and legacy
+key codes VS Code and xterm.js read (`prefixKeyMessages`). Webviews come from another origin (`vscode-cdn.net` for `code
 serve-web`), so their keys reach btmux only as VS Code re-dispatches them,
 after the webview saw them; focus moving into them selects the pane through
 the page's `blur`. Moving an iframe in the DOM or changing its `src` reloads VS
@@ -558,10 +558,11 @@ settings and keybindings, on connect and when their paths change), `style` (the
 base16/24 `color_palette` and the terminal font, on connect and on every
 change), and `open`
 (`editor = "vscode"`, `vscode_open`, `btmux open-editor`), with the folder the
-surface shows over that pane: windows showing another folder ignore it. The
-last open is replayed to extension hosts that connect before any received it
-(for up to 5 minutes: a license prompt, a first start) and for 30 s after, as
-VS Code may be reloading into that folder; shutting VS Code down drops it. The extension writes the palette and font to user
+surface shows over that pane: windows showing another folder ignore it, and
+one showing it replies `opened` with the open's `id`. The last open is
+replayed to extension hosts that connect before any replied (for up to 5
+minutes: a license prompt, a first start, a reload into that folder) and for
+30 s after, for other windows; shutting VS Code down drops it. The extension writes the palette and font to user
 settings (color customizations and the editor and integrated terminal font,
 the editor at 80% size;
 `btmux.syncTheme` and `btmux.syncFont` turn them off), which VS Code for the
@@ -577,18 +578,19 @@ JSONC files and sends them as `user`; the extension, handling messages in
 order, merges them into `vscode-userdata:/User/settings.json` and
 `keybindings.json` three ways (`extras/vscode/merge.js`, against the shared
 files as last applied, kept in `globalState`): what the shared file changed
-applies, and changes made in btmux's VS Code (`btmux.syncTheme`, settings
+applies, keybindings in its order (the last match wins) with those added here
+before the shared one they preceded, and changes made in btmux's VS Code (`btmux.syncTheme`, settings
 extensions write) stay; the theme and font keys it wrote stay, so they don't
 flicker, unless the result turns their sync off, which gives back the shared
 values (it then waits for VS Code to load the file before the `style` that
 follows). These live in the browser's IndexedDB, so no file on disk can
 seed them, and machine settings ignore application-scoped keys.
 `link_extensions` registers shared extension folders in `extensions.json` by
-absolute location, reading a source's own `extensions.json` (or a profile's;
-minus `.obsolete`) when it has one, and replaces those `<state
+absolute location, reading a source's own `extensions.json` (or a profile's,
+none if it has none; minus `.obsolete`) when it has one, and replaces those `<state
 dir>/vscode/linked-extensions.json` lists; it runs on each start and, while the
 server runs, whenever a source folder changes (desktop VS Code installing or
-updating one). Entries carry no gallery metadata, so btmux's VS Code never
+updating one), watching its nearest existing ancestor while it is missing. Entries carry no gallery metadata, so btmux's VS Code never
 updates them itself. With `openvscode-server`, Microsoft's and GitHub's
 closed-license extensions (`microsoft_only`) aren't linked, as they run only in
 Microsoft's builds. VS Code's `asExternalUri` returns `localhost` URLs

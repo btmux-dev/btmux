@@ -76,12 +76,15 @@ Insiders; `extensions` lists extension folders or folders of them. Home
 Manager's `programs.vscode` writes the default locations, so
 `programs.btmux.settings.vscode.desktop = true` is all it takes. `profile`
 shares a desktop profile by name instead of the default one, with whatever it
-takes from the default profile.
+takes from the default profile; a profile with no extensions of its own yet
+shares none.
 
 Shared settings and keybindings are read each time a VS Code window loads, and
 what changed in them since the last load is applied to btmux's VS Code, which
 keeps its own in the browser. Changes made there stay until the shared file
-changes the same setting or binding. Shared extensions are linked, not copied,
+changes the same setting or binding; keybindings follow the shared file's
+order, which decides which of two bindings for a key wins, and those added
+in btmux's VS Code keep their place among them. Shared extensions are linked, not copied,
 when VS Code starts and again whenever desktop VS Code installs, updates, or
 removes one. Desktop VS Code updates them, not btmux's; uninstalling one in
 btmux's VS Code lasts until it starts again. Extensions you install in btmux's

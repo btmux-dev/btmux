@@ -58,17 +58,37 @@ function mergeSettings(base, theirs, ours, written = new Set(), groups = []) {
   return result;
 }
 
-/** `ours` without the bindings `theirs` dropped since `base`, and with those it added. */
+/**
+ * `theirs`, in its order (VS Code's last matching binding wins), without the
+ * bindings removed here and with those added here, each before the shared
+ * binding it preceded. Unchanged since `base`, it leaves `ours` as it is.
+ */
 function mergeKeybindings(base, theirs, ours) {
+  if (base && same(base, theirs)) return ours;
   const id = (binding) => JSON.stringify(binding);
   const before = new Set((base ?? []).map(id));
   const after = new Set(theirs.map(id));
-  const result = ours.filter((binding) => !before.has(id(binding)) || after.has(id(binding)));
-  const present = new Set(result.map(id));
-  for (const binding of theirs) {
-    if (!before.has(id(binding)) && !present.has(id(binding))) result.push(binding);
+  const present = new Set(ours.map(id));
+  const shared = theirs.filter((binding) => !before.has(id(binding)) || present.has(id(binding)));
+  const kept = new Set(shared.map(id));
+  // Bindings added here, by the shared binding they precede.
+  const added = new Map();
+  let pending = [];
+  for (const binding of ours) {
+    const key = id(binding);
+    if (kept.has(key)) {
+      if (pending.length) added.set(key, [...(added.get(key) ?? []), ...pending]);
+      pending = [];
+    } else if (!before.has(key) && !after.has(key)) {
+      pending.push(binding);
+    }
   }
-  return result;
+  const result = [];
+  for (const binding of shared) {
+    result.push(...(added.get(id(binding)) ?? []), binding);
+    added.delete(id(binding));
+  }
+  return [...result, ...pending];
 }
 
 module.exports = { parseJsonc, mergeSettings, mergeKeybindings, same };
