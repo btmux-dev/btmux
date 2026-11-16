@@ -4,8 +4,12 @@ import starlight from "@astrojs/starlight";
 import starlightLinksValidator from "starlight-links-validator";
 import starlightLlmsTxt from "starlight-llms-txt";
 import { remarkRepoLinks } from "./src/remark-repo-links.mjs";
+import { generateChangelogPage } from "./scripts/changelog-page.mjs";
 
 const repo = "https://github.com/buntec/btmux";
+
+// Render the repo-root CHANGELOG.md as the Project > Changelog page.
+generateChangelogPage("https://github.com/btmux-dev/btmux");
 
 // Sidebar groups, one per content directory; pages order themselves with
 // `sidebar.order` in their frontmatter.

@@ -50,7 +50,8 @@ is shown beside the state: `idle · 2 shells, 1 monitor`.
 `<prefix> + a` shows every agent pane on the server as a live tile, with its
 session, window, and state.
 
-![The agent view with three agents: working, blocked, and done](../../../assets/screenshots/agent-view.png)
+![The agent view with three agents: working, blocked, and done](../../../assets/screenshots/agent-view-dark.png)
+![The agent view with three agents: working, blocked, and done](../../../assets/screenshots/agent-view-light.png)
 
 | Key                  | Action                                          |
 | -------------------- | ----------------------------------------------- |

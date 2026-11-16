@@ -65,6 +65,12 @@ needs a group in `docs/scripts/cli-reference.mjs`), and `just docs-screenshots`
 (`frontend/docs-screenshots.ts`, demo sessions on a browser-test stack; it
 must show nothing of the host, so no process viewer).
 
+`CHANGELOG.md` at the repo root is the changelog's only source: the docs'
+Changelog page is generated from it when the site loads its config. A change a
+user would notice adds a line under `## [Unreleased]` (Added, Changed, Fixed),
+with its PR link; a release renames that heading to `## [x.y.z] - date` and
+starts a new one.
+
 Write for a user who hasn't seen the code: say what a feature is for before
 how it works, short sentences, key tables for keys, and implementation detail
 only under Internals. Use these terms: a **client** is a desktop window or

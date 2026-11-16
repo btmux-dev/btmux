@@ -8,14 +8,16 @@ btmux opens with one session, one window, and one pane running your shell.
 Everything else starts with the **prefix**: press `Ctrl+A`, release, then
 press a key. Below, `<prefix> + %` means exactly that.
 
-![A btmux window split into three panes, with the sidebar on the left and the status bar below](../../../assets/screenshots/panes.png)
+![A btmux window split into three panes, with the sidebar on the left and the status bar below](../../../assets/screenshots/panes-dark.png)
+![A btmux window split into three panes, with the sidebar on the left and the status bar below](../../../assets/screenshots/panes-light.png)
 
 Two keys are worth remembering first:
 
 - `<prefix> + ?` lists every key binding.
 - `<prefix> + :` opens the command palette. Type to filter, Enter to run.
 
-![The command palette listing layout commands](../../../assets/screenshots/command-palette.png)
+![The command palette listing layout commands](../../../assets/screenshots/command-palette-dark.png)
+![The command palette listing layout commands](../../../assets/screenshots/command-palette-light.png)
 
 ## Panes
 
@@ -50,7 +52,8 @@ Windows are like tabs. The status bar at the bottom lists them.
 | `<prefix> + &`         | Close the window (asks first)        |
 | `<prefix> + w`         | Window grid: live thumbnails of recent windows, from every session |
 
-![The window grid showing four windows as live thumbnails](../../../assets/screenshots/window-grid.png)
+![The window grid showing four windows as live thumbnails](../../../assets/screenshots/window-grid-dark.png)
+![The window grid showing four windows as live thumbnails](../../../assets/screenshots/window-grid-light.png)
 
 ## Sessions
 
@@ -71,7 +74,8 @@ The switcher shows sessions and their windows as a tree, with a live preview.
 `/` filters by session, window, repository, or branch name; Enter switches; `c`
 creates, `m` renames, and `x` kills the selected row.
 
-![The session switcher: a tree of sessions and windows with branch tokens, and a preview of the selected window](../../../assets/screenshots/session-switcher.png)
+![The session switcher: a tree of sessions and windows with branch tokens, and a preview of the selected window](../../../assets/screenshots/session-switcher-dark.png)
+![The session switcher: a tree of sessions and windows with branch tokens, and a preview of the selected window](../../../assets/screenshots/session-switcher-light.png)
 
 ## Scrolling, searching, copying
 

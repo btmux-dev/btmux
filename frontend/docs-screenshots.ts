@@ -1,9 +1,11 @@
 /**
- * Takes the docs' screenshots from a fresh stack with demo sessions.
- * Run with `just docs-screenshots`; writes docs/src/assets/screenshots.
+ * Takes the docs' screenshots from a fresh stack with demo sessions, each in
+ * dark and light (`<name>-dark.png`, `<name>-light.png`; docs CSS shows the
+ * one matching the site's theme). Run with `just docs-screenshots`; writes
+ * docs/src/assets/screenshots.
  */
 import assert from 'node:assert/strict';
-import { chromium, type Page } from 'playwright';
+import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -148,108 +150,113 @@ for (const agent of agents) {
   assert(report.ok, `agent status: ${report.status}`);
 }
 
-const browser = await chromium.launch({ headless: true, channel: process.env.BTMUX_TEST_BROWSER });
-const context = await browser.newContext({
-  viewport: { width: 1360, height: 850 },
-  deviceScaleFactor: 2,
-  colorScheme: 'dark',
-});
-const page = await context.newPage();
-const store = (call: string) =>
-  page.evaluate(async (call) => {
-    const { useStore } = await import('/src/state/store.tsx' as string);
-    new Function('s', `s.${call}`)(useStore.getState());
-  }, call);
 const overlay = (mode: string, focus?: string) =>
   fetch(`${url}/api/panes/${dev}/open-file-browser`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ path: repo, mode, focus_file: focus }),
   }).then((response) => assert(response.ok, `open ${mode}: ${response.status}`));
-const shot = async (name: string, open: () => Promise<unknown>, close: () => Promise<unknown>, settle = 1200) => {
-  if (only.length && !only.includes(name)) return;
-  try {
-    await open();
-    await page.waitForTimeout(settle);
-    await page.screenshot({ path: path.join(out, `${name}.png`) });
-    console.log(`shot ${name}`);
-  } catch (error) {
-    console.error(`FAILED ${name}: ${error}`);
-    process.exitCode = 1;
-  }
-  await close();
-  await page.waitForTimeout(400);
-};
-const escape = () => page.keyboard.press('Escape');
 
+const browser = await chromium.launch({ headless: true, channel: process.env.BTMUX_TEST_BROWSER });
 try {
-  await page.goto(`${url}/s/acme-api`);
-  await page.getByLabel('Access token').fill(token);
-  await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await waitForAsync(page, async () => {
-    const { useStore } = await import('/src/state/store.tsx' as string);
-    return !!useStore.getState().config;
-  });
-  await page.waitForTimeout(2500);
+  // `appearance = "auto"` follows the browser's color scheme.
+  for (const scheme of ['dark', 'light'] as const) {
+    const context = await browser.newContext({
+      viewport: { width: 1360, height: 850 },
+      deviceScaleFactor: 2,
+      colorScheme: scheme,
+    });
+    const page = await context.newPage();
+    const store = (call: string) =>
+      page.evaluate(async (call) => {
+        const { useStore } = await import('/src/state/store.tsx' as string);
+        new Function('s', `s.${call}`)(useStore.getState());
+      }, call);
+    const shot = async (name: string, open: () => Promise<unknown>, close: () => Promise<unknown>, settle = 1200) => {
+      if (only.length && !only.includes(name)) return;
+      try {
+        await open();
+        await page.waitForTimeout(settle);
+        await page.screenshot({ path: path.join(out, `${name}-${scheme}.png`) });
+        console.log(`shot ${name}-${scheme}`);
+      } catch (error) {
+        console.error(`FAILED ${name}-${scheme}: ${error}`);
+        process.exitCode = 1;
+      }
+      await close();
+      await page.waitForTimeout(400);
+    };
+    const escape = () => page.keyboard.press('Escape');
 
-  await shot(
-    'panes',
-    async () => {},
-    async () => {},
-  );
-  await shot(
-    'command-palette',
-    async () => {
-      await page.getByLabel('Terminal').first().focus();
-      await page.keyboard.press('Control+a');
-      await page.keyboard.press(':');
-    },
-    escape,
-  );
-  await shot(
-    'session-switcher',
-    async () => {
-      await store('setSwitcherOpen(true)');
-      await page.waitForTimeout(800);
-      await page.keyboard.press('ArrowRight');
-    },
-    () => store('setSwitcherOpen(false)'),
-    2000,
-  );
-  await shot(
-    'window-grid',
-    () => store('setWindowGridOpen(true)'),
-    () => store('setWindowGridOpen(false)'),
-    2500,
-  );
-  await shot(
-    'file-browser',
-    () => overlay('files', 'README.md'),
-    () => store('setFileBrowserOpen(false)'),
-    1800,
-  );
-  await shot(
-    'git-mode',
-    async () => {
-      await overlay('git');
-      await page.waitForTimeout(1200);
-      await page.keyboard.press('j');
-    },
-    () => store('setFileBrowserOpen(false)'),
-    1800,
-  );
-  // No process viewer: it lists the host's own processes, users, and paths.
-  await shot(
-    'agent-view',
-    () => store('setAgentGridOpen(true)'),
-    () => store('setAgentGridOpen(false)'),
-    3000,
-  );
-  await shot(
-    'settings',
-    () => store('setSettingsOpen(true)'),
-    () => store('setSettingsOpen(false)'),
-  );
+    await page.goto(`${url}/s/acme-api`);
+    await page.getByLabel('Access token').fill(token);
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    await waitForAsync(page, async () => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      return !!useStore.getState().config;
+    });
+    await page.waitForTimeout(2500);
+
+    await shot(
+      'panes',
+      async () => {},
+      async () => {},
+    );
+    await shot(
+      'command-palette',
+      async () => {
+        await page.getByLabel('Terminal').first().focus();
+        await page.keyboard.press('Control+a');
+        await page.keyboard.press(':');
+      },
+      escape,
+    );
+    await shot(
+      'session-switcher',
+      async () => {
+        await store('setSwitcherOpen(true)');
+        await page.waitForTimeout(800);
+        await page.keyboard.press('ArrowRight');
+      },
+      () => store('setSwitcherOpen(false)'),
+      2000,
+    );
+    await shot(
+      'window-grid',
+      () => store('setWindowGridOpen(true)'),
+      () => store('setWindowGridOpen(false)'),
+      2500,
+    );
+    await shot(
+      'file-browser',
+      () => overlay('files', 'README.md'),
+      () => store('setFileBrowserOpen(false)'),
+      1800,
+    );
+    await shot(
+      'git-mode',
+      async () => {
+        await overlay('git');
+        await page.waitForTimeout(1200);
+        await page.keyboard.press('j');
+      },
+      () => store('setFileBrowserOpen(false)'),
+      1800,
+    );
+    // No process viewer: it lists the host's own processes, users, and paths.
+    await shot(
+      'agent-view',
+      () => store('setAgentGridOpen(true)'),
+      () => store('setAgentGridOpen(false)'),
+      3000,
+    );
+    await shot(
+      'settings',
+      () => store('setSettingsOpen(true)'),
+      () => store('setSettingsOpen(false)'),
+    );
+    await context.close();
+  }
 } finally {
   await browser.close();
   rmSync(home, { recursive: true, force: true });

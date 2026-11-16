@@ -41,7 +41,8 @@ reloads. **Save** writes them to `config.toml`, keeping your comments and other
 settings. If the file is read-only, as Nix and Home Manager install it, the
 dialog shows the TOML to copy instead.
 
-![The Settings dialog on its General tab](../../../assets/screenshots/settings.png)
+![The Settings dialog on its General tab](../../../assets/screenshots/settings-dark.png)
+![The Settings dialog on its General tab](../../../assets/screenshots/settings-light.png)
 
 The command palette's color and font pickers work like Apply.
 

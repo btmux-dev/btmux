@@ -29,3 +29,13 @@
   font-weight: 400;
   letter-spacing: 0;
 }
+
+/* Screenshots come in pairs; show the one for the site's theme. */
+:root[data-theme="light"] .sl-markdown-content img[src*="-dark."],
+:root[data-theme="dark"] .sl-markdown-content img[src*="-light."] {
+  display: none;
+}
+.sl-markdown-content img[src*="/_astro/"] {
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.5rem;
+}

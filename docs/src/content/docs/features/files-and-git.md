@@ -12,7 +12,8 @@ lists the keys for where you are.
 
 `<prefix> + f` opens it: a list of entries and a preview of the focused one.
 
-![The file browser with a rendered Markdown preview](../../../assets/screenshots/file-browser.png)
+![The file browser with a rendered Markdown preview](../../../assets/screenshots/file-browser-dark.png)
+![The file browser with a rendered Markdown preview](../../../assets/screenshots/file-browser-light.png)
 
 | Key                         | Action                                                 |
 | --------------------------- | ------------------------------------------------------ |
@@ -48,7 +49,8 @@ falling back to `find` and `grep`. Both show at most 100 results.
 `<prefix> + g` opens the status of the pane's repository: staged, unstaged,
 and untracked files, with the focused file's diff beside the list.
 
-![Git mode: staged, unstaged, and untracked files beside a diff](../../../assets/screenshots/git-mode.png)
+![Git mode: staged, unstaged, and untracked files beside a diff](../../../assets/screenshots/git-mode-dark.png)
+![Git mode: staged, unstaged, and untracked files beside a diff](../../../assets/screenshots/git-mode-light.png)
 
 | Key                 | Action                                              |
 | ------------------- | --------------------------------------------------- |
