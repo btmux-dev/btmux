@@ -12,6 +12,7 @@ fn main() {
             "connect_remote_server",
             "notify",
             "set_background",
+            "set_color_scheme",
             "desktop_info",
             "zoom",
             "new_window",

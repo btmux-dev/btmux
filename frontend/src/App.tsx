@@ -42,7 +42,7 @@ import { useFontLoader } from './hooks/useFontLoader';
 import { useModalBackdrop } from './hooks/useModalBackdrop';
 import { setPageBackground } from './lib/desktopTransparency';
 import { hasShaderWallpaper } from './lib/wallpaperCatalog';
-import { desktopVersionMismatch } from './lib/desktopApp';
+import { desktopVersionMismatch, setDesktopColorScheme } from './lib/desktopApp';
 import { dismissNotification } from './lib/notifications';
 import { useDesktopVersion } from './hooks/useDesktopVersion';
 import { useVisualViewport } from './hooks/useVisualViewport';
@@ -344,6 +344,11 @@ export function App() {
     document.documentElement.style.setProperty('--btmux-font', `"${family}", monospace`);
     document.documentElement.style.setProperty('--btmux-font-weight', weight);
   }, [effectiveConfig?.terminal?.fontFamily, effectiveConfig?.terminal?.fontWeight]);
+
+  const colorMode = config?.color_mode;
+  useEffect(() => {
+    if (colorMode) setDesktopColorScheme(colorMode);
+  }, [colorMode]);
 
   useEffect(() => {
     setPageBackground(

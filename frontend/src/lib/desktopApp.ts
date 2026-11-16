@@ -1,3 +1,5 @@
+import type { ColorMode } from '../generated/protocol';
+
 type TauriWindow = Window & {
   __TAURI_INTERNALS__?: { invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown> };
 };
@@ -36,6 +38,12 @@ export function isDesktopApp(): boolean {
 /** Returns the desktop app to its server picker. */
 export function switchDesktopServer(): void {
   (window as TauriWindow).__TAURI_INTERNALS__?.invoke('switch_server').catch(() => {});
+}
+
+/** Tells the desktop app the shown scheme, which windows opened from this one match. */
+export function setDesktopColorScheme(scheme: ColorMode): void {
+  // Older apps lack the command.
+  invokeDesktop('set_color_scheme', { scheme })?.catch(() => {});
 }
 
 /** Opens another desktop app window on the server picker. */

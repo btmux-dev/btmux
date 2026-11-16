@@ -36,9 +36,32 @@ const ZOOM_IN: &str = "zoom-in";
 const ZOOM_OUT: &str = "zoom-out";
 const ACTUAL_SIZE: &str = "actual-size";
 const DESKTOP_PROFILE: &str = "desktop";
-// The picker page's background (`ui/index.html`).
-#[cfg(target_os = "macos")]
-const PICKER_BACKGROUND: Color = Color(0x17, 0x17, 0x17, 0xff);
+
+// A page's light or dark appearance.
+#[derive(Clone, Copy, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Scheme {
+    Dark,
+    Light,
+}
+
+impl Scheme {
+    fn name(self) -> &'static str {
+        match self {
+            Scheme::Dark => "dark",
+            Scheme::Light => "light",
+        }
+    }
+
+    // The picker page's background (`ui/index.html`).
+    #[cfg(target_os = "macos")]
+    fn picker_background(self) -> Color {
+        match self {
+            Scheme::Dark => Color(0x17, 0x17, 0x17, 0xff),
+            Scheme::Light => Color(0xf5, 0xf5, 0xf5, 0xff),
+        }
+    }
+}
 
 #[derive(Default)]
 struct Server {
@@ -49,6 +72,8 @@ struct Server {
     choices: Mutex<HashMap<String, Vec<discovery::RunningServer>>>,
     // Each window's current navigation, so stale watchdogs stop.
     connections: Mutex<HashMap<String, u64>>,
+    // Each window's page scheme, which pickers opened from it match.
+    schemes: Mutex<HashMap<String, Scheme>>,
     next_connection: AtomicU64,
     next_window: AtomicU64,
     picker: OnceLock<Url>,
@@ -63,6 +88,7 @@ impl Server {
     fn navigate(&self, window: &str) -> u64 {
         let id = self.next_connection.fetch_add(1, Ordering::SeqCst);
         self.connections.lock().unwrap().insert(window.into(), id);
+        self.schemes.lock().unwrap().remove(window);
         id
     }
 
@@ -73,6 +99,11 @@ impl Server {
     fn forget(&self, window: &str) {
         self.connections.lock().unwrap().remove(window);
         self.choices.lock().unwrap().remove(window);
+        self.schemes.lock().unwrap().remove(window);
+    }
+
+    fn scheme(&self, window: &str) -> Option<Scheme> {
+        self.schemes.lock().unwrap().get(window).copied()
     }
 
     fn choice(&self, window: &str, address: &str) -> Result<discovery::RunningServer, String> {
@@ -138,18 +169,49 @@ async fn discover_servers(
     Ok(choices)
 }
 
-fn show_picker(window: &WebviewWindow, reason: &str) {
-    let state = window.state::<Server>();
-    state.navigate(window.label());
-    if let Some(picker) = state.picker.get() {
-        #[cfg(target_os = "macos")]
+// The picker's URL, in `scheme` or else the system's.
+fn picker_url(picker: &Url, reason: Option<&str>, scheme: Option<Scheme>) -> Url {
+    let mut url = picker.clone();
+    url.set_query(None);
+    {
+        let mut query = url.query_pairs_mut();
+        if let Some(reason) = reason {
+            query.append_pair("return", reason);
+        }
+        if let Some(scheme) = scheme {
+            query.append_pair("scheme", scheme.name());
+        }
+    }
+    if url.query() == Some("") {
+        url.set_query(None);
+    }
+    url
+}
+
+// Paints the window behind the picker until its page loads (macOS).
+fn set_picker_background(window: &WebviewWindow, scheme: Option<Scheme>) {
+    #[cfg(target_os = "macos")]
+    {
+        let scheme = scheme.unwrap_or_else(|| match window.theme() {
+            Ok(tauri::Theme::Light) => Scheme::Light,
+            _ => Scheme::Dark,
+        });
         let _ = window
             .as_ref()
             .window()
-            .set_background_color(Some(PICKER_BACKGROUND));
-        let mut url = picker.clone();
-        url.set_query(Some(&format!("return={reason}")));
-        let _ = window.navigate(url);
+            .set_background_color(Some(scheme.picker_background()));
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window, scheme);
+}
+
+fn show_picker(window: &WebviewWindow, reason: &str) {
+    let state = window.state::<Server>();
+    let scheme = state.scheme(window.label());
+    state.navigate(window.label());
+    if let Some(picker) = state.picker.get() {
+        set_picker_background(window, scheme);
+        let _ = window.navigate(picker_url(picker, Some(reason), scheme));
     }
 }
 
@@ -356,6 +418,7 @@ fn allow_remote(app: &AppHandle, origin: &str) -> Result<(), String> {
         .permission("allow-zoom")
         .permission("allow-new-window")
         .permission("allow-set-background")
+        .permission("allow-set-color-scheme")
         .permission("shell:allow-open");
     app.add_capability(capability)
         .map_err(|_| "Could not open btmux.".to_string())?;
@@ -792,6 +855,16 @@ fn set_background(window: WebviewWindow, color: [u8; 4]) {
     let _ = (window, color);
 }
 
+// Records the page's scheme, which pickers opened from its window match.
+#[tauri::command]
+fn set_color_scheme(window: WebviewWindow, state: State<'_, Server>, scheme: Scheme) {
+    state
+        .schemes
+        .lock()
+        .unwrap()
+        .insert(window.label().into(), scheme);
+}
+
 // The desktop app's own version, which may differ from the connected server's.
 #[tauri::command]
 fn desktop_info() -> &'static str {
@@ -830,14 +903,20 @@ fn focused_window(app: &AppHandle) -> Option<WebviewWindow> {
         .find(|window| window.is_focused().unwrap_or(false))
 }
 
-// A picker window, cascaded from the focused one at its size.
+// A picker window, cascaded from the focused one at its size and in its scheme.
 fn open_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
-    let id = app
-        .state::<Server>()
-        .next_window
-        .fetch_add(1, Ordering::SeqCst);
+    let state = app.state::<Server>();
+    let id = state.next_window.fetch_add(1, Ordering::SeqCst);
     let label = format!("window-{id}");
-    let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App("index.html".into()))
+    let focused = focused_window(app);
+    let scheme = focused
+        .as_ref()
+        .and_then(|window| state.scheme(window.label()));
+    let page = match scheme {
+        Some(scheme) => format!("index.html?scheme={}", scheme.name()),
+        None => "index.html".into(),
+    };
+    let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App(page.into()))
         .title("")
         .inner_size(1200.0, 800.0)
         .min_inner_size(640.0, 400.0)
@@ -853,7 +932,7 @@ fn open_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
             }
             NewWindowResponse::Deny
         });
-    if let Some(focused) = focused_window(app)
+    if let Some(focused) = focused
         && let (Ok(scale), Ok(position), Ok(size)) = (
             focused.scale_factor(),
             focused.outer_position(),
@@ -873,11 +952,14 @@ fn open_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .transparent(true)
         // Shows the window background, which pages set to their own.
         .title_bar_style(TitleBarStyle::Transparent)
-        .background_color(PICKER_BACKGROUND)
+        .background_color(scheme.unwrap_or(Scheme::Dark).picker_background())
         .initialization_script("window.__btmuxDesktopTransparency = true;");
     let window = builder.build()?;
+    if scheme.is_none() {
+        set_picker_background(&window, None);
+    }
     app.state::<zoom::Zoom>().apply(&window);
-    let _ = app.state::<Server>().picker.set(window.url()?);
+    let _ = state.picker.set(picker_url(&window.url()?, None, None));
     Ok(window)
 }
 
@@ -915,6 +997,7 @@ pub fn run() {
             connect_remote_server,
             notify,
             set_background,
+            set_color_scheme,
             desktop_info,
             zoom,
             new_window

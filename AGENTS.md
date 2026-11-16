@@ -274,7 +274,9 @@ outlives the app; the picker stops desktop-profile servers through
 `switch_server` (the palette's "desktop: switch server") and open another
 window on it through `new_window` ("desktop: new window", ⌘N on macOS);
 the launcher keeps each window's listed servers and watchdog by label, and
-capabilities match every window (`*`).
+capabilities match every window (`*`). Pages report their shown color mode
+(`set_color_scheme`); a picker opened from a window, or returned to, uses that
+window's scheme (`?scheme=`), else follows the system's.
 Remote servers (`desktop/src-tauri/src/remote.rs`) are saved by origin and
 token in an owner-only file and checked through `/api/info`, whose `Set-Cookie`
 names the auth cookie to install. Connecting adds a runtime capability that
