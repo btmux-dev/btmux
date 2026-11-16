@@ -15,8 +15,8 @@ browser and Git mode open files there. Set `editor` in
 
 Whatever `editor` says, the status bar shows a button for each editor the
 server can run: Neovim 0.12+ and, outside Windows, the `[vscode] server`
-program, found on the server's `PATH` (a service's `PATH` may be shorter than
-your shell's) or, for VS Code on macOS, in `/Applications`. The configured editor comes first. The `editor-neovim` and
+program, found on the server's `PATH`, else your shell's (a service's `PATH` may
+be shorter), or, for VS Code on macOS, in `/Applications`. The configured editor comes first. The `editor-neovim` and
 `editor-vscode` actions, unbound by default, toggle one of them from the
 command palette or a `[keys]` binding, and `btmux open-editor --kind vscode`
 opens one from a pane.

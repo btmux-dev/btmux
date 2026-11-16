@@ -37,13 +37,23 @@ function parseJsonc(text) {
 
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
-/** `ours` with the settings `theirs` changed since `base`, except `keep`'s. */
-function mergeSettings(base, theirs, ours, keep) {
+/**
+ * `ours` with the settings `theirs` changed since `base`, except those btmux
+ * `written`, which stay so they don't flicker. Each of `groups`, a sync
+ * setting and the keys it writes, that the result turns off gets `theirs`'
+ * values for those keys back instead.
+ */
+function mergeSettings(base, theirs, ours, written = new Set(), groups = []) {
   const result = { ...ours };
-  for (const key of new Set([...Object.keys(base ?? {}), ...Object.keys(theirs)])) {
-    if (keep.has(key) || (base && same(base[key], theirs[key]))) continue;
+  const apply = (key) => {
     if (key in theirs) result[key] = theirs[key];
     else delete result[key];
+  };
+  for (const key of new Set([...Object.keys(base ?? {}), ...Object.keys(theirs)])) {
+    if (!written.has(key) && !(base && same(base[key], theirs[key]))) apply(key);
+  }
+  for (const [setting, keys] of groups) {
+    if (result[setting] === false) keys.filter((key) => written.has(key)).forEach(apply);
   }
   return result;
 }

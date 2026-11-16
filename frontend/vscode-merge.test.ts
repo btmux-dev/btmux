@@ -26,6 +26,23 @@ test('settings changed here survive until the shared file changes them', () => {
   expect(mergeSettings(base, { a: 2, b: 1, gone: 1 }, { a: 'btmux' }, new Set(['a']))).toEqual({ a: 'btmux' });
 });
 
+test('a sync the shared file turns off gives its settings back', () => {
+  const groups: [string, string[]][] = [
+    ['btmux.syncTheme', ['workbench.colorTheme', 'workbench.colorCustomizations']],
+    ['btmux.syncFont', ['editor.fontFamily']],
+  ];
+  const written = new Set(['workbench.colorTheme', 'workbench.colorCustomizations', 'editor.fontFamily']);
+  const desktop = { 'workbench.colorTheme': 'Solarized', 'editor.fontFamily': 'Menlo' };
+  const ours = { 'workbench.colorTheme': 'btmux', 'workbench.colorCustomizations': { x: 1 }, 'editor.fontFamily': 'Geist' };
+  expect(mergeSettings(desktop, { ...desktop, 'btmux.syncTheme': false }, ours, written, groups)).toEqual({
+    'workbench.colorTheme': 'Solarized',
+    'btmux.syncTheme': false,
+    'editor.fontFamily': 'Geist',
+  });
+  // Still on, btmux's stay.
+  expect(mergeSettings(desktop, desktop, ours, written, groups)).toEqual(ours);
+});
+
 test('keybindings added here stay, and shared ones follow the shared file', () => {
   const x = { key: 'ctrl+x', command: 'x' };
   const y = { key: 'ctrl+y', command: 'y' };

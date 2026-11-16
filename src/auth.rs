@@ -267,6 +267,9 @@ pub async fn protect(State(auth): State<Arc<Auth>>, request: Request, next: Next
         return next.run(request).await;
     }
     if !auth.authenticated(request.headers()) {
+        if let Some(response) = return_same_site(&request) {
+            return response;
+        }
         let mut response = (StatusCode::UNAUTHORIZED, "Use your btmux access token as the password. The token file location is printed when the server starts.").into_response();
         if !request.uri().path().starts_with("/api/")
             && !request.uri().path().starts_with("/ws/")
@@ -396,6 +399,42 @@ fn mark_relayed_unauthorized(headers: &mut HeaderMap) {
     );
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     headers.insert(header::VARY, HeaderValue::from_static("Cookie"));
+}
+
+/// Where VS Code's sign-in flows (GitHub, Microsoft) return from their sites.
+const VSCODE_CALLBACK: &str = "/vscode/callback";
+
+/// Load a sign-in callback again from this site: arriving from the provider's,
+/// the navigation is cross-site, which withholds the `SameSite=Strict` cookie,
+/// as for `pair`. The refresh is the same URL, so it can lead nowhere else, and
+/// a request still without credentials then gets the usual 401.
+fn return_same_site(request: &Request) -> Option<Response> {
+    let header = |name| request.headers().get(name).and_then(|v| v.to_str().ok());
+    let cross_site = header(HeaderName::from_static("sec-fetch-site")) == Some("cross-site")
+        && header(HeaderName::from_static("sec-fetch-dest")) == Some("document");
+    if request.method() != Method::GET || request.uri().path() != VSCODE_CALLBACK || !cross_site {
+        return None;
+    }
+    let target = request.uri().path_and_query()?.as_str();
+    let refresh = HeaderValue::from_str(&format!("0; url={target}")).ok()?;
+    Some(
+        (
+            [
+                (header::REFRESH, refresh),
+                (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+                (
+                    header::CONTENT_SECURITY_POLICY,
+                    HeaderValue::from_static("default-src 'none'"),
+                ),
+                (
+                    header::REFERRER_POLICY,
+                    HeaderValue::from_static("no-referrer"),
+                ),
+            ],
+            Html("<!doctype html><title>Signing in…</title>"),
+        )
+            .into_response(),
+    )
 }
 
 /// Sign in a device that scanned a pairing QR code, then load the app. A
@@ -770,6 +809,32 @@ mod middleware_tests {
                 && cookie.contains("Secure")
                 && cookie.contains("Max-Age=")
         );
+    }
+
+    #[tokio::test]
+    async fn sign_in_callbacks_load_again_from_this_site() {
+        let auth = Arc::new(Auth::new("a".repeat(64), "127.0.0.1", 8004, &[]).unwrap());
+        let app = axum::Router::new()
+            .fallback(|| async { "ok" })
+            .layer(axum::middleware::from_fn_with_state(auth, protect));
+        let get = |uri: &str, site: &str| {
+            Request::builder()
+                .uri(uri)
+                .header(header::HOST, "localhost:8004")
+                .header("sec-fetch-site", site)
+                .header("sec-fetch-dest", "document")
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+        let uri = "/vscode/callback?vscode-scheme=code&vscode-authority=vscode.github-authentication&code=x%20y";
+        let response = app.clone().oneshot(get(uri, "cross-site")).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::REFRESH], format!("0; url={uri}"));
+        // From this site, or anywhere else, it takes credentials as usual.
+        for (uri, site) in [(uri, "same-origin"), ("/vscode/", "cross-site")] {
+            let response = app.clone().oneshot(get(uri, site)).await.unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{uri} {site}");
+        }
     }
 
     #[tokio::test]

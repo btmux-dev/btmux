@@ -116,9 +116,15 @@ async function applyUser({ settings, keybindings }) {
   const base = state.get(SHARED, {});
   if (settings) {
     const ours = await readUserFile('settings.json');
-    const keep = new Set(Object.keys(state.get(WRITTEN, {})));
-    const merged = mergeSettings(base.settings, settings, isObject(ours) ? ours : {}, keep);
-    await writeUserFile('settings.json', ours, merged);
+    const written = new Set(Object.keys(state.get(WRITTEN, {})));
+    const groups = [
+      ['btmux.syncTheme', THEME_KEYS],
+      ['btmux.syncFont', FONT_KEYS],
+    ];
+    const merged = mergeSettings(base.settings, settings, isObject(ours) ? ours : {}, written, groups);
+    // The style that follows reads the sync settings: wait for VS Code to load them.
+    const loaded = configurationChange();
+    if (await writeUserFile('settings.json', ours, merged)) await loaded;
   }
   if (keybindings) {
     const ours = await readUserFile('keybindings.json');
@@ -142,11 +148,25 @@ async function readUserFile(name) {
   }
 }
 
-/** Write a user file as JSON, unless it already has that content. */
+/** Write a user file as JSON, unless it already has that content; whether it wrote. */
 async function writeUserFile(name, current, value) {
-  if (same(current, value)) return;
+  if (same(current, value)) return false;
   const text = `${JSON.stringify(value, null, 2)}\n`;
   await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(USER_DIR, name), new TextEncoder().encode(text));
+  return true;
+}
+
+/** The next configuration change, or a timeout if VS Code saw none. */
+function configurationChange(timeout = 2000) {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      listener.dispose();
+      resolve();
+    };
+    const listener = vscode.workspace.onDidChangeConfiguration(done);
+    const timer = setTimeout(done, timeout);
+  });
 }
 
 /**

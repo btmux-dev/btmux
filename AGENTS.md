@@ -578,8 +578,10 @@ order, merges them into `vscode-userdata:/User/settings.json` and
 `keybindings.json` three ways (`extras/vscode/merge.js`, against the shared
 files as last applied, kept in `globalState`): what the shared file changed
 applies, and changes made in btmux's VS Code (`btmux.syncTheme`, settings
-extensions write) stay; the theme and font keys it wrote always stay, so they
-don't flicker. These live in the browser's IndexedDB, so no file on disk can
+extensions write) stay; the theme and font keys it wrote stay, so they don't
+flicker, unless the result turns their sync off, which gives back the shared
+values (it then waits for VS Code to load the file before the `style` that
+follows). These live in the browser's IndexedDB, so no file on disk can
 seed them, and machine settings ignore application-scoped keys.
 `link_extensions` registers shared extension folders in `extensions.json` by
 absolute location, reading a source's own `extensions.json` (or a profile's;
@@ -589,7 +591,13 @@ server runs, whenever a source folder changes (desktop VS Code installing or
 updating one). Entries carry no gallery metadata, so btmux's VS Code never
 updates them itself. With `openvscode-server`, Microsoft's and GitHub's
 closed-license extensions (`microsoft_only`) aren't linked, as they run only in
-Microsoft's builds.
+Microsoft's builds. VS Code's `asExternalUri` returns `localhost` URLs
+unchanged (`code serve-web` sets no tunnel provider), so extensions serving
+pages on the server's localhost work only from a browser on the same machine;
+`docs/vscode.md` lists this with other desktop extensions that can't run.
+Sign-in flows return cross-site to `/vscode/callback`, which carries no
+`SameSite=Strict` cookie: `auth::return_same_site` answers such a document
+request without credentials with a `Refresh` to the same URL, as `/pair` does.
 
 ### Sandboxed sessions (Multipass)
 
