@@ -274,6 +274,8 @@ pub struct AgentLifecycle {
     observed: Option<AgentProcess>,
     observed_name: Option<String>,
     named_by_report: bool,
+    /// The name came from OSC 7501 records, which process and hook names outrank.
+    named_by_program: bool,
     last_seen: Instant,
     ended: bool,
     ended_process: Option<AgentProcess>,
@@ -326,7 +328,7 @@ impl AgentLifecycle {
     /// A program known only by its OSC 7501 records.
     pub fn program(summary: &Summary, now: Instant) -> Self {
         let (state, message) = program_state(summary);
-        Self::new(
+        let mut lifecycle = Self::new(
             AgentStatus {
                 state,
                 agent: summary.app.clone(),
@@ -336,7 +338,9 @@ impl AgentLifecycle {
             },
             Authority::Program,
             now,
-        )
+        );
+        lifecycle.named_by_program = true;
+        lifecycle
     }
 
     pub fn reported(now: Instant) -> Self {
@@ -363,6 +367,7 @@ impl AgentLifecycle {
             observed: None,
             observed_name: None,
             named_by_report: false,
+            named_by_program: false,
             last_seen: now,
             ended: false,
             ended_process: None,
@@ -416,6 +421,7 @@ impl AgentLifecycle {
         }
         self.observed = Some(process);
         self.observed_name = Some(name.to_string());
+        self.named_by_program = false;
         // A reported name outranks the process-derived one.
         if self.named_by_report || self.status.agent.as_deref() == Some(name) {
             return false;
@@ -622,8 +628,9 @@ impl AgentLifecycle {
                     self.status.message = message;
                 }
                 self.status.source = Some(PROGRAM_SOURCE.into());
-                if self.status.agent.is_none() {
+                if self.status.agent.is_none() || self.named_by_program {
                     self.status.agent = summary.app.clone();
+                    self.named_by_program = true;
                 }
                 self.authority = Authority::Program;
                 self.pending_screen = None;
@@ -669,11 +676,13 @@ impl AgentLifecycle {
 
     /// Active only through hook reports, quiet for `grace`. Its reported PID
     /// may be a long-lived server that outlives the agent, so liveness alone
-    /// cannot end it.
+    /// cannot end it. OSC 7501 records end by their own lifetimes, such as a
+    /// result kept until acknowledged; idle ones are left to the prompt.
     pub fn is_unobserved_for(&self, now: Instant, grace: Duration) -> bool {
         self.is_active()
             && self.observed.is_none()
             && self.authority != Authority::Explicit
+            && !(self.authority == Authority::Program && self.status.state != AgentState::Idle)
             && now.duration_since(self.last_seen) >= grace
     }
 
@@ -818,6 +827,7 @@ impl AgentLifecycle {
         if let Some(agent) = report.agent {
             self.status.agent = Some(agent);
             self.named_by_report = true;
+            self.named_by_program = false;
         }
 
         let asserted = match report.event {
@@ -913,6 +923,7 @@ impl AgentLifecycle {
         self.status = AgentStatus::default();
         self.authority = Authority::Process;
         self.named_by_report = false;
+        self.named_by_program = false;
         self.turn_id = None;
         self.turn_complete = true;
         self.blocked_tool = None;
@@ -1367,6 +1378,38 @@ mod tests {
         assert_eq!(agent.status.agent.as_deref(), Some("claude-code"));
         assert!(agent.observe_program(None, now));
         assert!(!agent.is_active());
+    }
+
+    #[test]
+    fn program_names_follow_records_but_not_over_hooks_or_processes() {
+        use program_status::State;
+        let now = Instant::now();
+        let named = |app: &str| Summary {
+            app: Some(app.into()),
+            ..summary(State::Working)
+        };
+        let mut agent = AgentLifecycle::program(&named("build"), now);
+        assert!(agent.observe_program(Some(&named("deploy")), now));
+        assert_eq!(agent.status.agent.as_deref(), Some("deploy"));
+
+        // A hook's name stays.
+        let start = AgentReport {
+            agent: Some("claude".into()),
+            ..report(AgentEvent::SessionStart, "s", None)
+        };
+        agent.apply(start, 0, now);
+        agent.observe_program(Some(&named("lint")), now);
+        assert_eq!(agent.status.agent.as_deref(), Some("claude"));
+
+        // So does a process's.
+        let mut agent = AgentLifecycle::program(&named("build"), now);
+        let process = AgentProcess {
+            pid: 1,
+            start_time: 1,
+        };
+        assert!(agent.observe_process(process, "codex", 0, now, |_| true));
+        agent.observe_program(Some(&named("deploy")), now);
+        assert_eq!(agent.status.agent.as_deref(), Some("codex"));
     }
 
     #[test]

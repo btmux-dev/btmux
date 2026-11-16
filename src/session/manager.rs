@@ -2631,6 +2631,25 @@ mod agent_tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert_eq!(state(&mut mgr), None);
+
+        // A result outlives the program at the prompt until acknowledged.
+        let done = b"printf '\\033]7501;state=done:app=build\\007'\n";
+        mgr.find_pane(pane_id)
+            .unwrap()
+            .pty
+            .input_tx
+            .send(done.to_vec())
+            .unwrap();
+        while state(&mut mgr).is_none() && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let grace = Duration::from_secs(3);
+        let later = Instant::now() + grace;
+        assert!(!mgr.end_agents_at_prompt(later, grace));
+        assert_eq!(state(&mut mgr).unwrap().state, AgentState::Done);
+        assert!(mgr.acknowledge_pane(pane_id));
+        assert!(mgr.end_agents_at_prompt(later, grace));
+        assert_eq!(state(&mut mgr), None);
     }
 
     #[tokio::test]

@@ -241,20 +241,25 @@ impl ProgramStatus {
         let changed = match event {
             Event::Report(Report::Set(record)) => {
                 let index = self.records.iter().position(|r| r.id == record.id);
-                if index.is_some_and(|i| self.records[i] == record) {
-                    // Most recent all the same.
-                    let record = self.records.remove(index.unwrap());
+                if let Some(index) = index.filter(|&i| self.records[i] == record) {
+                    // Most recent all the same, which can pick another
+                    // summary among equals.
+                    let before = self.summary();
+                    let record = self.records.remove(index);
                     self.records.push(record);
-                    return false;
+                    let changed = self.summary() != before;
+                    self.reported |= changed;
+                    changed
+                } else {
+                    if let Some(index) = index {
+                        self.records.remove(index);
+                    } else if self.records.len() >= MAX_RECORDS {
+                        self.records.remove(0);
+                    }
+                    self.records.push(record);
+                    self.reported = true;
+                    true
                 }
-                if let Some(index) = index {
-                    self.records.remove(index);
-                } else if self.records.len() >= MAX_RECORDS {
-                    self.records.remove(0);
-                }
-                self.records.push(record);
-                self.reported = true;
-                true
             }
             Event::Report(Report::Clear(None)) | Event::Reset => {
                 self.records.clear();
@@ -485,5 +490,26 @@ mod tests {
         // Ties go to the newest.
         report(&mut store, "state=working:id=r5:title=TmV3", None);
         assert_eq!(store.summary().unwrap().text.as_deref(), Some("New"));
+    }
+
+    #[test]
+    fn repeated_reports_and_ancestors_change_the_summary() {
+        let text = |change: Option<Change>| change.and_then(|c| c.summary?.text);
+        let mut store = ProgramStatus::default();
+        report(&mut store, "state=blocked:id=a:msg=QQ", None);
+        report(&mut store, "state=blocked:id=b:msg=Qg", None);
+        assert_eq!(text(store.take_change()).as_deref(), Some("B"));
+        // An identical report makes `a` the most recent.
+        assert!(report(&mut store, "state=blocked:id=a:msg=QQ", None));
+        assert_eq!(text(store.take_change()).as_deref(), Some("A"));
+        assert!(!report(&mut store, "state=blocked:id=a:msg=QQ", None));
+        assert_eq!(store.take_change(), None);
+
+        // A child inherits its parent's current app.
+        report(&mut store, "state=working:app=build", None);
+        report(&mut store, "state=blocked:id=a:msg=QQ", None);
+        report(&mut store, "state=working:app=deploy", None);
+        let app = store.take_change().and_then(|c| c.summary?.app);
+        assert_eq!(app.as_deref(), Some("deploy"));
     }
 }
