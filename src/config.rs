@@ -1406,7 +1406,8 @@ pub struct ClientConfig {
 /// Canonical tmux-style default binds: (key, action). Actions map 1:1 to a
 /// frontend handler. Note `0-9` window-select is special-cased in the frontend
 /// and intentionally absent here, as are `kill-session`, `last-window`,
-/// `editor-neovim`, and `editor-vscode` (unbound by default).
+/// `editor-neovim`, `editor-vscode`, `shut-down-neovim`, and `shut-down-vscode`
+/// (unbound by default).
 const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("%", "split-vertical"),
     ("\"", "split-horizontal"),

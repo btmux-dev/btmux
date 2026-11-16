@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use uuid::Uuid;
 
-use crate::config::{ClientConfig, ColorMode};
+use crate::config::{ClientConfig, ColorMode, Editor};
 use crate::git;
 use crate::session::layout::LayoutPreset;
 use crate::session::manager::SessionSnapshot;
@@ -83,6 +83,16 @@ fn initial_messages(mgr: &crate::session::manager::SessionManager) -> Vec<String
                 panes,
                 removed_panes: Vec::new(),
                 replace: true,
+            })
+            .unwrap(),
+        );
+    }
+    if let Some(id) = crate::vscode::last_shutdown() {
+        messages.push(
+            serde_json::to_string(&ServerMessage::EditorShutDown {
+                editor: Editor::Vscode,
+                id: Some(id),
+                replay: true,
             })
             .unwrap(),
         );
@@ -279,6 +289,32 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         return Ok(());
     }
 
+    if let ClientMessage::ShutDownEditor { editor } = cmd {
+        let id = match editor {
+            Editor::Neovim if crate::ws::nvim::running().await => {
+                crate::ws::nvim::quit().await?;
+                None
+            }
+            Editor::Neovim => return Err("Neovim isn't running".into()),
+            Editor::Vscode => match crate::vscode::stop().await {
+                Some(id) => Some(id),
+                None => return Err("VS Code isn't running".into()),
+            },
+            Editor::Pane => return Err("Only the built-in editors can be shut down".into()),
+        };
+        let msg = ServerMessage::EditorShutDown {
+            editor,
+            id,
+            replay: false,
+        };
+        let _ = state
+            .read()
+            .await
+            .events()
+            .send(serde_json::to_string(&msg).unwrap());
+        return Ok(());
+    }
+
     if let ClientMessage::OpenFile {
         pane_id,
         path,
@@ -457,6 +493,7 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         | ClientMessage::ChangeDirectory { .. }
         | ClientMessage::NvimOpen { .. }
         | ClientMessage::VscodeOpen { .. }
+        | ClientMessage::ShutDownEditor { .. }
         | ClientMessage::FocusClient
         | ClientMessage::SystemColorMode { .. }
         | ClientMessage::WidgetShown { .. }
@@ -1023,6 +1060,10 @@ pub(crate) enum ClientMessage {
         path: String,
         line: Option<u32>,
     },
+    /// Quit the built-in Neovim (refused with unsaved changes) or stop VS Code.
+    ShutDownEditor {
+        editor: Editor,
+    },
     RunCommand {
         command: String,
         session_id: Uuid,
@@ -1115,6 +1156,14 @@ pub enum ServerMessage {
         path: Option<String>,
         line: Option<u32>,
         explicit: bool,
+    },
+    /// The built-in Neovim or VS Code was shut down; tabs close its surface.
+    /// VS Code's last shutdown is resent on connect and lag (`replay`), and
+    /// tabs that hadn't seen its `id` close the surface then.
+    EditorShutDown {
+        editor: Editor,
+        id: Option<String>,
+        replay: bool,
     },
     /// Sent on connect and on change while `--tailscale` is on.
     Tailscale {

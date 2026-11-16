@@ -7,6 +7,7 @@ import type { ConnectionState } from '../lib/connectionState';
 import type {
   AgentTelemetry,
   ConnectStatus,
+  Editor,
   GithubStatus,
   TailscaleStatus,
   WidgetSummary,
@@ -68,6 +69,10 @@ interface AppStore {
   vscodeOpen: boolean;
   vscodePaneId: string | null;
   vscodeRect: LayoutRect | null;
+  // Bumped when VS Code's server stops, so the surface drops its stale iframe.
+  vscodeEpoch: number;
+  // The id of the last VS Code shutdown this tab applied.
+  vscodeShutdown: string | null;
   browserOpen: boolean;
   browserPaneId: string | null;
   browserRect: LayoutRect | null;
@@ -136,6 +141,8 @@ interface AppStore {
   setNvimRect: (rect: LayoutRect | null) => void;
   setVscodeOpen: (open: boolean, paneId?: string | null) => void;
   setVscodeRect: (rect: LayoutRect | null) => void;
+  /** Close the surface of an editor whose server was shut down; false if VS Code's `id` was already applied. */
+  editorShutDown: (editor: Editor, id: string | null) => boolean;
   setBrowserOpen: (open: boolean, paneId?: string | null) => void;
   setBrowserRect: (rect: LayoutRect | null) => void;
   // Hide the editor surfaces over paneId, revealing its terminal.
@@ -207,6 +214,8 @@ export const useStore = create<AppStore>((set, get) => ({
   vscodeOpen: false,
   vscodePaneId: null,
   vscodeRect: null,
+  vscodeEpoch: 0,
+  vscodeShutdown: null,
   browserOpen: false,
   browserPaneId: null,
   browserRect: null,
@@ -275,6 +284,14 @@ export const useStore = create<AppStore>((set, get) => ({
     });
   },
   setVscodeRect: (rect) => set((s) => (sameRect(s.vscodeRect, rect) ? s : { vscodeRect: rect })),
+  editorShutDown: (editor, id) => {
+    if (editor === 'neovim') set({ nvimOpen: false });
+    else if (editor === 'vscode') {
+      if (id === get().vscodeShutdown) return false;
+      set((s) => ({ vscodeOpen: false, vscodeEpoch: s.vscodeEpoch + 1, vscodeShutdown: id }));
+    }
+    return true;
+  },
   setBrowserOpen: (open, paneId) => {
     if (open && unavailableOverRelay(get().config, 'The browser')) return;
     set((s) => {

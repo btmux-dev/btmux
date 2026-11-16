@@ -576,6 +576,10 @@ export function runAction(
       }
       break;
     }
+    case 'shut-down-neovim':
+    case 'shut-down-vscode':
+      send({ type: 'shut_down_editor', editor: action === 'shut-down-neovim' ? 'neovim' : 'vscode' });
+      break;
     case 'browser': {
       // Toggle the browser over the active pane, or move it there.
       const win = session?.windows[session.active_window];

@@ -19,6 +19,7 @@ import { editorButton, toolbarEditors } from './EditorIcon';
 import { runAction } from '../hooks/useKeybindings';
 import { TailscaleButton } from './TailscaleButton';
 import { MultipassButton } from './MultipassButton';
+import { EditorMenu } from './EditorMenu';
 
 let mruVersion = 0;
 window.addEventListener(WINDOW_MRU_EVENT, () => mruVersion++);
@@ -136,7 +137,12 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
       {toolbarEditors(config?.editor, config?.editors).map((editor) => {
         const button = editorButton(editor);
         const action = editor === config?.editor ? 'editor' : `editor-${editor}`;
-        return (
+        const run = (action: string) => {
+          closeModals();
+          state().setFileBrowserOpen(false);
+          runAction(action, session.id, send, (name) => navigate(`/s/${encodeURIComponent(name)}`));
+        };
+        return editor === 'pane' ? (
           <IconButton
             key={editor}
             label={button.label}
@@ -144,11 +150,15 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
             variant="ghost"
             size="sm"
             icon={button.icon}
-            onClick={() => {
-              closeModals();
-              state().setFileBrowserOpen(false);
-              runAction(action, session.id, send, (name) => navigate(`/s/${encodeURIComponent(name)}`));
-            }}
+            onClick={() => run(action)}
+          />
+        ) : (
+          <EditorMenu
+            key={editor}
+            editor={editor}
+            paneId={activeWindow?.zoomed_pane ?? pane?.id}
+            onToggle={() => run(action)}
+            onShutDown={() => send({ type: 'shut_down_editor', editor })}
           />
         );
       })}

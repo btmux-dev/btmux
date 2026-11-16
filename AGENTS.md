@@ -494,7 +494,14 @@ execs `$EDITOR`.
 `ClientConfig.editors` lists the editors the server can run (`nvim::available`,
 `vscode::available`); the status bar shows a button for each, after the
 configured one, and the unbound `editor-neovim`/`editor-vscode` actions toggle
-one regardless of `editor`.
+one regardless of `editor`. A built-in editor's button opens a menu to show or
+hide it or shut its server down (`shut_down_editor`, also the unbound
+`shut-down-neovim`/`shut-down-vscode` actions; Neovim refuses with unsaved
+changes); `GET /api/editors` lists the running ones, and every tab closes the
+surface on `editor_shut_down` (VS Code's iframe remounts, `vscodeEpoch`).
+VS Code's last shutdown is resent by id on connect and lag, so tabs that missed
+it close the surface too, and until `GET /api/vscode` starts it again, proxied
+requests from iframes still open get 503 rather than restarting it.
 
 ### VS Code
 

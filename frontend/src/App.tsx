@@ -74,6 +74,7 @@ function AppInner({
   const vscodeOpen = useStore((s) => s.vscodeOpen);
   const vscodePaneId = useStore((s) => s.vscodePaneId);
   const vscodeRect = useStore((s) => s.vscodeRect);
+  const vscodeEpoch = useStore((s) => s.vscodeEpoch);
   const [vscodeMounted, setVscodeMounted] = useState(vscodeOpen);
   useEffect(() => {
     if (vscodeOpen) setVscodeMounted(true);
@@ -251,6 +252,7 @@ function AppInner({
             )}
             {(vscodeOpen || vscodeMounted) && (
               <VscodeSurface
+                key={vscodeEpoch}
                 config={effectiveConfig}
                 open={vscodeOpen}
                 paneId={vscodePaneId}
