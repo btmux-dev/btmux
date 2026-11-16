@@ -307,6 +307,11 @@ output, describing the host (`system_info`, like `GET /api/system`), and
 rendered screen (with `scrollback` and `lines` like `/capture`), and
 `send_keys` takes `text` and tmux-style `keys`.
 
+The native editor's tools: `open_in_editor` opens a file over a pane (at a
+line) and starts its language servers, `editor_buffers` lists the open files
+and their unsaved changes, and `editor_diagnostics` returns what the language
+servers report for them (1-based lines), optionally only under a path.
+
 `run_command` waits until output has been idle for 400 ms by default, then
 returns an ANSI-stripped result. This does not prove that the process exited: a
 quiet, long-running command can return early. The overall timeout defaults to

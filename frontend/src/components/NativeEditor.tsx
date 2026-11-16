@@ -12,6 +12,7 @@ import type { EditorViewOp, PaneEditor as PaneEditorState } from '../generated/p
 import type { PaneEditor } from '../lib/nativeEditor/paneEditor';
 import type { EditorAppearance } from '../lib/nativeEditor/theme';
 import { onReveal } from '../lib/nativeEditor/reveal';
+import { registerEditorCommands } from '../lib/nativeEditor/registry';
 import { editorConnection } from '../lib/nativeEditor/connection';
 import type { BufferSummary, LspServerStatus } from '../generated/protocol';
 import { ClientConfig, LayoutRect } from '../state/types';
@@ -113,6 +114,11 @@ export function NativeEditor({
   useEffect(() => {
     if (editor) editor.formatOnSave = !!config?.format_on_save;
   }, [editor, config?.format_on_save]);
+
+  useEffect(() => {
+    if (!editor) return;
+    return registerEditorCommands(paneId, (action) => editor.command(action));
+  }, [editor, paneId]);
 
   useEffect(() => {
     if (!editor) return;

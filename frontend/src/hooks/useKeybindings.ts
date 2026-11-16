@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { editorShown, nativeEditorInput, nativeEditorOver, useStore } from '../state/store';
 import { dispatchKey } from '../lib/paneTerminal';
+import { runEditorCommand } from '../lib/nativeEditor/registry';
 import { ClientMessage } from '../protocol/messages';
 import type { Appearance } from '../state/types';
 import { Overlay, PickerItem } from '../state/types';
@@ -601,6 +602,20 @@ export function runAction(
       } else if (editor === 'neovim') {
         store.setNvimOpen(!(store.nvimOpen && store.nvimPaneId === paneId), paneId);
       }
+      break;
+    }
+    case 'editor-code-actions':
+    case 'editor-document-symbols':
+    case 'editor-workspace-symbols':
+    case 'editor-incoming-calls':
+    case 'editor-outgoing-calls':
+    case 'editor-supertypes':
+    case 'editor-subtypes':
+    case 'editor-expand-selection': {
+      const win = session?.windows[session.active_window];
+      const paneId = win?.zoomed_pane ?? win?.panes[win.active_pane]?.id ?? null;
+      if (!paneId || !nativeEditorOver(store, paneId) || !runEditorCommand(paneId, action))
+        store.showToast('Needs a file with a language server open in the editor', 'info');
       break;
     }
     case 'shut-down-neovim':

@@ -57,6 +57,14 @@ pub enum EditorClientMessage {
         #[cfg_attr(test, ts(type = "number | null"))]
         version: Option<u64>,
     },
+    /// Answer a server's `window/showMessageRequest`; `action` is the chosen title.
+    LspPromptAnswer {
+        #[cfg_attr(test, ts(type = "number"))]
+        server: u64,
+        #[cfg_attr(test, ts(type = "number"))]
+        token: u64,
+        action: Option<String>,
+    },
     /// Apply an LSP `WorkspaceEdit` (a rename) to buffers, loading files as
     /// needed; its positions are in `buffer` at `version`.
     ApplyEdit {
@@ -115,6 +123,25 @@ pub enum EditorServerMessage {
     },
     /// Every language server, on connect and on change.
     LspStatus { servers: Vec<lsp::LspServerStatus> },
+    /// A server asks the user to choose one of `actions` (`window/showMessageRequest`).
+    LspPrompt {
+        #[cfg_attr(test, ts(type = "number"))]
+        server: u64,
+        #[cfg_attr(test, ts(type = "number"))]
+        token: u64,
+        /// LSP `MessageType`: 1 error, 2 warning, 3 info, 4 log.
+        level: u8,
+        message: String,
+        actions: Vec<String>,
+    },
+    /// A server asks to show a document (`window/showDocument`).
+    LspShowDocument {
+        uri: String,
+        /// In the browser rather than the editor.
+        external: bool,
+        #[cfg_attr(test, ts(type = "unknown"))]
+        selection: Option<Value>,
+    },
 }
 
 #[derive(Serialize, Debug)]
@@ -168,6 +195,37 @@ static HUB: LazyLock<Hub> = LazyLock::new(Hub::new);
 
 pub fn hub() -> &'static Hub {
     &HUB
+}
+
+/// Load `path` and start its language servers, with no tab open (automation).
+pub async fn load(path: &str) -> Result<(), String> {
+    let path = resolve(path)?;
+    hub().load_buffer(path).await.map(|_| ())
+}
+
+/// Open buffers, for automation.
+pub fn buffers() -> Vec<serde_json::Value> {
+    let inner = hub().inner.lock().unwrap();
+    let mut list: Vec<_> = inner
+        .buffers
+        .values()
+        .map(|b| {
+            let servers: Vec<_> = b
+                .servers
+                .iter()
+                .filter_map(|id| inner.lsp_statuses().into_iter().find(|s| s.id == *id))
+                .collect();
+            serde_json::json!({
+                "path": crate::fs_ops::client_path(&b.path),
+                "unsaved": b.dirty(),
+                "changed_on_disk": b.disk_status != DiskStatus::Same,
+                "language": b.language_id,
+                "language_servers": servers,
+            })
+        })
+        .collect();
+    list.sort_by(|a, b| a["path"].as_str().cmp(&b["path"].as_str()));
+    list
 }
 
 /// Refuse to drop unsaved changes (an upgrade).
@@ -339,6 +397,11 @@ impl Hub {
                 let mut inner = self.inner.lock().unwrap();
                 inner.lsp_from_tab(socket, server, message, buffer, version);
             }
+            EditorClientMessage::LspPromptAnswer {
+                server,
+                token,
+                action,
+            } => self.lsp_prompt_answer(server, token, action),
             EditorClientMessage::ApplyEdit {
                 req,
                 edit,

@@ -9,10 +9,7 @@ browser and Git mode open files there. Set `editor` in
   and edits the same text, live; unsaved changes live on the server, so a
   reload keeps them. `Mod-s` saves, a quick double Esc hides the editor, and
   files changed on disk reload unless you have unsaved changes, which get a
-  warning instead. Language servers give it diagnostics, completion, hover,
-  signature help, go to definition (F12 or Cmd/Ctrl-click), references
-  (Shift-F12), rename across files (F2), and formatting (Shift-Alt-F, or on
-  save with `[native-editor] format-on-save = true`); see below.
+  warning instead. Language servers give it its IDE features; see below.
 - `"neovim"`: a Neovim GUI drawn by btmux, with your config and with its command
   line, completion menu, messages, LSP signature help, and floating windows
   rendered as native UI. Needs Neovim 0.12 or newer on the server's `PATH`;
@@ -56,4 +53,29 @@ config = { basedpyright = { analysis = { typeCheckingMode = "strict" } } }
 ```
 
 `config` answers the server's `workspace/configuration` requests; changes
-apply to servers started after them.
+apply to servers started after them. The Health tab of About lists the
+configured servers and whether btmux finds them. Files in a sandboxed session's
+mounts get servers inside its Multipass instance, found by a login shell there.
+
+What servers provide, where they support it:
+
+| Feature | Keys |
+| --- | --- |
+| Diagnostics (pushed or pulled), semantic highlighting, inlay hints, highlights of the symbol under the cursor, code lenses, folding | |
+| Completion and signature help | as you type |
+| Hover | the mouse |
+| Go to definition | F12, or Cmd-click (Ctrl-click elsewhere) |
+| References | Shift-F12 |
+| Rename, across files | F2 |
+| Code actions (quick fixes, refactorings) | Mod-. |
+| Symbols in the file | Mod-Shift-O |
+| Symbols in the workspace | Mod-Alt-O |
+| Calls to the symbol | Shift-Alt-H |
+| Grow the selection to the enclosing syntax | Mod-I (Mod-U shrinks it back) |
+| Format the document, or the selection | Shift-Alt-F; on save with `[native-editor] format-on-save = true` |
+
+Mod is Cmd on macOS, Ctrl elsewhere. The command palette has these as `editor-*`
+actions (unbound by default; bind them in `[keys]`), plus calls from the
+symbol, supertypes, and subtypes. Renames and code actions change files that
+aren't open too: they wait in the editor, unsaved, under "Other unsaved files".
+A server's questions come up in the browser tab you're using.

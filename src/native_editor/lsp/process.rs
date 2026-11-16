@@ -82,33 +82,40 @@ pub fn spawn(
     root: PathBuf,
     config: LanguageServerConfig,
     shell: String,
+    sandbox: Option<String>,
     on_message: impl Fn(Value) + Send + Sync + 'static,
     on_exit: impl FnOnce(Exit) + Send + 'static,
 ) -> Handle {
     let (tx, rx) = mpsc::unbounded_channel();
     let (stop, stopped) = oneshot::channel();
     tokio::spawn(async move {
-        let exit = run(&name, &root, &config, &shell, rx, stopped, on_message).await;
+        let command = match sandbox {
+            Some(instance) => in_sandbox(&instance, &root, &config)
+                .ok_or_else(|| "Multipass isn't installed".to_string()),
+            None => on_host(&config, &shell).await,
+        };
+        let exit = match command {
+            Ok(mut command) => {
+                command.current_dir(&root);
+                run(&name, &config, command, rx, stopped, on_message).await
+            }
+            Err(message) => Exit {
+                message: message.to_string(),
+                started: false,
+            },
+        };
         on_exit(exit);
     });
     Handle { tx, stop }
 }
 
-async fn run(
-    name: &str,
-    root: &PathBuf,
+/// The server on this machine, found on `PATH`, else the shell's.
+async fn on_host(
     config: &LanguageServerConfig,
     shell: &str,
-    mut rx: mpsc::UnboundedReceiver<Value>,
-    mut stopped: oneshot::Receiver<()>,
-    on_message: impl Fn(Value) + Sync,
-) -> Exit {
-    let failed = |message: String| Exit {
-        message,
-        started: false,
-    };
+) -> Result<tokio::process::Command, String> {
     if config.command.is_empty() {
-        return failed(format!("{name} has no command"));
+        return Err("no command".into());
     }
     let program = OsString::from(&config.command);
     let [shell_path] = crate::agent_limits::programs_paths(
@@ -117,24 +124,73 @@ async fn run(
         crate::agent_limits::AskShell::Retry,
     )
     .await;
-    let Some(search) = shell_path.clone().or_else(|| std::env::var_os("PATH")) else {
-        return failed("PATH is unset".into());
-    };
-    let Some(path) = crate::agent_limits::find_in(&program, &search) else {
-        return failed(format!("{} not found", config.command));
-    };
+    let search = shell_path
+        .clone()
+        .or_else(|| std::env::var_os("PATH"))
+        .ok_or("PATH is unset")?;
+    let path = crate::agent_limits::find_in(&program, &search)
+        .ok_or_else(|| format!("{} not found", config.command))?;
     let mut command = tokio::process::Command::new(path);
+    command.args(&config.args).envs(&config.environment);
+    if let Some(path) = shell_path {
+        command.env("PATH", path);
+    }
+    Ok(command)
+}
+
+/// The server in a Multipass guest, where the mount has the same path, run
+/// by a login shell so the guest's `PATH` (toolchains) applies.
+fn in_sandbox(
+    instance: &str,
+    root: &std::path::Path,
+    config: &LanguageServerConfig,
+) -> Option<tokio::process::Command> {
+    let mut command = tokio::process::Command::new(crate::multipass::program()?);
+    command.args(sandbox_args(instance, root, config));
+    Some(command)
+}
+
+fn sandbox_args(
+    instance: &str,
+    root: &std::path::Path,
+    config: &LanguageServerConfig,
+) -> Vec<OsString> {
+    let mut args: Vec<OsString> =
+        vec!["exec".into(), instance.into(), "--working-directory".into()];
+    args.push(root.into());
+    args.extend(["--".into(), "env".into()]);
+    args.extend(
+        config
+            .environment
+            .iter()
+            .map(|(k, v)| format!("{k}={v}").into()),
+    );
+    args.extend(["bash".into(), "-lc".into(), r#"exec "$0" "$@""#.into()]);
+    args.push((&config.command).into());
+    args.extend(config.args.iter().map(OsString::from));
+    args
+}
+
+/// The shell's status for a program it couldn't find.
+const NOT_FOUND: i32 = 127;
+
+async fn run(
+    name: &str,
+    config: &LanguageServerConfig,
+    mut command: tokio::process::Command,
+    mut rx: mpsc::UnboundedReceiver<Value>,
+    mut stopped: oneshot::Receiver<()>,
+    on_message: impl Fn(Value) + Sync,
+) -> Exit {
+    let failed = |message: String| Exit {
+        message,
+        started: false,
+    };
     command
-        .args(&config.args)
-        .current_dir(root)
-        .envs(&config.environment)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    if let Some(path) = shell_path {
-        command.env("PATH", path);
-    }
     // Its own group, so stopping it reaches helpers it starts (tsserver).
     #[cfg(unix)]
     command.process_group(0);
@@ -200,6 +256,11 @@ async fn run(
     let status = child.wait().await;
     writer.abort();
     let tail: Vec<String> = tail.lock().unwrap().iter().cloned().collect();
+    if let Ok(status) = &status {
+        if status.code() == Some(NOT_FOUND) {
+            return failed(format!("{} not found in the sandbox", config.command));
+        }
+    }
     let status = match status {
         Ok(status) => status.to_string(),
         Err(e) => e.to_string(),
@@ -217,6 +278,35 @@ async fn run(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn sandboxed_servers_run_in_a_guest_login_shell() {
+        let config = LanguageServerConfig {
+            command: "rust-analyzer".into(),
+            args: vec!["--x".into()],
+            environment: [("A".to_string(), "1".to_string())].into(),
+            ..Default::default()
+        };
+        let args = sandbox_args("btmux-sandbox", std::path::Path::new("/w"), &config);
+        let args: Vec<_> = args.iter().map(|a| a.to_str().unwrap()).collect();
+        assert_eq!(
+            args,
+            [
+                "exec",
+                "btmux-sandbox",
+                "--working-directory",
+                "/w",
+                "--",
+                "env",
+                "A=1",
+                "bash",
+                "-lc",
+                r#"exec "$0" "$@""#,
+                "rust-analyzer",
+                "--x",
+            ]
+        );
+    }
 
     #[tokio::test]
     async fn frames_round_trip() {

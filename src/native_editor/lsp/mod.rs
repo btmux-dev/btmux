@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod process;
+pub mod watch;
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -52,10 +53,15 @@ pub struct LspServerStatus {
     pub progress: Vec<String>,
 }
 
-/// A tab's request, by its own id.
 enum Pending {
+    /// A tab's request, by its own id.
     Tab(SocketId, Value),
+    /// btmux's pull of a document's diagnostics.
+    Pull(String),
 }
+
+/// After a change, wait this long for more before pulling diagnostics.
+const PULL_DELAY: Duration = Duration::from_millis(250);
 
 pub(super) struct Server {
     id: u64,
@@ -78,19 +84,87 @@ pub(super) struct Server {
     pending: HashMap<i64, Pending>,
     next_request: i64,
     /// The latest diagnostics per URI, for tabs that connect later.
-    diagnostics: BTreeMap<String, Value>,
+    diagnostics: BTreeMap<String, Diagnostics>,
     /// By token: (title, line).
     progress: BTreeMap<String, (String, String)>,
     crashes: VecDeque<Instant>,
     config: crate::config::LanguageServerConfig,
+    /// The Multipass instance it runs in, for files in a sandbox.
+    sandbox: Option<String>,
+    /// It wants diagnostics pulled (`textDocument/diagnostic`).
+    pull: bool,
+    /// The latest scheduled pull per buffer; older ones are skipped.
+    pulls: HashMap<Uuid, u64>,
+    next_pull: u64,
+    /// `workspace/didChangeWatchedFiles` registrations, by id.
+    watchers: Vec<(String, Vec<watch::FileWatcher>)>,
+    root_watch: Option<watch::RootWatch>,
+    /// `window/showMessageRequest`s waiting for a tab, by token.
+    prompts: HashMap<u64, Value>,
+    next_prompt: u64,
+}
+
+type ServerKey = (String, PathBuf, Option<String>);
+
+/// A document's diagnostics: published, and pulled (`textDocument/diagnostic`).
+#[derive(Default)]
+struct Diagnostics {
+    pushed: Vec<Value>,
+    pulled: Vec<Value>,
+}
+
+impl Diagnostics {
+    fn params(&self, uri: &str) -> Value {
+        let all: Vec<_> = self.pushed.iter().chain(&self.pulled).cloned().collect();
+        json!({ "uri": uri, "diagnostics": all })
+    }
 }
 
 #[derive(Default)]
 pub(super) struct Lsp {
     servers: HashMap<u64, Server>,
-    by_key: HashMap<(String, PathBuf), u64>,
+    by_key: HashMap<ServerKey, u64>,
     next_id: u64,
 }
+
+/// Semantic token types and modifiers btmux colors.
+pub const TOKEN_TYPES: &[&str] = &[
+    "namespace",
+    "type",
+    "class",
+    "enum",
+    "interface",
+    "struct",
+    "typeParameter",
+    "parameter",
+    "variable",
+    "property",
+    "enumMember",
+    "event",
+    "function",
+    "method",
+    "macro",
+    "keyword",
+    "modifier",
+    "comment",
+    "string",
+    "number",
+    "regexp",
+    "operator",
+    "decorator",
+];
+pub const TOKEN_MODIFIERS: &[&str] = &[
+    "declaration",
+    "definition",
+    "readonly",
+    "static",
+    "deprecated",
+    "abstract",
+    "async",
+    "modification",
+    "documentation",
+    "defaultLibrary",
+];
 
 fn notification(method: &str, params: Value) -> Value {
     json!({ "jsonrpc": "2.0", "method": method, "params": params })
@@ -115,6 +189,13 @@ fn client_capabilities() -> Value {
             "configuration": true,
             "workspaceFolders": true,
             "didChangeConfiguration": { "dynamicRegistration": false },
+            "didChangeWatchedFiles": { "dynamicRegistration": true, "relativePatternSupport": true },
+            "executeCommand": {},
+            "symbol": { "resolveSupport": { "properties": ["location.range"] } },
+            "semanticTokens": { "refreshSupport": true },
+            "inlayHint": { "refreshSupport": true },
+            "codeLens": { "refreshSupport": true },
+            "diagnostics": { "refreshSupport": true },
         },
         "textDocument": {
             "synchronization": { "didSave": true, "dynamicRegistration": false },
@@ -145,8 +226,41 @@ fn client_capabilities() -> Value {
             "typeDefinition": {},
             "references": {},
             "publishDiagnostics": { "relatedInformation": true, "versionSupport": true },
+            "diagnostic": { "relatedDocumentSupport": false },
+            "codeAction": {
+                "codeActionLiteralSupport": { "codeActionKind": { "valueSet": [
+                    "", "quickfix", "refactor", "refactor.extract", "refactor.inline",
+                    "refactor.rewrite", "source", "source.organizeImports", "source.fixAll",
+                ] } },
+                "isPreferredSupport": true,
+                "disabledSupport": true,
+                "dataSupport": true,
+                "resolveSupport": { "properties": ["edit"] },
+            },
+            "codeLens": {},
+            "documentHighlight": {},
+            "documentSymbol": { "hierarchicalDocumentSymbolSupport": true },
+            "foldingRange": { "lineFoldingOnly": false },
+            "selectionRange": {},
+            "rangeFormatting": {},
+            "onTypeFormatting": {},
+            "inlayHint": { "resolveSupport": { "properties": [] } },
+            "callHierarchy": {},
+            "typeHierarchy": {},
+            "semanticTokens": {
+                "requests": { "full": true, "range": false },
+                "tokenTypes": TOKEN_TYPES,
+                "tokenModifiers": TOKEN_MODIFIERS,
+                "formats": ["relative"],
+                "overlappingTokenSupport": false,
+                "multilineTokenSupport": false,
+            },
         },
-        "window": { "showMessage": {}, "workDoneProgress": true },
+        "window": {
+            "showMessage": { "messageActionItem": { "additionalPropertiesSupport": false } },
+            "showDocument": { "support": true },
+            "workDoneProgress": true,
+        },
     })
 }
 
@@ -250,7 +364,7 @@ impl Inner {
             let Some(server_config) = config.servers.get(&name).cloned() else {
                 continue;
             };
-            let key = (name.clone(), root.clone());
+            let key = (name.clone(), root.clone(), target.sandbox.clone());
             let id = match self.lsp.by_key.get(&key) {
                 Some(id) => *id,
                 None => {
@@ -279,6 +393,14 @@ impl Inner {
                             progress: BTreeMap::new(),
                             crashes: VecDeque::new(),
                             config: server_config,
+                            sandbox: target.sandbox.clone(),
+                            pull: false,
+                            pulls: HashMap::new(),
+                            next_pull: 0,
+                            watchers: Vec::new(),
+                            root_watch: None,
+                            prompts: HashMap::new(),
+                            next_prompt: 0,
                         },
                     );
                     self.start_server(id, &config.shell);
@@ -289,6 +411,7 @@ impl Inner {
             server.buffers.insert(buffer);
             if server.ready() {
                 self.did_open(id, buffer);
+                self.schedule_pull(id, buffer);
             }
             ids.push(id);
         }
@@ -312,6 +435,7 @@ impl Inner {
             server.root.clone(),
             server.config.clone(),
             shell.to_owned(),
+            server.sandbox.clone(),
             move |message| super::hub().lsp_receive(id, generation, message),
             move |exit| super::hub().lsp_exited(id, generation, exit),
         );
@@ -354,8 +478,65 @@ impl Inner {
         ));
     }
 
+    /// Pull `buffer`'s diagnostics from a server that wants that, once
+    /// changes settle.
+    fn schedule_pull(&mut self, id: u64, buffer: Uuid) {
+        let Some(server) = self.lsp.servers.get_mut(&id).filter(|s| s.pull) else {
+            return;
+        };
+        server.next_pull += 1;
+        let seq = server.next_pull;
+        server.pulls.insert(buffer, seq);
+        tokio::spawn(async move {
+            tokio::time::sleep(PULL_DELAY).await;
+            super::hub().lsp_pull(id, buffer, seq);
+        });
+    }
+
+    fn pull_now(&mut self, id: u64, buffer: Uuid) {
+        let Some(b) = self.buffers.get(&buffer) else {
+            return;
+        };
+        let uri = config::uri(&b.path);
+        let Some(server) = self.lsp.servers.get_mut(&id).filter(|s| s.ready()) else {
+            return;
+        };
+        let sid = server.next_request;
+        server.next_request += 1;
+        server.pending.insert(sid, Pending::Pull(uri.clone()));
+        server.send(json!({
+            "jsonrpc": "2.0",
+            "id": sid,
+            "method": "textDocument/diagnostic",
+            "params": { "textDocument": { "uri": uri } },
+        }));
+    }
+
+    /// Take one source's diagnostics for `uri`; tabs get both sources'
+    /// together, and tabs connecting later get them from the cache.
+    fn publish(&mut self, id: u64, uri: &str, pulled: bool, items: Vec<Value>) {
+        let Some(server) = self.lsp.servers.get_mut(&id) else {
+            return;
+        };
+        let entry = server.diagnostics.entry(uri.to_owned()).or_default();
+        if pulled {
+            entry.pulled = items;
+        } else {
+            entry.pushed = items;
+        }
+        let params = entry.params(uri);
+        if entry.pushed.is_empty() && entry.pulled.is_empty() {
+            server.diagnostics.remove(uri);
+        }
+        let message = notification("textDocument/publishDiagnostics", params);
+        let sockets: Vec<_> = server.sockets.iter().copied().collect();
+        for socket in sockets {
+            self.send_lsp(socket, id, message.clone());
+        }
+    }
+
     /// Tell a buffer's servers what changed.
-    pub(super) fn lsp_changed(&self, buffer: Uuid, applied: &[Applied]) {
+    pub(super) fn lsp_changed(&mut self, buffer: Uuid, applied: &[Applied]) {
         let Some(b) = self.buffers.get(&buffer) else {
             return;
         };
@@ -388,6 +569,14 @@ impl Inner {
                     }),
                 ));
             }
+        }
+        let servers = self
+            .buffers
+            .get(&buffer)
+            .map(|b| b.servers.clone())
+            .unwrap_or_default();
+        for id in servers {
+            self.schedule_pull(id, buffer);
         }
     }
 
@@ -434,7 +623,9 @@ impl Inner {
         for server in self.lsp.servers.values_mut() {
             server.sockets.remove(&socket);
             server.waiting.retain(|(s, _)| *s != socket);
-            server.pending.retain(|_, Pending::Tab(s, _)| *s != socket);
+            server
+                .pending
+                .retain(|_, p| !matches!(p, Pending::Tab(s, _) if *s == socket));
         }
     }
 
@@ -462,7 +653,11 @@ impl Inner {
                 match (&server.state, &server.init) {
                     (ServerState::Ready, Some(init)) => {
                         let reply = response(rid, init.clone());
-                        let diagnostics: Vec<_> = server.diagnostics.values().cloned().collect();
+                        let diagnostics: Vec<_> = server
+                            .diagnostics
+                            .iter()
+                            .map(|(uri, d)| d.params(uri))
+                            .collect();
                         self.send_lsp(socket, id, reply);
                         for params in diagnostics {
                             self.send_lsp(
@@ -495,12 +690,10 @@ impl Inner {
             ) => {}
             (Some("$/cancelRequest"), None) => {
                 let cancelled = &message["params"]["id"];
-                let found = server
-                    .pending
-                    .iter()
-                    .find_map(|(sid, Pending::Tab(s, rid))| {
-                        (*s == socket && rid == cancelled).then_some(*sid)
-                    });
+                let found = server.pending.iter().find_map(|(sid, p)| match p {
+                    Pending::Tab(s, rid) if *s == socket && rid == cancelled => Some(*sid),
+                    _ => None,
+                });
                 if let Some(sid) = found {
                     server.send(notification("$/cancelRequest", json!({ "id": sid })));
                 }
@@ -531,7 +724,93 @@ impl Inner {
     }
 }
 
+enum Answer {
+    Reply(Value),
+    /// `workspace/applyEdit`, answered once files load.
+    ApplyEdit,
+    /// Answered later (a prompt), or not at all (the server is gone).
+    Later,
+}
+
 impl super::Hub {
+    /// The language servers' diagnostics for open files (under `under`, if
+    /// given), for automation.
+    pub fn diagnostics(&self, under: Option<&std::path::Path>) -> Vec<Value> {
+        let inner = self.inner.lock().unwrap();
+        let mut out = Vec::new();
+        for server in inner.lsp.servers.values() {
+            for (uri, diagnostics) in &server.diagnostics {
+                let Some(path) = config::path(uri) else {
+                    continue;
+                };
+                if under.is_some_and(|under| !path.starts_with(under)) {
+                    continue;
+                }
+                for d in diagnostics.pushed.iter().chain(&diagnostics.pulled) {
+                    let severity = match d["severity"].as_u64() {
+                        Some(1) => "error",
+                        Some(2) => "warning",
+                        Some(3) => "info",
+                        _ => "hint",
+                    };
+                    out.push(json!({
+                        "path": crate::fs_ops::client_path(&path),
+                        // 1-based, as editors show them.
+                        "line": d["range"]["start"]["line"].as_u64().map(|l| l + 1),
+                        "column": d["range"]["start"]["character"].as_u64().map(|c| c + 1),
+                        "severity": severity,
+                        "message": d["message"],
+                        "source": d.get("source").cloned().unwrap_or_else(|| server.name.clone().into()),
+                    }));
+                }
+            }
+        }
+        out
+    }
+
+    fn lsp_pull(&self, id: u64, buffer: Uuid, seq: u64) {
+        let mut inner = self.inner.lock().unwrap();
+        let current = inner
+            .lsp
+            .servers
+            .get_mut(&id)
+            .and_then(|s| s.pulls.get(&buffer).copied());
+        if current != Some(seq) {
+            return;
+        }
+        if let Some(server) = inner.lsp.servers.get_mut(&id) {
+            server.pulls.remove(&buffer);
+        }
+        inner.pull_now(id, buffer);
+    }
+
+    /// A tab answered `window/showMessageRequest`; the first answer wins.
+    pub(super) fn lsp_prompt_answer(&self, id: u64, token: u64, action: Option<String>) {
+        let mut inner = self.inner.lock().unwrap();
+        let Some(server) = inner.lsp.servers.get_mut(&id) else {
+            return;
+        };
+        let Some(rid) = server.prompts.remove(&token) else {
+            return;
+        };
+        let result = action.map_or(Value::Null, |title| json!({ "title": title }));
+        server.send(response(rid, result));
+    }
+
+    fn lsp_files_changed(&self, id: u64, generation: u32, changes: Vec<(PathBuf, u8)>) {
+        let inner = self.inner.lock().unwrap();
+        let Some(server) = inner.lsp.servers.get(&id) else {
+            return;
+        };
+        if server.generation != generation || !server.ready() {
+            return;
+        }
+        let watchers: Vec<_> = server.watchers.iter().flat_map(|(_, w)| w).collect();
+        if let Some(params) = watch::changes(&watchers, &changes) {
+            server.send(notification("workspace/didChangeWatchedFiles", params));
+        }
+    }
+
     fn lsp_receive(&'static self, id: u64, generation: u32, message: Value) {
         let mut inner = self.inner.lock().unwrap();
         let Some(server) = inner.lsp.servers.get_mut(&id) else {
@@ -548,22 +827,34 @@ impl super::Hub {
                     inner.lsp_initialized(id, message);
                     return;
                 }
-                if let Some(Pending::Tab(socket, tab_id)) = server.pending.remove(&sid) {
-                    let mut reply = message;
-                    reply["id"] = tab_id;
-                    inner.send_lsp(socket, id, reply);
+                match server.pending.remove(&sid) {
+                    Some(Pending::Tab(socket, tab_id)) => {
+                        let mut reply = message;
+                        reply["id"] = tab_id;
+                        inner.send_lsp(socket, id, reply);
+                    }
+                    Some(Pending::Pull(uri)) => {
+                        let result = &message["result"];
+                        if result["kind"] == "full" {
+                            let items = result["items"].clone();
+                            let items = items.as_array().cloned().unwrap_or_default();
+                            inner.publish(id, &uri, true, items);
+                        }
+                    }
+                    None => {}
                 }
             }
             (Some(method), Some(rid)) => {
-                let reply = inner.answer_server(id, &method, rid.clone(), &message["params"]);
-                match reply {
-                    Some(reply) => {
+                let answer = inner.answer_server(id, &method, rid.clone(), &message["params"]);
+                match answer {
+                    Answer::Reply(reply) => {
                         if let Some(server) = inner.lsp.servers.get(&id) {
                             server.send(reply);
                         }
                     }
-                    // `workspace/applyEdit` loads files first.
-                    None => {
+                    Answer::Later => {}
+                    // Loads files first.
+                    Answer::ApplyEdit => {
                         let edit = message["params"]["edit"].clone();
                         drop(inner);
                         tokio::spawn(async move {
@@ -616,8 +907,10 @@ impl super::Hub {
         } else {
             ServerState::Failed
         };
-        for (_, Pending::Tab(socket, rid)) in pending {
-            inner.send_lsp(socket, id, error(rid, REQUEST_FAILED, &exit.message));
+        for (_, p) in pending {
+            if let Pending::Tab(socket, rid) = p {
+                inner.send_lsp(socket, id, error(rid, REQUEST_FAILED, &exit.message));
+            }
         }
         for (socket, rid) in waiting {
             inner.send_lsp(socket, id, error(rid, REQUEST_FAILED, &exit.message));
@@ -639,10 +932,11 @@ impl super::Hub {
             return;
         }
         let server = inner.lsp.servers.remove(&id).expect("checked");
-        inner
-            .lsp
-            .by_key
-            .remove(&(server.name.clone(), server.root.clone()));
+        inner.lsp.by_key.remove(&(
+            server.name.clone(),
+            server.root.clone(),
+            server.sandbox.clone(),
+        ));
         if let Some(handle) = server.handle {
             let _ = handle
                 .tx
@@ -680,6 +974,7 @@ impl Inner {
             .unwrap_or(1);
         server.full_sync = kind == 1;
         server.save_text = sync["save"]["includeText"].as_bool().unwrap_or(false);
+        server.pull = !result["capabilities"]["diagnosticProvider"].is_null();
         server.state = ServerState::Ready;
         server.message = None;
         server.init = Some(result.clone());
@@ -695,6 +990,7 @@ impl Inner {
         let waiting = std::mem::take(&mut server.waiting);
         for buffer in buffers {
             self.did_open(id, buffer);
+            self.schedule_pull(id, buffer);
         }
         for (socket, rid) in waiting {
             self.send_lsp(socket, id, response(rid, result.clone()));
@@ -702,12 +998,13 @@ impl Inner {
         self.send_lsp_statuses();
     }
 
-    /// Answer a request the server makes of its client; `None` for
-    /// `workspace/applyEdit`, answered once applied.
-    fn answer_server(&self, id: u64, method: &str, rid: Value, params: &Value) -> Option<Value> {
-        let server = self.lsp.servers.get(&id)?;
-        Some(match method {
-            "workspace/applyEdit" => return None,
+    /// Answer a request the server makes of its client.
+    fn answer_server(&mut self, id: u64, method: &str, rid: Value, params: &Value) -> Answer {
+        let Some(server) = self.lsp.servers.get_mut(&id) else {
+            return Answer::Later;
+        };
+        Answer::Reply(match method {
+            "workspace/applyEdit" => return Answer::ApplyEdit,
             "workspace/configuration" => {
                 let settings = toml_json(&server.config.config);
                 let items = params["items"].as_array().cloned().unwrap_or_default();
@@ -728,15 +1025,97 @@ impl Inner {
                     json!([{ "uri": config::uri(&server.root), "name": name }]),
                 )
             }
-            "client/registerCapability"
-            | "client/unregisterCapability"
-            | "window/workDoneProgress/create"
-            | "window/showMessageRequest"
-            | "workspace/semanticTokens/refresh"
+            "client/registerCapability" => {
+                for registration in params["registrations"].as_array().into_iter().flatten() {
+                    if registration["method"] != "workspace/didChangeWatchedFiles" {
+                        continue;
+                    }
+                    let watchers = registration["registerOptions"]["watchers"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(watch::FileWatcher::parse)
+                        .collect();
+                    let rid = registration["id"].as_str().unwrap_or_default().to_owned();
+                    server.watchers.push((rid, watchers));
+                }
+                if !server.watchers.is_empty() && server.root_watch.is_none() {
+                    let generation = server.generation;
+                    server.root_watch = watch::RootWatch::start(&server.root, move |changes| {
+                        super::hub().lsp_files_changed(id, generation, changes)
+                    });
+                }
+                response(rid, Value::Null)
+            }
+            "client/unregisterCapability" => {
+                // The spec's spelling.
+                for gone in params["unregisterations"].as_array().into_iter().flatten() {
+                    let gone = gone["id"].as_str().unwrap_or_default();
+                    server.watchers.retain(|(rid, _)| rid != gone);
+                }
+                if server.watchers.is_empty() {
+                    server.root_watch = None;
+                }
+                response(rid, Value::Null)
+            }
+            "window/showMessageRequest" => {
+                if server.sockets.is_empty() {
+                    response(rid, Value::Null)
+                } else {
+                    let token = server.next_prompt;
+                    server.next_prompt += 1;
+                    server.prompts.insert(token, rid);
+                    let msg = super::to_json(&EditorServerMessage::LspPrompt {
+                        server: id,
+                        token,
+                        level: params["type"].as_u64().unwrap_or(3) as u8,
+                        message: params["message"].as_str().unwrap_or_default().to_owned(),
+                        actions: params["actions"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|a| a["title"].as_str().map(str::to_owned))
+                            .collect(),
+                    });
+                    let sockets: Vec<_> = server.sockets.iter().copied().collect();
+                    for socket in sockets {
+                        self.send_raw(socket, msg.clone());
+                    }
+                    return Answer::Later;
+                }
+            }
+            "window/showDocument" => {
+                let shown = !server.sockets.is_empty();
+                let msg = super::to_json(&EditorServerMessage::LspShowDocument {
+                    uri: params["uri"].as_str().unwrap_or_default().to_owned(),
+                    external: params["external"].as_bool().unwrap_or(false),
+                    selection: params.get("selection").cloned(),
+                });
+                let sockets: Vec<_> = server.sockets.iter().copied().collect();
+                for socket in sockets {
+                    self.send_raw(socket, msg.clone());
+                }
+                response(rid, json!({ "success": shown }))
+            }
+            "workspace/diagnostic/refresh" => {
+                let buffers: Vec<_> = server.buffers.iter().copied().collect();
+                for buffer in buffers {
+                    self.schedule_pull(id, buffer);
+                }
+                response(rid, Value::Null)
+            }
+            "workspace/semanticTokens/refresh"
             | "workspace/inlayHint/refresh"
-            | "workspace/codeLens/refresh"
-            | "workspace/diagnostic/refresh" => response(rid, Value::Null),
-            "window/showDocument" => response(rid, json!({ "success": false })),
+            | "workspace/codeLens/refresh" => {
+                // Tabs ask again.
+                let refresh = notification("$/btmux/refresh", json!({ "method": method }));
+                let sockets: Vec<_> = server.sockets.iter().copied().collect();
+                for socket in sockets {
+                    self.send_lsp(socket, id, refresh.clone());
+                }
+                response(rid, Value::Null)
+            }
+            "window/workDoneProgress/create" => response(rid, Value::Null),
             _ => error(rid, METHOD_NOT_FOUND, "Not supported by btmux"),
         })
     }
@@ -749,15 +1128,13 @@ impl Inner {
             "textDocument/publishDiagnostics" => {
                 let params = &message["params"];
                 if let Some(uri) = params["uri"].as_str() {
-                    if params["diagnostics"]
+                    let items = params["diagnostics"]
                         .as_array()
-                        .is_some_and(|d| d.is_empty())
-                    {
-                        server.diagnostics.remove(uri);
-                    } else {
-                        server.diagnostics.insert(uri.to_owned(), params.clone());
-                    }
+                        .cloned()
+                        .unwrap_or_default();
+                    self.publish(id, uri, false, items);
                 }
+                return;
             }
             "$/progress" => {
                 let params = &message["params"];

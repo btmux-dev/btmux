@@ -488,9 +488,23 @@ request's stamped `version` (synced plus unconfirmed, since tabs push every
 unconfirmed update and the server skips ones it applied) isn't the buffer's.
 The backend answers the server's requests (`workspace/configuration` from
 `config`, `applyEdit`, …), caches diagnostics for tabs connecting later, and
-summarizes `$/progress` in `lsp_status`. Renames go through `apply_edit`, which
-edits every file named, loading unopened ones as unsaved buffers. Crashed
-servers restart up to 3 times a minute; idle ones stop after 60 s.
+summarizes `$/progress` in `lsp_status`. Renames and code actions go through
+`apply_edit`, which edits every file named, loading unopened ones as unsaved
+buffers. Crashed servers restart up to 3 times a minute; idle ones stop after
+60 s. The backend also pulls diagnostics (`textDocument/diagnostic`) after
+changes settle, publishing them with pushed ones; watches the root for
+registered `didChangeWatchedFiles` globs (`lsp/watch.rs`); turns
+`showMessageRequest` and `showDocument` into `lsp_prompt` and
+`lsp_show_document`, which only a focused tab acts on (first answer wins); and
+forwards `*/refresh` requests to tabs as `$/btmux/refresh`. Files under a
+sandboxed session's mount (`set_sandboxes`, from `broadcast_state`) get servers
+run by `multipass exec` and a login shell in the guest. The browser's other
+features (`lib/nativeEditor/features.ts`: semantic tokens, inlay hints, code
+lenses, highlights, folding and selection ranges, code actions, symbols, call
+and type hierarchy, range and on-type formatting) request through the same
+client; pickers are a CodeMirror panel (`picker.ts`), and the palette's
+`editor-*` actions reach a pane's editor through `registry.ts`. MCP has
+`open_in_editor`, `editor_buffers`, and `editor_diagnostics`.
 
 ### Built-in Neovim
 

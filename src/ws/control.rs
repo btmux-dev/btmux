@@ -58,6 +58,8 @@ pub(crate) fn broadcast_state(mgr: &crate::session::manager::SessionManager) {
         agent_panes: mgr.running_agent_panes(),
     };
     let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
+    // Language servers for sandboxed files run in the guest.
+    crate::native_editor::lsp::config::set_sandboxes(mgr.sandbox_mounts());
     if mgr.statuses().receiver_count() > 0 {
         let _ = mgr.statuses().send(mgr.pane_statuses());
     }

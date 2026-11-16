@@ -22,6 +22,7 @@ import { useStore } from '../../state/store';
 import { IS_MAC } from '../nvimKeys';
 import { editorConnection } from './connection';
 import { viewDocs, type Doc } from './doc';
+import { lspFeatures, refreshEffect, setRawDiagnostics } from './features';
 
 /** btmux's language server clients speak to the server through `/ws/editor`; it syncs documents itself. */
 
@@ -311,6 +312,11 @@ function client(server: number): LSPClient {
       },
       'window/logMessage': () => true,
       '$/progress': () => true,
+      '$/btmux/refresh': (c, params: { method: string }) => {
+        for (const file of (c.workspace as BtmuxWorkspace).files)
+          file.view.dispatch({ effects: refreshEffect.of(params.method) });
+        return true;
+      },
     },
     extensions: [
       serverCompletion(),
@@ -344,6 +350,47 @@ editorConnection.onConnection((open) => {
   }
 });
 
+// Only the focused tab acts on what a server asks of the user.
+editorConnection.serverUi = (msg) => {
+  if (!document.hasFocus()) return;
+  const store = useStore.getState();
+  if (msg.type === 'lsp_prompt') {
+    const level = msg.level === 1 ? 'error' : msg.level === 2 ? 'attention' : 'info';
+    if (!msg.actions.length) {
+      store.showToast(msg.message, level);
+      editorConnection.answerPrompt(msg.server, msg.token, null);
+      return;
+    }
+    store.setOverlay({
+      mode: 'picker',
+      title: msg.message,
+      items: msg.actions.map((action) => ({ id: action, label: action })),
+      onSelect: (action) => {
+        editorConnection.answerPrompt(msg.server, msg.token, action);
+        // The picker stays open for previews; one answer is all a prompt takes.
+        useStore.getState().setOverlay(null);
+      },
+    });
+    return;
+  }
+  if (msg.external) {
+    if (/^https?:/.test(msg.uri)) window.open(msg.uri, '_blank', 'noopener');
+    return;
+  }
+  const path = pathOf(msg.uri);
+  if (!path || !display) return;
+  const selection = msg.selection as { start: Position } | null;
+  void display(path).then((view) => {
+    if (!view || !selection) return;
+    const at = offset(view.state.doc, selection.start);
+    view.dispatch({ selection: { anchor: at }, effects: EditorView.scrollIntoView(at, { y: 'center' }) });
+  });
+};
+
+type Position = { line: number; character: number };
+
+setRawDiagnostics((p) => diagnostics.get(p.client)?.get(p.uri)?.diagnostics ?? []);
+
 /** The server failed to start (not installed) or crashed too often. */
 export const serverFailed = (server: number | undefined) =>
   editorConnection.lspStatus.find((s) => s.id === server)?.state === 'failed';
@@ -355,6 +402,7 @@ export function lspExtension(doc: Doc): Extension {
   if (server === undefined || !doc.uri || !doc.languageId || serverFailed(server)) return [];
   return [
     client(server).plugin(doc.uri, doc.languageId),
+    lspFeatures,
     // Cmd-click (Ctrl elsewhere) jumps to the definition.
     EditorView.domEventHandlers({
       mousedown(e, view) {

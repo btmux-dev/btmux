@@ -241,6 +241,29 @@ pub fn current() -> Arc<LspConfig> {
 pub struct Target {
     pub language_id: String,
     pub servers: Vec<(String, PathBuf)>,
+    /// The Multipass instance to run them in: the file is in a sandboxed
+    /// session's mount, where its toolchain is.
+    pub sandbox: Option<String>,
+}
+
+/// Sandboxed sessions' mounts and their instance.
+static SANDBOXES: LazyLock<RwLock<Vec<(PathBuf, String)>>> = LazyLock::new(Default::default);
+
+/// Record where sandboxed sessions' files are (on every state change).
+pub fn set_sandboxes(mounts: Vec<(PathBuf, String)>) {
+    let mut current = SANDBOXES.write().unwrap();
+    if *current != mounts {
+        *current = mounts;
+    }
+}
+
+fn sandbox(path: &Path) -> Option<String> {
+    SANDBOXES
+        .read()
+        .unwrap()
+        .iter()
+        .find(|(mount, _)| path.starts_with(mount))
+        .map(|(_, instance)| instance.clone())
 }
 
 /// Where `path`'s servers run. Reads the filesystem.
@@ -259,6 +282,7 @@ pub fn target(config: &LspConfig, path: &Path) -> Option<Target> {
             .filter(|name| config.servers.contains_key(*name))
             .map(|name| (name.clone(), root.clone()))
             .collect(),
+        sandbox: sandbox(path),
     })
 }
 

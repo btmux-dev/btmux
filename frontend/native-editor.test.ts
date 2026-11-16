@@ -1,9 +1,11 @@
 // Run with `just test-frontend` (bun test).
 import { expect, test } from 'bun:test';
-import { ChangeSet, EditorState } from '@codemirror/state';
+import { ChangeSet, EditorState, Text } from '@codemirror/state';
 import { collab, getSyncedVersion, receiveUpdates, sendableUpdates } from '@codemirror/collab';
 import { freshFrom } from './src/lib/nativeEditor/doc';
 import { detectIndent } from './src/lib/nativeEditor/languages';
+import { decodeTokens } from './src/lib/nativeEditor/features';
+import { fuzzyMatch } from './src/lib/nativeEditor/picker';
 
 test('updates are skipped up to the synced version, and a gap is detected', () => {
   expect(freshFrom(3, 3)).toBe(0);
@@ -44,4 +46,22 @@ test('two editors converge through the server order', () => {
   b = receive(b, 1);
   expect(a.doc.toString()).toBe('xaby');
   expect(b.doc.toString()).toBe('xaby');
+});
+
+test('semantic tokens decode relative positions and modifiers', () => {
+  const doc = Text.of(['let thing = thing;', '  thing']);
+  const legend = { tokenTypes: ['variable', 'function'], tokenModifiers: ['readonly', 'static'] };
+  // thing@0:4 (function), thing@0:12 (variable, readonly|static), thing@1:2 (function)
+  const data = [0, 4, 5, 1, 0, 0, 8, 5, 0, 3, 1, 2, 5, 1, 0];
+  expect(decodeTokens(doc, data, legend)).toEqual([
+    [4, 9, 'cm-sem-function'],
+    [12, 17, 'cm-sem-variable cm-sem-m-readonly cm-sem-m-static'],
+    [21, 26, 'cm-sem-function'],
+  ]);
+});
+
+test('the picker matches characters in order', () => {
+  expect(fuzzyMatch('workspaceSymbols', 'wsym')).toBe(true);
+  expect(fuzzyMatch('workspaceSymbols', 'mys')).toBe(false);
+  expect(fuzzyMatch('Thing', 'thi')).toBe(true);
 });

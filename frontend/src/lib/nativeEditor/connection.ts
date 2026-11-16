@@ -47,6 +47,8 @@ class EditorConnection {
   private statusListeners = new Set<(servers: LspServerStatus[]) => void>();
   private connectionListeners = new Set<(open: boolean) => void>();
   lspStatus: LspServerStatus[] = [];
+  /** Server requests for the user: prompts and documents to show. */
+  serverUi: ((msg: Extract<EditorServerMessage, { type: 'lsp_prompt' | 'lsp_show_document' }>) => void) | null = null;
 
   private url() {
     return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/editor`;
@@ -133,6 +135,10 @@ class EditorConnection {
         for (const fn of this.lspListeners.get(msg.server) ?? []) fn(text);
         return;
       }
+      case 'lsp_prompt':
+      case 'lsp_show_document':
+        this.serverUi?.(msg);
+        return;
       case 'lsp_status':
         this.lspStatus = msg.servers;
         for (const fn of this.statusListeners) fn(msg.servers);
@@ -229,6 +235,10 @@ class EditorConnection {
     this.statusListeners.add(fn);
     fn(this.lspStatus);
     return () => this.statusListeners.delete(fn);
+  }
+
+  answerPrompt(server: number, token: number, action: string | null) {
+    this.send({ type: 'lsp_prompt_answer', server, token, action });
   }
 
   applyEdit(edit: unknown, buffer: string | null, version: number | null) {

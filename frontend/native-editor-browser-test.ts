@@ -49,7 +49,13 @@ const editorText = (page: Page, paneId: string) =>
   page.evaluate((id) => {
     const content = document.querySelector(`[data-native-editor][data-pane-id="${id}"]`);
     if (!content) return null;
-    return Array.from(content.querySelectorAll(':scope > .cm-line'), (line) => line.textContent).join('\n');
+    // Without inlay hints.
+    const text = (line: Element) => {
+      const copy = line.cloneNode(true) as Element;
+      for (const hint of copy.querySelectorAll('.cm-lsp-inlay-hint')) hint.remove();
+      return copy.textContent;
+    };
+    return Array.from(content.querySelectorAll(':scope > .cm-line'), text).join('\n');
   }, paneId);
 
 const waitForText = async (page: Page, paneId: string, text: string) => {
@@ -197,6 +203,8 @@ try {
     await page.locator(`[data-editor-pane="${paneId}"] .cm-lintRange-error`).first().waitFor();
     await page.getByLabel('Language server fake').waitFor();
     await page.getByText('1 errors, 0 warnings').waitFor();
+    // Lenses and hints move text as they arrive; positions are measured after.
+    await page.locator(`[data-editor-pane="${paneId}"] .cm-lsp-code-lens`).first().waitFor();
     console.log('PASS diagnostics from the language server');
 
     // The rect of `word`'s first occurrence on `line` (0-based), in the pane's editor.
@@ -246,7 +254,8 @@ try {
     console.log('PASS hover');
 
     // F12 jumps to the definition in another file, opened in this pane.
-    await page.mouse.click(hover.x, hover.y);
+    const definition = (await wordRect(1, 'thing'))!;
+    await page.mouse.click(definition.x, definition.y);
     await page.keyboard.press('F12');
     await waitForAsync(
       page,

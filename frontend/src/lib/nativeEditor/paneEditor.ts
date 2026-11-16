@@ -21,6 +21,7 @@ import { editorConnection } from './connection';
 import { editorTheme, type EditorAppearance } from './theme';
 import { detectIndent, languageFor } from './languages';
 import { format, lspExtension, serverFailed, setDisplay } from './lsp';
+import { editorCommands, serverFoldsChanged } from './features';
 
 /** Longest wait for formatting before a save goes ahead without it. */
 const FORMAT_TIMEOUT_MS = 3000;
@@ -140,7 +141,7 @@ export class PaneEditor {
       highlightActiveLineGutter(),
       highlightSpecialChars(),
       history(),
-      foldGutter(),
+      foldGutter({ foldingChanged: serverFoldsChanged }),
       drawSelection(),
       dropCursor(),
       EditorState.allowMultipleSelections.of(true),
@@ -322,6 +323,16 @@ export class PaneEditor {
 
   focus() {
     this.view.focus();
+  }
+
+  /** Run a palette command (`editorCommands`) on the shown file. */
+  command(action: string): boolean {
+    const run = editorCommands[action];
+    const doc = this.active ? this.docs.get(this.active) : undefined;
+    if (!run || !doc?.view) return false;
+    this.view.focus();
+    const ran = run(this.view);
+    return ran instanceof Promise ? true : ran;
   }
 
   /** Write the active file; `force` overwrites outside changes. */

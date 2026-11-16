@@ -7,6 +7,14 @@
 // - rename: every WORD in the .fake files of the document's directory,
 //   open or not (as edits to the open text or the file on disk)
 // - formatting: trailing spaces removed
+// - pulled diagnostics: an error on every "worse"
+// - semantic tokens: every "thing" is a function
+// - inlay hints: ": hint" after every "let NAME"
+// - document highlights, symbols, call hierarchy: occurrences of WORD
+// - code lenses: "fake.ask" on line 1, which asks the user (showMessageRequest)
+// - code actions: replace "bad" with "good"
+// - folding: the first three lines; selection ranges: word, then line
+// - watched files: **/*.fake, logged
 import { appendFileSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -83,6 +91,18 @@ function handle(msg: any): unknown {
           definitionProvider: true,
           renameProvider: true,
           documentFormattingProvider: true,
+          diagnosticProvider: { interFileDependencies: false, workspaceDiagnostics: false },
+          semanticTokensProvider: { legend: { tokenTypes: ['function'], tokenModifiers: [] }, full: true },
+          inlayHintProvider: true,
+          documentHighlightProvider: true,
+          documentSymbolProvider: true,
+          workspaceSymbolProvider: true,
+          callHierarchyProvider: true,
+          codeLensProvider: {},
+          codeActionProvider: true,
+          foldingRangeProvider: true,
+          selectionRangeProvider: true,
+          executeCommandProvider: { commands: ['fake.ask'] },
         },
         serverInfo: { name: 'fake-lsp' },
       };
@@ -110,6 +130,95 @@ function handle(msg: any): unknown {
         if (edits.length) changes[uri] = edits;
       }
       return { changes };
+    }
+    case 'textDocument/diagnostic': {
+      const items = occurrences(text(p.textDocument.uri), 'worse').map((range) => ({
+        range,
+        severity: 1,
+        message: 'worse word',
+      }));
+      return { kind: 'full', items };
+    }
+    case 'textDocument/semanticTokens/full': {
+      const data: number[] = [];
+      let line = 0;
+      let char = 0;
+      for (const r of occurrences(text(p.textDocument.uri), 'thing')) {
+        const dl = r.start.line - line;
+        data.push(dl, dl ? r.start.character : r.start.character - char, 5, 0, 0);
+        line = r.start.line;
+        char = r.start.character;
+      }
+      return { data };
+    }
+    case 'textDocument/inlayHint': {
+      const t = text(p.textDocument.uri);
+      return [...t.matchAll(/let (\w+)/g)].map((m) => ({
+        position: position(t, m.index! + m[0].length),
+        label: ': hint',
+      }));
+    }
+    case 'textDocument/documentHighlight': {
+      const t = text(p.textDocument.uri);
+      return occurrences(t, wordAt(t, p.position)).map((range) => ({ range }));
+    }
+    case 'textDocument/documentSymbol': {
+      const t = text(p.textDocument.uri);
+      return occurrences(t, 'thing').map((range) => ({
+        name: 'thing',
+        kind: 12,
+        range,
+        selectionRange: range,
+      }));
+    }
+    case 'workspace/symbol': {
+      const results = [];
+      for (const [uri, doc] of docs)
+        for (const range of occurrences(doc.text, 'thing'))
+          if ('thing'.includes(p.query)) results.push({ name: 'thing', kind: 12, location: { uri, range } });
+      const other = uriOf(join(dirname(pathOf([...docs.keys()][0])), 'other.fake'));
+      for (const range of occurrences(text(other), 'thing'))
+        if ('thing'.includes(p.query)) results.push({ name: 'thing', kind: 12, location: { uri: other, range } });
+      return results;
+    }
+    case 'textDocument/prepareCallHierarchy': {
+      const t = text(p.textDocument.uri);
+      const word = wordAt(t, p.position);
+      const range = occurrences(t, word)[0];
+      return range ? [{ name: word, kind: 12, uri: p.textDocument.uri, range, selectionRange: range }] : null;
+    }
+    case 'callHierarchy/incomingCalls': {
+      const item = p.item;
+      return occurrences(text(item.uri), item.name).map((range) => ({
+        from: { name: `caller@${range.start.line + 1}`, kind: 12, uri: item.uri, range, selectionRange: range },
+        fromRanges: [range],
+      }));
+    }
+    case 'textDocument/codeLens':
+      return [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }, command: { title: 'Ask me', command: 'fake.ask' } }];
+    case 'workspace/executeCommand':
+      if (p.command === 'fake.ask')
+        request('window/showMessageRequest', { type: 3, message: 'Proceed?', actions: [{ title: 'Yes' }, { title: 'No' }] });
+      return null;
+    case 'textDocument/codeAction': {
+      const uri = p.textDocument.uri;
+      const t = text(uri);
+      const edits = occurrences(t, 'bad').map((range) => ({ range, newText: 'good' }));
+      return edits.length ? [{ title: 'Replace bad with good', kind: 'quickfix', edit: { changes: { [uri]: edits } } }] : [];
+    }
+    case 'textDocument/foldingRange':
+      return [{ startLine: 0, endLine: 2 }];
+    case 'textDocument/selectionRange': {
+      const t = text(p.textDocument.uri);
+      return p.positions.map((pos: Position) => {
+        const at = offset(t, pos);
+        let from = at;
+        let to = at;
+        while (from > 0 && /\w/.test(t[from - 1])) from--;
+        while (to < t.length && /\w/.test(t[to])) to++;
+        const line = { start: { line: pos.line, character: 0 }, end: { line: pos.line, character: t.split('\n')[pos.line].length } };
+        return { range: { start: position(t, from), end: position(t, to) }, parent: { range: line } };
+      });
     }
     case 'textDocument/formatting': {
       const t = text(p.textDocument.uri);
@@ -152,6 +261,14 @@ function notify(msg: any) {
   }
 }
 
+let nextId = 1000;
+const asked = new Map<number, string>();
+function request(method: string, params: unknown) {
+  const id = nextId++;
+  asked.set(id, method);
+  send({ jsonrpc: '2.0', id, method, params });
+}
+
 let buffer = Buffer.alloc(0);
 process.stdin.on('data', (chunk: Buffer) => {
   buffer = Buffer.concat([buffer, chunk]);
@@ -162,7 +279,23 @@ process.stdin.on('data', (chunk: Buffer) => {
     if (buffer.length < end + 4 + length) return;
     const msg = JSON.parse(buffer.subarray(end + 4, end + 4 + length).toString());
     buffer = buffer.subarray(end + 4 + length);
+    if (msg.method === undefined && asked.has(msg.id)) {
+      log(`answer ${asked.get(msg.id)} ${JSON.stringify(msg.result)}`);
+      asked.delete(msg.id);
+      continue;
+    }
     log(msg.method ?? 'response');
+    if (msg.method === 'workspace/didChangeWatchedFiles') log(`watched ${JSON.stringify(msg.params.changes)}`);
+    if (msg.method === 'initialized')
+      request('client/registerCapability', {
+        registrations: [
+          {
+            id: 'watch',
+            method: 'workspace/didChangeWatchedFiles',
+            registerOptions: { watchers: [{ globPattern: '**/*.fake' }] },
+          },
+        ],
+      });
     if (msg.id !== undefined && msg.method) {
       const result = handle(msg);
       send(

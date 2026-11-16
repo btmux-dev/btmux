@@ -1700,6 +1700,24 @@ impl SessionManager {
         }
     }
 
+    /// Sandboxed sessions' mounts, with the instance they are mounted in.
+    pub fn sandbox_mounts(&self) -> Vec<(std::path::PathBuf, String)> {
+        let instance = crate::multipass::instance_name(&self.config.multipass_config);
+        let mut mounts: Vec<_> = self
+            .sessions
+            .iter()
+            .filter_map(|s| match &s.runtime {
+                Runtime::Multipass { mounts, .. } => Some(mounts),
+                Runtime::Local => None,
+            })
+            .flatten()
+            .map(|m| (std::path::PathBuf::from(m), instance.clone()))
+            .collect();
+        mounts.sort();
+        mounts.dedup();
+        mounts
+    }
+
     pub fn session_summaries(&self) -> Vec<SessionSummary> {
         self.sessions
             .iter()
