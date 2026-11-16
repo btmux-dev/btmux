@@ -843,6 +843,9 @@ fn open_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .min_inner_size(640.0, 400.0)
         .initialization_script(include_str!("notification.js"))
         .initialization_script(include_str!("zoom.js"))
+        // Tauri's handler takes every drop, so pages (VS Code) never get one.
+        .disable_drag_drop_handler()
+        .initialization_script(include_str!("drop.js"))
         // Some webviews reset zoom on navigation.
         .on_page_load(|window, _| window.state::<zoom::Zoom>().apply(&window))
         // window.open opens in the default browser; the shell plugin's
