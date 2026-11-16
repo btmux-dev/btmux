@@ -10,8 +10,13 @@ The command line, completion menu, messages, progress, and LSP signature help
 are native UI rather than terminal cells, and floating windows (LSP hover,
 diagnostics, plugin windows) appear as cards.
 
-![Neovim in btmux with its completion menu drawn as a native popup](../../../assets/screenshots/neovim-completion-dark.png)
-![Neovim in btmux with its completion menu drawn as a native popup](../../../assets/screenshots/neovim-completion-light.png)
+![LSP completion in the Neovim GUI: a menu of members with their kinds, and the selected item's type beside it](../../../assets/screenshots/neovim-completion-dark.png)
+![LSP completion in the Neovim GUI: a menu of members with their kinds, and the selected item's type beside it](../../../assets/screenshots/neovim-completion-light.png)
+
+LSP hover, like other floating windows, is a card:
+
+![LSP hover in the Neovim GUI, shown as a card over the code](../../../assets/screenshots/neovim-hover-dark.png)
+![LSP hover in the Neovim GUI, shown as a card over the code](../../../assets/screenshots/neovim-hover-light.png)
 
 The command line and its completions are drawn the same way:
 

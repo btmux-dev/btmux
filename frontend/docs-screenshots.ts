@@ -47,7 +47,7 @@ write(
 write('.gitignore', 'node_modules\n.env\n');
 write(
   'src/server.ts',
-  `import { health } from './routes/health';\nimport { users } from './routes/users';\n\nconst routes = [health, users];\n\nexport function handle(request: Request): Response {\n  const { pathname } = new URL(request.url);\n  for (const route of routes) {\n    const match = route.pattern.exec(pathname);\n    if (match) return route.handler(request, match);\n  }\n  return new Response('Not found', { status: 404 });\n}\n\nBun.serve({ port: 3000, fetch: handle });\n`,
+  `import { health } from './routes/health';\nimport { users } from './routes/users';\n\nconst routes = [health, users];\n\nexport function handle(request: Request): Response | Promise<Response> {\n  const { pathname } = new URL(request.url);\n  for (const route of routes) {\n    const match = route.pattern.exec(pathname);\n    if (match) return route.handler(request, match);\n  }\n  return new Response('Not found', { status: 404 });\n}\n\nBun.serve({ port: 3000, fetch: handle });\n`,
 );
 write(
   'src/routes/health.ts',
@@ -80,7 +80,7 @@ git('merge', '--no-ff', '-m', 'Merge orders', 'orders');
 // Work in progress: one staged, one unstaged, one untracked.
 write(
   'src/server.ts',
-  `import { health } from './routes/health';\nimport { orders } from './routes/orders';\nimport { users } from './routes/users';\n\nconst routes = [health, users, orders];\n\nexport function handle(request: Request): Response {\n  const { pathname } = new URL(request.url);\n  for (const route of routes) {\n    const match = route.pattern.exec(pathname);\n    if (match) return route.handler(request, match);\n  }\n  return Response.json({ error: 'not found' }, { status: 404 });\n}\n\nBun.serve({ port: Number(process.env.PORT ?? 3000), fetch: handle });\n`,
+  `import { health } from './routes/health';\nimport { orders } from './routes/orders';\nimport { users } from './routes/users';\n\nconst routes = [health, users, orders];\n\nexport function handle(request: Request): Response | Promise<Response> {\n  const { pathname } = new URL(request.url);\n  for (const route of routes) {\n    const match = route.pattern.exec(pathname);\n    if (match) return route.handler(request, match);\n  }\n  return Response.json({ error: 'not found' }, { status: 404 });\n}\n\nBun.serve({ port: Number(process.env.PORT ?? 3000), fetch: handle });\n`,
 );
 git('add', 'src/server.ts');
 write(
@@ -88,6 +88,45 @@ write(
   '# acme-api\n\nThe Acme HTTP API.\n\n## Develop\n\n```sh\nbun install\nbun dev\n```\n\nSet `PORT` to listen elsewhere.\n\n## Routes\n\n- `GET /health`\n- `GET /users/:id`\n- `POST /orders`\n',
 );
 write('tests/orders.test.ts', `import { expect, test } from 'bun:test';\n\ntest.todo('creates an order');\n`);
+// Types for the runtime globals, so the language server reports no errors.
+write(
+  'src/globals.d.ts',
+  'declare const Bun: { serve(options: { port: number; fetch: (request: Request) => Response | Promise<Response> }): void };\ndeclare const process: { env: Record<string, string | undefined>; uptime(): number };\n',
+);
+write(
+  'tsconfig.json',
+  '{\n  "compilerOptions": { "target": "esnext", "module": "esnext", "moduleResolution": "bundler" },\n  "include": ["src"]\n}\n',
+);
+git('add', 'src/globals.d.ts', 'tsconfig.json');
+git('commit', '-m', 'Declare runtime globals');
+
+// A language server for the Neovim shots, outside the demo repo, and a Neovim
+// config that uses it with native completion, as the Neovim page suggests.
+const tools = path.join(home, 'tools');
+mkdirSync(tools);
+writeFileSync(path.join(tools, 'package.json'), '{}\n');
+execFileSync('bun', ['add', 'typescript-language-server', 'typescript@5'], { cwd: tools, stdio: 'ignore' });
+mkdirSync(path.join(configHome, 'nvim'), { recursive: true });
+writeFileSync(
+  path.join(configHome, 'nvim', 'init.lua'),
+  `vim.o.number = true
+vim.o.signcolumn = 'no'
+vim.o.autocomplete = true
+vim.o.completeopt = 'menuone,noselect,fuzzy,popup'
+vim.lsp.config('ts', {
+  cmd = { ${JSON.stringify(path.join(tools, 'node_modules', '.bin', 'typescript-language-server'))}, '--stdio' },
+  filetypes = { 'typescript' },
+  root_markers = { 'package.json' },
+})
+vim.lsp.enable('ts')
+vim.api.nvim_create_autocmd('LspAttach', {
+  callback = function(ev)
+    vim.lsp.completion.enable(true, ev.data.client_id, ev.buf, { autotrigger = true })
+  end,
+})
+`,
+);
+
 const site = path.join(home, 'website');
 mkdirSync(site);
 writeFileSync(path.join(site, 'index.html'), '<h1>Acme</h1>\n');
@@ -299,9 +338,9 @@ try {
       await small.close();
     };
 
-    // Neovim over the single pane of the server window, without user config.
+    // Neovim over the single pane of the server window, with the config above.
     btmux('select-window', '-t', 'acme-api:server');
-    await closeUp('acme-api', ['neovim-completion', 'neovim-cmdline'], async (page, save) => {
+    await closeUp('acme-api', ['neovim-completion', 'neovim-hover', 'neovim-cmdline'], async (page, save) => {
       await page.evaluate(async (pane) => {
         const { useStore } = await import('/src/state/store.tsx' as string);
         useStore.getState().setNvimOpen(true, pane);
@@ -314,20 +353,31 @@ try {
         await page.keyboard.press('Enter');
         await page.waitForTimeout(300);
       };
+      // One Escape at a time: a second within 300 ms hides the surface.
+      const escape = async () => {
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(600);
+      };
       await command('e! src/server.ts');
-      await command('set number completeopt=menuone,noselect,popup');
-      // Keyword completion on a new line inside handle().
-      await page.keyboard.type('9Goro');
+      // The language server starts and loads the project.
+      await page.waitForTimeout(scheme === 'dark' ? 12_000 : 3000);
+      // LSP completion of a route's members, inside the loop of handle().
+      await page.keyboard.type('9Goroute.');
+      await page.waitForTimeout(2500);
       await page.keyboard.press('Control+n');
       await save('neovim-completion');
-      // One Escape: a second within 300 ms hides the surface.
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(600);
+      await escape();
       await command('e!');
+      // LSP hover on handle.
+      await page.keyboard.type('7G2wK');
+      await page.waitForTimeout(1500);
+      await save('neovim-hover');
+      await page.keyboard.type('j');
+      await page.waitForTimeout(400);
       await page.keyboard.type(':set fold');
       await page.keyboard.press('Tab');
       await save('neovim-cmdline');
-      await page.keyboard.press('Escape');
+      await escape();
       await page.evaluate(async () => {
         const { useStore } = await import('/src/state/store.tsx' as string);
         useStore.getState().setNvimOpen(false);
