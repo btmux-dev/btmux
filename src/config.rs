@@ -385,7 +385,7 @@ pub enum SubCommand {
     /// Run a program in a popup over this pane, closed when it exits, and exit
     /// with its status. Outside btmux, or if no tab shows the pane, it runs
     /// here instead.
-    #[command(visible_alias = "display-popup")]
+    #[command(visible_alias = "display-popup", disable_help_flag = true)]
     Popup(crate::popup::PopupArgs),
     /// Run fzf with a btmux menu when it can do what the arguments ask, else
     /// the real fzf. Linked as `fzf` on PATH, btmux behaves as this command.

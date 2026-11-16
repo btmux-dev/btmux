@@ -48,6 +48,7 @@ const EXIT_FAILED: i32 = 2;
 const EXIT_NOT_FOUND: i32 = 127;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum PopupCommand {
     /// A program and its arguments.
@@ -109,6 +110,8 @@ impl PopupCommand {
 }
 
 /// What a popup's PTY runs.
+#[derive(Serialize, Deserialize, Clone)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Spawn {
     pub command: PopupCommand,
     /// The caller's environment; `None` keeps the server's.
@@ -137,6 +140,8 @@ pub enum Outcome {
     Exited(Option<i32>),
     /// The program never started.
     Failed(String),
+    /// No tab started it, so it never ran.
+    NotShown,
 }
 
 #[derive(Debug, PartialEq)]
@@ -160,8 +165,18 @@ struct Ended {
 pub struct PopupsHandoff {
     /// Started popups, whose PTYs are among the panes.
     pub open: Vec<PopupSummary>,
+    /// Popups no tab has started yet.
+    pub starting: Vec<StartingHandoff>,
     /// Ended popups' outcomes, for waiters that reconnect.
     pub ended: Vec<EndedHandoff>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct StartingHandoff {
+    pub popup: PopupSummary,
+    pub spawn: Spawn,
+    pub cwd: Option<std::path::PathBuf>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -228,6 +243,20 @@ impl Popups {
     /// Wake waiters, as when a viewer starts a popup.
     pub fn touch(&self) {
         self.changed.send_modify(|n| *n += 1);
+    }
+
+    /// The pane an open or recently ended popup belongs to.
+    fn owner(&self, id: Uuid) -> Option<Uuid> {
+        self.open
+            .iter()
+            .find(|popup| popup.id == id)
+            .map(|popup| popup.pane_id)
+            .or_else(|| {
+                self.ended
+                    .iter()
+                    .find(|ended| ended.id == id)
+                    .map(|ended| ended.pane_id)
+            })
     }
 
     fn progress(&self, id: Uuid, pane_id: Uuid) -> Progress {
@@ -331,6 +360,25 @@ impl Popups {
         self.end(id, Outcome::Failed(error))
     }
 
+    /// Popups no tab has started yet, for an upgraded server.
+    pub fn export_starting(&self) -> Vec<StartingHandoff> {
+        self.open
+            .iter()
+            .filter_map(|popup| {
+                let (spawn, cwd) = popup.pty.popup_spawn()?;
+                Some(StartingHandoff {
+                    popup: PopupSummary {
+                        id: popup.id,
+                        pane_id: popup.pane_id,
+                        title: popup.title.clone(),
+                    },
+                    spawn: spawn.clone(),
+                    cwd: cwd.map(Into::into),
+                })
+            })
+            .collect()
+    }
+
     /// Close the popups open over a pane that closed.
     pub fn close_pane(&mut self, pane_id: Uuid) -> bool {
         let ids: Vec<_> = self
@@ -395,11 +443,15 @@ impl std::fmt::Display for OpenError {
 pub fn open(
     mgr: &mut SessionManager,
     pane_id: Uuid,
+    id: Uuid,
     mut spawn: Spawn,
     cwd: Option<String>,
     title: Option<String>,
 ) -> Result<Uuid, OpenError> {
     spawn.command.validate().map_err(OpenError::Invalid)?;
+    if mgr.find_pane(id).is_some() || mgr.popups.owner(id).is_some() {
+        return Err(OpenError::Invalid("this popup id is taken".into()));
+    }
     let pane = mgr.find_pane(pane_id).ok_or(OpenError::NoPane)?;
     if mgr.popups.iter().any(|popup| popup.pane_id == pane_id) {
         return Err(OpenError::AlreadyOpen);
@@ -423,7 +475,6 @@ pub fn open(
     if let Some((end, _)) = title.char_indices().nth(TITLE_MAX) {
         title.truncate(end);
     }
-    let id = Uuid::new_v4();
     let pty = mgr.new_popup_pty(id, pane_id, cwd.map(Into::into), Some(spawn));
     mgr.popups.insert(Popup {
         id,
@@ -464,6 +515,10 @@ pub async fn close(state: &AppState, id: Uuid) {
 
 #[derive(Deserialize, Serialize)]
 pub struct PopupRequest {
+    /// Chosen by the caller, so a request retried across an upgrade finds
+    /// its popup rather than running the program again.
+    #[serde(default)]
+    pub id: Option<Uuid>,
     pub command: PopupCommand,
     #[serde(default)]
     pub cwd: Option<String>,
@@ -481,6 +536,7 @@ pub async fn api_popup(
     Json(request): Json<PopupRequest>,
 ) -> Response {
     let PopupRequest {
+        id,
         command,
         cwd,
         env,
@@ -488,9 +544,24 @@ pub async fn api_popup(
     } = request;
     let (id, mut changed) = {
         let mut mgr = state.write().await;
-        match open(&mut mgr, pane_id, Spawn { command, env }, cwd, title) {
-            Ok(id) => (id, mgr.popups.changed.subscribe()),
-            Err(error) => return error.into_response(),
+        let retried = id.filter(|&id| match mgr.popups.progress(id, pane_id) {
+            // It never ran, as when an upgrade cut the request: open it again.
+            Progress::Ended(Outcome::NotShown) => {
+                mgr.popups.ended.retain(|ended| ended.id != id);
+                false
+            }
+            Progress::Unknown => false,
+            _ => true,
+        });
+        match retried {
+            Some(id) => (id, mgr.popups.changed.subscribe()),
+            None => {
+                let id = id.unwrap_or_else(Uuid::new_v4);
+                match open(&mut mgr, pane_id, id, Spawn { command, env }, cwd, title) {
+                    Ok(id) => (id, mgr.popups.changed.subscribe()),
+                    Err(error) => return error.into_response(),
+                }
+            }
         }
     };
     let started = tokio::time::timeout(SHOW_TIMEOUT, async {
@@ -505,22 +576,30 @@ pub async fn api_popup(
         }
     })
     .await;
-    match started {
-        Ok(Progress::Running | Progress::Ended(Outcome::Exited(_))) => {
-            Json(serde_json::json!({ "id": id })).into_response()
-        }
-        Ok(Progress::Ended(Outcome::Failed(error))) => {
-            (StatusCode::UNPROCESSABLE_ENTITY, error).into_response()
-        }
-        Ok(_) => (StatusCode::GONE, "the popup closed").into_response(),
+    let progress = match started {
+        Ok(progress) => progress,
+        // A tab may have started it just now: only one still starting runs here.
         Err(_) => {
             let mut mgr = state.write().await;
-            if mgr.popups.progress(id, pane_id) == Progress::Starting {
-                mgr.popups.end(id, Outcome::Exited(None));
+            let progress = mgr.popups.progress(id, pane_id);
+            if progress == Progress::Starting {
+                mgr.popups.end(id, Outcome::NotShown);
                 broadcast(&mgr);
             }
+            progress
+        }
+    };
+    match progress {
+        Progress::Running | Progress::Ended(Outcome::Exited(_)) => {
+            Json(serde_json::json!({ "id": id })).into_response()
+        }
+        Progress::Ended(Outcome::Failed(error)) => {
+            (StatusCode::UNPROCESSABLE_ENTITY, error).into_response()
+        }
+        Progress::Starting | Progress::Ended(Outcome::NotShown) => {
             (StatusCode::CONFLICT, "no browser tab is showing this pane").into_response()
         }
+        Progress::Unknown => (StatusCode::GONE, "the popup closed").into_response(),
     }
 }
 
@@ -538,6 +617,10 @@ pub async fn api_wait(
                 }
                 Progress::Ended(Outcome::Failed(error)) => {
                     return (StatusCode::UNPROCESSABLE_ENTITY, error).into_response()
+                }
+                Progress::Ended(Outcome::NotShown) => {
+                    return (StatusCode::CONFLICT, "no browser tab showed the popup")
+                        .into_response()
                 }
                 Progress::Unknown => return StatusCode::NOT_FOUND.into_response(),
                 Progress::Starting | Progress::Running => mgr.popups.changed.subscribe(),
@@ -566,6 +649,28 @@ pub struct PopupArgs {
     /// Accepted for tmux's `display-popup -E`: popups always close when the command exits.
     #[arg(short = 'E', hide = true, action = clap::ArgAction::Count)]
     close_on_exit: u8,
+    // Accepted for tmux scripts: btmux sizes and draws popups itself.
+    #[arg(short = 'w', hide = true)]
+    _width: Option<String>,
+    #[arg(short = 'h', hide = true)]
+    _height: Option<String>,
+    #[arg(short = 'x', hide = true)]
+    _x: Option<String>,
+    #[arg(short = 'y', hide = true)]
+    _y: Option<String>,
+    #[arg(short = 'b', hide = true)]
+    _border_lines: Option<String>,
+    #[arg(short = 's', hide = true)]
+    _style: Option<String>,
+    #[arg(short = 'S', hide = true)]
+    _border_style: Option<String>,
+    #[arg(short = 'c', hide = true)]
+    _client: Option<String>,
+    #[arg(short = 'B', hide = true)]
+    _no_border: bool,
+    /// Print help.
+    #[arg(long, action = clap::ArgAction::Help)]
+    help: Option<bool>,
     /// The program and its arguments. A single argument is a command line for the shell.
     #[arg(
         required = true,
@@ -630,6 +735,7 @@ async fn run_popup(profile: Option<&str>, args: &PopupArgs) -> Result<i32, Strin
     env.retain(|(key, _)| !extra.iter().any(|(name, _)| name == key));
     env.extend(extra.iter().cloned());
     let request = PopupRequest {
+        id: Some(Uuid::new_v4()),
         command: command.clone(),
         cwd: Some(cwd.to_string_lossy().into_owned()),
         env: Some(env),
@@ -637,14 +743,9 @@ async fn run_popup(profile: Option<&str>, args: &PopupArgs) -> Result<i32, Strin
     };
     let body = serde_json::to_value(&request).map_err(|e| e.to_string())?;
     let path = format!("/api/panes/{pane}/popup");
-    let (status, reply) = crate::api_client::request_with_status(
-        profile,
-        reqwest::Method::POST,
-        &path,
-        Some(body),
-        NO_TIMEOUT,
-    )
-    .await?;
+    // Retried with its id across an upgrade, it never runs twice.
+    let (status, reply) =
+        request_retrying(profile, reqwest::Method::POST, &path, Some(body)).await?;
     match status {
         reqwest::StatusCode::OK => {}
         // No tab shows the pane, as over ssh: it runs here.
@@ -673,46 +774,56 @@ async fn run_popup(profile: Option<&str>, args: &PopupArgs) -> Result<i32, Strin
 /// restarts in place (`btmux upgrade`).
 async fn wait(profile: Option<&str>, pane: Uuid, id: Uuid) -> Result<i32, String> {
     let path = format!("/api/panes/{pane}/popup/{id}");
+    match request_retrying(profile, reqwest::Method::GET, &path, None).await? {
+        (reqwest::StatusCode::OK, reply) => {
+            #[derive(Deserialize)]
+            struct Exited {
+                status: Option<i32>,
+            }
+            let Exited { status } = serde_json::from_str(&reply).map_err(|e| e.to_string())?;
+            Ok(status.unwrap_or(1))
+        }
+        (reqwest::StatusCode::UNPROCESSABLE_ENTITY, reply) => {
+            eprintln!("btmux: {reply}");
+            Ok(EXIT_NOT_FOUND)
+        }
+        (reqwest::StatusCode::NOT_FOUND, _) => {
+            Err("the popup is gone; its exit status is unknown".into())
+        }
+        (status, reply) => Err(if reply.is_empty() {
+            status.to_string()
+        } else {
+            reply
+        }),
+    }
+}
+
+/// A request repeated while the server is unreachable or failing, as while
+/// it restarts in place, for up to a minute.
+async fn request_retrying(
+    profile: Option<&str>,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<serde_json::Value>,
+) -> Result<(reqwest::StatusCode, String), String> {
     let mut unreachable_since = None;
     loop {
         match crate::api_client::request_with_status(
             profile,
-            reqwest::Method::GET,
-            &path,
-            None,
+            method.clone(),
+            path,
+            body.clone(),
             NO_TIMEOUT,
         )
         .await
         {
-            Ok((reqwest::StatusCode::OK, reply)) => {
-                #[derive(Deserialize)]
-                struct Exited {
-                    status: Option<i32>,
-                }
-                let Exited { status } = serde_json::from_str(&reply).map_err(|e| e.to_string())?;
-                return Ok(status.unwrap_or(1));
-            }
-            Ok((reqwest::StatusCode::UNPROCESSABLE_ENTITY, reply)) => {
-                eprintln!("btmux: {reply}");
-                return Ok(EXIT_NOT_FOUND);
-            }
-            Ok((reqwest::StatusCode::NOT_FOUND, _)) => {
-                return Err("the popup is gone; its exit status is unknown".into())
-            }
-            Ok((status, reply)) if !status.is_server_error() => {
-                return Err(if reply.is_empty() {
-                    status.to_string()
-                } else {
-                    reply
-                });
-            }
+            Ok((status, reply)) if !status.is_server_error() => return Ok((status, reply)),
             Ok(_) | Err(_) => {
                 let since = *unreachable_since.get_or_insert_with(Instant::now);
                 if since.elapsed() > Duration::from_secs(60) {
                     return Err("lost the btmux server".into());
                 }
                 tokio::time::sleep(Duration::from_millis(500)).await;
-                continue;
             }
         }
     }
@@ -747,6 +858,10 @@ fn run_inline(
             process
         }
     };
+    // Spawning reports a missing directory as a missing program.
+    if !cwd.is_dir() {
+        return Err(format!("{}: no such directory", cwd.display()));
+    }
     process.current_dir(cwd).envs(extra.iter().cloned());
     let status = match process.status() {
         Ok(status) => status,
@@ -799,6 +914,7 @@ mod tests {
     fn one_argument_is_a_command_line() {
         use clap::Parser;
         #[derive(Parser)]
+        #[command(disable_help_flag = true)]
         struct Cli {
             #[command(flatten)]
             popup: PopupArgs,
@@ -808,6 +924,9 @@ mod tests {
                 .map(|cli| cli.popup)
         };
         let args = parse(&["-E", "-d", "/tmp", "lazygit"]).unwrap();
+        assert_eq!(args.command(), PopupCommand::Shell("lazygit".into()));
+        // tmux's sizing and style flags are ignored.
+        let args = parse(&["-w", "80%", "-h", "80%", "-B", "-E", "lazygit"]).unwrap();
         assert_eq!(args.command(), PopupCommand::Shell("lazygit".into()));
         let args = parse(&["-e", "A=1", "git", "log", "--oneline"]).unwrap();
         assert_eq!(
@@ -819,10 +938,10 @@ mod tests {
         assert!(parse(&[]).is_err());
     }
 
-    async fn app() -> (AppState, Router, Uuid) {
-        let (exit_tx, mut exit_rx) = tokio::sync::mpsc::unbounded_channel();
+    fn manager() -> (SessionManager, tokio::sync::mpsc::UnboundedReceiver<Uuid>) {
+        let (exit_tx, exit_rx) = tokio::sync::mpsc::unbounded_channel();
         let (meta_tx, _) = tokio::sync::mpsc::unbounded_channel();
-        let mut manager = SessionManager::new(
+        let manager = SessionManager::new(
             "/bin/sh".into(),
             crate::config::FileConfig::default(),
             exit_tx,
@@ -830,8 +949,13 @@ mod tests {
             8004,
             None,
         );
-        let session = manager.create_session(None).await;
-        let pane = manager.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        (manager, exit_rx)
+    }
+
+    fn serve(
+        manager: SessionManager,
+        mut exit_rx: tokio::sync::mpsc::UnboundedReceiver<Uuid>,
+    ) -> (AppState, Router) {
         let state: AppState = Arc::new(tokio::sync::RwLock::new(manager));
         let exits = state.clone();
         tokio::spawn(async move {
@@ -839,7 +963,21 @@ mod tests {
                 exits.write().await.handle_pane_exit(id).await;
             }
         });
-        (state.clone(), crate::server::create_app(state), pane)
+        (state.clone(), crate::server::create_app(state))
+    }
+
+    async fn app() -> (AppState, Router, Uuid) {
+        let (mut manager, exit_rx) = manager();
+        let session = manager.create_session(None).await;
+        let pane = manager.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        let (state, app) = serve(manager, exit_rx);
+        (state, app, pane)
+    }
+
+    fn wait_request(pane: Uuid, id: Uuid) -> Request<Body> {
+        Request::get(format!("/api/panes/{pane}/popup/{id}"))
+            .body(Body::empty())
+            .unwrap()
     }
 
     fn call(
@@ -896,6 +1034,102 @@ mod tests {
         let (status, _) = call(&app, open_request(pane, "true")).await.unwrap();
         assert_eq!(status, StatusCode::CONFLICT);
         assert!(state.read().await.popups.summaries().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_popup_started_at_the_deadline_runs_only_there() {
+        let (state, app, pane) = app().await;
+        let opened = call(&app, open_request(pane, "sleep 30"));
+        let id = open_id(&state).await;
+        {
+            // Started while the deadline passes.
+            let mut mgr = state.write().await;
+            mgr.find_pty_mut(id)
+                .unwrap()
+                .ensure_spawned(80, 24)
+                .unwrap();
+            tokio::time::sleep(SHOW_TIMEOUT * 3).await;
+        }
+        let (status, reply) = opened.await.unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(reply["id"], id.to_string());
+        close(&state, id).await;
+    }
+
+    #[tokio::test]
+    async fn retried_requests_find_their_popup() {
+        let (state, app, pane) = app().await;
+        let id = Uuid::new_v4();
+        let request = |pane: Uuid, id: Uuid| {
+            let body = serde_json::json!({ "id": id, "command": { "shell": "read line" } });
+            Request::post(format!("/api/panes/{pane}/popup"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        };
+        let (status, _) = call(&app, request(pane, id)).await.unwrap();
+        assert_eq!(status, StatusCode::CONFLICT);
+        // It never ran, so it opens again.
+        let opened = call(&app, request(pane, id));
+        assert_eq!(open_id(&state).await, id);
+        show(&state, id).await.unwrap();
+        assert_eq!(opened.await.unwrap().0, StatusCode::OK);
+        // Once started, a retry finds it rather than starting another.
+        let (status, reply) = call(&app, request(pane, id)).await.unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(reply["id"], id.to_string());
+        assert_eq!(state.read().await.popups.summaries().len(), 1);
+        // A pane's id can't name a popup.
+        let (status, _) = call(&app, request(pane, pane)).await.unwrap();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        close(&state, id).await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unstarted_popups_survive_an_upgrade() {
+        let (state, _app, pane) = app().await;
+        let (sessions, popups) = {
+            let mut mgr = state.write().await;
+            let spawn = Spawn {
+                command: PopupCommand::Shell("exit $((A + 3))".into()),
+                env: Some(vec![("A".into(), "1".into())]),
+            };
+            open(
+                &mut mgr,
+                pane,
+                Uuid::new_v4(),
+                spawn,
+                Some("/".into()),
+                None,
+            )
+            .unwrap();
+            let (sessions, popups, panes) = mgr.export_handoff(Duration::from_secs(2)).unwrap();
+            assert!(panes.is_empty());
+            (sessions, serde_json::to_string(&popups).unwrap())
+        };
+        let (mut manager, exit_rx) = manager();
+        manager.restore_handoff(sessions, serde_json::from_str(&popups).unwrap(), Vec::new());
+        let (state, app) = serve(manager, exit_rx);
+        let id = open_id(&state).await;
+        show(&state, id).await.unwrap();
+        let (_, reply) =
+            tokio::time::timeout(Duration::from_secs(10), call(&app, wait_request(pane, id)))
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(reply["status"], 4);
+    }
+
+    #[test]
+    fn a_missing_directory_is_not_a_missing_program() {
+        let error = run_inline(
+            &PopupCommand::Exec(vec!["true".into()]),
+            &[],
+            std::path::Path::new("/nonexistent/btmux"),
+        )
+        .unwrap_err();
+        assert!(error.contains("no such directory"), "{error}");
     }
 
     #[tokio::test]

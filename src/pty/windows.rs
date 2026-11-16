@@ -309,10 +309,8 @@ impl PtyHandle {
 impl Drop for PtyHandle {
     fn drop(&mut self) {
         self.probe.lock().unwrap().take();
+        self.terminate();
         if let Some(master) = &self.master {
-            if self.child.lock().unwrap().is_some() {
-                let _ = master.killer.lock().unwrap().kill();
-            }
             // Closing the pseudoconsole ends the programs attached to it.
             drop(master.pty.lock().unwrap().take());
         }

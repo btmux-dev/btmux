@@ -6,11 +6,16 @@ pending: number,
 input: number, bin: string | null, shell_name: string | null, prompt: number, };
 type PopupsHandoff = {
 open: Array<PopupSummary>,
+starting: Array<StartingHandoff>,
 ended: Array<EndedHandoff>, };
 type PopupSummary = { id: string, pane_id: string, title: string, };
+type StartingHandoff = { popup: PopupSummary, spawn: Spawn, cwd: string | null, };
+type Spawn = { command: PopupCommand,
+env: Array<[string, string]> | null, };
+type PopupCommand = { "exec": Array<string> } | { "shell": string };
 type EndedHandoff = { id: string, pane_id: string, outcome: Outcome,
 age_ms: bigint, };
-type Outcome = { "Exited": number | null } | { "Failed": string };
+type Outcome = { "Exited": number | null } | { "Failed": string } | "NotShown";
 type Event = { "Data": number } | { "Size": [number, number] };
 type KittyKeyboard = {
 stacks: [[number, number, number, number, number, number, number, number], [number, number, number, number, number, number, number, number]], alternate: boolean,

@@ -288,9 +288,16 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
             command: crate::popup::PopupCommand::Shell(command.clone()),
             env: None,
         };
-        return crate::popup::open(&mut mgr, *pane_id, spawn, None, title.clone())
-            .map(|_| ())
-            .map_err(|error| error.to_string());
+        return crate::popup::open(
+            &mut mgr,
+            *pane_id,
+            Uuid::new_v4(),
+            spawn,
+            None,
+            title.clone(),
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string());
     }
     if let ClientMessage::ClosePopup { id } = &cmd {
         crate::popup::close(state, *id).await;

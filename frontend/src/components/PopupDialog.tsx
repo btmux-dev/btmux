@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Dialog } from '@astryxdesign/core/Dialog';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
@@ -26,11 +26,29 @@ interface Props {
   send: (msg: ClientMessage) => void;
 }
 
+/** Whether a modal surface, which a popup opened now would cover, is open. */
+function useOtherModalOpen() {
+  return useStore(
+    (s) => !!s.overlay || s.settingsOpen || s.switcherOpen || s.fileBrowserOpen || s.windowGridOpen || s.agentGridOpen,
+  );
+}
+
 /**
  * A `btmux popup` program over its pane's window, sized like the file browser.
  * It closes when the program exits; Esc and backdrop clicks go to the program.
+ * It waits for a modal surface open before it to close, so it doesn't take
+ * the keyboard from one in use.
  */
-export function PopupDialog({ popup, sessionId, send }: Props) {
+export function PopupDialog(props: Props) {
+  const otherModalOpen = useOtherModalOpen();
+  const [ready, setReady] = useState(!otherModalOpen);
+  useEffect(() => {
+    if (!otherModalOpen) setReady(true);
+  }, [otherModalOpen]);
+  return ready ? <OpenPopupDialog {...props} /> : null;
+}
+
+function OpenPopupDialog({ popup, sessionId, send }: Props) {
   const narrow = useMediaQuery(NARROW_QUERY);
   const touch = useMediaQuery(TOUCH_QUERY);
   const config = useStore((s) => s.config);
@@ -45,17 +63,20 @@ export function PopupDialog({ popup, sessionId, send }: Props) {
     visibleRef,
   });
 
+  // By value: every `popups` broadcast brings new objects, and rerunning
+  // would close this popup's search.
+  const { id, pane_id: paneId, title } = popup;
   useEffect(() => {
     const store = useStore.getState();
-    store.setPopupShown(popup);
+    store.setPopupShown({ id, pane_id: paneId, title });
     // A pane's search would be hidden under the popup, yet own the keyboard.
-    if (store.searchPaneId !== null && store.searchPaneId !== popup.id) store.setSearchPaneId(null);
+    if (store.searchPaneId !== null && store.searchPaneId !== id) store.setSearchPaneId(null);
     return () => {
       const store = useStore.getState();
-      if (store.popupShown?.id === popup.id) store.setPopupShown(null);
-      if (store.searchPaneId === popup.id) store.setSearchPaneId(null);
+      if (store.popupShown?.id === id) store.setPopupShown(null);
+      if (store.searchPaneId === id) store.setSearchPaneId(null);
     };
-  }, [popup]);
+  }, [id, paneId, title]);
 
   useEffect(() => {
     term?.setTheme(config?.theme ?? STARTUP_THEME);
@@ -64,13 +85,10 @@ export function PopupDialog({ popup, sessionId, send }: Props) {
   // Until the replay shows, keys go nowhere rather than to the close button.
   useEffect(() => rootRef.current?.focus(), []);
   // Focus the program once shown, and again when a dialog over it closes.
-  const overlay = useStore((s) => s.overlay);
-  const settingsOpen = useStore((s) => s.settingsOpen);
-  const switcherOpen = useStore((s) => s.switcherOpen);
-  const fileBrowserOpen = useStore((s) => s.fileBrowserOpen);
+  const otherModalOpen = useOtherModalOpen();
   // The connection banner, during an upgrade.
   const disconnected = useStore((s) => s.controlConnectionState !== 'connected');
-  const coveredByAnother = !!overlay || settingsOpen || switcherOpen || fileBrowserOpen || disconnected;
+  const coveredByAnother = otherModalOpen || disconnected;
   // `btmux pick`, `confirm`, and `input` run in the popup, and search, show over it.
   const searchOpen = useStore((s) => s.searchPaneId === popup.id);
   const widget = useStore((s) => s.widgets.find((widget) => widget.pane_id === popup.id));

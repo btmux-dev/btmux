@@ -716,7 +716,9 @@ command's directory (`-d DIR` for another) and gets its environment, plus `-e
 NAME=VALUE` for each one given. `-T` sets the title, the command by default.
 `-t` opens it over another pane, named as for the
 [tmux-style commands](#tmux-style-commands). `-E` is accepted for tmux scripts;
-popups always close when the program exits.
+popups always close when the program exits. tmux's size, position, and style
+flags (`-w`, `-h`, `-x`, `-y`, `-b`, `-B`, `-s`, `-S`, `-c`) are accepted and
+ignored.
 
 Every key goes to the program, Esc included, except the prefix: prefix bindings
 still work, and `<prefix> <prefix>` sends the prefix key to the program. A
@@ -728,8 +730,9 @@ show in it, and pane search (`<prefix> /`) and clipboard pastes go to it.
 Popups of [sandboxed](sandbox.md) panes run in the sandbox, in its login
 shell's environment.
 
-Outside btmux, or if no tab shows the pane within 3 s (over ssh, say), the
-program runs in place instead, so `btmux popup` works in scripts anywhere. A
+A popup opened while a dialog such as Settings or the file browser is open
+waits for it to close. Outside btmux, or if no tab shows the pane within 3 s
+(over ssh, say), the program runs in place instead, so `btmux popup` works in scripts anywhere. A
 program that can't start exits 127.
 
 To open one with a key, add a `[[popup]]` table to `config.toml`. Its `key`
@@ -749,7 +752,8 @@ title = "Git" # optional; the command by default
 `POST /api/panes/<pane-id>/popup` opens one, with `command` either
 `{"exec": ["program", "arg"]}` or `{"shell": "command line"}`, and optional
 `cwd` (the pane's directory by default), `env` (a list of `[name, value]` pairs that replaces the server's
-environment), and `title`. It replies `{"id": ...}` once a tab has started the
+environment), `title`, and `id`, a UUID the caller picks so a retried request
+finds its popup instead of running the program again. It replies `{"id": ...}` once a tab has started the
 program, 409 if no tab does within 3 s, 422 if the program can't start, and 423
 if the pane already has a popup. `GET /api/panes/<pane-id>/popup/<id>` waits
 for the program to exit and replies `{"status": n}` (`null` if unknown); exit

@@ -205,6 +205,19 @@ try {
   assert.equal(await searchPane(), await popupId());
   await page.keyboard.type('CLIP_MARKER');
   await popup.getByText(/\d+\/\d+/).waitFor();
+  // Other popups opening and closing leave its search open.
+  const otherPane = await page.evaluate(async (paneId) => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    for (const session of useStore.getState().allSessions)
+      for (const window of session.windows)
+        for (const pane of window.panes) if (pane.id !== paneId) return pane.id as string;
+    return null;
+  }, paneId);
+  assert(otherPane, 'the window the inline run opened');
+  const other = await page.request.post(api(`/panes/${otherPane}/popup`), { data: { command: { shell: 'true' } } });
+  assert.equal(other.status(), 409);
+  assert(await search.isVisible(), 'the search stays open');
+  assert.equal(await searchPane(), await popupId());
   await page.keyboard.press('Escape');
   await search.waitFor({ state: 'detached' });
   await popupFocused();
@@ -237,6 +250,25 @@ try {
   );
   await popupShows('cover');
   await waitForOutput('bg=2');
+  await popupFocused();
+  await page.keyboard.press('Enter');
+  await closed();
+  await waitForOutput('rc=0');
+
+  // A popup waits for a dialog in use to close.
+  await page.locator('[data-pane-terminal]').first().click();
+  await page.keyboard.press('Control+a');
+  await page.keyboard.press('f');
+  await page.waitForSelector('dialog[open]');
+  await run(`clear; "$BTMUX_BIN" popup sh -c 'echo later; read -r x'; echo "rc=$?"`);
+  await page.waitForTimeout(500);
+  assert.equal(await popup.count(), 0);
+  assert(
+    await page.evaluate(() => document.activeElement?.closest('dialog[open]') != null),
+    'the file browser keeps focus',
+  );
+  await page.keyboard.press('Escape');
+  await popupShows('later');
   await popupFocused();
   await page.keyboard.press('Enter');
   await closed();

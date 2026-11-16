@@ -1800,21 +1800,24 @@ impl SessionManager {
             return Err(format!("{stuck} pane(s) did not stop in time"));
         }
         let handed_off = |id: Uuid| exported.iter().any(|(pane, _, _)| *pane == id);
-        // A program reaped before its exit was handled keeps its status.
-        let reaped: Vec<_> = self
+        // A program reaped before its exit was handled keeps its status; one
+        // still running without a reader can't be handed off and is hung up.
+        let lost: Vec<_> = self
             .popups
             .iter()
             .filter(|popup| popup.pty.is_spawned() && !handed_off(popup.id))
             .map(|popup| popup.id)
             .collect();
-        let mut ended = false;
-        for id in reaped {
-            ended |= self.popups.exited(id) == Some(true);
+        let ended = !lost.is_empty();
+        for id in lost {
+            if self.popups.exited(id) == Some(false) {
+                self.popups
+                    .failed(id, "the popup did not survive the upgrade".into());
+            }
         }
         if ended {
             crate::popup::broadcast(self);
         }
-        // Only started popups have a program to hand off.
         let popups = crate::popup::PopupsHandoff {
             open: self
                 .popups
@@ -1822,6 +1825,7 @@ impl SessionManager {
                 .into_iter()
                 .filter(|popup| handed_off(popup.id))
                 .collect(),
+            starting: self.popups.export_starting(),
             ended: self.popups.export_ended(),
         };
         Ok((self.all_snapshots(), popups, exported))
@@ -1885,11 +1889,20 @@ impl SessionManager {
             .collect();
         let restored = self.restore_from_snapshots(sessions);
         self.popups.restore_ended(popups.ended);
-        for popup in popups.open {
+        let handed_off: Vec<_> = popups.open.iter().map(|popup| popup.id).collect();
+        let starting = popups
+            .starting
+            .into_iter()
+            .map(|starting| (starting.popup, Some((starting.spawn, starting.cwd))));
+        let open = popups.open.into_iter().map(|popup| (popup, None));
+        for (popup, spawn) in open.chain(starting) {
             if self.find_pane(popup.pane_id).is_none() {
                 continue;
             }
-            let pty = self.new_popup_pty(popup.id, popup.pane_id, None, None);
+            let pty = match spawn {
+                Some((spawn, cwd)) => self.new_popup_pty(popup.id, popup.pane_id, cwd, Some(spawn)),
+                None => self.new_popup_pty(popup.id, popup.pane_id, None, None),
+            };
             self.popups.insert(crate::popup::Popup {
                 id: popup.id,
                 pane_id: popup.pane_id,
@@ -1915,7 +1928,7 @@ impl SessionManager {
         let orphans: Vec<_> = self
             .popups
             .iter()
-            .filter(|popup| !adopted.contains(&popup.id))
+            .filter(|popup| handed_off.contains(&popup.id) && !adopted.contains(&popup.id))
             .map(|popup| popup.id)
             .collect();
         for id in orphans {

@@ -142,11 +142,14 @@ pane and `BTMUX_POPUP_ID` the popup, where widgets its programs open show
 (`/api/panes/{popup id}/widget`); widgets of panes under a shown popup aren't
 reported shown, so callers fall back. Pane search, scrolling, and clipboard and
 image pastes go to a shown popup. `POST /api/panes/{id}/popup` replies once a tab spawned it, 409 after 3 s
-otherwise, and the CLI then runs the program in place, as it does outside btmux;
-`GET .../popup/{popup id}` waits for the exit status (`PtyHandle::exit_status`,
+otherwise, and the CLI then runs the program in place, as it does outside btmux.
+The CLI picks the popup's id and retries the request across an upgrade, which
+finds the popup rather than opening another; one that never ran (`NotShown`)
+opens again. A tab with another modal surface open shows a popup once it
+closes. `GET .../popup/{popup id}` waits for the exit status (`PtyHandle::exit_status`,
 from the waiter; a reader's EOF while the child runs is ignored) and the CLI
-retries it across `btmux upgrade`, which hands popups off with the panes, and
-ended statuses, which are kept 5 minutes (`PopupsHandoff`). Closing a pane closes its popups; `close_popup`
+retries it across `btmux upgrade`, which hands popups off with the panes (with
+their command and environment until started), and ended statuses, which are kept 5 minutes (`PopupsHandoff`). Closing a pane closes its popups; `close_popup`
 hangs one up and drops it after 3 s. A guest pane's popup runs in the guest
 (`guest-shell --run`/`-- argv`, without the caller's environment), in the
 directory asked for even outside the mounts, and both routes are guest routes. While a popup is shown it owns the keyboard except the

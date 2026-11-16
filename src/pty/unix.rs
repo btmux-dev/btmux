@@ -772,19 +772,10 @@ impl PtyHandle {
 
 impl Drop for PtyHandle {
     fn drop(&mut self) {
+        self.terminate();
         // Invalidate the borrowed descriptor before `master` closes it and the
         // OS can reuse its number.
-        if let Some(probe) = self.probe.lock().unwrap().take() {
-            let pgrp = unsafe { libc::tcgetpgrp(probe.fd) };
-            if pgrp > 0 {
-                unsafe {
-                    libc::kill(-pgrp, libc::SIGHUP);
-                }
-            }
-        }
-        if let Some(pid) = *self.child.lock().unwrap() {
-            unsafe { libc::kill(pid, libc::SIGHUP) };
-        }
+        self.probe.lock().unwrap().take();
     }
 }
 

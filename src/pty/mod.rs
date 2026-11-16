@@ -278,6 +278,11 @@ impl PtyHandle {
         self
     }
 
+    /// A popup's program and directory, until it is spawned.
+    pub fn popup_spawn(&self) -> Option<(&crate::popup::Spawn, Option<&Path>)> {
+        Some((self.popup.as_ref()?, self.spawn_cwd.as_deref()))
+    }
+
     /// The exit status, once the shell was reaped.
     pub fn exit_status(&self) -> Option<i32> {
         *self.exit_status.lock().unwrap()
@@ -392,9 +397,12 @@ impl PtyHandle {
             }
         }
 
+        // Not kept: a popup's environment can be large. A popup that fails to
+        // start is closed.
+        let popup = self.popup.take();
         // Prepare all fallible resources before starting worker threads. The PTY
         // kernel buffer retains initial shell output until the reader starts.
-        let argv: Vec<String> = match (&self.guest, &self.popup) {
+        let argv: Vec<String> = match (&self.guest, &popup) {
             (Some(guest), popup) => {
                 let exe = server_exe().ok_or("cannot find the btmux executable")?;
                 let cwd = self.spawn_cwd.as_deref().and_then(Path::to_str);
@@ -411,7 +419,7 @@ impl PtyHandle {
         let mut cmd = CommandBuilder::new(program);
         cmd.args(args);
         // A popup gets its caller's environment; a guest's comes from the guest.
-        if let Some(env) = self.popup.as_ref().and_then(|popup| popup.env.as_ref()) {
+        if let Some(env) = popup.as_ref().and_then(|popup| popup.env.as_ref()) {
             cmd.env_clear();
             for (key, value) in env {
                 cmd.env(key, value);
@@ -427,7 +435,7 @@ impl PtyHandle {
         cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.env("BTMUX_PANE_ID", self.env_pane.to_string());
         // Widgets its programs open show in the popup.
-        match self.popup {
+        match popup {
             Some(_) => cmd.env("BTMUX_POPUP_ID", self.pane_id.to_string()),
             None => cmd.env_remove("BTMUX_POPUP_ID"),
         }
@@ -458,7 +466,7 @@ impl PtyHandle {
             cmd.cwd(dir);
         }
         #[cfg(windows)]
-        if self.popup.is_none() {
+        if popup.is_none() {
             windows::integrate_shell(&mut cmd, self.dialect, self.spawn_cwd.is_none());
         }
 
