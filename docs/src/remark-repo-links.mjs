@@ -16,7 +16,7 @@ export function remarkRepoLinks({ repo }) {
       const [path, hash] = node.url.split("#");
       const anchor = hash ? `#${hash}` : "";
       const target = resolve(dirname(file.path), path);
-      const rel = relative(content, target);
+      const rel = relative(content, target).replace(/\.mdx$/, ".md");
       if (rel.endsWith(".md") && !rel.startsWith("..")) {
         const slug = rel.slice(0, -3).replace(/(^|\/)index$/, "");
         node.url = `/${slug}${slug ? "/" : ""}${anchor}`;

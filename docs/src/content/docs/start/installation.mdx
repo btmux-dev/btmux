@@ -4,6 +4,8 @@ sidebar:
   order: 1
 ---
 
+import { Tabs, TabItem } from "@astrojs/starlight/components";
+
 ## Release installer
 
 The installer supports Apple Silicon macOS and x86-64/ARM64 Linux.
@@ -88,23 +90,44 @@ cargo install --path .
 ## Shell completions
 
 `btmux completions <shell>` prints a completion script for bash, fish, zsh,
-PowerShell, or Elvish. Save it in your shell's completion directory. For example:
+PowerShell, or Elvish. Save it in your shell's completion directory:
+
+<Tabs syncKey="shell">
+<TabItem label="fish">
 
 ```sh
-# fish
 mkdir -p ~/.config/fish/completions
 btmux completions fish > ~/.config/fish/completions/btmux.fish
+```
 
-# zsh: add ~/.zfunc to fpath before compinit runs in ~/.zshrc
+</TabItem>
+<TabItem label="zsh">
+
+```sh
+# add ~/.zfunc to fpath before compinit runs in ~/.zshrc
 mkdir -p ~/.zfunc
 btmux completions zsh > ~/.zfunc/_btmux
 ```
 
+</TabItem>
+<TabItem label="bash">
+
+```sh
+mkdir -p ~/.local/share/bash-completion/completions
+btmux completions bash > ~/.local/share/bash-completion/completions/btmux
+```
+
+</TabItem>
+<TabItem label="PowerShell">
+
 ```powershell
-# PowerShell: load completions from your profile
+# load completions from your profile
 if (!(Test-Path $PROFILE)) { New-Item -ItemType File -Force $PROFILE | Out-Null }
 Add-Content $PROFILE 'btmux completions powershell | Out-String | Invoke-Expression'
 ```
+
+</TabItem>
+</Tabs>
 
 Regenerate the script after updating btmux so it includes new commands and flags.
 

@@ -67,9 +67,9 @@ curl -fsSL https://raw.githubusercontent.com/buntec/btmux/main/scripts/install.s
 # or: brew install buntec/btmux/btmux
 ```
 
-**Browser / CLI** on Windows: [download the release binary](docs/src/content/docs/start/installation.md#windows) and put it on your `PATH`.
+**Browser / CLI** on Windows: [download the release binary](docs/src/content/docs/start/installation.mdx#windows) and put it on your `PATH`.
 
-Homebrew, background services, and Home Manager are covered in [Installation](docs/src/content/docs/start/installation.md).
+Homebrew, background services, and Home Manager are covered in [Installation](docs/src/content/docs/start/installation.mdx).
 
 ## Quick start
 
@@ -86,7 +86,7 @@ Key bindings start with a prefix, as in tmux, by default `C-a` (Ctrl+A). Press
 
 ## Learn more
 
-- [Installation](docs/src/content/docs/start/installation.md): Windows, services, tokens, remote access, and shell completions
+- [Installation](docs/src/content/docs/start/installation.mdx): Windows, services, tokens, remote access, and shell completions
 - [Phones, tablets, and Tailscale](docs/src/content/docs/features/phones-and-tailscale.md): serving over HTTPS on your tailnet, QR sign-in, and touch screens
 - [In-place upgrades](docs/src/content/docs/internals/upgrade.md): how `btmux upgrade` keeps shells running across a new binary
 - [Configuration](docs/src/content/docs/configuration/index.md): `~/.config/btmux/config.toml` (`%APPDATA%\btmux\config.toml` on Windows), themes, and profiles

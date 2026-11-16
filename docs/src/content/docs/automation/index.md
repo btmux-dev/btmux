@@ -24,5 +24,9 @@ started with `BTMUX_AUTH_TOKEN` set, use that value instead.
 
 Send `Authorization: Bearer $BTMUX_AUTH_TOKEN` with every request. Existing MCP
 client configurations and previously installed hook snippets also need this
-header. The token grants control of shells and access to files available to
-the btmux user.
+header.
+
+:::caution
+The token grants control of shells and access to files available to the btmux
+user.
+:::
