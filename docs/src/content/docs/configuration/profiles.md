@@ -1,7 +1,7 @@
 ---
 title: "Profiles and persistence"
 sidebar:
-  order: 2
+  order: 4
 ---
 
 By default, session structure is saved to

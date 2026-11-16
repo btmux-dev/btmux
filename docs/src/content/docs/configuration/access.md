@@ -1,7 +1,7 @@
 ---
-title: "Access and remote access"
+title: "Access tokens"
 sidebar:
-  order: 3
+  order: 5
 ---
 
 ## Token files
@@ -43,4 +43,4 @@ forward WebSocket upgrades. Forwarded headers never implicitly grant trust.
 Plain HTTP does not encrypt the access token or terminal traffic.
 
 To reach btmux from your other devices without a proxy, see
-[Phones, tablets, and Tailscale](../features/phones-and-tailscale.mdx).
+[Remote access](../features/remote-access.mdx).

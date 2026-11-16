@@ -4,15 +4,15 @@ sidebar:
   order: 6
 ---
 
-With `editor = "vscode"`, `<prefix> + e` toggles VS Code over the active pane,
-opened in the pane's Git worktree (its root, not the subfolder the pane is in),
-else the pane's folder. The other panes stay visible, and zooming the pane
-(`<prefix> + z`) makes VS Code fill the window. Pressing Esc twice quickly also
-hides it; on touch screens, the key bar has a button for that. Pressing the
-prefix twice sends it to VS Code. There is one VS Code server per btmux server,
-stopped with btmux. VS Code reloads only when shown over a pane in another
-folder, which ends its terminals and tasks; over a pane connected to another
-host (ssh), it keeps its folder.
+With `editor = "vscode"`, `<prefix> + e` opens VS Code
+[over the active pane](editors.md#over-a-pane), in the pane's Git worktree
+(its root, not the subfolder the pane is in), else the pane's folder. On touch
+screens, the key bar has a button to hide it. Pressing the prefix twice sends
+it to VS Code.
+
+VS Code reloads only when shown over a pane in another folder, which ends its
+terminals and tasks. Over a pane connected to another host (ssh), it keeps its
+folder.
 
 Over a pane of a [sandboxed session](sandbox.md), VS Code still runs on the
 host: its terminals, tasks, and extensions act on files the sandbox can change,
@@ -26,17 +26,9 @@ Requires macOS or Linux, and either VS Code or `openvscode-server` on the server
 (see [Server](#server)). Webviews such as the Markdown preview need internet
 access.
 
-## Opening files
-
-The file browser and Git mode open files in VS Code when `editor = "vscode"`.
-`btmux open-editor [FILE] [LINE]` follows the same setting from a btmux pane.
-Files open in the VS Code windows showing that pane's folder, in every browser
-tab showing it, and not in windows of other folders.
-
-With another `editor`, the status bar still has a button for VS Code when the
-server can run it. `btmux open-editor --kind vscode` opens it from a pane, and
-the `editor-vscode` action, unbound by default, toggles it from the command
-palette or a `[keys]` binding.
+Files open in the VS Code windows showing that pane's folder, in every client
+showing it, and not in windows of other folders. With another `editor`, VS Code
+is still [one click or command away](editors.md#using-both).
 
 ## Server
 

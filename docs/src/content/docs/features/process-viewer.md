@@ -1,7 +1,7 @@
 ---
 title: "Process and port viewer"
 sidebar:
-  order: 3
+  order: 8
 ---
 
 Open the viewer with `<prefix> + t`. Its keys work without the prefix:

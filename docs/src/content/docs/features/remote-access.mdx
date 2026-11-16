@@ -1,0 +1,83 @@
+---
+title: "Remote access"
+sidebar:
+  order: 1
+---
+
+import { Steps } from "@astrojs/starlight/components";
+
+Your sessions live on the server, so any browser that can reach it can use
+them: another computer, a tablet, a phone. The easiest way to reach it is
+[Tailscale](https://tailscale.com), which gives the server a private HTTPS
+address on your own devices.
+
+## With Tailscale
+
+<Steps>
+
+1. Install Tailscale on the server and on your other devices. Enable
+   [MagicDNS](https://tailscale.com/kb/1081/magicdns) and
+   [HTTPS certificates](https://tailscale.com/kb/1153/enabling-https) for the
+   tailnet. btmux uses the `tailscale` CLI; on macOS, the one bundled with the
+   Tailscale app works.
+
+2. Start btmux with `--tailscale`:
+
+   ```sh
+   btmux --tailscale            # https://<machine>.<tailnet>.ts.net:8004
+   btmux --tailscale install    # the same, as a background service
+   ```
+
+   In the desktop app, check **Share it on my tailnet** when starting a
+   [desktop server that keeps running](../start/desktop.md#other-machines).
+
+3. Open the URL it prints, also shown by the status bar's tailnet button, and
+   sign in with the username `btmux` and the
+   [access token](../start/installation.mdx#server-only). Browsers keep the
+   login for 400 days.
+
+4. To sign in a phone or tablet, open the tailnet button's popover and scan
+   its QR code. It signs that browser in without the token. Each code works
+   once and expires after two minutes.
+
+</Steps>
+
+The [desktop app](../start/desktop.md#other-machines) on another machine can
+connect to that URL too.
+
+### What `--tailscale` does
+
+btmux runs `tailscale serve`, which serves the machine's tailnet name over
+HTTPS with a Tailscale certificate and forwards to btmux. btmux itself stays
+on `127.0.0.1`.
+
+- It never replaces another route on that port. If one exists, btmux serves
+  locally and says so: remove that route or choose another `--port`.
+- Shutting down removes only a route btmux created; an upgrade keeps it.
+- If Tailscale isn't running yet, btmux keeps serving locally and retries. If
+  the route disappears later, for example after Tailscale restarts, it sets it
+  up again.
+
+The tailnet button shows the URL, or the last error.
+
+HTTPS matters even though the tailnet is already encrypted: browsers allow the
+clipboard, notifications, and WebGPU wallpapers only on secure origins.
+
+## Without Tailscale
+
+Put btmux behind a reverse proxy that terminates HTTPS, and tell btmux its
+public address with `--public-url`. See
+[Reverse proxies](../configuration/access.md#reverse-proxies).
+
+## On a phone or tablet
+
+Touch devices get a key bar above the status bar with the keys on-screen
+keyboards lack: Esc, Tab, arrows, the prefix, and Ctrl and Alt, which apply to
+the next key. It also opens the command palette, cycles panes, and hides the
+keyboard.
+
+- Swipes scroll, including in full-screen programs such as `less`.
+- On narrow screens a window shows only its active pane, and the file browser
+  and process viewer fill the screen.
+- Key hints in footers can be tapped.
+- Add btmux to the home screen to run it without browser chrome.

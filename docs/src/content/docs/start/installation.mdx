@@ -4,139 +4,173 @@ sidebar:
   order: 1
 ---
 
-import { Tabs, TabItem } from "@astrojs/starlight/components";
+import { Steps, Tabs, TabItem } from "@astrojs/starlight/components";
 
-## Release installer
+btmux comes as a desktop app, or as a server you open in a browser. Both
+include the `btmux` command.
 
-The installer supports Apple Silicon macOS and x86-64/ARM64 Linux.
+Release builds cover Apple Silicon macOS, x86-64/ARM64 Linux, and x64/ARM64
+Windows.
 
-:::note
-Intel macOS is not currently supported.
+## Desktop app
+
+<Tabs syncKey="os">
+<TabItem label="macOS">
+
+```sh
+brew install --cask buntec/btmux/btmux
+```
+
+The app is signed and notarized. Intel Macs are not supported.
+
+</TabItem>
+<TabItem label="Linux">
+
+Download `btmux-desktop-<arch>-unknown-linux-gnu.deb` from
+[Releases](https://github.com/buntec/btmux/releases/latest) and install it:
+
+```sh
+sudo apt install ./btmux-desktop-*.deb
+```
+
+</TabItem>
+<TabItem label="Windows">
+
+Run `btmux-desktop-<arch>-pc-windows-msvc-setup.exe` from
+[Releases](https://github.com/buntec/btmux/releases/latest). It installs for the
+current user, without admin rights.
+
+:::caution
+Windows support is experimental. The installer is unsigned; if SmartScreen
+blocks it, choose **More info → Run anyway**.
 :::
+
+</TabItem>
+</Tabs>
+
+Open btmux. It starts its own server and connects, with no sign-in. Continue
+with [First steps](first-steps.md), or read what else the
+[desktop app](desktop.md) does.
+
+## Server only
+
+Install just the server on a headless or remote machine, or to use btmux in a
+browser.
+
+<Tabs syncKey="os">
+<TabItem label="macOS">
+
+```sh
+brew install buntec/btmux/btmux
+```
+
+Or use the install script, as on Linux.
+
+</TabItem>
+<TabItem label="Linux">
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/buntec/btmux/main/scripts/install.sh | bash
 ```
 
 It downloads the latest release binary to `~/.local/bin`. Set
-`BTMUX_INSTALL_DIR` to choose another location.
-
-## Homebrew
-
-The [buntec/homebrew-btmux](https://github.com/buntec/homebrew-btmux) tap has a
-formula for the server/CLI (Apple Silicon macOS, x86-64/ARM64 Linux) and a cask
-for the desktop app (Apple Silicon macOS):
-
-```sh
-brew install buntec/btmux/btmux          # server/CLI
-brew install --cask buntec/btmux/btmux   # desktop app
-```
-
-Both are signed and notarized, and updated with each release.
-
-To upgrade, update the tap first, then move the background service (see
-`btmux install`) to the new binary:
-
-```sh
-brew update
-brew upgrade buntec/btmux/btmux            # server/CLI
-brew upgrade --cask buntec/btmux/btmux     # desktop app
-btmux upgrade                              # keeps running pane processes
-```
-
-Without `brew update`, the tap may not list the new release. `btmux upgrade`
-keeps shells and scrollback; if it can't, run `btmux restart`, which ends them
-([how upgrades work](../internals/upgrade.md)). Quit the desktop app before
-upgrading the cask.
-
-## Background service
-
-btmux can install itself as a per-user service that starts at login and restarts
-after a crash. It uses a launchd LaunchAgent on macOS and a systemd user unit on
-Linux.
-
-```sh
-btmux install              # install and start on 127.0.0.1:8004
-btmux --port 8004 install  # bake command-line options into the service
-btmux install --print      # print the unit without installing it
-btmux upgrade              # move the running server to this binary, keeping shells
-btmux restart              # restart the installed service
-btmux uninstall            # stop and remove the service
-```
-
-The `--host`, `--port`, `--profile`, `--shell`, `--public-url`, and `--tailscale` flags, along
-with your shell's `PATH`, are captured when the service is installed. Re-run
-`btmux install` after changing them.
-
-Install the service from a stable binary path such as `~/.local/bin/btmux`.
-Using a `target/` build artifact will break the service after `cargo clean` or a
-rebuild that replaces the binary.
-
-Windows has no service support yet: `btmux install` exits with an error. Run
-`btmux` in a terminal instead, or use the desktop app.
-
-## Build from source
-
-Install [Rust](https://rustup.rs), [Bun](https://bun.sh), and
-[`just`](https://github.com/casey/just), then run:
-
-```sh
-git clone https://github.com/buntec/btmux.git
-cd btmux
-just setup
-cargo install --path .
-```
-
-## Shell completions
-
-`btmux completions <shell>` prints a completion script for bash, fish, zsh,
-PowerShell, or Elvish. Save it in your shell's completion directory:
-
-<Tabs syncKey="shell">
-<TabItem label="fish">
-
-```sh
-mkdir -p ~/.config/fish/completions
-btmux completions fish > ~/.config/fish/completions/btmux.fish
-```
+`BTMUX_INSTALL_DIR` to choose another location. Homebrew works too:
+`brew install buntec/btmux/btmux`.
 
 </TabItem>
-<TabItem label="zsh">
+<TabItem label="Windows">
 
-```sh
-# add ~/.zfunc to fpath before compinit runs in ~/.zshrc
-mkdir -p ~/.zfunc
-btmux completions zsh > ~/.zfunc/_btmux
-```
-
-</TabItem>
-<TabItem label="bash">
-
-```sh
-mkdir -p ~/.local/share/bash-completion/completions
-btmux completions bash > ~/.local/share/bash-completion/completions/btmux
-```
-
-</TabItem>
-<TabItem label="PowerShell">
+Download the release binary and put it on your `PATH`. In PowerShell:
 
 ```powershell
-# load completions from your profile
-if (!(Test-Path $PROFILE)) { New-Item -ItemType File -Force $PROFILE | Out-Null }
-Add-Content $PROFILE 'btmux completions powershell | Out-String | Invoke-Expression'
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
+$dir = "$env:LOCALAPPDATA\Programs\btmux"
+New-Item -ItemType Directory -Force $dir | Out-Null
+Invoke-WebRequest "https://github.com/buntec/btmux/releases/latest/download/btmux-$arch-pc-windows-msvc.exe" -OutFile "$dir\btmux.exe"
+[Environment]::SetEnvironmentVariable('Path', "$([Environment]::GetEnvironmentVariable('Path', 'User'));$dir", 'User')
 ```
+
+Open a new terminal so it picks up the `PATH` change. The binary is unsigned.
+See [Windows](../configuration/windows.md) for shells and limits.
 
 </TabItem>
 </Tabs>
 
-Regenerate the script after updating btmux so it includes new commands and flags.
+Then start it and sign in:
 
-## Home Manager
+<Steps>
 
-The repository's flake exposes a Home Manager module, a CLI release package
-(`packages.<system>.default`), and a desktop package (`packages.<system>.desktop`). The
-module writes `config.toml`, installs btmux, and enables a per-user service by
-default.
+1. Run `btmux`. It opens `http://127.0.0.1:8004` and prints the path of its
+   access token file.
+
+2. Read the token:
+
+   ```sh
+   cat "${XDG_STATE_HOME:-$HOME/.local/state}/btmux/state.token"
+   ```
+
+   On Windows, in PowerShell:
+
+   ```powershell
+   Get-Content "$env:LOCALAPPDATA\btmux\state.token"
+   ```
+
+3. Sign in with the username `btmux` and the token as the password.
+
+</Steps>
+
+The token stays the same across restarts. To reach the server from a phone or
+another machine, see [Remote access](../features/remote-access.mdx).
+[Access tokens](../configuration/access.md) covers rotating the token and
+reverse proxies.
+
+### Run it as a service
+
+On macOS and Linux, btmux can install itself as a per-user service (launchd or
+systemd) that starts at login and restarts after a crash:
+
+```sh
+btmux install              # install and start on 127.0.0.1:8004
+btmux --port 8005 install  # bake command-line options into the service
+btmux install --print      # print the unit without installing it
+btmux restart              # restart the service, ending its shells
+btmux uninstall            # stop and remove the service
+```
+
+The `--host`, `--port`, `--profile`, `--shell`, `--public-url`, and
+`--tailscale` flags, along with your shell's `PATH`, are captured when the
+service is installed. Run `btmux install` again after changing them.
+
+The desktop app finds a running service and offers to connect to it.
+
+## Upgrading
+
+Upgrade with whatever you installed with, then move the running server to the
+new binary:
+
+```sh
+brew update && brew upgrade buntec/btmux/btmux   # or run the install script again
+btmux upgrade
+```
+
+`btmux upgrade` keeps running shells and their scrollback
+([how](../internals/upgrade.md)). If it can't, `btmux restart` ends them and
+restores the layout. Windows has no in-place upgrade: quit btmux, replace it,
+and start it again.
+
+For the desktop app, quit it, then run `brew upgrade --cask buntec/btmux/btmux`
+or the new installer.
+
+## Other ways to install
+
+### Nix
+
+The repository's flake exposes `packages.<system>.default` (the server and CLI)
+and `packages.<system>.desktop` (the desktop app), for Apple Silicon macOS and
+x86-64/ARM64 Linux.
+
+It also has a Home Manager module, which installs btmux with its shell
+completions, writes `config.toml`, and runs the service:
 
 ```nix
 {
@@ -148,92 +182,34 @@ default.
     enable = true;
     settings = {
       prefix = "C-b";
-      terminal.font-family = "JetBrains Mono";
       terminal.font-size = 16;
     };
-    service = {
-      host = "127.0.0.1";
-      port = 8004;
-      shell = "/bin/bash";
-    };
+    service.port = 8004;
   };
 }
 ```
 
-The service is the one `btmux install` sets up, so `btmux restart` works with
-it; if you used `btmux install` before, run `btmux uninstall` first. When only
-the package changes, activation runs `btmux upgrade`, so running shells survive.
-If that is refused (say, unsaved Neovim buffers), activation warns and you can
-run `btmux upgrade` later.
-
-The module also installs bash, fish, and zsh completions when the package
-supports them. `services.btmux` is an alias for `programs.btmux`.
-
+`settings` takes anything [`config.toml`](../configuration/index.md) does.
 Other options:
 
+- `desktop.enable = true`: install the desktop app too. It runs its own
+  server, so you can set `service.enable = false` unless you also want btmux
+  in a browser.
 - `service.enable = false`: install and configure btmux without starting it.
-- `service.tailscale = true`: start the service with `--tailscale` (see
-  [Tailscale](../features/phones-and-tailscale.md#tailscale)).
-- `package`: use another build, or `null` (with the service disabled) to only
-  write the configuration.
+- `service.host`, `service.shell`, `service.tailscale`: the service's
+  `--host`, `--shell`, and [`--tailscale`](../features/remote-access.mdx).
+- `package`, `desktop.package`: use another build. `package = null`, with the
+  service disabled, only writes the configuration.
 - `enableFishIntegration = false`: skip the
   [fish integration](../features/fish.md), installed when
-  `programs.fish.enable` is set; `fishPickMenus = true` uses `btmux pick` menus
-  for Tab, `Ctrl-R`, and `cdh`.
+  `programs.fish.enable` is set. `fishPickMenus = true` uses `btmux pick`
+  menus for Tab, `Ctrl-R`, and `cdh`.
 
-To also install the desktop app:
+The service is the one `btmux install` sets up; if you used that before, run
+`btmux uninstall` first. When only the package changes, activation runs
+`btmux upgrade`, so running shells survive. If that is refused (say, unsaved
+Neovim buffers), activation warns and you can run `btmux upgrade` later.
 
-```nix
-programs.btmux = {
-  enable = true;
-  desktop.enable = true;
-  service.enable = false;
-};
-```
+### From source
 
-The desktop app runs its bundled server using the separate `desktop` profile.
-It reads the same `config.toml`; it does not need the Home Manager background
-service. Leave `service.enable = true` if you also want the browser service.
-Both packages support Apple Silicon macOS and x86-64/ARM64 Linux. Override
-`desktop.package` to select another desktop build. On macOS, Home Manager
-makes the app available in `~/Applications/Home Manager Apps`; on Linux, it installs a
-desktop menu entry. You can also launch it with `btmux-desktop`.
-
-## Windows
-
-:::caution
-Windows support (x64 and ARM64) is experimental.
-:::
-
-Download `btmux-x86_64-pc-windows-msvc.exe` or
-`btmux-aarch64-pc-windows-msvc.exe` from
-[Releases](https://github.com/buntec/btmux/releases/latest), rename it to
-`btmux.exe`, and put it in a directory on your `PATH`. For example, in
-PowerShell:
-
-```powershell
-$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
-$dir = "$env:LOCALAPPDATA\Programs\btmux"
-New-Item -ItemType Directory -Force $dir | Out-Null
-Invoke-WebRequest "https://github.com/buntec/btmux/releases/latest/download/btmux-$arch-pc-windows-msvc.exe" -OutFile "$dir\btmux.exe"
-[Environment]::SetEnvironmentVariable('Path', "$([Environment]::GetEnvironmentVariable('Path', 'User'));$dir", 'User')
-```
-
-Open a new terminal so it picks up the `PATH` change. The desktop app's
-installer, `btmux-desktop-<arch>-pc-windows-msvc-setup.exe`, is on the
-[Releases](https://github.com/buntec/btmux/releases/latest) page; both are
-unsigned, so SmartScreen may ask you to choose **More info → Run anyway**.
-
-Panes run `powershell.exe` by default. Set `shell` in
-`%APPDATA%\btmux\config.toml` to another command line: `pwsh`, `cmd.exe`,
-`'C:\Program Files\Git\bin\bash.exe'` (Git Bash), or `wsl.exe -d Ubuntu`.
-Under bash, btmux tracks the pane's directory with `PROMPT_COMMAND` and `PS0`;
-if your bashrc replaces them, emit OSC 7 and OSC 133 A/C marks yourself.
-
-The access token is in `%LOCALAPPDATA%\btmux\state.token`
-(`Get-Content "$env:LOCALAPPDATA\btmux\state.token"`).
-
-There is no background service or in-place upgrade on Windows. To update, quit
-btmux (and the desktop app), replace `btmux.exe` or run the new desktop
-installer, and start it again. Running shells end, but the saved sessions,
-windows, and pane directories are restored.
+See [Development](../project/development.md).

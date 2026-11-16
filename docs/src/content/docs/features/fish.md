@@ -1,7 +1,7 @@
 ---
 title: "Fish integration"
 sidebar:
-  order: 10
+  order: 12
 ---
 
 ```sh

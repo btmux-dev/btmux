@@ -1,7 +1,7 @@
 ---
 title: "Notifications"
 sidebar:
-  order: 6
+  order: 7
 ---
 
 `btmux send-notification` shows a notification in every connected browser:

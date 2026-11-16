@@ -4,34 +4,18 @@ sidebar:
   order: 5
 ---
 
-`<prefix> + e` opens a Neovim GUI over the active pane; the other panes stay
-visible, and zooming the pane (`<prefix> + z`) makes Neovim fill the window. btmux draws the
-editor itself and renders the command line, completion menu, messages, progress,
-and LSP signature help as native UI. Floating windows (LSP hover, diagnostics,
-plugin windows) appear in cards that replace Neovim's border and show its title.
-`winblend` and `pumblend` make those cards and the completion menu translucent,
-blurring what's behind them by `backdrop-blur` while their text stays sharp. There is one Neovim per btmux server, so
-every browser tab and the desktop app share the same editor. `<prefix> + e`
-(or pressing Esc twice quickly) hides it again, and from another pane moves it
-there; `:q` closes Neovim and the view.
+`<prefix> + e` opens your Neovim in a GUI that btmux draws
+[over the active pane](editors.md#over-a-pane). It runs your normal config.
+The command line, completion menu, messages, progress, and LSP signature help
+are native UI rather than terminal cells, and floating windows (LSP hover,
+diagnostics, plugin windows) appear as cards.
 
-Requires Neovim 0.12 or newer as `nvim` on the server's `PATH`.
+Requires Neovim 0.12 or newer as `nvim` on the server's `PATH`. `:q` closes
+Neovim and the view.
 
-## Opening files
-
-The file browser and Git mode open files in the Neovim GUI, or in the pane
-when the server can't find Neovim 0.12+ at startup. To use the pane instead
-(its running Neovim, or `$EDITOR` in its shell), also for `<prefix> + e`, set:
-
-```toml
-editor = "pane"
-```
-
-`btmux open-editor [FILE] [LINE]` follows the same setting from a btmux pane:
-it opens the Neovim GUI (at FILE, if given) over the pane, or
-runs `$EDITOR` in the terminal when `editor = "pane"` or outside btmux.
-`--kind neovim|vscode|pane` (`nvim` also works) overrides the setting, so
-`btmux open-editor --kind vscode` opens VS Code with Neovim as the default.
+`winblend` and `pumblend` make floating windows and the completion menu
+translucent, blurring what's behind them by `backdrop-blur` while their text
+stays sharp.
 
 ## Your Neovim config
 

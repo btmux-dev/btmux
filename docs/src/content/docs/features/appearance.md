@@ -1,74 +1,97 @@
 ---
 title: "Appearance"
 sidebar:
-  order: 1
+  order: 9
 ---
 
-Press `<prefix> + :` and choose `config: open settings` to open the
-browser-based editor. Applying a change creates a process-local preview; the
-editor never writes `config.toml`. Preview overrides disappear when btmux
-restarts or the config file reloads. Use the editor's generated TOML and copy
-action to persist your choices.
+Colors, fonts, and wallpapers can all be tried live in
+[Settings](../configuration/index.md#settings) before you save them. This page
+describes the options behind it.
 
-Configuration includes terminal options, session and window sort order, pane
-title bars, vi-style navigation, bundled font families and weights, image or
-procedural wallpapers, and steady-state, session-switch, and pane-switch WebGL
-effects.
-
-The `[terminal]` `font-family` and `font-weight` set the terminal, the Neovim
-GUI, and code-like UI text such as paths, session and window names, and key
-hints. Other UI text uses Geist Sans.
-
-Wallpapers are disabled by default. Set `wallpaper` to an image URL or path,
-add `[[wallpaper-shader]]` layers to stack shaders and effects, or both: the image
-is the bottom layer, beneath the shaders (see [Shader wallpapers](shaders.md)).
-The server fetches remote images itself and serves them to the browser.
-
-btmux checks GitHub for newer releases about once a day and shows a toast when
-one is available; About btmux also checks when it opens. It never downloads or installs anything; upgrade with whatever
-method you installed with. Set `check-for-updates = false` to turn the check off.
+## Dark and light
 
 btmux has a dark and a light color scheme. `appearance` picks which one is
-shown: `"auto"` (the default) follows the system setting of the browser that
-connected or was focused last, while `"dark"` and `"light"` pin one. The same
-scheme is shown in every tab and reported to programs in panes. The sidebar's
-appearance button and the `choose-appearance` command switch it for the
-session.
+shown:
 
 ```toml
-appearance = "auto"
+appearance = "auto"   # or "dark", "light"
 colors-dark = "kauz-dark"
 colors-light = "kauz-light"
 ```
 
-`colors-dark` (default `btmux-default-dark`) and `colors-light` (default
-`btmux-default-light`) accept:
+`"auto"` follows the system setting of the client that connected or was
+focused last. The same scheme is shown in every client and reported to
+programs in panes. The sidebar's appearance button and the `choose-appearance`
+command switch it until the next restart.
 
-- the name of a bundled scheme: `btmux-default-dark`, `btmux-default-light`,
-  `kauz-dark`, or `kauz-light`;
-- the name of a base16/base24 YAML file in `$XDG_CONFIG_HOME/btmux/colors/`
-  (falling back to `~/.config/btmux/colors/`), which takes precedence over a
-  bundled scheme of the same name. The name is the filename without its
-  `.yaml` or `.yml` extension; files with other extensions are ignored;
-- an absolute or `~/`-relative local YAML path; or
-- an `http://` or `https://` URL to a YAML palette.
+## Color schemes
 
-An inline `[theme-dark]` or `[theme-light]` table of `base00`–`base0F` (and
-optionally `base10`–`base17`) overrides the matching option.
+`colors-dark` and `colors-light` take base16 or base24 schemes, given as:
 
-Palettes may be defined at the top level or nested under `palette`. They must
-contain `base00`–`base0F`; a file without them is skipped with a warning in the
-server log. A palette is base24 only if it also has all of `base10`–`base17`;
-with any of them missing it is treated as base16. Remote palettes are fetched
-whenever the configuration loads.
+- a bundled scheme: `btmux-default-dark`, `btmux-default-light` (the
+  defaults), `kauz-dark`, or `kauz-light`;
+- the name of a YAML file in `~/.config/btmux/colors/`, without its `.yaml` or
+  `.yml` extension. It wins over a bundled scheme of the same name;
+- an absolute or `~/`-relative path to a YAML file; or
+- an `http://` or `https://` URL to one, fetched whenever the configuration
+  loads.
 
-Schemes in the colors directory and the bundled schemes appear in the colors
-picker of the command palette, which sets the scheme of the mode currently
-shown, and in Settings. Changes there are session-only; set `appearance`,
-`colors-dark`, or `colors-light` in `config.toml` to keep them.
+Or define a palette inline, which overrides the matching option:
 
-Programs in a pane can query the scheme: btmux answers OSC 4/10/11/12 color
-queries and `CSI ? 996 n`, and sends `CSI ? 997 ; 1|2 n` to programs that
-enabled mode 2031 whenever the theme changes, including when `appearance`
-switches between dark and light. Fish uses this to set
-`fish_terminal_color_theme` and switch light/dark theme variants.
+```toml
+[theme-dark]
+base00 = "#1e1e2e"
+# ... through base0F, and optionally base10 to base17
+```
+
+A palette file may hold its colors at the top level or under `palette`. It
+must contain `base00`–`base0F`; a file without them is skipped with a warning
+in the server log. It counts as base24 only with all of `base10`–`base17`.
+
+The command palette's colors picker lists the bundled schemes and those in the
+colors directory, and sets the scheme of the mode currently shown.
+
+## Fonts
+
+```toml
+[terminal]
+font-family = "JetBrains Mono"
+font-size = 16
+font-weight = 400
+```
+
+These set the terminal, the Neovim GUI, and code-like UI text such as paths,
+session and window names, and key hints. Other UI text uses Geist Sans.
+Bundled families are Geist Mono (the default), JetBrains Mono, Fira Code,
+Cascadia Code, Source Code Pro, and Departure Mono.
+
+## Wallpapers
+
+Wallpapers are off by default. Set `wallpaper` to an image URL or path, add
+[shader layers](shaders.md), or both: the image sits beneath the shaders.
+
+```toml
+wallpaper = "~/Pictures/bg.png"
+wallpaper-opacity = 0.1
+wallpaper-blur = 0
+wallpaper-saturate = 0.05
+```
+
+The server fetches remote images itself and serves them to the browser.
+
+## Pane titles and effects
+
+- `show-pane-titles = true` adds a title bar to each pane with its title,
+  directory, and size.
+- `pane-switch-border` draws a border on the pane you switch to: `"wipe"` (the
+  default), `"trace"`, `"sweep"`, or `"none"`.
+- `backdrop-blur` and `backdrop-dim` set the backdrop behind dialogs.
+- `animations = false` turns off all animated effects.
+
+## For programs in panes
+
+Programs can ask for the scheme: btmux answers OSC 4/10/11/12 color queries
+and `CSI ? 996 n`, and sends `CSI ? 997 ; 1|2 n` to programs that enabled mode
+2031 whenever the theme changes, including a switch between dark and light.
+Fish uses this to pick its light or dark theme variant; see the
+[fish integration](fish.md).

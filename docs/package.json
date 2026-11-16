@@ -3,9 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "sync": "node scripts/sync-readmes.mjs",
-    "dev": "node scripts/sync-readmes.mjs && astro dev",
-    "build": "node scripts/sync-readmes.mjs && astro build",
+    "dev": "astro dev",
+    "build": "astro build",
     "preview": "astro preview"
   },
   "dependencies": {

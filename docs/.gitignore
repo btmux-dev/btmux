@@ -1,7 +1,4 @@
 node_modules/
 dist/
 .astro/
-# Generated from the READMEs by scripts/sync-readmes.mjs
-src/content/docs/index.md
-src/content/docs/project/desktop.md
 public/demos/

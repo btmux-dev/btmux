@@ -1,19 +1,26 @@
 ---
 title: "Shader wallpapers"
 sidebar:
-  order: 2
+  order: 10
 ---
 
-Shader wallpapers use the MIT-licensed [Shaders](https://shaders.com/docs/guide)
-components, bundled locally with btmux. A wallpaper is a stack of up to 8 layers,
-composed like Shaders' [layers](https://shaders.com/docs/guide/composing-effects):
-generators draw new content, and an effect processes every layer beneath it. A
-`wallpaper` image is drawn beneath the stack, so effects process it and blend modes
-composite over it; it renders at `wallpaper-resolution`, so raise that for a sharp
-photo. Build
-the stack in Settings → Wallpaper: add, reorder, disable, or remove layers, and edit
-each layer's native parameters. Changes preview immediately; Apply changes only the
-running server, and Show TOML copies the settings to persist them.
+A shader wallpaper is a stack of up to 8 layers drawn behind your panes.
+**Generators** draw something new: gradients, noise, `aurora`, `plasma`,
+`smoke`, `boids`. **Effects** process every layer beneath them: `pixelate`,
+`film-grain`, `crt-screen`, `blur`, `kaleidoscope`. Some of each react to the
+pointer or the terminal cursor.
+
+The shaders are the MIT-licensed [Shaders](https://shaders.com/docs/guide)
+components, bundled with btmux; nothing is downloaded at runtime.
+
+## Building a stack
+
+Use Settings → Wallpaper. It lists every shader and blend mode, and lets you
+add, reorder, disable, and remove layers and edit each layer's parameters,
+with a live preview. **Randomize parameters** below a layer's controls rolls a
+coordinated set for that layer. **Save** writes the stack to `config.toml`.
+
+In TOML, layers are listed bottom first:
 
 ```toml
 wallpaper-opacity = 0.25
@@ -21,7 +28,6 @@ wallpaper-speed = 0.2
 wallpaper-fps = 30
 wallpaper-resolution = 0.4
 
-# Bottom layer first.
 [[wallpaper-shader]]
 shader = "ink-flow"
 [wallpaper-shader.params]
@@ -40,48 +46,28 @@ enabled = true             # keep a layer configured but hidden
 interactive = true         # whether pointer and terminal-cursor input reach it
 ```
 
-Generators include gradients, noise fields, `aurora`, `plasma`, `strands`, and the
-interactive `chroma-flow`, `cursor-trail`, `ink-flow`, `boids`, `fog`,
-`magnetic-filings`, `particle-flow`, `reaction-diffusion`, `smoke`, and `smoke-flow`,
-plus a
-`lens-flare` overlay. Effects include every Shaders Stylize effect (for example
-`ascii`, `crt-screen`, `dither`, `film-grain`, `glitch`, `halftone`, `pixelate`,
-`vhs`, `vignette`, and `watercolor`), the color adjustments (`brightness-contrast`,
-`duotone`, `hue-shift`, `saturation`, `tint`, and others), the distortions (`bulge`,
-`kaleidoscope`, `twirl`, `wave-distortion`, `fluted-glass`, `form-3d`, `surface-3d`,
-and others), the blurs (`blur`, `bokeh-blur`, `tilt-shift`, `zoom-blur`, and others),
-and the interactive effects `cursor-ripples`, `grid-distortion`,
-`liquify`, `pixel-sort`, `pixel-throw`, and `shatter`, which bend the layers beneath
-them around the cursor. Settings lists them all.
+Parameter names are kebab-case, as Settings exports them. A layer without
+`params` uses its shader's defaults.
 
-Blend modes are `normal`, `normal-oklch`, `normal-oklab`, `multiply`, `screen`,
-`linear-dodge`, `overlay`, `difference`, `color-dodge`, `exclusion`, `color`,
-`luminosity`, `darken`, `lighten`, `color-burn`, `linear-burn`, `soft-light`,
-`hard-light`, `hue`, and `saturation`.
+## With an image
 
-Parameter names use kebab-case, matching the Settings TOML export; colors, numbers,
-booleans, text, positions, and gradient stop arrays are supported. Each layer uses
-its shader's native defaults, including its numeric `seed` when provided. The global
-wallpaper speed multiplies native speed parameters, or scales simulation time for
-interactive effects. Cursor-following moves `center`, `position`, or
-`light-position` on interactive layers and supplies input to interactive effects;
-the cursor-following switches control which input sources reach them. Choosing a
-different shader for a layer resets that layer's parameters.
+A [`wallpaper`](appearance.md#wallpapers) image is drawn beneath the stack, so
+effects process it and blend modes composite over it. It then renders at
+`wallpaper-resolution`; raise that for a sharp photo.
 
-Randomize parameters, below each layer's controls, generates a complete parameter
-set including native seeds. Colors share a coordinated palette, gradient stops stay
-ordered, and numeric values stay within sensible native ranges. It previews
-immediately and changes only that layer; Apply and the TOML export work as with
-manual edits.
+## Speed and cursor
 
-WebGPU is required; unsupported browsers and GPU failures leave the wallpaper
-image, or else the theme background, visible. Frame rates are capped to 10–60 FPS, and background tabs,
-modal transitions, and disabled animations pause continuous rendering. Wallpaper
-changes preserve terminal instances and pane sockets. Changing the stack or shader
-settings can restart simulations. No hosted presets or runtime shader downloads
-are used, and shader telemetry is disabled by using the core renderer without a
-telemetry collector.
+- `wallpaper-speed` multiplies each shader's own speed. `0` freezes it.
+- `wallpaper-fps` (10–60) and `wallpaper-resolution` (0.1–1.0) trade quality
+  for GPU time.
+- `wallpaper-shader-follows-mouse-cursor` and
+  `wallpaper-shader-follows-keyboard-input` choose whether the pointer and the
+  terminal cursor move interactive layers.
 
-After updating the pinned `shaders` dependency, run `just sync-shaders` to refresh
-its parameter metadata and lazy loaders. To offer another Shaders component, add it
-to the `generators` or `effects` list in `scripts/sync-shaders.mjs`.
+Rendering pauses in background tabs and with `animations = false`.
+
+## Requirements
+
+Shaders need WebGPU. In a browser without it, or after a GPU failure, the
+wallpaper image shows instead, or else the theme background. WebGPU also needs
+a secure origin: `localhost`, or [HTTPS](remote-access.mdx).

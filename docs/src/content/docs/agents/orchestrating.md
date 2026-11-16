@@ -5,7 +5,7 @@ sidebar:
 ---
 
 btmux knows when each agent in a pane is working, blocked, done, or idle (see
-[below](status.md)), so scripts and agents can wait for that state
+[States](index.md#states)), so scripts and agents can wait for that state
 instead of scraping the screen or polling.
 
 | MCP tool         | REST                               | Purpose                                                       |

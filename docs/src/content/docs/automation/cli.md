@@ -35,6 +35,7 @@ btmux kill-pane -t "$pane"
 | `capture-pane` (`capturep`)  | `-t -S` (`-p`, `-J` are implied) |
 | `new-worktree`               | `-t -d -F BRANCH`                |
 | `remove-worktree`            | `-t`                             |
+| `display-popup` (`popup`)    | `-t -d -e -T -E`; see [Popups](popups.md) |
 
 For coding agents, [`skills/btmux`](../../../../../skills/btmux/SKILL.md) is an
 [Agent Skill](https://agentskills.io) that teaches these commands. Install it
@@ -70,3 +71,28 @@ worktree the target pane is in and closes every pane in it, printing its path.
 It refuses the main worktree, uncommitted changes, a locked worktree, and panes
 running a program, and keeps the branch. `prefix + W` and `prefix + X` do the
 same in the browser.
+
+## Shell completions
+
+`btmux completions <shell>` prints a completion script for bash, fish, zsh,
+PowerShell, or Elvish. Save it in your shell's completion directory:
+
+```sh
+# fish
+btmux completions fish > ~/.config/fish/completions/btmux.fish
+
+# zsh: add ~/.zfunc to fpath before compinit runs in ~/.zshrc
+mkdir -p ~/.zfunc && btmux completions zsh > ~/.zfunc/_btmux
+
+# bash
+mkdir -p ~/.local/share/bash-completion/completions
+btmux completions bash > ~/.local/share/bash-completion/completions/btmux
+```
+
+```powershell
+# PowerShell: load completions from your profile
+Add-Content $PROFILE 'btmux completions powershell | Out-String | Invoke-Expression'
+```
+
+Regenerate the script after updating btmux. The
+[Home Manager module](../start/installation.mdx#nix) installs completions itself.

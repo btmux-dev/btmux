@@ -5,45 +5,57 @@ sidebar:
   label: "Overview"
 ---
 
-btmux creates a configuration file on first launch:
+btmux reads one TOML file, created on first launch:
 
 ```text
 ~/.config/btmux/config.toml
 ```
 
-It respects `$XDG_CONFIG_HOME`, all fields are optional, and most changes are
-picked up live. Log-level changes take effect after a restart. If the file
-can't be parsed, btmux keeps the last valid configuration (the defaults at
-startup) and shows a banner until the file is fixed; its Show error button opens
-the full message. Run the following
-command for the complete documented set of options:
+It follows `$XDG_CONFIG_HOME`; on Windows it is `%APPDATA%\btmux\config.toml`.
+Every field is optional. `btmux generate-config` prints them all with their
+defaults, as does [All options](reference.md).
 
-```sh
-btmux generate-config
+```toml
+prefix = "C-b"
+editor = "pane"
+
+[terminal]
+font-family = "JetBrains Mono"
+font-size = 16
 ```
 
-## tmux behaviors
+## Changes apply live
 
-Kill confirmation, send-prefix, pane resizing, and `repeat-time` are described in
-[btmux for tmux users](../start/tmux.md).
+Saving the file updates every connected client; only log levels need a
+restart. If the file can't be parsed, btmux keeps the last valid configuration
+and shows a banner until it is fixed. The banner's **Show error** button opens
+the full message.
 
-## macOS editing keys
+## Settings
 
-On macOS, panes translate Cmd editing chords as Ghostty does: Cmd+Left/Right
-send `C-a`/`C-e` and Cmd+Backspace `C-u`, even to programs using the kitty
-keyboard protocol. Cmd+Delete sends `C-k`, which Ghostty doesn't bind.
-Shift+Cmd+Left/Right send the arrow with shift and super (`CSI 1;10 D`), so
-programs that support selection can select to the line edge.
-Option+Left/Right and Option+Backspace move and delete by word without it. Set
-`[terminal] macos-edit-keys = false` to leave Cmd chords to the browser.
+Press `<prefix> + :` and choose `config: open settings` to edit most options in
+a dialog, with live previews. **Apply** changes the running server only, to try
+things out: such changes are dropped on restart and whenever `config.toml`
+reloads. **Save** writes them to `config.toml`, keeping your comments and other
+settings. If the file is read-only, as Nix and Home Manager install it, the
+dialog shows the TOML to copy instead.
 
-## Editor
+The command palette's color and font pickers work like Apply.
 
-`editor` chooses what `<prefix> + e`, the file browser, and Git mode open; see
-[Editors](../features/editors.md).
+## Updates
 
-The `browser` action (`<prefix> + b`) toggles a browser over the active pane; see
-[Browser](../features/browser.md).
+btmux checks GitHub for newer releases about once a day and shows a toast when
+one is available. It never downloads or installs anything:
+[upgrade](../start/installation.mdx#upgrading) with whatever you installed
+with. Set `check-for-updates = false` to turn the check off.
 
-`[multipass]` sets up the VM sandboxed sessions run in; see
-[Sandboxed sessions](../features/sandbox.md).
+## Where things are set
+
+| To change                         | See                                          |
+| --------------------------------- | -------------------------------------------- |
+| The prefix and key bindings       | [Key bindings](keybindings.md)               |
+| Colors, fonts, wallpapers         | [Appearance](../features/appearance.md)      |
+| What `<prefix> + e` opens         | [Editors](../features/editors.md)            |
+| The sandbox VM                    | [Sandboxed sessions](../features/sandbox.md) |
+| Notifications                     | [Coding agents](../agents/index.md#notifications) |
+| Separate instances and saved state | [Profiles](profiles.md)                     |

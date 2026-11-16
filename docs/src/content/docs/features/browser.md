@@ -4,9 +4,9 @@ sidebar:
   order: 7
 ---
 
-`<prefix> + b` toggles a browser over the active pane, and from another pane
-moves it there. The other panes stay visible. Pressing Esc twice quickly also
-hides it; on touch screens, the key bar has a button for that.
+`<prefix> + b` opens a browser [over the active pane](editors.md#over-a-pane),
+for checking a dev server or reading docs beside your terminal. On touch
+screens, the key bar has a button to hide it.
 
 It runs a headless Chrome or Chromium on the server, found on the server's
 `PATH` or in `/Applications`, so it shows any site, and `localhost` means the

@@ -248,6 +248,10 @@ docs-dev:
 docs-build:
     cd docs && bun install && bun run build
 
+# Regenerate the docs' option reference from `btmux generate-config`
+docs-config:
+    { printf '%s\n' '---' 'title: "All options"' 'sidebar:' '  order: 3' '---' '' 'Every option with its default, as `btmux generate-config` prints it. Uncomment a line to change it.' '' '```toml'; cargo run -q -- generate-config; echo '```'; } > docs/src/content/docs/configuration/reference.md
+
 # Encode recorded demos (just record-desktop-demo) into docs/public/demos
 docs-demos-encode in=".":
     scripts/encode-demos.sh {{in}} docs/public/demos

@@ -1,7 +1,7 @@
 ---
 title: "Sandboxed sessions"
 sidebar:
-  order: 8
+  order: 2
 ---
 
 A session can run its shells in a [Multipass](https://multipass.run) Ubuntu VM

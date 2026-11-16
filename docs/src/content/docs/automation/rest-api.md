@@ -75,6 +75,7 @@ shows an error and leaves that program's input untouched.
 | `GET /api/agents`                                               | List panes running an agent, with their states                |
 | `GET /api/panes/<pane-id>/wait`                                 | Wait for the pane's agent to reach a state                    |
 | `POST /api/panes/<pane-id>/prompt`                              | Submit a prompt to the pane's agent and wait for its turn     |
+| `POST /api/panes/<pane-id>/popup`                               | Run a program in a [popup](popups.md) over the pane           |
 | `POST /api/notify`                                              | Show a notification, not tied to a pane, in every client      |
 | `POST/DELETE /api/panes/<pane-id>/notify`                       | Report agent events or set/clear a notification               |
 | `POST /api/panes/<pane-id>/open-file-browser`                   | Open the file browser at a path, in the pane's session        |

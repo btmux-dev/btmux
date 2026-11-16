@@ -21,3 +21,11 @@
   height: auto;
   border: 1px solid var(--sl-color-gray-5);
 }
+
+/* The landing page's title is the wordmark too. */
+.hero h1 {
+  font-family: "Geist Pixel Variable", var(--sl-font);
+  font-variation-settings: "ELSH" 40;
+  font-weight: 400;
+  letter-spacing: 0;
+}
