@@ -16,41 +16,6 @@ curl -fsSL https://raw.githubusercontent.com/buntec/btmux/main/scripts/install.s
 It downloads the latest release binary to `~/.local/bin`. Set
 `BTMUX_INSTALL_DIR` to choose another location.
 
-## Windows
-
-Windows support (x64 and ARM64) is experimental. Download
-`btmux-x86_64-pc-windows-msvc.exe` or `btmux-aarch64-pc-windows-msvc.exe` from
-[Releases](https://github.com/buntec/btmux/releases/latest), rename it to
-`btmux.exe`, and put it in a directory on your `PATH`. For example, in
-PowerShell:
-
-```powershell
-$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
-$dir = "$env:LOCALAPPDATA\Programs\btmux"
-New-Item -ItemType Directory -Force $dir | Out-Null
-Invoke-WebRequest "https://github.com/buntec/btmux/releases/latest/download/btmux-$arch-pc-windows-msvc.exe" -OutFile "$dir\btmux.exe"
-[Environment]::SetEnvironmentVariable('Path', "$([Environment]::GetEnvironmentVariable('Path', 'User'));$dir", 'User')
-```
-
-Open a new terminal so it picks up the `PATH` change. The desktop app's
-installer, `btmux-desktop-<arch>-pc-windows-msvc-setup.exe`, is on the
-[Releases](https://github.com/buntec/btmux/releases/latest) page; both are
-unsigned, so SmartScreen may ask you to choose **More info → Run anyway**.
-
-Panes run `powershell.exe` by default. Set `shell` in
-`%APPDATA%\btmux\config.toml` to another command line: `pwsh`, `cmd.exe`,
-`'C:\Program Files\Git\bin\bash.exe'` (Git Bash), or `wsl.exe -d Ubuntu`.
-Under bash, btmux tracks the pane's directory with `PROMPT_COMMAND` and `PS0`;
-if your bashrc replaces them, emit OSC 7 and OSC 133 A/C marks yourself.
-
-The access token is in `%LOCALAPPDATA%\btmux\state.token`
-(`Get-Content "$env:LOCALAPPDATA\btmux\state.token"`).
-
-There is no background service or in-place upgrade on Windows. To update, quit
-btmux (and the desktop app), replace `btmux.exe` or run the new desktop
-installer, and start it again. Running shells end, but the saved sessions,
-windows, and pane directories are restored.
-
 ## Homebrew
 
 The [buntec/homebrew-btmux](https://github.com/buntec/homebrew-btmux) tap has a
@@ -215,3 +180,38 @@ Both packages support Apple Silicon macOS and x86-64/ARM64 Linux. Override
 `desktop.package` to select another desktop build. On macOS, Home Manager
 makes the app available in `~/Applications/Home Manager Apps`; on Linux, it installs a
 desktop menu entry. You can also launch it with `btmux-desktop`.
+
+## Windows
+
+Windows support (x64 and ARM64) is experimental. Download
+`btmux-x86_64-pc-windows-msvc.exe` or `btmux-aarch64-pc-windows-msvc.exe` from
+[Releases](https://github.com/buntec/btmux/releases/latest), rename it to
+`btmux.exe`, and put it in a directory on your `PATH`. For example, in
+PowerShell:
+
+```powershell
+$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
+$dir = "$env:LOCALAPPDATA\Programs\btmux"
+New-Item -ItemType Directory -Force $dir | Out-Null
+Invoke-WebRequest "https://github.com/buntec/btmux/releases/latest/download/btmux-$arch-pc-windows-msvc.exe" -OutFile "$dir\btmux.exe"
+[Environment]::SetEnvironmentVariable('Path', "$([Environment]::GetEnvironmentVariable('Path', 'User'));$dir", 'User')
+```
+
+Open a new terminal so it picks up the `PATH` change. The desktop app's
+installer, `btmux-desktop-<arch>-pc-windows-msvc-setup.exe`, is on the
+[Releases](https://github.com/buntec/btmux/releases/latest) page; both are
+unsigned, so SmartScreen may ask you to choose **More info → Run anyway**.
+
+Panes run `powershell.exe` by default. Set `shell` in
+`%APPDATA%\btmux\config.toml` to another command line: `pwsh`, `cmd.exe`,
+`'C:\Program Files\Git\bin\bash.exe'` (Git Bash), or `wsl.exe -d Ubuntu`.
+Under bash, btmux tracks the pane's directory with `PROMPT_COMMAND` and `PS0`;
+if your bashrc replaces them, emit OSC 7 and OSC 133 A/C marks yourself.
+
+The access token is in `%LOCALAPPDATA%\btmux\state.token`
+(`Get-Content "$env:LOCALAPPDATA\btmux\state.token"`).
+
+There is no background service or in-place upgrade on Windows. To update, quit
+btmux (and the desktop app), replace `btmux.exe` or run the new desktop
+installer, and start it again. Running shells end, but the saved sessions,
+windows, and pane directories are restored.
