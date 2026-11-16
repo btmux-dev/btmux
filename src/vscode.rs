@@ -13,14 +13,16 @@
 //! Not yet supported on Windows.
 #![cfg_attr(windows, allow(dead_code))]
 
+use std::ffi::OsString;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, OnceLock};
 use std::time::{Duration, Instant};
 
 use axum::{
     body::Body,
-    extract::Request,
+    extract::{Request, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     Json,
@@ -34,15 +36,17 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::NamedPipeClient as UnixStream;
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
-use tokio::process::{Child, Command};
+use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{broadcast, watch, Mutex};
 use tokio::task::JoinHandle;
 
+use crate::agent_limits::AskShell;
 use crate::config::{
     ClientConfig, VscodeConfig, VscodeServer as Kind, DEFAULT_FONT_FAMILY, DEFAULT_FONT_SIZE,
     DEFAULT_FONT_WEIGHT,
 };
 use crate::ws::nvim::PrivateDir;
+use crate::AppState;
 
 /// Mount point; the server is told to serve everything under it.
 pub const BASE_PATH: &str = "/vscode";
@@ -54,13 +58,19 @@ const LICENSE_FILE: &str = "license-accepted";
 static SERVER: LazyLock<Mutex<Option<Server>>> = LazyLock::new(|| Mutex::new(None));
 /// Shut down by the user: only `/api/vscode` starts it again, not proxied
 /// requests from iframes that haven't closed yet. Changed under `SERVER`.
-static STOPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static STOPPED: AtomicBool = AtomicBool::new(false);
+/// Shut down for an exit or upgrade: nothing starts it again, as reconnecting
+/// windows would, until a failed upgrade resumes.
+static HALTED: AtomicBool = AtomicBool::new(false);
+/// The pane shell's `PATH`, when btmux's own lacks the server program, as a
+/// service's lacks what shell startup adds.
+static SHELL_PATH: std::sync::RwLock<Option<OsString>> = std::sync::RwLock::new(None);
 /// The last shutdown by the user, so tabs that missed it close the surface.
 static LAST_SHUTDOWN: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 /// Which server to start; from `[vscode] server`.
 static KIND: std::sync::Mutex<Kind> = std::sync::Mutex::new(Kind::Code);
 /// Accepted without a profile to remember it in.
-static LICENSE_ACCEPTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static LICENSE_ACCEPTED: AtomicBool = AtomicBool::new(false);
 /// Per-profile user data and extensions.
 static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
@@ -71,12 +81,32 @@ static SHARED: LazyLock<watch::Sender<Shared>> =
 static STYLE: LazyLock<watch::Sender<Option<String>>> = LazyLock::new(|| watch::channel(None).0);
 /// `open` messages for connected extension hosts.
 static OPENS: LazyLock<broadcast::Sender<String>> = LazyLock::new(|| broadcast::channel(16).0);
-/// The latest `open` and when an extension host first received it. It's
-/// replayed to hosts that connect before then, as VS Code may still be waiting
-/// on its license or starting, and soon after, as it may be reloading into
-/// another folder.
-static LAST_OPEN: std::sync::Mutex<Option<(Option<Instant>, String)>> = std::sync::Mutex::new(None);
+/// The latest `open`. It's replayed to hosts that connect before any host
+/// received it, as VS Code may still be waiting on its license or starting,
+/// and soon after, as it may be reloading into another folder.
+static LAST_OPEN: std::sync::Mutex<Option<PendingOpen>> = std::sync::Mutex::new(None);
+/// How long after an extension host received it.
 const OPEN_REPLAY: Duration = Duration::from_secs(30);
+/// How long it waits for a first one: a license prompt or first start
+/// (`code serve-web` downloads the server).
+const OPEN_PENDING: Duration = Duration::from_secs(300);
+/// Quiet time before shared extension folders are linked again.
+const RELINK_DEBOUNCE: Duration = Duration::from_secs(1);
+
+struct PendingOpen {
+    message: String,
+    created: Instant,
+    delivered: Option<Instant>,
+}
+
+impl PendingOpen {
+    fn current(&self) -> bool {
+        match self.delivered {
+            Some(at) => at.elapsed() < OPEN_REPLAY,
+            None => self.created.elapsed() < OPEN_PENDING,
+        }
+    }
+}
 
 #[derive(Embed)]
 #[folder = "extras/vscode"]
@@ -86,6 +116,11 @@ struct Server {
     child: Child,
     directory: PrivateDir,
     extension_listener: JoinHandle<()>,
+    /// Links shared extension folders again when they change.
+    extension_watcher: JoinHandle<()>,
+    /// Its read end tells the watchdog (`WATCHDOG`) btmux is gone: this
+    /// close-on-exec write end closes when btmux exits, crashes, or upgrades.
+    _lifeline: Option<ChildStdin>,
     /// Recent output, reported if it exits before it's ready.
     output: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
     readers: Vec<JoinHandle<()>>,
@@ -101,6 +136,7 @@ impl Drop for Server {
     /// The binary may be a wrapper script, so kill its whole process group.
     fn drop(&mut self) {
         self.extension_listener.abort();
+        self.extension_watcher.abort();
         #[cfg(unix)]
         if let Some(pid) = self.child.id() {
             // SAFETY: killpg has no memory-safety preconditions.
@@ -117,10 +153,13 @@ impl Drop for Server {
 struct Source {
     path: PathBuf,
     explicit: bool,
+    /// For extensions, the registry listing them instead of
+    /// `<path>/extensions.json`: a desktop profile's.
+    registry: Option<PathBuf>,
 }
 
 /// Desktop VS Code's (or configured) user files, sent to each VS Code window,
-/// and extension folders, linked when the server starts.
+/// and extension folders, linked when the server starts and when they change.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Shared {
     settings: Option<Source>,
@@ -128,38 +167,111 @@ struct Shared {
     extensions: Vec<Source>,
 }
 
+/// A desktop VS Code profile's folder and which of the default profile's
+/// resources it uses instead of its own.
+#[derive(Debug, PartialEq)]
+struct Profile {
+    dir: PathBuf,
+    default_settings: bool,
+    default_keybindings: bool,
+    default_extensions: bool,
+}
+
+impl Profile {
+    /// The profile named `name`, from desktop VS Code's `globalStorage/storage.json` under `user`.
+    fn find(user: &Path, name: &str) -> Result<Self, String> {
+        let path = user.join("globalStorage").join("storage.json");
+        let storage: serde_json::Value = std::fs::read(&path)
+            .map_err(|e| format!("{}: {e}", path.display()))
+            .and_then(|data| {
+                serde_json::from_slice(&data).map_err(|e| format!("{}: {e}", path.display()))
+            })?;
+        let profile = storage["userDataProfiles"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|profile| profile["name"].as_str() == Some(name))
+            .ok_or_else(|| format!("desktop VS Code has no profile named {name:?}"))?;
+        let dir = match &profile["location"] {
+            serde_json::Value::String(id) => user.join("profiles").join(id),
+            location => PathBuf::from(
+                location["path"]
+                    .as_str()
+                    .ok_or_else(|| format!("profile {name:?} has no location"))?,
+            ),
+        };
+        let default = |resource: &str| profile["useDefaultFlags"][resource].as_bool() == Some(true);
+        Ok(Self {
+            dir,
+            default_settings: default("settings"),
+            default_keybindings: default("keybindings"),
+            default_extensions: default("extensions"),
+        })
+    }
+}
+
 impl Shared {
     fn new(config: &VscodeConfig) -> Self {
         let explicit = |value: &String| Source {
             path: crate::config::expand_home(value),
             explicit: true,
+            registry: None,
         };
         let desktop = |path: Option<PathBuf>| {
             path.filter(|_| config.desktop).map(|path| Source {
                 path,
                 explicit: false,
+                registry: None,
             })
         };
         // `~/Library/Application Support/Code/User` on macOS, else `$XDG_CONFIG_HOME/Code/User`.
         let user = dirs::config_dir().map(|dir| dir.join("Code").join("User"));
+        let profile = match (&config.profile, &user) {
+            (Some(name), Some(user)) if config.desktop => Profile::find(user, name)
+                .inspect_err(|error| warn_once(&format!("VS Code profile: {error}")))
+                .ok(),
+            _ => None,
+        };
+        let user_file = |name: &str, default: fn(&Profile) -> bool| match &profile {
+            Some(profile) if !default(profile) => Some(profile.dir.join(name)),
+            _ => user.as_ref().map(|dir| dir.join(name)),
+        };
+        let extensions = dirs::home_dir().map(|home| home.join(".vscode/extensions"));
         Self {
             settings: config
                 .settings
                 .as_ref()
                 .map(explicit)
-                .or_else(|| desktop(user.as_ref().map(|dir| dir.join("settings.json")))),
+                .or_else(|| desktop(user_file("settings.json", |p| p.default_settings))),
             keybindings: config
                 .keybindings
                 .as_ref()
                 .map(explicit)
-                .or_else(|| desktop(user.as_ref().map(|dir| dir.join("keybindings.json")))),
+                .or_else(|| desktop(user_file("keybindings.json", |p| p.default_keybindings))),
             extensions: match &config.extensions {
                 Some(dirs) => dirs.iter().map(explicit).collect(),
-                None => desktop(dirs::home_dir().map(|home| home.join(".vscode/extensions")))
+                None => desktop(extensions)
+                    .map(|source| Source {
+                        registry: profile
+                            .as_ref()
+                            .filter(|profile| !profile.default_extensions)
+                            .map(|profile| profile.dir.join("extensions.json")),
+                        ..source
+                    })
                     .into_iter()
                     .collect(),
             },
         }
+    }
+}
+
+/// Log `message` unless it was the last one, as config resolves often.
+fn warn_once(message: &str) {
+    static LAST: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+    let mut last = LAST.lock().unwrap();
+    if last.as_deref() != Some(message) {
+        tracing::warn!("{message}");
+        *last = Some(message.to_owned());
     }
 }
 
@@ -199,10 +311,21 @@ pub fn configure(config: &ClientConfig) {
     });
 }
 
-/// Open `path` in VS Code. The browser shows the surface, starting VS Code if needed.
-pub fn open(path: &str, line: Option<u32>) {
-    let message = serde_json::json!({ "type": "open", "path": path, "line": line }).to_string();
-    *LAST_OPEN.lock().unwrap() = Some((None, message.clone()));
+/// Open `path` in the VS Code windows showing `folder` (all, without one). The
+/// browser shows the surface, starting VS Code if needed.
+pub fn open(path: &str, line: Option<u32>, folder: Option<&str>) {
+    let message = serde_json::json!({
+        "type": "open",
+        "path": path,
+        "line": line,
+        "folder": folder,
+    })
+    .to_string();
+    *LAST_OPEN.lock().unwrap() = Some(PendingOpen {
+        message: message.clone(),
+        created: Instant::now(),
+        delivered: None,
+    });
     let _ = OPENS.send(message);
 }
 
@@ -279,12 +402,7 @@ fn read_registry(path: &Path) -> Vec<serde_json::Value> {
 }
 
 /// An extension's `publisher.name` and version, from its manifest.
-fn manifest_id(dir: &Path) -> Option<(String, String)> {
-    manifest_id_from(&std::fs::read(dir.join("package.json")).ok()?)
-}
-
-fn manifest_id_from(data: &[u8]) -> Option<(String, String)> {
-    let manifest: serde_json::Value = serde_json::from_slice(data).ok()?;
+fn manifest_id_from(manifest: &serde_json::Value) -> Option<(String, String)> {
     Some((
         format!(
             "{}.{}",
@@ -295,14 +413,31 @@ fn manifest_id_from(data: &[u8]) -> Option<(String, String)> {
     ))
 }
 
+fn read_manifest(dir: &Path) -> Option<serde_json::Value> {
+    serde_json::from_slice(&std::fs::read(dir.join("package.json")).ok()?).ok()
+}
+
+/// Microsoft's and GitHub's closed-license extensions (Pylance, C/C++, C# Dev
+/// Kit, Copilot, …) run only in Microsoft's VS Code, so not in openvscode-server.
+fn microsoft_only(manifest: &serde_json::Value) -> bool {
+    let publisher = manifest["publisher"]
+        .as_str()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let closed = manifest["license"]
+        .as_str()
+        .is_some_and(|license| license.to_ascii_uppercase().starts_with("SEE LICENSE"));
+    closed && (publisher.starts_with("ms-") || ["microsoft", "github"].contains(&&*publisher))
+}
+
 /// The extension folders in `source`: itself if it is one, else those its
-/// `extensions.json` registers (as desktop VS Code and Home Manager keep
-/// them), else its subfolders.
-fn find_extensions(source: &Path) -> std::io::Result<Vec<PathBuf>> {
-    if source.join("package.json").is_file() {
+/// `extensions.json` (or `registry`, a profile's) registers (as desktop VS Code
+/// and Home Manager keep them), else its subfolders.
+fn find_extensions(source: &Path, registry: Option<&Path>) -> std::io::Result<Vec<PathBuf>> {
+    if registry.is_none() && source.join("package.json").is_file() {
         return Ok(vec![source.to_owned()]);
     }
-    let registry = source.join("extensions.json");
+    let registry = registry.map_or_else(|| source.join("extensions.json"), Path::to_path_buf);
     let found: Vec<PathBuf> = if registry.is_file() {
         // Folders VS Code has uninstalled or replaced but not yet deleted.
         let obsolete: serde_json::Map<String, serde_json::Value> =
@@ -342,15 +477,25 @@ fn find_extensions(source: &Path) -> std::io::Result<Vec<PathBuf>> {
 /// Register the extensions in `sources` in `extensions`' `extensions.json` by
 /// absolute location, replacing those `linked` lists from last time and other
 /// installs of the same extensions. The bundled extension stays as it is.
-fn link_extensions(extensions: &Path, linked: &Path, sources: &[Source]) -> Result<(), String> {
+///
+/// Entries carry no gallery metadata, so VS Code treats them as installed from
+/// files and never updates them itself: desktop VS Code does, and the changed
+/// folders are linked again.
+fn link_extensions(
+    extensions: &Path,
+    linked: &Path,
+    sources: &[Source],
+    kind: Kind,
+) -> Result<(), String> {
     let error = |path: &Path, e: std::io::Error| format!("{}: {e}", path.display());
     let bundled = Extension::get("package.json")
-        .and_then(|file| manifest_id_from(&file.data))
+        .and_then(|file| serde_json::from_slice(&file.data).ok())
+        .and_then(|manifest| manifest_id_from(&manifest))
         .map(|(id, _)| id.to_ascii_lowercase());
     let mut wanted: Vec<serde_json::Value> = Vec::new();
     let mut ids: Vec<String> = Vec::new();
     for source in sources {
-        let dirs = match find_extensions(&source.path) {
+        let dirs = match find_extensions(&source.path, source.registry.as_deref()) {
             Ok(dirs) => dirs,
             Err(e) if !source.explicit && e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => {
@@ -359,10 +504,15 @@ fn link_extensions(extensions: &Path, linked: &Path, sources: &[Source]) -> Resu
             }
         };
         for dir in dirs {
-            let Some((id, version)) = manifest_id(&dir) else {
+            let manifest = read_manifest(&dir);
+            let Some((id, version)) = manifest.as_ref().and_then(manifest_id_from) else {
                 tracing::warn!("VS Code extension without an id: {}", dir.display());
                 continue;
             };
+            if kind == Kind::OpenvscodeServer && manifest.as_ref().is_some_and(microsoft_only) {
+                tracing::debug!("not linking {id}: it runs only in Microsoft's VS Code");
+                continue;
+            }
             let key = id.to_ascii_lowercase();
             if bundled.as_ref() == Some(&key) || ids.contains(&key) {
                 continue;
@@ -527,8 +677,8 @@ async fn serve_extension(stream: UnixStream) {
         .lock()
         .unwrap()
         .as_ref()
-        .filter(|(at, _)| at.is_none_or(|at| at.elapsed() < OPEN_REPLAY))
-        .map(|(_, message)| message.clone());
+        .filter(|open| open.current())
+        .map(|open| open.message.clone());
     let mut pending: Vec<String> = user
         .into_iter()
         .chain(style.borrow_and_update().clone())
@@ -544,9 +694,9 @@ async fn serve_extension(stream: UnixStream) {
             {
                 return;
             }
-            if let Some((at, last)) = LAST_OPEN.lock().unwrap().as_mut() {
-                if *last == message {
-                    at.get_or_insert_with(Instant::now);
+            if let Some(open) = LAST_OPEN.lock().unwrap().as_mut() {
+                if open.message == message {
+                    open.delivered.get_or_insert_with(Instant::now);
                 }
             }
         }
@@ -580,14 +730,14 @@ async fn serve_extension(stream: UnixStream) {
 
 /// `code serve-web` needs the user to accept the VS Code Server license.
 fn license_accepted() -> bool {
-    LICENSE_ACCEPTED.load(std::sync::atomic::Ordering::Relaxed)
+    LICENSE_ACCEPTED.load(Ordering::Relaxed)
         || DATA_DIR
             .get()
             .is_some_and(|dir| dir.join(LICENSE_FILE).exists())
 }
 
 fn accept_license() -> Result<(), String> {
-    LICENSE_ACCEPTED.store(true, std::sync::atomic::Ordering::Relaxed);
+    LICENSE_ACCEPTED.store(true, Ordering::Relaxed);
     if let Some(dir) = DATA_DIR.get() {
         std::fs::create_dir_all(dir)
             .and_then(|()| std::fs::write(dir.join(LICENSE_FILE), ""))
@@ -603,13 +753,25 @@ pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-/// The program `kind` runs, if installed.
-pub(crate) fn program(kind: Kind) -> Option<PathBuf> {
+fn program_name(kind: Kind) -> &'static str {
     match kind {
-        Kind::Code => find_on_path("code")
-            .or_else(|| Some(PathBuf::from(MACOS_CODE)).filter(|path| path.is_file())),
-        Kind::OpenvscodeServer => find_on_path("openvscode-server"),
+        Kind::Code => "code",
+        Kind::OpenvscodeServer => "openvscode-server",
     }
+}
+
+/// The program `kind` runs, if installed: on btmux's `PATH`, the pane shell's,
+/// or for `code`, in the macOS app bundle.
+pub(crate) fn program(kind: Kind) -> Option<PathBuf> {
+    let name = program_name(kind);
+    find_on_path(name)
+        .or_else(|| {
+            let path = SHELL_PATH.read().unwrap().clone()?;
+            crate::agent_limits::find_in(name.as_ref(), &path)
+        })
+        .or_else(|| {
+            Some(PathBuf::from(MACOS_CODE)).filter(|path| kind == Kind::Code && path.is_file())
+        })
 }
 
 /// Whether the VS Code surface can start `kind`.
@@ -617,15 +779,71 @@ pub fn available(kind: Kind) -> bool {
     cfg!(unix) && program(kind).is_some()
 }
 
+/// The pane shell's `PATH` if btmux's lacks `kind`'s program, which the server
+/// then runs with too, so its extensions find what panes do.
+async fn shell_path(shell: &str, kind: Kind, ask: AskShell) -> Option<OsString> {
+    let [path] =
+        crate::agent_limits::programs_paths(shell, [OsString::from(program_name(kind))], ask).await;
+    if path.is_some() {
+        *SHELL_PATH.write().unwrap() = path.clone();
+    }
+    path
+}
+
+/// At startup, look for a server program only the pane shell's `PATH` has, and
+/// list VS Code among the editors if that finds it.
+pub fn find_program(state: AppState) {
+    tokio::spawn(async move {
+        let (shell, kind) = {
+            let mgr = state.read().await;
+            (mgr.shell().to_owned(), mgr.config().vscode.server)
+        };
+        if !cfg!(unix) || available(kind) {
+            return;
+        }
+        shell_path(&shell, kind, AskShell::Once).await;
+        if !available(kind) {
+            return;
+        }
+        let mut mgr = state.write().await;
+        let config = mgr.refresh_config().clone();
+        let json = serde_json::to_string(&crate::ws::control::ServerMessage::Config {
+            config: Box::new(config),
+        })
+        .unwrap();
+        let _ = mgr.events().send(json);
+    });
+}
+
+/// Runs the server (`"$@"`) and kills its process group once stdin, a pipe
+/// from btmux, closes: the server must not outlive btmux, even killed or
+/// upgrading, when no `Drop` runs.
+const WATCHDOG: &str = r#"exec 3<&0
+"$@" 3<&- </dev/null &
+server=$!
+{ read -r _ <&3; kill -TERM 0; } </dev/null &
+watchdog=$!
+exec 3<&-
+wait "$server"
+status=$?
+kill "$watchdog" 2>/dev/null
+exit "$status""#;
+
 /// The server command, minus the options both servers share.
 fn server_command(kind: Kind, data: &Path) -> Result<Command, String> {
-    Ok(match kind {
+    let binary = program(kind).ok_or(match kind {
         Kind::Code => {
-            let code = program(kind).ok_or(
-                "VS Code's `code` command was not found. Install Visual Studio Code \
-                        (e.g. `brew install --cask visual-studio-code`) and its `code` command.",
-            )?;
-            let mut command = Command::new(code);
+            "VS Code's `code` command was not found. Install Visual Studio Code \
+            (e.g. `brew install --cask visual-studio-code`) and its `code` command."
+        }
+        Kind::OpenvscodeServer => {
+            "`openvscode-server` ([vscode] server = \"openvscode-server\") was not found on PATH."
+        }
+    })?;
+    let mut command = Command::new("/bin/sh");
+    command.args(["-c", WATCHDOG, "btmux-vscode"]).arg(binary);
+    match kind {
+        Kind::Code => {
             command
                 .args([
                     "serve-web",
@@ -635,30 +853,82 @@ fn server_command(kind: Kind, data: &Path) -> Result<Command, String> {
                 .arg("--server-data-dir")
                 .arg(data)
                 .env("VSCODE_CLI_NONINTERACTIVE", "1");
-            command
         }
         Kind::OpenvscodeServer => {
-            let binary = program(kind)
-                .ok_or("`openvscode-server` (vscode-server = \"openvscode-server\") was not found on PATH.")?;
-            let mut command = Command::new(binary);
             command
                 .args(["--telemetry-level", "off"])
                 .arg("--user-data-dir")
                 .arg(data.join("data"))
                 .arg("--extensions-dir")
                 .arg(data.join("extensions"));
-            command
+        }
+    }
+    Ok(command)
+}
+
+/// Link shared extension folders again whenever they or the configured ones
+/// change, as desktop VS Code installs, updates, and removes them.
+#[cfg(unix)]
+fn watch_extensions(extensions: PathBuf, linked: PathBuf, kind: Kind) -> JoinHandle<()> {
+    use notify::event::{EventKind, ModifyKind};
+    use notify::{RecursiveMode, Watcher};
+    tokio::spawn(async move {
+        let mut shared = SHARED.subscribe();
+        shared.borrow_and_update();
+        loop {
+            let sources = shared.borrow().extensions.clone();
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            // Not reads (or atime), which linking does itself.
+            let watcher =
+                notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+                    if event.is_ok_and(|event| match event.kind {
+                        EventKind::Modify(ModifyKind::Metadata(_)) => false,
+                        EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) => true,
+                        _ => false,
+                    }) {
+                        let _ = tx.send(());
+                    }
+                });
+            let _watcher = watcher
+                .inspect_err(|e| tracing::warn!("VS Code extensions: cannot watch: {e}"))
+                .ok()
+                .map(|mut watcher| {
+                    // A registry is replaced, not written in place: watch its folder.
+                    let registries = sources
+                        .iter()
+                        .filter_map(|source| source.registry.as_deref()?.parent());
+                    for path in sources.iter().map(|s| s.path.as_path()).chain(registries) {
+                        let _ = watcher.watch(path, RecursiveMode::NonRecursive);
+                    }
+                    watcher
+                });
+            tokio::select! {
+                changed = shared.changed() => if changed.is_err() {
+                    return;
+                },
+                Some(()) = rx.recv() => {
+                    while let Ok(Some(())) = tokio::time::timeout(RELINK_DEBOUNCE, rx.recv()).await {}
+                }
+            }
+            let sources = shared.borrow().extensions.clone();
+            let (extensions, linked) = (extensions.clone(), linked.clone());
+            let linking = tokio::task::spawn_blocking(move || {
+                link_extensions(&extensions, &linked, &sources, kind)
+            });
+            if let Ok(Err(error)) = linking.await {
+                tracing::warn!("VS Code extensions: {error}");
+            }
         }
     })
 }
 
 #[cfg(windows)]
-fn spawn(_kind: Kind) -> Result<Server, String> {
+fn spawn(_kind: Kind, _path: Option<OsString>) -> Result<Server, String> {
     Err("The VS Code surface isn't supported on Windows yet.".into())
 }
 
 #[cfg(unix)]
-fn spawn(kind: Kind) -> Result<Server, String> {
+fn spawn(kind: Kind, path: Option<OsString>) -> Result<Server, String> {
     let directory = PrivateDir::new()?;
     let data = match DATA_DIR.get() {
         Some(dir) => dir.clone(),
@@ -669,13 +939,24 @@ fn spawn(kind: Kind) -> Result<Server, String> {
     if let Err(error) = install_extension(&extensions) {
         tracing::warn!("btmux VS Code extension: {error}");
     }
+    let linked = data.join("linked-extensions.json");
     let sources = SHARED.borrow().extensions.clone();
-    if let Err(error) = link_extensions(&extensions, &data.join("linked-extensions.json"), &sources)
-    {
+    if let Err(error) = link_extensions(&extensions, &linked, &sources, kind) {
         tracing::warn!("VS Code extensions: {error}");
     }
     let extension_socket = directory.path().join("btmux.sock");
-    let mut child = server_command(kind, &data)?
+    let mut command = server_command(kind, &data)?;
+    // It isn't a pane, nor in the terminal btmux started from.
+    for var in crate::pty::OUTER_TERMINAL_ENV
+        .iter()
+        .chain(&crate::pty::PANE_ENV)
+    {
+        command.env_remove(var);
+    }
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
+    let mut child = command
         .env("BTMUX_VSCODE_SOCKET", &extension_socket)
         .arg("--socket-path")
         .arg(directory.path().join("code.sock"))
@@ -685,12 +966,13 @@ fn spawn(kind: Kind) -> Result<Server, String> {
             "--without-connection-token",
         ])
         .current_dir(dirs::home_dir().unwrap_or_else(|| "/".into()))
-        .stdin(std::process::Stdio::null())
+        .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .process_group(0)
         .spawn()
         .map_err(|e| format!("start {kind:?}: {e}"))?;
+    let lifeline = child.stdin.take();
     let extension_listener = match listen_for_extension(&extension_socket) {
         Ok(listener) => listener,
         Err(error) => {
@@ -733,6 +1015,8 @@ fn spawn(kind: Kind) -> Result<Server, String> {
         child,
         directory,
         extension_listener,
+        extension_watcher: watch_extensions(extensions, linked, kind),
+        _lifeline: lifeline,
         output,
         readers,
     })
@@ -744,6 +1028,8 @@ enum StartError {
     License,
     /// Shut down by the user and not started again.
     Stopped,
+    /// btmux is exiting or upgrading.
+    Halted,
     Failed(String),
 }
 
@@ -752,6 +1038,7 @@ impl std::fmt::Display for StartError {
         match self {
             Self::License => f.write_str("the VS Code Server license hasn't been accepted"),
             Self::Stopped => f.write_str("VS Code was shut down"),
+            Self::Halted => f.write_str("btmux is restarting"),
             Self::Failed(message) => f.write_str(message),
         }
     }
@@ -764,45 +1051,67 @@ async fn connect_socket(path: &Path) -> std::io::Result<UnixStream> {
     tokio::net::windows::named_pipe::ClientOptions::new().open(path)
 }
 
-/// Connect to the server, starting it if it isn't running and either `start`
-/// or the user didn't shut it down.
-async fn connect(start: bool) -> Result<UnixStream, StartError> {
-    let mut server = SERVER.lock().await;
-    if start {
-        STOPPED.store(false, std::sync::atomic::Ordering::Relaxed);
-    }
-    let running = server
+fn is_running(server: &mut Option<Server>) -> bool {
+    server
         .as_mut()
-        .is_some_and(|server| matches!(server.child.try_wait(), Ok(None)));
-    if running {
-        if let Ok(stream) = connect_socket(&server.as_ref().unwrap().socket()).await {
-            return Ok(stream);
+        .is_some_and(|server| matches!(server.child.try_wait(), Ok(None)))
+}
+
+/// Connect to the server, starting it if it isn't running and either `start`
+/// or the user didn't shut it down. `SERVER` is held to start it, not while it
+/// starts listening, so status checks and shutdowns don't wait on that.
+async fn connect(state: &AppState, start: bool) -> Result<UnixStream, StartError> {
+    // Not under `SERVER`: an upgrade takes the manager, then `SERVER`.
+    let shell = state.read().await.shell().to_owned();
+    let socket = {
+        let mut server = SERVER.lock().await;
+        if HALTED.load(Ordering::Relaxed) {
+            return Err(StartError::Halted);
         }
-    } else if STOPPED.load(std::sync::atomic::Ordering::Relaxed) {
-        return Err(StartError::Stopped);
-    } else {
-        let kind = *KIND.lock().unwrap();
-        if kind == Kind::Code && !license_accepted() {
-            return Err(StartError::License);
+        if start {
+            STOPPED.store(false, Ordering::Relaxed);
         }
-        *server = Some(spawn(kind).map_err(StartError::Failed)?);
-    }
-    let running = server.as_mut().unwrap();
+        if !is_running(&mut server) {
+            if STOPPED.load(Ordering::Relaxed) {
+                return Err(StartError::Stopped);
+            }
+            let kind = *KIND.lock().unwrap();
+            if kind == Kind::Code && !license_accepted() {
+                return Err(StartError::License);
+            }
+            let path = shell_path(&shell, kind, AskShell::Retry).await;
+            *server = Some(spawn(kind, path).map_err(StartError::Failed)?);
+        }
+        server.as_ref().unwrap().socket()
+    };
     // Node takes a moment to start listening.
     for _ in 0..300 {
-        if let Ok(stream) = connect_socket(&running.socket()).await {
+        if let Ok(stream) = connect_socket(&socket).await {
             return Ok(stream);
         }
+        let mut server = SERVER.lock().await;
+        let Some(running) = server.as_mut().filter(|server| server.socket() == socket) else {
+            // Shut down (or replaced) meanwhile.
+            return Err(if HALTED.load(Ordering::Relaxed) {
+                StartError::Halted
+            } else {
+                StartError::Stopped
+            });
+        };
         if let Ok(Some(status)) = running.child.try_wait() {
-            for reader in running.readers.drain(..) {
+            let readers = std::mem::take(&mut running.readers);
+            let output = running.output.clone();
+            *server = None;
+            drop(server);
+            for reader in readers {
                 let _ = tokio::time::timeout(Duration::from_secs(1), reader).await;
             }
-            let output = Vec::from(running.output.lock().unwrap().clone()).join("\n");
-            *server = None;
+            let output = Vec::from(output.lock().unwrap().clone()).join("\n");
             return Err(StartError::Failed(format!(
                 "VS Code exited ({status}):\n{output}"
             )));
         }
+        drop(server);
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     Err(StartError::Failed(
@@ -824,46 +1133,50 @@ pub enum VscodeStatus {
 }
 
 /// `GET /api/vscode`: start VS Code if needed and report whether it's ready.
-pub async fn status() -> Json<VscodeStatus> {
-    Json(match connect(true).await {
+pub async fn status(State(state): State<AppState>) -> Json<VscodeStatus> {
+    Json(match connect(&state, true).await {
         Ok(_) => VscodeStatus::Ready,
         Err(StartError::License) => VscodeStatus::License,
         Err(StartError::Failed(message)) => VscodeStatus::Error { message },
-        Err(error @ StartError::Stopped) => VscodeStatus::Error {
+        Err(error @ (StartError::Stopped | StartError::Halted)) => VscodeStatus::Error {
             message: error.to_string(),
         },
     })
 }
 
 /// `POST /api/vscode/license`: the user accepted the license; start VS Code.
-pub async fn accept() -> Json<VscodeStatus> {
+pub async fn accept(state: State<AppState>) -> Json<VscodeStatus> {
     if let Err(message) = accept_license() {
         return Json(VscodeStatus::Error { message });
     }
-    status().await
+    status(state).await
 }
 
 pub async fn running() -> bool {
-    SERVER
-        .lock()
-        .await
-        .as_mut()
-        .is_some_and(|server| matches!(server.child.try_wait(), Ok(None)))
+    is_running(&mut *SERVER.lock().await)
 }
 
+/// Stop it for an exit or upgrade, keeping reconnecting windows from starting
+/// it again until `resume`.
 pub async fn shutdown() {
+    HALTED.store(true, Ordering::Relaxed);
     drop(SERVER.lock().await.take());
+}
+
+/// After a failed upgrade: windows may start it again.
+pub fn resume() {
+    HALTED.store(false, Ordering::Relaxed);
 }
 
 /// Shut it down for the user; returns the shutdown's id, or `None` if it wasn't running.
 pub async fn stop() -> Option<String> {
     let mut server = SERVER.lock().await;
-    let running = server
-        .as_mut()
-        .is_some_and(|server| matches!(server.child.try_wait(), Ok(None)));
+    let running = is_running(&mut server);
     drop(server.take());
+    // Nor reopen it when it starts again.
+    *LAST_OPEN.lock().unwrap() = None;
     running.then(|| {
-        STOPPED.store(true, std::sync::atomic::Ordering::Relaxed);
+        STOPPED.store(true, Ordering::Relaxed);
         let id = uuid::Uuid::new_v4().simple().to_string();
         *LAST_SHUTDOWN.lock().unwrap() = Some(id.clone());
         id
@@ -875,8 +1188,8 @@ pub fn last_shutdown() -> Option<String> {
 }
 
 /// Forward a request, including WebSocket upgrades, to the server.
-pub async fn proxy(mut request: Request) -> Response {
-    match forward(&mut request).await {
+pub async fn proxy(State(state): State<AppState>, mut request: Request) -> Response {
+    match forward(&state, &mut request).await {
         Ok(response) => response,
         Err(error) => {
             tracing::warn!("vscode proxy: {error}");
@@ -885,12 +1198,12 @@ pub async fn proxy(mut request: Request) -> Response {
     }
 }
 
-async fn forward(request: &mut Request) -> Result<Response, String> {
-    let stream = match connect(false).await {
+async fn forward(state: &AppState, request: &mut Request) -> Result<Response, String> {
+    let stream = match connect(state, false).await {
         Ok(stream) => stream,
         // A stale iframe; it closes once its tab hears of the shutdown.
-        Err(StartError::Stopped) => {
-            return Ok((StatusCode::SERVICE_UNAVAILABLE, "VS Code was shut down").into_response())
+        Err(error @ (StartError::Stopped | StartError::Halted)) => {
+            return Ok((StatusCode::SERVICE_UNAVAILABLE, error.to_string()).into_response())
         }
         Err(error) => return Err(error.to_string()),
     };
@@ -1053,6 +1366,7 @@ mod tests {
         let source = |path: PathBuf| Source {
             path,
             explicit: true,
+            registry: None,
         };
         let registered = || -> Vec<(String, Option<String>)> {
             read_registry(&extensions.join("extensions.json"))
@@ -1076,6 +1390,7 @@ mod tests {
                 source(root.join("single")),
                 source(root.join("missing")),
             ],
+            Kind::Code,
         )
         .unwrap();
         assert_eq!(
@@ -1106,7 +1421,7 @@ mod tests {
             source(folder.clone()),
             source(root.join("single")),
         ];
-        link_extensions(&extensions, &linked, &sources).unwrap();
+        link_extensions(&extensions, &linked, &sources, Kind::Code).unwrap();
         assert_eq!(
             std::fs::metadata(extensions.join("extensions.json"))
                 .unwrap()
@@ -1114,7 +1429,13 @@ mod tests {
                 .unwrap(),
             modified
         );
-        link_extensions(&extensions, &linked, &[source(root.join("single"))]).unwrap();
+        link_extensions(
+            &extensions,
+            &linked,
+            &[source(root.join("single"))],
+            Kind::Code,
+        )
+        .unwrap();
         assert_eq!(
             registered(),
             [
@@ -1139,9 +1460,94 @@ mod tests {
             shared.keybindings,
             Some(Source {
                 path: "/k.json".into(),
-                explicit: true
+                explicit: true,
+                registry: None,
             })
         );
         assert!(shared.extensions.is_empty());
+    }
+
+    #[test]
+    fn finds_desktop_profiles_and_their_defaults() {
+        let user =
+            std::env::temp_dir().join(format!("btmux-vscode-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(user.join("globalStorage")).unwrap();
+        std::fs::write(
+            user.join("globalStorage/storage.json"),
+            serde_json::json!({ "userDataProfiles": [
+                { "location": "1a2b", "name": "Work",
+                  "useDefaultFlags": { "keybindings": true } },
+            ] })
+            .to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            Profile::find(&user, "Work").unwrap(),
+            Profile {
+                dir: user.join("profiles/1a2b"),
+                default_settings: false,
+                default_keybindings: true,
+                default_extensions: false,
+            }
+        );
+        assert!(Profile::find(&user, "Home").is_err());
+        std::fs::remove_dir_all(&user).unwrap();
+    }
+
+    #[test]
+    fn reads_a_profile_registry_relative_to_the_extensions_folder() {
+        let root =
+            std::env::temp_dir().join(format!("btmux-vscode-{}", uuid::Uuid::new_v4().simple()));
+        let shared = root.join("extensions");
+        write_extension(&shared.join("a.b-1.0.0"), "a", "b", "1.0.0");
+        write_extension(&shared.join("c.d-1.0.0"), "c", "d", "1.0.0");
+        let registry = root.join("profile/extensions.json");
+        std::fs::create_dir_all(registry.parent().unwrap()).unwrap();
+        std::fs::write(
+            &registry,
+            r#"[{"identifier":{"id":"a.b"},"version":"1.0.0","relativeLocation":"a.b-1.0.0"}]"#,
+        )
+        .unwrap();
+        assert_eq!(
+            find_extensions(&shared, Some(&registry)).unwrap(),
+            [shared.join("a.b-1.0.0")]
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn recognizes_extensions_only_microsoft_builds_run() {
+        let manifest = |publisher: &str, license: &str| serde_json::json!({ "publisher": publisher, "license": license });
+        assert!(microsoft_only(&manifest(
+            "ms-python",
+            "SEE LICENSE IN LICENSE.txt"
+        )));
+        assert!(microsoft_only(&manifest(
+            "GitHub",
+            "SEE LICENSE IN LICENSE.txt"
+        )));
+        assert!(!microsoft_only(&manifest("ms-python", "MIT")));
+        assert!(!microsoft_only(&manifest(
+            "vscodevim",
+            "SEE LICENSE IN LICENSE"
+        )));
+    }
+
+    #[test]
+    fn opens_wait_for_a_first_window_then_replay_briefly() {
+        let now = Instant::now();
+        // Instants can't precede boot.
+        let Some(past) = now.checked_sub(OPEN_PENDING) else {
+            return;
+        };
+        let open = |created: Instant, delivered: Option<Instant>| PendingOpen {
+            message: String::new(),
+            created,
+            delivered,
+        };
+        assert!(open(now, None).current());
+        assert!(!open(past, None).current());
+        assert!(open(past, Some(now)).current());
+        assert!(!open(now, Some(now - OPEN_REPLAY)).current());
     }
 }

@@ -190,6 +190,9 @@ pub struct PaneSnapshot {
     pub id: Uuid,
     pub title: Option<String>,
     pub cwd: Option<String>,
+    /// `cwd` is on another host.
+    #[serde(default)]
+    pub cwd_remote: bool,
     #[serde(default)]
     pub agent_status: AgentStatus,
     /// Names the running agent instance, so a client can target it.

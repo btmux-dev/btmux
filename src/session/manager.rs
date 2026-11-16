@@ -601,6 +601,13 @@ impl SessionManager {
         Some(&self.config)
     }
 
+    /// Resolve the config again, as when something it detects was found.
+    pub fn refresh_config(&mut self) -> &ClientConfig {
+        self.config = self.resolve();
+        self.sync_palette();
+        &self.config
+    }
+
     /// Record that config.toml was rejected; the current config stays in use.
     pub fn set_config_error(&mut self, error: String) -> &ClientConfig {
         self.config_error = Some(error.clone());
@@ -873,6 +880,13 @@ impl SessionManager {
             .worktree_path
             .clone()
             .unwrap_or_else(|| crate::worktree::DEFAULT_PATH.to_string())
+    }
+
+    /// The folder an editor opens for `pane`: its worktree's root, else its
+    /// cwd, unless that's on another host. Mirrors `workspaceFolder` in the frontend.
+    pub fn editor_folder(&self, pane: &Pane) -> Option<String> {
+        let cwd = pane.pty.local_cwd()?;
+        Some(self.git.lookup(&cwd).map_or(cwd, |git| git.worktree_root))
     }
 
     pub fn find_pane_mut(&mut self, pane_id: Uuid) -> Option<&mut Pane> {
@@ -1828,6 +1842,8 @@ impl SessionManager {
                             id: p.id,
                             title: p.pty.title.lock().unwrap().clone(),
                             cwd: p.pty.effective_cwd(),
+                            cwd_remote: p.pty.effective_cwd().is_some()
+                                && p.pty.local_cwd().is_none(),
                             agent_status: self.agent_status(p.id).cloned().unwrap_or_default(),
                             agent_id: self.agent_id(p.id),
                             unread: p.unread.clone(),

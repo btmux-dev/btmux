@@ -73,6 +73,10 @@ interface AppStore {
   vscodeEpoch: number;
   // The id of the last VS Code shutdown this tab applied.
   vscodeShutdown: string | null;
+  // The folder VS Code shows, from its address.
+  vscodeFolder: string | null;
+  // Bumped each time the surface is shown, which may switch it to its pane's folder.
+  vscodeShown: number;
   browserOpen: boolean;
   browserPaneId: string | null;
   browserRect: LayoutRect | null;
@@ -141,6 +145,7 @@ interface AppStore {
   setNvimRect: (rect: LayoutRect | null) => void;
   setVscodeOpen: (open: boolean, paneId?: string | null) => void;
   setVscodeRect: (rect: LayoutRect | null) => void;
+  setVscodeFolder: (folder: string | null) => void;
   /** Close the surface of an editor whose server was shut down; false if VS Code's `id` was already applied. */
   editorShutDown: (editor: Editor, id: string | null) => boolean;
   setBrowserOpen: (open: boolean, paneId?: string | null) => void;
@@ -216,6 +221,8 @@ export const useStore = create<AppStore>((set, get) => ({
   vscodeRect: null,
   vscodeEpoch: 0,
   vscodeShutdown: null,
+  vscodeFolder: null,
+  vscodeShown: 0,
   browserOpen: false,
   browserPaneId: null,
   browserRect: null,
@@ -280,10 +287,16 @@ export const useStore = create<AppStore>((set, get) => ({
     if (open && unavailableOverRelay(get().config, 'VS Code')) return;
     set((s) => {
       const vscodePaneId = open && paneId !== undefined ? paneId : s.vscodePaneId;
-      return { ...(open && surfacesOff(s, vscodePaneId)), vscodeOpen: open, vscodePaneId };
+      return {
+        ...(open && surfacesOff(s, vscodePaneId)),
+        vscodeOpen: open,
+        vscodePaneId,
+        vscodeShown: s.vscodeShown + (open ? 1 : 0),
+      };
     });
   },
   setVscodeRect: (rect) => set((s) => (sameRect(s.vscodeRect, rect) ? s : { vscodeRect: rect })),
+  setVscodeFolder: (vscodeFolder) => set({ vscodeFolder }),
   editorShutDown: (editor, id) => {
     if (editor === 'neovim') set({ nvimOpen: false });
     else if (editor === 'vscode') {

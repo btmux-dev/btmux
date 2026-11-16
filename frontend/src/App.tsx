@@ -263,7 +263,6 @@ function AppInner({
                   if (activeSessionId && vscodePaneId)
                     send({ type: 'select_pane', session_id: activeSessionId, pane_id: vscodePaneId });
                 }}
-                cwd={vscodePane?.cwd ?? null}
               />
             )}
             {(browserOpen || browserMounted) && (

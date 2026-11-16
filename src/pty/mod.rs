@@ -31,7 +31,7 @@ pub const MAX_INPUT: usize = 64 * 1024;
 
 /// What the server's own terminal or multiplexer sets; programs detect
 /// features (and tmux/screen passthrough) from them.
-const OUTER_TERMINAL_ENV: [&str; 29] = [
+pub(crate) const OUTER_TERMINAL_ENV: [&str; 29] = [
     "TERM_SESSION_ID",
     "TERMINFO",
     "LC_TERMINAL",
@@ -61,6 +61,17 @@ const OUTER_TERMINAL_ENV: [&str; 29] = [
     "TMUX_PANE",
     "STY",
     "ZELLIJ",
+];
+
+/// What btmux sets for a pane's shell, which processes outside panes mustn't inherit.
+pub(crate) const PANE_ENV: [&str; 7] = [
+    "TERM_PROGRAM",
+    "TERM_PROGRAM_VERSION",
+    "BTMUX_PANE_ID",
+    "BTMUX_BIN",
+    "BTMUX_AUTH_TOKEN",
+    "BTMUX_API_URL",
+    "BTMUX_OTEL_ENDPOINT",
 ];
 
 /// This server's binary, read at startup: once it is replaced on disk, Linux

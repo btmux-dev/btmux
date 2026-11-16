@@ -3,9 +3,10 @@
 //   {"type":"user","settings":{…}|null,"keybindings":[…]|null}
 //   {"type":"style","palette":{base00…base0F[, base10…base17]},
 //    "font":{"family":"Geist Mono","size":18,"weight":200}}
-//   {"type":"open","path":"/abs/file","line":12}
+//   {"type":"open","path":"/abs/file","line":12,"folder":"/abs"|null}
 const net = require('net');
 const vscode = require('vscode');
+const { parseJsonc, mergeSettings, mergeKeybindings, same } = require('./merge');
 
 const Global = vscode.ConfigurationTarget.Global;
 const THEME_KEYS = [
@@ -29,6 +30,8 @@ const EDITOR_FONT_SCALE = 0.8;
 
 // Settings btmux wrote, as JSON by key, so turning a sync off clears only those.
 const WRITTEN = 'btmux.written';
+// The shared settings and keybindings as last applied, to merge their changes.
+const SHARED = 'btmux.shared';
 // In the browser, user settings and keybindings live in VS Code's IndexedDB.
 const USER_DIR = vscode.Uri.from({ scheme: 'vscode-userdata', path: '/User' });
 
@@ -87,6 +90,8 @@ async function handle(message) {
     style = message;
     await applyStyle();
   } else if (message.type === 'open') {
+    // Opened in the windows showing its folder; the others ignore it.
+    if (message.folder && !showsFolder(message.folder)) return;
     const options = { preview: false };
     if (message.line) {
       const position = new vscode.Position(Math.max(message.line - 1, 0), 0);
@@ -96,32 +101,52 @@ async function handle(message) {
   }
 }
 
+const trimSlash = (path) => path.replace(/(.)\/+$/, '$1');
+
+function showsFolder(folder) {
+  return (vscode.workspace.workspaceFolders ?? []).some((f) => trimSlash(f.uri.path) === trimSlash(folder));
+}
+
 /**
- * Replace the user settings and keybindings with the shared ones, keeping the
- * theme and font settings btmux wrote so they don't flicker.
+ * Merge what changed in the shared settings and keybindings into the user
+ * files, keeping changes made here and the theme and font settings btmux
+ * wrote, so they don't flicker.
  */
 async function applyUser({ settings, keybindings }) {
+  const base = state.get(SHARED, {});
   if (settings) {
-    const config = vscode.workspace.getConfiguration();
-    const merged = { ...settings };
-    for (const key of Object.keys(state.get(WRITTEN, {}))) {
-      const value = config.inspect(key)?.globalValue;
-      if (value !== undefined) merged[key] = value;
-    }
-    await writeUserFile('settings.json', merged);
+    const ours = await readUserFile('settings.json');
+    const keep = new Set(Object.keys(state.get(WRITTEN, {})));
+    const merged = mergeSettings(base.settings, settings, isObject(ours) ? ours : {}, keep);
+    await writeUserFile('settings.json', ours, merged);
   }
-  if (keybindings) await writeUserFile('keybindings.json', keybindings);
+  if (keybindings) {
+    const ours = await readUserFile('keybindings.json');
+    await writeUserFile('keybindings.json', ours, mergeKeybindings(base.keybindings, keybindings, Array.isArray(ours) ? ours : []));
+  }
+  await state.update(SHARED, {
+    settings: settings ?? base.settings,
+    keybindings: keybindings ?? base.keybindings,
+  });
+}
+
+const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/** A user file's content, or null if it's missing or unreadable. */
+async function readUserFile(name) {
+  try {
+    const data = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(USER_DIR, name));
+    return parseJsonc(new TextDecoder().decode(data));
+  } catch {
+    return null;
+  }
 }
 
 /** Write a user file as JSON, unless it already has that content. */
-async function writeUserFile(name, value) {
-  const uri = vscode.Uri.joinPath(USER_DIR, name);
+async function writeUserFile(name, current, value) {
+  if (same(current, value)) return;
   const text = `${JSON.stringify(value, null, 2)}\n`;
-  const current = await vscode.workspace.fs.readFile(uri).then(
-    (data) => new TextDecoder().decode(data),
-    () => null,
-  );
-  if (current !== text) await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(text));
+  await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(USER_DIR, name), new TextEncoder().encode(text));
 }
 
 /**

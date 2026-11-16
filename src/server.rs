@@ -765,12 +765,15 @@ async fn api_open_editor(
     Json(body): Json<OpenEditorRequest>,
 ) -> Response {
     let explicit = body.editor.is_some();
-    let editor = {
+    let (editor, folder) = {
         let mgr = state.read().await;
-        if mgr.find_pane(pane_id).is_none() {
+        let Some(pane) = mgr.find_pane(pane_id) else {
             return StatusCode::NOT_FOUND.into_response();
-        }
-        body.editor.unwrap_or(mgr.config().editor)
+        };
+        (
+            body.editor.unwrap_or(mgr.config().editor),
+            mgr.editor_folder(pane),
+        )
     };
     let msg = match editor {
         crate::config::Editor::Pane => {
@@ -786,7 +789,7 @@ async fn api_open_editor(
         }
         crate::config::Editor::Vscode => {
             if let Some(path) = &body.path {
-                crate::vscode::open(path, body.line);
+                crate::vscode::open(path, body.line, folder.as_deref());
             }
             ws::control::ServerMessage::OpenVscode {
                 pane_id,
