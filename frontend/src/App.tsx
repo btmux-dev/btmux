@@ -41,8 +41,9 @@ import { ClientMessage } from './protocol/messages';
 import { useFontLoader } from './hooks/useFontLoader';
 import { useModalBackdrop } from './hooks/useModalBackdrop';
 import { setPageBackground } from './lib/desktopTransparency';
+import { terminalColorMode } from './lib/astryx-theme';
 import { hasShaderWallpaper } from './lib/wallpaperCatalog';
-import { desktopVersionMismatch } from './lib/desktopApp';
+import { desktopVersionMismatch, setDesktopColorScheme } from './lib/desktopApp';
 import { dismissNotification } from './lib/notifications';
 import { useDesktopVersion } from './hooks/useDesktopVersion';
 import { useVisualViewport } from './hooks/useVisualViewport';
@@ -344,6 +345,12 @@ export function App() {
     document.documentElement.style.setProperty('--btmux-font', `"${family}", monospace`);
     document.documentElement.style.setProperty('--btmux-font-weight', weight);
   }, [effectiveConfig?.terminal?.fontFamily, effectiveConfig?.terminal?.fontWeight]);
+
+  // The shown mode, which a preview or a light palette in the dark slot can change.
+  const shownMode = effectiveConfig ? terminalColorMode(effectiveConfig.theme) : undefined;
+  useEffect(() => {
+    if (shownMode) setDesktopColorScheme(shownMode);
+  }, [shownMode]);
 
   useEffect(() => {
     setPageBackground(

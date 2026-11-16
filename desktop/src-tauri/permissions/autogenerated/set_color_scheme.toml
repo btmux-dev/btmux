@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-color-scheme"
+description = "Enables the set_color_scheme command without any pre-configured scope."
+commands.allow = ["set_color_scheme"]
+
+[[permission]]
+identifier = "deny-set-color-scheme"
+description = "Denies the set_color_scheme command without any pre-configured scope."
+commands.deny = ["set_color_scheme"]

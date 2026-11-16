@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "allows the bundled startup picker to discover, connect to, start, and stop servers, and manage remote servers",
+  "description": "allows the bundled startup picker to discover, connect to, start, and stop servers, manage remote servers, and match the window background and scheme",
   "local": true,
   "windows": [
     "*"
@@ -16,6 +16,8 @@
     "allow-remove-remote-server",
     "allow-connect-remote-server",
     "allow-zoom",
-    "allow-new-window"
+    "allow-new-window",
+    "allow-set-background",
+    "allow-set-color-scheme"
   ]
 }

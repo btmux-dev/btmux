@@ -4,47 +4,74 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>btmux</title>
+    <script>
+      // The window's scheme (`?scheme=`, from the window it opened from), else the system's.
+      const pickedScheme = new URLSearchParams(location.search).get("scheme");
+      const lightQuery = matchMedia("(prefers-color-scheme: light)");
+      const pickerBackgrounds = { dark: [0x17, 0x17, 0x17, 0xff], light: [0xf5, 0xf5, 0xf5, 0xff] };
+      function applyScheme() {
+        const scheme = pickedScheme === "dark" || pickedScheme === "light" ? pickedScheme : lightQuery.matches ? "light" : "dark";
+        document.documentElement.dataset.scheme = scheme;
+        // Paints the window behind the transparent title bar (macOS).
+        if (window.__btmuxDesktopTransparency)
+          window.__TAURI__?.core.invoke("set_background", { color: pickerBackgrounds[scheme] }).catch(() => {});
+      }
+      applyScheme();
+      if (pickedScheme) window.__TAURI__?.core.invoke("set_color_scheme", { scheme: pickedScheme }).catch(() => {});
+      else lightQuery.addEventListener("change", applyScheme);
+    </script>
     <style>
-      :root { color-scheme: dark; }
-      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #171717; color: #ddd; font: 14px system-ui, sans-serif; }
+      :root {
+        color-scheme: dark;
+        --bg: #171717; --text: #ddd; --muted: #aaa; --border: #333;
+        --button: #252525; --button-hover: #333; --button-text: #eee; --button-border: #444;
+        --input: #111; --accent: #b4c9ff; --accent-hover: #c8d7ff; --on-accent: #171717; --danger: #ffb4b4;
+      }
+      :root[data-scheme="light"] {
+        color-scheme: light;
+        --bg: #f5f5f5; --text: #1f1f1f; --muted: #5f5f5f; --border: #d6d6d6;
+        --button: #fff; --button-hover: #ebebeb; --button-text: #1f1f1f; --button-border: #c4c4c4;
+        --input: #fff; --accent: #3355c7; --accent-hover: #2a48ad; --on-accent: #fff; --danger: #b3261e;
+      }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--text); font: 14px system-ui, sans-serif; }
       main { width: min(480px, calc(100vw - 64px)); padding: 32px; }
       h1 { font-size: 24px; font-weight: 600; margin: 0 0 24px; }
-      h2 { font-size: 13px; font-weight: 600; margin: 0; color: #aaa; text-transform: uppercase; letter-spacing: 0.04em; }
-      p { color: #aaa; line-height: 1.5; margin: 0; }
+      h2 { font-size: 13px; font-weight: 600; margin: 0; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+      p { color: var(--muted); line-height: 1.5; margin: 0; }
       section { margin-bottom: 28px; }
       .head { display: flex; align-items: center; justify-content: space-between; min-height: 28px; margin-bottom: 8px; }
-      .card { border: 1px solid #333; border-radius: 8px; padding: 16px; }
+      .card { border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
       .row { display: flex; align-items: center; gap: 8px; }
       .info { flex: 1; min-width: 0; overflow-wrap: anywhere; }
       .info strong, .info small { display: block; }
-      .info small { margin-top: 4px; color: #aaa; line-height: 1.4; }
+      .info small { margin-top: 4px; color: var(--muted); line-height: 1.4; }
       ul { list-style: none; padding: 0; margin: 0; }
       li + li { margin-top: 8px; }
-      button { background: #252525; color: #eee; border: 1px solid #444; border-radius: 6px; padding: 8px 14px; cursor: pointer; font: inherit; white-space: nowrap; }
-      button:hover { background: #333; }
-      button:focus-visible { outline: 2px solid #b4c9ff; outline-offset: 3px; }
+      button { background: var(--button); color: var(--button-text); border: 1px solid var(--button-border); border-radius: 6px; padding: 8px 14px; cursor: pointer; font: inherit; white-space: nowrap; }
+      button:hover { background: var(--button-hover); }
+      button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
       button:disabled { opacity: 0.5; cursor: wait; }
-      .primary { background: #b4c9ff; border-color: #b4c9ff; color: #171717; font-weight: 600; }
-      .primary:hover { background: #c8d7ff; }
-      .link { background: none; border: 0; padding: 4px 6px; color: #b4c9ff; }
+      .primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+      .primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+      .link { background: none; border: 0; padding: 4px 6px; color: var(--accent); }
       .link:hover { background: none; text-decoration: underline; }
-      .stop.confirm { border-color: #ffb4b4; color: #ffb4b4; }
+      .stop.confirm { border-color: var(--danger); color: var(--danger); }
       fieldset { border: 0; padding: 0; margin: 12px 0 16px; }
       label { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
       label + label { margin-top: 10px; }
-      label small { display: block; margin-top: 2px; color: #aaa; line-height: 1.4; }
-      input { margin: 2px 0 0; accent-color: #b4c9ff; }
+      label small { display: block; margin-top: 2px; color: var(--muted); line-height: 1.4; }
+      input { margin: 2px 0 0; accent-color: var(--accent); }
       label.sub { margin-left: 24px; }
       code { font: 13px ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
       .field label { display: block; cursor: default; }
       .field + .field { margin-top: 12px; }
-      .field input { display: block; box-sizing: border-box; width: 100%; margin-top: 6px; padding: 8px 10px; background: #111; color: #eee; border: 1px solid #444; border-radius: 6px; font: inherit; }
-      .field input:focus-visible { outline: 2px solid #b4c9ff; outline-offset: 1px; }
-      .field small { display: block; margin-top: 6px; color: #aaa; line-height: 1.4; }
+      .field input { display: block; box-sizing: border-box; width: 100%; margin-top: 6px; padding: 8px 10px; background: var(--input); color: var(--text); border: 1px solid var(--button-border); border-radius: 6px; font: inherit; }
+      .field input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+      .field small { display: block; margin-top: 6px; color: var(--muted); line-height: 1.4; }
       .actions { justify-content: flex-end; margin-top: 16px; }
       #remote-form { margin-top: 8px; }
-      .problem { color: #ffb4b4 !important; }
-      #error { color: #ffb4b4; }
+      .problem { color: var(--danger) !important; }
+      #error { color: var(--danger); }
       #status:empty, #error:empty { display: none; }
       [hidden] { display: none !important; }
     </style>
