@@ -134,25 +134,26 @@ default.
 }
 ```
 
-Set `service.tailscale = true` to start the service with `--tailscale` (see
-[Tailscale](../features/phones-and-tailscale.md#tailscale)). `services.btmux` is accepted as an alias for `programs.btmux`. The service uses
-the same launchd label and systemd unit as `btmux install`, so `btmux restart`
-works with it. When only the package changes, activation runs `btmux upgrade`,
-so running shells survive; it falls back to a restart if the running server
-can't upgrade in place, and restarts when the service's options change. If the
-upgrade is refused or fails while the server keeps running (for example, with
-unsaved Neovim buffers), activation only warns; run `btmux upgrade` later. If you used `btmux install` before, run `btmux uninstall` first. Set
-`programs.btmux.service.enable = false` to install and configure btmux without
-starting it. Override `package` to use a different build or package source, or
-set it to `null` (with the service disabled) to only write the configuration.
-When `programs.fish.enable` is set, the module also installs the btmux fish
-integration (see [Configuration](../features/fish.md)); set
-`enableFishIntegration = false` to skip it, or `fishPickMenus = true` to use
-[`btmux pick` menus](../features/fish.md) for Tab, `Ctrl-R`, and `cdh`.
-The module installs bash, fish, and zsh completions when the selected package
-supports `btmux completions`. The bundled fallback package currently uses an
-older release, so completions become available after selecting a newer package
-or updating that release.
+The service is the one `btmux install` sets up, so `btmux restart` works with
+it; if you used `btmux install` before, run `btmux uninstall` first. When only
+the package changes, activation runs `btmux upgrade`, so running shells survive.
+If that is refused (say, unsaved Neovim buffers), activation warns and you can
+run `btmux upgrade` later.
+
+Other options:
+
+- `service.enable = false`: install and configure btmux without starting it.
+- `service.tailscale = true`: start the service with `--tailscale` (see
+  [Tailscale](../features/phones-and-tailscale.md#tailscale)).
+- `package`: use another build, or `null` (with the service disabled) to only
+  write the configuration.
+- `enableFishIntegration = false`: skip the
+  [fish integration](../features/fish.md), installed when
+  `programs.fish.enable` is set; `fishPickMenus = true` uses `btmux pick` menus
+  for Tab, `Ctrl-R`, and `cdh`.
+
+The module also installs bash, fish, and zsh completions when the package
+supports them. `services.btmux` is an alias for `programs.btmux`.
 
 To also install the desktop app:
 
