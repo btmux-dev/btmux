@@ -87,6 +87,16 @@ fn initial_messages(mgr: &crate::session::manager::SessionManager) -> Vec<String
             .unwrap(),
         );
     }
+    if let Some(id) = crate::vscode::last_shutdown() {
+        messages.push(
+            serde_json::to_string(&ServerMessage::EditorShutDown {
+                editor: Editor::Vscode,
+                id: Some(id),
+                replay: true,
+            })
+            .unwrap(),
+        );
+    }
     if let Some(status) = crate::tailscale::status() {
         messages.push(serde_json::to_string(&ServerMessage::Tailscale { status }).unwrap());
     }
@@ -280,14 +290,23 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
     }
 
     if let ClientMessage::ShutDownEditor { editor } = cmd {
-        match editor {
-            Editor::Neovim if crate::ws::nvim::running().await => crate::ws::nvim::quit().await?,
-            Editor::Vscode if crate::vscode::running().await => crate::vscode::shutdown().await,
+        let id = match editor {
+            Editor::Neovim if crate::ws::nvim::running().await => {
+                crate::ws::nvim::quit().await?;
+                None
+            }
             Editor::Neovim => return Err("Neovim isn't running".into()),
-            Editor::Vscode => return Err("VS Code isn't running".into()),
+            Editor::Vscode => match crate::vscode::stop().await {
+                Some(id) => Some(id),
+                None => return Err("VS Code isn't running".into()),
+            },
             Editor::Pane => return Err("Only the built-in editors can be shut down".into()),
-        }
-        let msg = ServerMessage::EditorShutDown { editor };
+        };
+        let msg = ServerMessage::EditorShutDown {
+            editor,
+            id,
+            replay: false,
+        };
         let _ = state
             .read()
             .await
@@ -1139,8 +1158,12 @@ pub enum ServerMessage {
         explicit: bool,
     },
     /// The built-in Neovim or VS Code was shut down; tabs close its surface.
+    /// VS Code's last shutdown is resent on connect and lag (`replay`), and
+    /// tabs that hadn't seen its `id` close the surface then.
     EditorShutDown {
         editor: Editor,
+        id: Option<String>,
+        replay: bool,
     },
     /// Sent on connect and on change while `--tailscale` is on.
     Tailscale {

@@ -186,8 +186,8 @@ export function useControlSocket() {
             else openInEditor((m) => wsRef.current?.send(JSON.stringify(m)), msg.pane_id, msg.path, msg.line, editor);
           }
         } else if (msg.type === 'editor_shut_down') {
-          useStore.getState().editorShutDown(msg.editor);
-          showToast(`${msg.editor === 'vscode' ? 'VS Code' : 'Neovim'} shut down`, 'info');
+          if (useStore.getState().editorShutDown(msg.editor, msg.id) && !msg.replay)
+            showToast(`${msg.editor === 'vscode' ? 'VS Code' : 'Neovim'} shut down`, 'info');
         } else if (msg.type === 'tailscale') {
           useStore.getState().setTailscale(msg.status);
         } else if (msg.type === 'connect') {

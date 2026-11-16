@@ -52,6 +52,11 @@ const MACOS_CODE: &str = "/Applications/Visual Studio Code.app/Contents/Resource
 const LICENSE_FILE: &str = "license-accepted";
 
 static SERVER: LazyLock<Mutex<Option<Server>>> = LazyLock::new(|| Mutex::new(None));
+/// Shut down by the user: only `/api/vscode` starts it again, not proxied
+/// requests from iframes that haven't closed yet. Changed under `SERVER`.
+static STOPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The last shutdown by the user, so tabs that missed it close the surface.
+static LAST_SHUTDOWN: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 /// Which server to start; from `[vscode] server`.
 static KIND: std::sync::Mutex<Kind> = std::sync::Mutex::new(Kind::Code);
 /// Accepted without a profile to remember it in.
@@ -737,6 +742,8 @@ fn spawn(kind: Kind) -> Result<Server, String> {
 enum StartError {
     /// The user hasn't accepted the VS Code Server license yet.
     License,
+    /// Shut down by the user and not started again.
+    Stopped,
     Failed(String),
 }
 
@@ -744,6 +751,7 @@ impl std::fmt::Display for StartError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::License => f.write_str("the VS Code Server license hasn't been accepted"),
+            Self::Stopped => f.write_str("VS Code was shut down"),
             Self::Failed(message) => f.write_str(message),
         }
     }
@@ -756,9 +764,13 @@ async fn connect_socket(path: &Path) -> std::io::Result<UnixStream> {
     tokio::net::windows::named_pipe::ClientOptions::new().open(path)
 }
 
-/// Start the server if it isn't running, then connect to it.
-async fn connect() -> Result<UnixStream, StartError> {
+/// Connect to the server, starting it if it isn't running and either `start`
+/// or the user didn't shut it down.
+async fn connect(start: bool) -> Result<UnixStream, StartError> {
     let mut server = SERVER.lock().await;
+    if start {
+        STOPPED.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
     let running = server
         .as_mut()
         .is_some_and(|server| matches!(server.child.try_wait(), Ok(None)));
@@ -766,6 +778,8 @@ async fn connect() -> Result<UnixStream, StartError> {
         if let Ok(stream) = connect_socket(&server.as_ref().unwrap().socket()).await {
             return Ok(stream);
         }
+    } else if STOPPED.load(std::sync::atomic::Ordering::Relaxed) {
+        return Err(StartError::Stopped);
     } else {
         let kind = *KIND.lock().unwrap();
         if kind == Kind::Code && !license_accepted() {
@@ -811,10 +825,13 @@ pub enum VscodeStatus {
 
 /// `GET /api/vscode`: start VS Code if needed and report whether it's ready.
 pub async fn status() -> Json<VscodeStatus> {
-    Json(match connect().await {
+    Json(match connect(true).await {
         Ok(_) => VscodeStatus::Ready,
         Err(StartError::License) => VscodeStatus::License,
         Err(StartError::Failed(message)) => VscodeStatus::Error { message },
+        Err(error @ StartError::Stopped) => VscodeStatus::Error {
+            message: error.to_string(),
+        },
     })
 }
 
@@ -838,6 +855,25 @@ pub async fn shutdown() {
     drop(SERVER.lock().await.take());
 }
 
+/// Shut it down for the user; returns the shutdown's id, or `None` if it wasn't running.
+pub async fn stop() -> Option<String> {
+    let mut server = SERVER.lock().await;
+    let running = server
+        .as_mut()
+        .is_some_and(|server| matches!(server.child.try_wait(), Ok(None)));
+    drop(server.take());
+    running.then(|| {
+        STOPPED.store(true, std::sync::atomic::Ordering::Relaxed);
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        *LAST_SHUTDOWN.lock().unwrap() = Some(id.clone());
+        id
+    })
+}
+
+pub fn last_shutdown() -> Option<String> {
+    LAST_SHUTDOWN.lock().unwrap().clone()
+}
+
 /// Forward a request, including WebSocket upgrades, to the server.
 pub async fn proxy(mut request: Request) -> Response {
     match forward(&mut request).await {
@@ -850,7 +886,14 @@ pub async fn proxy(mut request: Request) -> Response {
 }
 
 async fn forward(request: &mut Request) -> Result<Response, String> {
-    let stream = connect().await.map_err(|e| e.to_string())?;
+    let stream = match connect(false).await {
+        Ok(stream) => stream,
+        // A stale iframe; it closes once its tab hears of the shutdown.
+        Err(StartError::Stopped) => {
+            return Ok((StatusCode::SERVICE_UNAVAILABLE, "VS Code was shut down").into_response())
+        }
+        Err(error) => return Err(error.to_string()),
+    };
     let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
         .await
         .map_err(|e| e.to_string())?;
