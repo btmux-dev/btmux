@@ -47,4 +47,5 @@ ${body}`;
     new URL("../src/content/docs/project/changelog.md", import.meta.url),
     page,
   );
+  return versions;
 }

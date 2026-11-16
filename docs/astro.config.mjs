@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { defineConfig } from "astro/config";
 import { unified } from "@astrojs/markdown-remark";
 import starlight from "@astrojs/starlight";
@@ -9,7 +10,15 @@ import { generateChangelogPage } from "./scripts/changelog-page.mjs";
 const repo = "https://github.com/buntec/btmux";
 
 // Render the repo-root CHANGELOG.md as the Project > Changelog page.
-generateChangelogPage("https://github.com/btmux-dev/btmux");
+const released = generateChangelogPage("https://github.com/btmux-dev/btmux");
+
+// The version beside the site title (src/components/SiteTitle.astro), linking
+// to its changelog entry: heading anchors drop the dots, `## 0.0.206` is `#00206`.
+const version = readFileSync(new URL("../Cargo.toml", import.meta.url), "utf8")
+  .match(/^version = "([^"]+)"/m)[1];
+const versionHref = `/project/changelog/#${
+  released.includes(version) ? version.replaceAll(".", "") : "unreleased"
+}`;
 
 // Sidebar groups, one per content directory; pages order themselves with
 // `sidebar.order` in their frontmatter.
@@ -27,6 +36,12 @@ export default defineConfig({
   site: "https://btmux.dev",
   markdown: {
     processor: unified({ remarkPlugins: [[remarkRepoLinks, { repo }]] }),
+  },
+  vite: {
+    define: {
+      __BTMUX_VERSION__: JSON.stringify(version),
+      __BTMUX_VERSION_HREF__: JSON.stringify(versionHref),
+    },
   },
   integrations: [
     starlight({
@@ -48,6 +63,7 @@ export default defineConfig({
         "@fontsource-variable/geist-pixel/elsh.css",
         "./src/styles/custom.css",
       ],
+      components: { SiteTitle: "./src/components/SiteTitle.astro" },
       social: [{ icon: "github", label: "GitHub", href: repo }],
       editLink: { baseUrl: `${repo}/edit/main/docs/` },
       sidebar: Object.entries(groups).map(([label, directory]) => ({

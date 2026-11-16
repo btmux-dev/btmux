@@ -1,0 +1,38 @@
+---
+// Starlight's site title followed by the current btmux version, linking to its
+// entry on the Changelog page. The version is Cargo.toml's, through the
+// `__BTMUX_VERSION__` and `__BTMUX_VERSION_HREF__` defines in astro.config.mjs.
+import Default from "@astrojs/starlight/components/SiteTitle.astro";
+
+const version = __BTMUX_VERSION__;
+const href = __BTMUX_VERSION_HREF__;
+---
+
+<div class="sl-flex title-with-version">
+  <Default />
+  <a class="version" href={href} title={`btmux ${version} changelog`}>
+    v{version}
+  </a>
+</div>
+
+<style>
+  .title-with-version {
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .version {
+    font-family: var(--sl-font-mono);
+    font-size: var(--sl-text-xs);
+    line-height: 1;
+    padding: 0.25rem 0.45rem;
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 999px;
+    color: var(--sl-color-gray-2);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .version:hover {
+    color: var(--sl-color-white);
+    border-color: var(--sl-color-gray-3);
+  }
+</style>
