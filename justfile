@@ -248,6 +248,15 @@ docs-dev:
 docs-build:
     cd docs && bun install && bun run build
 
+# Retake the docs' screenshots (docs/src/assets/screenshots) from a fresh stack with demo sessions
+docs-screenshots:
+    cd frontend && bunx playwright install chromium && bun browser-test-stack.ts docs-screenshots.ts
+
+# Regenerate the docs' command reference from `btmux --help`
+docs-cli:
+    cargo build
+    node docs/scripts/cli-reference.mjs target/debug/btmux
+
 # Regenerate the docs' option reference from `btmux generate-config`
 docs-config:
     { printf '%s\n' '---' 'title: "All options"' 'sidebar:' '  order: 3' '---' '' 'Every option with its default, as `btmux generate-config` prints it. Uncomment a line to change it.' '' '```toml'; cargo run -q -- generate-config; echo '```'; } > docs/src/content/docs/configuration/reference.md

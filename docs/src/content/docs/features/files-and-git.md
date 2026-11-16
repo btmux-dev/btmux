@@ -12,6 +12,8 @@ lists the keys for where you are.
 
 `<prefix> + f` opens it: a list of entries and a preview of the focused one.
 
+![The file browser with a rendered Markdown preview](../../../assets/screenshots/file-browser.png)
+
 | Key                         | Action                                                 |
 | --------------------------- | ------------------------------------------------------ |
 | `j` / `k`, arrows           | Move                                                   |
@@ -29,7 +31,7 @@ lists the keys for where you are.
 | `a`                         | New file or folder (end the name with `/` for a folder) |
 | `r`                         | Rename                                                 |
 | `d` / `D`                   | Move to trash / delete permanently (asks first)        |
-| `Ctrl+d` / `Ctrl+u`         | Scroll the preview                                     |
+| `Ctrl+D` / `Ctrl+U`         | Scroll the preview                                     |
 | `m`, `w`                    | Preview fullscreen, wrap lines                         |
 | `q`, `Esc`                  | Close                                                  |
 
@@ -45,6 +47,8 @@ falling back to `find` and `grep`. Both show at most 100 results.
 
 `<prefix> + g` opens the status of the pane's repository: staged, unstaged,
 and untracked files, with the focused file's diff beside the list.
+
+![Git mode: staged, unstaged, and untracked files beside a diff](../../../assets/screenshots/git-mode.png)
 
 | Key                 | Action                                              |
 | ------------------- | --------------------------------------------------- |
@@ -67,12 +71,12 @@ pull, push, and stash popups, `-` followed by a letter toggles a flag first.
 
 | Key | Popup    | Actions                                                                 | Flags |
 | --- | -------- | ----------------------------------------------------------------------- | ----- |
-| `b` | Branch   | `Enter` check out, `c` create and check out, `n` create, `m` rename, `d` delete | |
+| `b` | Branch   | `Enter` check out, `c` create and check out, `n` create, `m` rename, `d` delete, `D` force delete | |
 | `f` | Fetch    | `u` upstream, `e` another remote, `a` all remotes                        | `-p` prune, `-t` tags |
 | `F` | Pull     | `u` upstream, `e` another branch                                         | `-r` rebase, `-f` fast-forward only |
 | `P` | Push     | `u` upstream, `e` elsewhere, `t` tags                                    | `-f` force with lease, `-h` skip hooks, `-n` dry run |
 | `z` | Stash    | `z` stash, `i` index only, `a` apply, `p` pop, `d` drop                  | `-u` untracked, `-a` all |
-| `%` | Worktree | `Enter` visit, `c` create and visit, `n` create, `d` delete, `l` lock, `p` prune | |
+| `%` | Worktree | `Enter` visit, `c` create and visit, `n` create, `d` delete, `D` force delete, `l` lock, `p` prune | |
 
 These run the `git` command, so your credentials, hooks, and config apply.
 

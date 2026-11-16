@@ -37,12 +37,11 @@ the raw bytes instead.
 pane goes), optional `cwd`, and `select` (default true), and returns the new
 `pane_id`. Creating a session or window also returns its `pane_id`.
 
-`focus` switches every connected browser tab to the pane's window and session
+`focus` switches every connected client to the pane's window and session
 (204, or 404 for an unknown pane).
 
 `open-file-browser`'s `mode` is `"files"` (default), `"git"`, or `"process"`,
-matching the `prefix + f` / `prefix + g` / `prefix + t` overlay. It switches
-every connected browser tab
+matching the `<prefix> + f` / `<prefix> + g` / `<prefix> + t` overlay. It switches every connected client
 to the pane's window and session before opening the overlay there.
 For file mode, optional `focus_file` names an entry in `path` to focus on open.
 
@@ -65,7 +64,7 @@ shows an error and leaves that program's input untouched.
 | `POST /api/sessions/<session-id>/layout/next`                   | Cycle to the next pane layout                                 |
 | `GET /api/panes`                                                | List every pane with its window and session                   |
 | `POST /api/panes/<pane-id>/split`                               | Split a pane in any window                                    |
-| `POST/DELETE /api/panes/<pane-id>/worktree`                     | Create a git worktree with a window, or remove the pane's     |
+| `POST/DELETE /api/panes/<pane-id>/worktree`                     | Create a Git worktree with a window, or remove the pane's     |
 | `POST /api/panes/<pane-id>/select`                              | Make a pane and its window active                             |
 | `DELETE /api/panes/<pane-id>`                                   | Kill a pane, closing its window or session if it was the last |
 | `POST /api/windows/<window-id>/{select,rename}`                 | Make a window active, or rename it                            |
@@ -79,7 +78,7 @@ shows an error and leaves that program's input untouched.
 | `POST /api/notify`                                              | Show a notification, not tied to a pane, in every client      |
 | `POST/DELETE /api/panes/<pane-id>/notify`                       | Report agent events or set/clear a notification               |
 | `POST /api/panes/<pane-id>/open-file-browser`                   | Open the file browser at a path, in the pane's session        |
-| `POST /api/panes/<pane-id>/focus`                               | Switch every tab to the pane's window and session             |
+| `POST /api/panes/<pane-id>/focus`                               | Switch every client to the pane's window and session          |
 | `GET/POST/DELETE /api/panes/<pane-id>/agent-status`             | Explain, set, or clear semantic agent status                  |
 | `GET /api/system`                                               | Describe the server host (OS, CPU, memory, disks, shell, ...) |
 | `GET /api/health`                                               | Report which optional programs the server found and whether they run |

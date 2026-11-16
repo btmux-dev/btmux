@@ -4,20 +4,49 @@ sidebar:
   order: 2
 ---
 
-Terminal scrollback in the browser still follows `[terminal].scrollback`. The
-backend retains a separate output journal capped at 8 MiB per pane and 128 MiB
-across journals. Evicting history advances a VT100 screen checkpoint, preserving
-the visible screen and standard input modes while releasing older history.
-Replay includes ordered resize events and never clears history on a resize.
-The cap covers retained journal data, not total process or browser memory.
+A client can attach to a pane at any time: after a reload, from a second
+machine, or hours after the program started. The server has to show it what is
+already on screen. This page explains how, and what happens when several
+clients look at the same pane.
 
-The checkpoint covers standard VT100 text, attributes, cursor, alternate screen,
-and supported input modes. Ghostty-specific graphics and unsupported terminal
-extensions are preserved in recent raw output but are not guaranteed after that
-output is compacted into a checkpoint. Full compatibility with every Ghostty
-extension would require a matching server-side Ghostty state serializer.
+## The journal
 
-The first connected interactive viewer controls the shared PTY size; other
-viewers adopt it. On disconnect, ownership passes to the oldest remaining viewer.
-Mirrors never own dimensions or send input. Window and pane selection remain
-shared per session, while session navigation remains local to each browser.
+The server keeps each pane's recent output in a **journal**: the raw bytes the
+program wrote, in order, along with every resize. When a client attaches, the
+server replays the journal into the client's terminal emulator, which ends up
+in the same state as everyone else's.
+
+Journals are capped at 8 MiB per pane and 128 MiB in total. This is separate
+from `[terminal] scrollback`, which limits how many lines each client keeps.
+
+## The checkpoint
+
+When a journal is full, its oldest output is dropped. Simply cutting it off
+would lose whatever that output set up: the text still on screen, colors, the
+cursor, whether a full-screen program is running.
+
+So the server folds dropped output into a **checkpoint**: a snapshot of the
+screen that the remaining journal continues from. A replay starts with the
+checkpoint, then the journal.
+
+The checkpoint understands standard terminal features: text, attributes, the
+cursor, the alternate screen, and input modes. Newer extensions, such as
+inline images, survive while they are still in the journal, but not once they
+have been folded into a checkpoint.
+
+## Several clients on one pane
+
+A program has one terminal size, but clients have different window sizes.
+
+- The first client to attach sets the pane's size. Others show that size
+  instead of fitting their own window.
+- Another client takes over the size by typing, pasting, or clicking in the
+  pane. When the owner disconnects, the longest-attached client takes over.
+- Thumbnails, in the window grid and the agent view, only watch. They never
+  set the size or send input.
+
+Resizing never clears history: resizes are part of the journal, so a replay
+walks through them in order.
+
+Which window and pane are active is shared by all clients. Which session a
+client shows is its own.

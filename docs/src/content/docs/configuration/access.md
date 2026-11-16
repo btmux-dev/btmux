@@ -1,7 +1,7 @@
 ---
 title: "Access tokens"
 sidebar:
-  order: 5
+  order: 6
 ---
 
 ## Token files

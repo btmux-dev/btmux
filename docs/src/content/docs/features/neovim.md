@@ -77,8 +77,8 @@ its highlights.
 
 The default background follows `[terminal] allow-transparency`, which defaults
 to enabled with a wallpaper or shader. Explicit highlight backgrounds (selection,
-search, floats, and cursor line) remain visible. The panes underneath stay mounted
-and are hidden while the editor is open.
+search, floats, and cursor line) remain visible. The pane underneath keeps running
+while the editor covers it.
 
 The view uses the terminal font and `font-weight` (bold is 700). Neovim's
 `guifont` and `linespace` override it, as in Neovide: `:set guifont=Fira\ Code:h14`
@@ -96,7 +96,7 @@ changes trigger `FocusGained` and `FocusLost`.
 F-keys and Cmd shortcuts reach Neovim as `<F5>` or `<D-s>`. Cmd+Q, W, T, N, R,
 L, M, H, Cmd+digits, and Cmd+V (paste) stay with the browser or desktop app.
 With `mousemoveevent` set, hovering sends `<MouseMove>`; `mousehide` hides the
-pointer while you type. CTRL-Z (`:suspend`) hides the view, and a bell (when
+pointer while you type. Ctrl+Z (`:suspend`) hides the view, and a bell (when
 `belloff` allows it) flashes it.
 
 ## Limitations

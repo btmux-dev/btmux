@@ -1,7 +1,7 @@
 ---
 title: "btmux for tmux users"
 sidebar:
-  order: 4
+  order: 5
 ---
 
 Most default keys match tmux. The default prefix is `C-a`, the most common tmux
@@ -19,7 +19,7 @@ differs.
 | `c` `n` `p` `0`-`9`    | New window, next, previous, select  |
 | `,` `&`                | Rename window, kill window          |
 | `$` `(` `)` `L`        | Rename session, previous, next, last |
-| `]` `?` `:`            | Paste, key list, prompt             |
+| `?`                    | Key list                            |
 
 ## Same key, different meaning
 
@@ -33,10 +33,12 @@ differs.
 | `[`     | copy mode   | opens the scrollback in `$EDITOR` inside the pane |
 | `l`     | last-window | pane right (`h` `j` `k` too); last-window unbound |
 | `/`     | describe key | search the scrollback                            |
+| `]`     | paste buffer | pastes the system clipboard                      |
+| `:`     | command prompt | command palette of btmux commands              |
 | `C`     | (unbound)   | new session (prompts for name)                    |
 | `g` `a` | (unbound)   | Git mode, agent view                              |
 | `e` `b` | (unbound)   | editor, browser                                   |
-| `W` `X` | (unbound)   | new git worktree (prompts for branch), remove it  |
+| `W` `X` | (unbound)   | new Git worktree (prompts for branch), remove it  |
 
 Rebind any of them under [`[keys]`](../configuration/keybindings.md).
 
@@ -58,13 +60,13 @@ Rebind any of them under [`[keys]`](../configuration/keybindings.md).
   killing the last window kills the session. The last session cannot be killed,
   and exiting its last shell starts a fresh session "0" instead of ending the
   server.
-- **Paste.** `<prefix> ]` pastes the system clipboard, not a tmux buffer. The
-  browser may ask for clipboard permission.
+- **Paste.** The browser may ask for clipboard permission the first time.
 - **Prefix timeout.** The prefix expires after 2 seconds; tmux waits
   indefinitely.
 - **Repeat.** `repeat-time` defaults to `0` (off); tmux's default is 500 ms.
-- **Browser keys.** Cmd/Meta combinations and function keys are not forwarded to
-  the terminal.
+- **Browser keys.** Function keys and Cmd/Meta combinations are not forwarded
+  to the terminal, apart from the
+  [macOS editing keys](../configuration/keybindings.md#macos-editing-keys).
 - **`[keys]`.** Each action has one key. Overriding it moves the action off its
   default key rather than adding a second one.
 - **Popups.** `btmux display-popup` (or `popup`) takes `-t -d -e -T -E` and

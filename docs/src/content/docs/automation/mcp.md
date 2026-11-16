@@ -5,7 +5,7 @@ sidebar:
 ---
 
 The MCP server at `/mcp` exposes tools for creating and inspecting sessions,
-splitting panes, creating and removing git worktrees (`create_worktree`,
+splitting panes, creating and removing Git worktrees (`create_worktree`,
 `remove_worktree`), running commands, sending text and keys, reading pane
 output, describing the host (`system_info`, like `GET /api/system`), and
 [driving agents](../agents/orchestrating.md). `read_pane_output` returns the

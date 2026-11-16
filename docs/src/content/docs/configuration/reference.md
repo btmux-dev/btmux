@@ -170,6 +170,14 @@ Every option with its default, as `btmux generate-config` prints it. Uncomment a
 # window-grid = "w"
 # zoom-pane = "z"
 
+# A key (after the prefix) that runs a command in a popup over the active pane,
+# in its directory, through the shell. The popup closes when the command exits.
+# It takes the key from any action bound to it. Repeat the table for more keys.
+# [[popup]]
+# key = "G"
+# command = "lazygit"
+# title = "Git"
+
 # Terminal options. All are optional; absent fields use btmux's built-in
 # defaults shown below.
 # [terminal]
@@ -201,6 +209,7 @@ Every option with its default, as `btmux generate-config` prints it. Uncomment a
 # [vscode]
 # server = "code"   # "code" = `code serve-web` from an installed VS Code, "openvscode-server" = on PATH; read when it starts
 # desktop = false   # use desktop VS Code's settings, keybindings, and extensions
+# profile = "Work"   # from this desktop profile instead of the default one
 # settings = "~/.config/Code/User/settings.json"   # instead of desktop VS Code's
 # keybindings = "~/.config/Code/User/keybindings.json"
 # extensions = ["~/.vscode/extensions"]   # extension folders, or folders of them

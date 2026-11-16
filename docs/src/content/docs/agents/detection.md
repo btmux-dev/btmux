@@ -14,7 +14,7 @@ btmux combines four kinds of evidence:
 - **Processes.** It detects interactive Codex, Claude Code, and Gemini CLI
   processes under each pane's shell, including known Node/Bun entry points,
   about once a second. The foreground job selects the agent whose screen it
-  reads. A confirmed process exit clears the status even when Ctrl-C skips the
+  reads. A confirmed process exit clears the status even when Ctrl+C skips the
   end hook. Suspended or background agents stay listed with unknown activity,
   and a suspended agent keeps its hook session and resumes it after `fg`.
 - **Hooks.** The [installed hooks](index.md#setup) report session and turn

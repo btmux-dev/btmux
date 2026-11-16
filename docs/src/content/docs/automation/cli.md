@@ -8,6 +8,9 @@ The `btmux` binary has a subset of tmux's commands, with the same names,
 aliases, and main flags, for scripts and agents. Inside a pane they target that
 pane's server; otherwise the running server of `--profile`.
 
+These are only the tmux-style commands. [All commands](../configuration/commands.md)
+lists every one with its flags.
+
 ```sh
 btmux list-panes -F '#{pane_index} #{pane_id} #{pane_current_path}'
 pane=$(btmux split-window -h -d -c "$PWD")
@@ -47,7 +50,7 @@ Differences from tmux:
 - `-t` takes a pane, window, or session ID, or `SESSION[:WINDOW[.PANE]]` by
   name or index. An empty part is the current one (`:1`, `:.2`, `work:`).
   Without `-t`, the target is the pane the command runs in (`BTMUX_PANE_ID`).
-  Pane indexes follow the layout, as `prefix + q` shows them.
+  Pane indexes follow the layout, as `<prefix> + q` shows them.
 - `new-session`, `new-window`, and `split-window` print the new pane's ID, as
   tmux does with `-P -F '#{pane_id}'`. Sessions are always detached.
 - List commands print JSON unless given `-F`. Formats only substitute
@@ -62,14 +65,14 @@ Differences from tmux:
   last window, but never the last session.
 
 `new-worktree` and `remove-worktree` aren't tmux commands. `new-worktree
-BRANCH` adds a git worktree for the target pane's repo, beside its main
+BRANCH` adds a Git worktree for the target pane's repo, beside its main
 worktree (`../<repo>-<branch>`, or the `worktree-path` setting), and opens a
 window there in the pane's session, printing its pane ID. An existing local
 branch, or a remote one (as a tracking branch), is checked out; a new branch
 starts at the target pane's HEAD. `remove-worktree` removes the linked
 worktree the target pane is in and closes every pane in it, printing its path.
 It refuses the main worktree, uncommitted changes, a locked worktree, and panes
-running a program, and keeps the branch. `prefix + W` and `prefix + X` do the
+running a program, and keeps the branch. `<prefix> + W` and `<prefix> + X` do the
 same in the browser.
 
 ## Shell completions

@@ -10,7 +10,7 @@ leave and come back: a widget stays open until it is answered or the command is
 killed, including across tab reloads. With several tabs on the pane, each shows it
 and the first answer counts. Status 2 always means it failed: it ran outside
 btmux, or no tab showed the pane within 3 s. Status 130 means it was canceled with
-Esc or `Ctrl-C`.
+Esc or `Ctrl+C`.
 
 ## Menus
 
@@ -21,8 +21,8 @@ git switch "$(git branch --format='%(refname:short)' | btmux pick --prompt Branc
 ```
 
 Items are stdin's lines. A tab starts a description, which is shown and
-filtered on but not printed. Typing filters; Up, Down, Tab, `Ctrl-N`, and
-`Ctrl-P` move; Enter or a click chooses. It exits 0 once an item is chosen and
+filtered on but not printed. Typing filters; Up, Down, Tab, `Ctrl+N`, and
+`Ctrl+P` move; Enter or a click chooses. It exits 0 once an item is chosen and
 printed, and 1 if stdin had no items.
 
 | Flag                | Effect                                                                                  |

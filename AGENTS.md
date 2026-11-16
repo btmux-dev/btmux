@@ -54,6 +54,25 @@ Use American English consistently.
 This repository is public: never put agent session links (e.g. a `Claude-Session:`
 trailer or `claude.ai/code/session_…` URL) in commit messages or PR descriptions.
 
+## Docs
+
+The site in `docs/` is Starlight; pages are in `docs/src/content/docs`, one
+directory per sidebar group, ordered by `sidebar.order`. `just docs-dev` serves
+it and `just docs-build` also checks links. Three parts are generated, so
+regenerate rather than edit them: `just docs-config` (All options, from
+`generate-config`), `just docs-cli` (All commands, from `--help`; a new command
+needs a group in `docs/scripts/cli-reference.mjs`), and `just docs-screenshots`
+(`frontend/docs-screenshots.ts`, demo sessions on a browser-test stack; it
+must show nothing of the host, so no process viewer).
+
+Write for a user who hasn't seen the code: say what a feature is for before
+how it works, short sentences, key tables for keys, and implementation detail
+only under Internals. Use these terms: a **client** is a desktop window or
+browser tab; things open **over a pane** (editors, browser) or as a
+**dialog**. Keys are `<prefix> + x` after the prefix and `Ctrl+A`, `Cmd+C`
+otherwise, with tmux notation (`C-a`) only for config values; "key bindings"
+is two words, and it is "Git", not "git", outside commands.
+
 ## Compatibility
 
 There are no backward compatibility guarantees before 0.1.0. Rename or remove

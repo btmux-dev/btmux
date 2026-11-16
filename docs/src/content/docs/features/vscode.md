@@ -61,32 +61,47 @@ desktop = true
 # extensions = ["~/.vscode/extensions"]
 ```
 
-`desktop = true` shares desktop VS Code's user settings, keybindings, and
-extensions: `settings.json` and `keybindings.json` from
-`~/Library/Application Support/Code/User` (macOS) or
-`$XDG_CONFIG_HOME/Code/User` (Linux), and the extensions in
-`~/.vscode/extensions`. `settings`, `keybindings`, and `extensions` override
-these paths (and work without `desktop`), for example for VSCodium or
-Insiders; `extensions` lists extension folders or folders of them. Home
-Manager's `programs.vscode` writes the default locations, so
-`programs.btmux.settings.vscode.desktop = true` is all it takes. `profile`
-shares a desktop profile by name instead of the default one, with whatever it
-takes from the default profile; a profile with no extensions of its own yet
-shares none.
+`desktop = true` shares desktop VS Code's settings, key bindings, and
+extensions with btmux's VS Code. It reads them from the default locations:
 
-Shared settings and keybindings are read each time a VS Code window loads, and
-what changed in them since the last load is applied to btmux's VS Code, which
-keeps its own in the browser. Changes made there stay until the shared file
-changes the same setting or binding; keybindings follow the shared file's
-order, which decides which of two bindings for a key wins, and those added
-in btmux's VS Code keep their place among them. Shared extensions are linked, not copied,
-when VS Code starts and again whenever desktop VS Code installs, updates, or
-removes one. Desktop VS Code updates them, not btmux's; uninstalling one in
-btmux's VS Code lasts until it starts again. Extensions you install in btmux's
-VS Code stay, unless desktop VS Code has the same one. With
-`openvscode-server`, Microsoft's and GitHub's closed-source extensions (Pylance,
-C/C++, C# Dev Kit, Copilot) aren't shared, as they run only in Microsoft's VS
-Code.
+| What                     | macOS                                     | Linux                        |
+| ------------------------ | ----------------------------------------- | ---------------------------- |
+| Settings and key bindings | `~/Library/Application Support/Code/User` | `$XDG_CONFIG_HOME/Code/User` |
+| Extensions               | `~/.vscode/extensions`                    | `~/.vscode/extensions`       |
+
+- `settings`, `keybindings`, and `extensions` override those paths, and work
+  without `desktop`: for VSCodium or Insiders, say. `extensions` lists
+  extension folders, or folders of them.
+- `profile` shares a desktop profile by name instead of the default one, with
+  whatever it takes from the default profile. A profile with no extensions of
+  its own yet shares none.
+- With Home Manager, `programs.vscode` writes the default locations, so
+  `programs.btmux.settings.vscode.desktop = true` is all it takes.
+
+### How settings stay in sync
+
+btmux's VS Code keeps its own settings, in the browser. Each time a VS Code
+window loads, btmux reads the shared files and applies what changed in them
+since the last load.
+
+- A change you make in btmux's VS Code stays until the shared file changes the
+  same setting or binding.
+- Key bindings follow the shared file's order, which decides which of two
+  bindings for a key wins. Bindings added in btmux's VS Code keep their place
+  among them.
+
+### How extensions stay in sync
+
+Shared extensions are linked, not copied, when VS Code starts and again
+whenever desktop VS Code installs, updates, or removes one.
+
+- Desktop VS Code updates them; btmux's doesn't.
+- Uninstalling one in btmux's VS Code lasts until it starts again.
+- Extensions you install in btmux's VS Code stay, unless desktop VS Code has
+  the same one.
+- With `openvscode-server`, Microsoft's and GitHub's closed-source extensions
+  (Pylance, C/C++, C# Dev Kit, Copilot) aren't shared, as they run only in
+  Microsoft's VS Code.
 
 ## Extensions that don't work
 

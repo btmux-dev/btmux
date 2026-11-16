@@ -1,7 +1,7 @@
 ---
 title: "Desktop app"
 sidebar:
-  order: 3
+  order: 4
 ---
 
 The desktop app is a window onto a btmux server. It can start its own, or

@@ -26,8 +26,9 @@ font-size = 16
 
 ## Changes apply live
 
-Saving the file updates every connected client; only log levels need a
-restart. If the file can't be parsed, btmux keeps the last valid configuration
+Saving the file updates every connected client. A few options are read only
+when something starts: log levels at server start, `[vscode] server` when VS
+Code starts, and most of `[multipass]` when the VM is created. If the file can't be parsed, btmux keeps the last valid configuration
 and shows a banner until it is fixed. The banner's **Show error** button opens
 the full message.
 
@@ -39,6 +40,8 @@ things out: such changes are dropped on restart and whenever `config.toml`
 reloads. **Save** writes them to `config.toml`, keeping your comments and other
 settings. If the file is read-only, as Nix and Home Manager install it, the
 dialog shows the TOML to copy instead.
+
+![The Settings dialog on its General tab](../../../assets/screenshots/settings.png)
 
 The command palette's color and font pickers work like Apply.
 
@@ -59,3 +62,4 @@ with. Set `check-for-updates = false` to turn the check off.
 | The sandbox VM                    | [Sandboxed sessions](../features/sandbox.md) |
 | Notifications                     | [Coding agents](../agents/index.md#notifications) |
 | Separate instances and saved state | [Profiles](profiles.md)                     |
+| Server flags and every command    | [All commands](commands.md)                  |
