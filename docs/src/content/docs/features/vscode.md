@@ -7,8 +7,15 @@ sidebar:
 With `editor = "vscode"`, `<prefix> + e` opens VS Code
 [over the active pane](editors.md#over-a-pane), in the pane's Git worktree
 (its root, not the subfolder the pane is in), else the pane's folder. On touch
-screens, the key bar has a button to hide it. Pressing the prefix twice sends
-it to VS Code.
+screens, the key bar has a button to hide it.
+
+Requires macOS or Linux, and either VS Code or `openvscode-server` on the server
+(see [Server](#server)). Webviews such as the Markdown preview need internet
+access.
+
+btmux still takes the prefix key while VS Code has focus. To give VS Code that
+key itself, press it twice: with the default prefix, `Ctrl+A Ctrl+A` sends one
+`Ctrl+A` to VS Code.
 
 VS Code reloads only when shown over a pane in another folder, which ends its
 terminals and tasks. Over a pane connected to another host (ssh), it keeps its
@@ -17,14 +24,6 @@ folder.
 Over a pane of a [sandboxed session](sandbox.md), VS Code still runs on the
 host: its terminals, tasks, and extensions act on files the sandbox can change,
 with your account. btmux warns about this once per session.
-
-```toml
-editor = "vscode"
-```
-
-Requires macOS or Linux, and either VS Code or `openvscode-server` on the server
-(see [Server](#server)). Webviews such as the Markdown preview need internet
-access.
 
 Files open in the VS Code windows showing that pane's folder, in every client
 showing it, and not in windows of other folders. With another `editor`, VS Code
