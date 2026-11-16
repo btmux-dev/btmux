@@ -17,6 +17,8 @@ import { NARROW_QUERY, TOUCH_QUERY } from '../lib/touch';
 import { wideDialogProps } from '../lib/wideDialog';
 import { useTerminalOptions } from './TerminalPane';
 import { MobileKeyBar } from './MobileKeyBar';
+import { PaneSearch } from './PaneSearch';
+import { PaneWidget } from './PaneWidget';
 
 interface Props {
   popup: PopupSummary;
@@ -46,8 +48,12 @@ export function PopupDialog({ popup, sessionId, send }: Props) {
   useEffect(() => {
     const store = useStore.getState();
     store.setPopupShown(popup);
+    // A pane's search would be hidden under the popup, yet own the keyboard.
+    if (store.searchPaneId !== null && store.searchPaneId !== popup.id) store.setSearchPaneId(null);
     return () => {
-      if (useStore.getState().popupShown?.id === popup.id) useStore.getState().setPopupShown(null);
+      const store = useStore.getState();
+      if (store.popupShown?.id === popup.id) store.setPopupShown(null);
+      if (store.searchPaneId === popup.id) store.setSearchPaneId(null);
     };
   }, [popup]);
 
@@ -65,9 +71,13 @@ export function PopupDialog({ popup, sessionId, send }: Props) {
   // The connection banner, during an upgrade.
   const disconnected = useStore((s) => s.controlConnectionState !== 'connected');
   const coveredByAnother = !!overlay || settingsOpen || switcherOpen || fileBrowserOpen || disconnected;
+  // `btmux pick`, `confirm`, and `input` run in the popup, and search, show over it.
+  const searchOpen = useStore((s) => s.searchPaneId === popup.id);
+  const widget = useStore((s) => s.widgets.find((widget) => widget.pane_id === popup.id));
+  const widgetId = widget?.id ?? null;
   useEffect(() => {
-    if (term && initialReplayRendered && !coveredByAnother) term.focus();
-  }, [term, initialReplayRendered, coveredByAnother]);
+    if (term && initialReplayRendered && !coveredByAnother && !searchOpen) term.focus();
+  }, [term, initialReplayRendered, coveredByAnother, searchOpen, widgetId]);
 
   const background = config?.theme?.background ?? STARTUP_THEME.background;
   return (
@@ -104,6 +114,16 @@ export function PopupDialog({ popup, sessionId, send }: Props) {
             // `visibility` keeps layout, so the grid is sized while the replay stays hidden.
             style={{ visibility: initialReplayRendered ? 'visible' : 'hidden' }}
           />
+          {widget && term && initialReplayRendered && (
+            <PaneWidget key={widget.id} id={widget.id} kind={widget.kind} term={term} shown send={send} />
+          )}
+          {searchOpen && term && (
+            <PaneSearch
+              term={term}
+              theme={config?.theme ?? null}
+              onClose={() => useStore.getState().setSearchPaneId(null)}
+            />
+          )}
         </div>
         {/* The dialog is modal, so the app's key bar can't be reached under it. */}
         {touch && <MobileKeyBar sessionId={sessionId} send={send} />}

@@ -436,7 +436,15 @@ export function TerminalPane({
           }}
         />
         {widget && term && initialReplayRendered && (
-          <PaneWidget key={widget.id} id={widget.id} kind={widget.kind} term={term} shown={rendering} send={send} />
+          // Under a popup it can't be used, so callers fall back unless it's shown later.
+          <PaneWidget
+            key={widget.id}
+            id={widget.id}
+            kind={widget.kind}
+            term={term}
+            shown={rendering && !popupShown}
+            send={send}
+          />
         )}
         {searchOpen && term && (
           <PaneSearch

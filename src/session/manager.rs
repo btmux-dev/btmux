@@ -27,11 +27,11 @@ pub type PaneStatuses = std::sync::Arc<HashMap<Uuid, Option<AgentStatus>>>;
 #[cfg(unix)]
 pub type HandoffPane = (Uuid, std::os::fd::RawFd, crate::pty::Handoff);
 
-/// Sessions, started popups, and live shells, for an upgraded server.
+/// Sessions, popups, and live shells, for an upgraded server.
 #[cfg(unix)]
 pub type HandoffExport = (
     Vec<SessionSnapshot>,
-    Vec<crate::popup::PopupSummary>,
+    crate::popup::PopupsHandoff,
     Vec<HandoffPane>,
 );
 
@@ -807,10 +807,9 @@ impl SessionManager {
             .count()
     }
 
-    /// Whether the pane's shell runs in the guest.
+    /// Whether the pane's shell, or the popup's program, runs in the guest.
     pub fn is_guest_pane(&self, pane_id: Uuid) -> bool {
-        self.find_pane(pane_id)
-            .is_some_and(|pane| pane.pty.is_guest())
+        self.find_pty(pane_id).is_some_and(PtyHandle::is_guest)
     }
 
     pub async fn create_session(&mut self, name: Option<String>) -> Uuid {
@@ -1800,13 +1799,31 @@ impl SessionManager {
             self.resume_handoff(exported);
             return Err(format!("{stuck} pane(s) did not stop in time"));
         }
-        // Only started popups have a program to hand off.
-        let popups = self
+        let handed_off = |id: Uuid| exported.iter().any(|(pane, _, _)| *pane == id);
+        // A program reaped before its exit was handled keeps its status.
+        let reaped: Vec<_> = self
             .popups
-            .summaries()
-            .into_iter()
-            .filter(|popup| exported.iter().any(|(id, _, _)| *id == popup.id))
+            .iter()
+            .filter(|popup| popup.pty.is_spawned() && !handed_off(popup.id))
+            .map(|popup| popup.id)
             .collect();
+        let mut ended = false;
+        for id in reaped {
+            ended |= self.popups.exited(id) == Some(true);
+        }
+        if ended {
+            crate::popup::broadcast(self);
+        }
+        // Only started popups have a program to hand off.
+        let popups = crate::popup::PopupsHandoff {
+            open: self
+                .popups
+                .summaries()
+                .into_iter()
+                .filter(|popup| handed_off(popup.id))
+                .collect(),
+            ended: self.popups.export_ended(),
+        };
         Ok((self.all_snapshots(), popups, exported))
     }
 
@@ -1857,7 +1874,7 @@ impl SessionManager {
     pub fn restore_handoff(
         &mut self,
         sessions: Vec<SessionSnapshot>,
-        popups: Vec<crate::popup::PopupSummary>,
+        popups: crate::popup::PopupsHandoff,
         panes: Vec<(Uuid, std::os::fd::OwnedFd, crate::pty::Handoff)>,
     ) -> usize {
         let unread: Vec<_> = sessions
@@ -1867,7 +1884,8 @@ impl SessionManager {
             .filter_map(|p| Some((p.id, p.unread.clone()?)))
             .collect();
         let restored = self.restore_from_snapshots(sessions);
-        for popup in popups {
+        self.popups.restore_ended(popups.ended);
+        for popup in popups.open {
             if self.find_pane(popup.pane_id).is_none() {
                 continue;
             }

@@ -274,6 +274,8 @@ export function runAction(
 ) {
   const store = useStore.getState();
   const paneId = store.getActivePaneId(sessionId);
+  // A shown popup's terminal gets what goes to a terminal; its pane, structural actions.
+  const termId = store.popupShown?.id ?? paneId;
   const openOverlay = (o: Overlay) => store.setOverlay(o);
   const session = store.getSession(sessionId);
 
@@ -330,12 +332,12 @@ export function runAction(
     }
     case 'scroll-page-up':
     case 'scroll-page-down': {
-      const term = paneId ? store.terminals.get(paneId) : undefined;
+      const term = termId ? store.terminals.get(termId) : undefined;
       term?.scrollPages(action === 'scroll-page-up' ? -1 : 1);
       break;
     }
     case 'paste-clipboard': {
-      const term = paneId ? store.terminals.get(paneId) : undefined;
+      const term = termId ? store.terminals.get(termId) : undefined;
       if (!term) break;
       const blocked = () => store.showToast('Clipboard access was blocked by the browser', 'error');
       if (!navigator.clipboard?.readText) {
@@ -355,14 +357,14 @@ export function runAction(
       read()
         .catch(() => navigator.clipboard.readText())
         .then((data) => {
-          if (typeof data !== 'string') return pasteImage(paneId!, term, data);
+          if (typeof data !== 'string') return pasteImage(termId!, term, data);
           if (data) term.paste(data);
         })
         .catch(blocked);
       break;
     }
     case 'search-pane':
-      if (paneId) store.setSearchPaneId(paneId);
+      if (termId) store.setSearchPaneId(termId);
       break;
     case 'toggle-latex':
       if (paneId) store.toggleLatex(paneId);

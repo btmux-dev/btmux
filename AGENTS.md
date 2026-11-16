@@ -138,15 +138,18 @@ one is a shell command line (`PopupCommand`). The CLI sends its cwd and whole
 environment, which replaces the server's (`Spawn::env`); `[[popup]]` key
 bindings (`popup-<index>` binds, `open_popup`) have none and run the shell
 interactively for the `PATH` panes get. `BTMUX_PANE_ID` in a popup names its
-pane. `POST /api/panes/{id}/popup` replies once a tab spawned it, 409 after 3 s
+pane and `BTMUX_POPUP_ID` the popup, where widgets its programs open show
+(`/api/panes/{popup id}/widget`); widgets of panes under a shown popup aren't
+reported shown, so callers fall back. Pane search, scrolling, and clipboard and
+image pastes go to a shown popup. `POST /api/panes/{id}/popup` replies once a tab spawned it, 409 after 3 s
 otherwise, and the CLI then runs the program in place, as it does outside btmux;
 `GET .../popup/{popup id}` waits for the exit status (`PtyHandle::exit_status`,
 from the waiter; a reader's EOF while the child runs is ignored) and the CLI
-retries it across `btmux upgrade`, which hands popups off with the panes. Ended
-statuses are kept 5 minutes. Closing a pane closes its popups; `close_popup`
+retries it across `btmux upgrade`, which hands popups off with the panes, and
+ended statuses, which are kept 5 minutes (`PopupsHandoff`). Closing a pane closes its popups; `close_popup`
 hangs one up and drops it after 3 s. A guest pane's popup runs in the guest
-(`guest-shell --run`/`-- argv`, without the caller's environment), and both
-routes are guest routes. While a popup is shown it owns the keyboard except the
+(`guest-shell --run`/`-- argv`, without the caller's environment), in the
+directory asked for even outside the mounts, and both routes are guest routes. While a popup is shown it owns the keyboard except the
 prefix; `<prefix> <prefix>` writes to it (`write_pane_input` takes popup ids),
 and touch screens get a `MobileKeyBar` inside it, since the dialog is modal.
 `usePaneTerminal` is the emulator and socket lifecycle `TerminalPane` and

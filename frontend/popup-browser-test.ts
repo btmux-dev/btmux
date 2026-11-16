@@ -156,6 +156,92 @@ try {
   assert(await terminalFocused(), 'the pane has focus again');
   assert(!(await screen()).includes('\x01'), 'the prefix reached only the popup');
 
+  const popupFocused = () =>
+    page.waitForFunction(() => document.activeElement?.closest('[data-popup] [data-pane-terminal]') != null);
+  const popupId = () =>
+    page.evaluate(async () => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      return useStore.getState().popupShown?.id as string;
+    });
+  const searchPane = () =>
+    page.evaluate(async () => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      return useStore.getState().searchPaneId as string | null;
+    });
+
+  // Clipboard and image pastes, and pane search, go to the popup.
+  await run(`clear; "$BTMUX_BIN" popup sh -c 'echo paste-ready; read -r a; read -r b; echo "got=$a,$b"; read -r x'; echo "rc=$?"`);
+  await popupShows('paste-ready');
+  await popupFocused();
+  await page.evaluate(() =>
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { readText: async () => 'CLIP_MARKER' },
+    }),
+  );
+  await page.keyboard.press('Control+a');
+  await page.keyboard.press(']');
+  await popupShows('CLIP_MARKER');
+  await page.keyboard.press('Enter');
+  await page.evaluate(() => {
+    const data = new DataTransfer();
+    data.items.add(new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'shot.png', { type: 'image/png' }));
+    document
+      .querySelector('[data-popup] [data-pane-terminal] textarea')!
+      .dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+  });
+  await popupShows('paste-');
+  await page.keyboard.press('Enter');
+  await popupShows('got=CLIP_MARKER,');
+  // Long paths wrap.
+  const pasted = (await popup.innerText()).replace(/\s+/g, '');
+  assert(/got=CLIP_MARKER,\/\S*paste-[0-9a-f]+\.png/.test(pasted), pasted);
+  assert(!(await screen()).includes('CLIP_MARKER'), 'the pane got no paste');
+  await page.keyboard.press('Control+a');
+  await page.keyboard.press('/');
+  const search = popup.getByLabel('Search scrollback');
+  await search.waitFor();
+  assert(await search.evaluate((input) => input === document.activeElement), 'the search has focus');
+  assert.equal(await searchPane(), await popupId());
+  await page.keyboard.type('CLIP_MARKER');
+  await popup.getByText(/\d+\/\d+/).waitFor();
+  await page.keyboard.press('Escape');
+  await search.waitFor({ state: 'detached' });
+  await popupFocused();
+  // Closing the popup closes its search, which would keep prefix keys.
+  await page.keyboard.press('Control+a');
+  await page.keyboard.press('/');
+  await search.waitFor();
+  await popup.getByRole('button', { name: 'Close popup' }).click();
+  await closed();
+  await waitForOutput('rc=129');
+  assert.equal(await searchPane(), null);
+
+  // Widgets of programs in a popup show in it.
+  await run(`clear; "$BTMUX_BIN" popup sh -c 'printf "one\\ntwo\\n" | "$BTMUX_BIN" pick; read -r x'; echo "rc=$?"`);
+  const picker = popup.locator('[data-pane-widget]:not(.opacity-0)');
+  await picker.waitFor();
+  await page.waitForFunction(() => document.activeElement?.closest('[data-popup] [data-pane-widget]') != null);
+  await page.keyboard.type('two');
+  await page.keyboard.press('Enter');
+  await picker.waitFor({ state: 'detached' });
+  await popupShows('two');
+  await popupFocused();
+  await page.keyboard.press('Enter');
+  await closed();
+  await waitForOutput('rc=0');
+
+  // The pane's own widgets, under the popup, aren't shown, so their callers fall back.
+  await run(
+    `clear; (sleep 1; printf "a\\n" | "$BTMUX_BIN" pick; echo "bg=$?") & "$BTMUX_BIN" popup sh -c 'echo cover; read -r x'; wait; echo "rc=$?"`,
+  );
+  await popupShows('cover');
+  await waitForOutput('bg=2');
+  await popupFocused();
+  await page.keyboard.press('Enter');
+  await closed();
+  await waitForOutput('rc=0');
+
   assert.deepEqual(errors, []);
   console.log('popup browser test passed');
 } finally {

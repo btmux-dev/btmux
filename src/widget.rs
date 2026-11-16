@@ -220,7 +220,8 @@ pub async fn api_widget(
     let (progress, mut watcher) = watch::channel(Progress::Waiting);
     {
         let mut mgr = state.write().await;
-        if mgr.find_pane(pane_id).is_none() {
+        // A popup's widgets show in it.
+        if mgr.find_pty(pane_id).is_none() {
             return StatusCode::NOT_FOUND.into_response();
         }
         if mgr.widgets.0.iter().any(|widget| widget.pane_id == pane_id) {
@@ -329,8 +330,10 @@ pub(crate) fn pane_id() -> Result<String, String> {
         .ok_or("this must run in a btmux pane".into())
 }
 
-/// Shows the widget and waits: `None` if canceled.
+/// Shows the widget and waits: `None` if canceled. In a popup, it shows there.
 async fn show(pane: &str, request: &WidgetRequest) -> Result<Option<WidgetAnswer>, String> {
+    let popup = std::env::var("BTMUX_POPUP_ID").ok();
+    let pane = popup.as_deref().filter(|id| !id.is_empty()).unwrap_or(pane);
     let body = serde_json::to_value(request).map_err(|error| error.to_string())?;
     let reply = crate::api_client::request(
         None,

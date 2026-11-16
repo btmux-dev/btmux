@@ -212,8 +212,9 @@ impl Guest {
         }
     }
 
-    /// `btmux guest-shell` arguments for a shell in `cwd`.
-    pub fn wrapper_args(&self, cwd: Option<&str>) -> Vec<String> {
+    /// `btmux guest-shell` arguments for a shell in `cwd`. Unless `exact`, as
+    /// for a guest caller's directory, one outside the mounts is the first mount.
+    pub fn wrapper_args(&self, cwd: Option<&str>, exact: bool) -> Vec<String> {
         let mut args = vec![
             "guest-shell".to_string(),
             "--instance".into(),
@@ -240,7 +241,7 @@ impl Guest {
             args.extend(["--copy".into(), path.clone()]);
         }
         let cwd = cwd
-            .filter(|cwd| self.mounted(cwd))
+            .filter(|cwd| exact || self.mounted(cwd))
             .or(mounts.first().map(String::as_str));
         if let Some(cwd) = cwd {
             args.extend(["--cwd".into(), cwd.to_string()]);
@@ -1243,6 +1244,9 @@ async fn enter(args: &GuestShellArgs, pane: &str) -> Result<Command, String> {
         ),
         format!("BTMUX_BIN={GUEST_BIN}"),
     ]);
+    if let Ok(popup) = std::env::var("BTMUX_POPUP_ID") {
+        command.arg(format!("BTMUX_POPUP_ID={popup}"));
+    }
     command.args([
         "sh",
         "-c",
@@ -1616,10 +1620,12 @@ mod tests {
     #[test]
     fn wrapper_starts_in_a_mount() {
         let guest = guest(&["/src/app"]);
-        let args = guest.wrapper_args(Some("/src/app/lib"));
+        let args = guest.wrapper_args(Some("/src/app/lib"), false);
         assert!(args.ends_with(&["--cwd".into(), "/src/app/lib".into()]));
-        let args = guest.wrapper_args(Some("/etc"));
+        let args = guest.wrapper_args(Some("/etc"), false);
         assert!(args.ends_with(&["--cwd".into(), "/src/app".into()]));
+        let args = guest.wrapper_args(Some("/etc"), true);
+        assert!(args.ends_with(&["--cwd".into(), "/etc".into()]));
         assert!(args.windows(2).any(|w| w == ["--shell", "fish"]));
     }
 
@@ -1633,7 +1639,7 @@ mod tests {
         }
         let guest = guest(&["/src/app"]);
         let parse = |command: crate::popup::PopupCommand| {
-            let args = guest.wrapper_args(None);
+            let args = guest.wrapper_args(None, true);
             let argv = args[1..].iter().cloned().chain(command.guest_args());
             Cli::try_parse_from(std::iter::once("guest-shell".into()).chain(argv))
                 .unwrap()

@@ -72,13 +72,11 @@ pub async fn api_paste_image(
 ) -> Response {
     let (dialect, guest) = {
         let mgr = state.read().await;
-        let Some(pane) = mgr.find_pane(pane_id) else {
+        // A pane's or a popup's, which runs where its pane does.
+        let Some(pty) = mgr.find_pty(pane_id) else {
             return StatusCode::NOT_FOUND.into_response();
         };
-        (
-            pane.pty.dialect(),
-            pane.pty.guest_instance().map(str::to_string),
-        )
+        (pty.dialect(), pty.guest_instance().map(str::to_string))
     };
     let content_type = headers
         .get(header::CONTENT_TYPE)

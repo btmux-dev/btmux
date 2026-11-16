@@ -193,6 +193,15 @@ try {
   await popup.waitFor({ state: 'detached' });
   assert.equal(await waitForText(/\nPOPPED_(\d+)\n/), '5', 'the popup command must get its exit status');
 
+  // An ended popup's status is kept across an upgrade too.
+  const ended = await api(`/api/panes/${pane}/popup`, { command: { exec: ['sh', '-c', 'exit 7'] } });
+  const endedPath = `/api/panes/${pane}/popup/${ended.id}`;
+  assert.deepEqual(await api(endedPath), { status: 7 });
+  const endedInfo = await api('/api/info');
+  await api('/api/server/upgrade', { executable: endedInfo.executable });
+  await until(async () => (await api('/api/info')).instance !== endedInfo.instance, 'server did not come back');
+  assert.deepEqual(await api(endedPath), { status: 7 }, 'an ended popup keeps its status');
+
   // The control socket reconnects and follows structural changes again.
   await api(`/api/sessions/${session.id}/windows`, {});
   await waitForAsync(

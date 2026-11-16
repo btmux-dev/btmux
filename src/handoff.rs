@@ -17,7 +17,7 @@ use axum::body::Bytes;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::popup::PopupSummary;
+use crate::popup::PopupsHandoff;
 use crate::pty::kitty_keyboard::KittyKeyboard;
 use crate::pty::replay::Output;
 use crate::pty::{set_cloexec, Handoff};
@@ -57,8 +57,7 @@ struct Header {
     listener: RawFd,
     lock: Option<RawFd>,
     sessions: Vec<SessionSnapshot>,
-    /// Started popups, whose PTYs are among `panes`.
-    popups: Vec<PopupSummary>,
+    popups: PopupsHandoff,
     panes: Vec<PaneHeader>,
     telemetry: TelemetryStore,
 }
@@ -101,7 +100,7 @@ pub struct Inherited {
     pub listener: std::net::TcpListener,
     pub lock: Option<OwnedFd>,
     pub sessions: Vec<SessionSnapshot>,
-    pub popups: Vec<PopupSummary>,
+    pub popups: PopupsHandoff,
     pub panes: Vec<(Uuid, OwnedFd, Handoff)>,
     pub telemetry: TelemetryStore,
 }
@@ -366,7 +365,7 @@ fn exec(
     context: &Context,
     exe: &Path,
     sessions: Vec<SessionSnapshot>,
-    popups: Vec<PopupSummary>,
+    popups: PopupsHandoff,
     panes: &[(Uuid, RawFd, Handoff)],
     telemetry: TelemetryStore,
 ) -> String {
@@ -401,7 +400,7 @@ fn write(
     dir: &Path,
     context: &Context,
     sessions: Vec<SessionSnapshot>,
-    popups: Vec<PopupSummary>,
+    popups: PopupsHandoff,
     panes: &[(Uuid, RawFd, Handoff)],
     telemetry: TelemetryStore,
 ) -> std::io::Result<File> {
@@ -580,7 +579,10 @@ mod tests {
         let schema = [
             Header::decl(&config),
             PaneHeader::decl(&config),
-            PopupSummary::decl(&config),
+            PopupsHandoff::decl(&config),
+            crate::popup::PopupSummary::decl(&config),
+            crate::popup::EndedHandoff::decl(&config),
+            crate::popup::Outcome::decl(&config),
             Event::decl(&config),
             KittyKeyboard::decl(&config),
             SessionSnapshot::decl(&config),

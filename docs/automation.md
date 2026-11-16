@@ -723,8 +723,10 @@ still work, and `<prefix> <prefix>` sends the prefix key to the program. A
 popup belongs to its pane: switching windows hides it while it keeps running,
 it outlives tab reloads and `btmux upgrade`, and closing the pane closes it.
 The close button in its title bar hangs the program up (status 129). A pane
-has one popup at a time. Popups of [sandboxed](sandbox.md) panes run in the
-sandbox, in its login shell's environment.
+has one popup at a time. `btmux pick`, `confirm`, and `input` run in a popup
+show in it, and pane search (`<prefix> /`) and clipboard pastes go to it.
+Popups of [sandboxed](sandbox.md) panes run in the sandbox, in its login
+shell's environment.
 
 Outside btmux, or if no tab shows the pane within 3 s (over ssh, say), the
 program runs in place instead, so `btmux popup` works in scripts anywhere. A

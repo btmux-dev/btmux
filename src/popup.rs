@@ -130,8 +130,9 @@ pub struct Popup {
     pub pty: PtyHandle,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-enum Outcome {
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum Outcome {
     /// The exit status, if known.
     Exited(Option<i32>),
     /// The program never started.
@@ -151,6 +152,26 @@ struct Ended {
     pane_id: Uuid,
     outcome: Outcome,
     at: Instant,
+}
+
+/// Popups, for an upgraded server.
+#[derive(Serialize, Deserialize, Default)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct PopupsHandoff {
+    /// Started popups, whose PTYs are among the panes.
+    pub open: Vec<PopupSummary>,
+    /// Ended popups' outcomes, for waiters that reconnect.
+    pub ended: Vec<EndedHandoff>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct EndedHandoff {
+    id: Uuid,
+    pane_id: Uuid,
+    outcome: Outcome,
+    /// How long ago it ended.
+    age_ms: u64,
 }
 
 /// Open popups, and how recently ended ones ended.
@@ -252,6 +273,45 @@ impl Popups {
         });
         self.touch();
         true
+    }
+
+    /// Ended outcomes still kept, for an upgraded server.
+    pub fn export_ended(&self) -> Vec<EndedHandoff> {
+        self.ended
+            .iter()
+            .filter(|ended| ended.at.elapsed() <= ENDED_KEPT)
+            .map(|ended| EndedHandoff {
+                id: ended.id,
+                pane_id: ended.pane_id,
+                outcome: ended.outcome.clone(),
+                age_ms: ended
+                    .at
+                    .elapsed()
+                    .as_millis()
+                    .try_into()
+                    .unwrap_or(u64::MAX),
+            })
+            .collect()
+    }
+
+    /// Keep an old server's ended outcomes for the rest of their time.
+    pub fn restore_ended(&mut self, ended: Vec<EndedHandoff>) {
+        let now = Instant::now();
+        for ended in ended {
+            let age = Duration::from_millis(ended.age_ms);
+            let Some(at) = now.checked_sub(age).filter(|_| age <= ENDED_KEPT) else {
+                continue;
+            };
+            if self.ended.len() >= ENDED_MAX {
+                self.ended.pop_front();
+            }
+            self.ended.push_back(Ended {
+                id: ended.id,
+                pane_id: ended.pane_id,
+                outcome: ended.outcome,
+                at,
+            });
+        }
     }
 
     /// The PTY's reader or waiter reported its end: `false` if it's no popup.
@@ -938,6 +998,73 @@ mod tests {
         assert_eq!(opened.await.unwrap().0, StatusCode::OK);
         state.write().await.handle_pane_exit(pane).await;
         assert!(state.read().await.popups.summaries().is_empty());
+    }
+
+    #[test]
+    fn ended_outcomes_are_handed_off_for_the_rest_of_their_time() {
+        let ago = |secs| {
+            Instant::now()
+                .checked_sub(Duration::from_secs(secs))
+                .unwrap()
+        };
+        let (id, stale, pane_id) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let mut popups = Popups::default();
+        popups.ended.extend([
+            Ended {
+                id: stale,
+                pane_id,
+                outcome: Outcome::Exited(Some(1)),
+                at: ago(ENDED_KEPT.as_secs() + 1),
+            },
+            Ended {
+                id,
+                pane_id,
+                outcome: Outcome::Exited(Some(7)),
+                at: ago(10),
+            },
+        ]);
+        let json = serde_json::to_string(&popups.export_ended()).unwrap();
+        let mut restored = Popups::default();
+        restored.restore_ended(serde_json::from_str(&json).unwrap());
+        assert_eq!(
+            restored.progress(id, pane_id),
+            Progress::Ended(Outcome::Exited(Some(7)))
+        );
+        assert_eq!(restored.progress(stale, pane_id), Progress::Unknown);
+        let age = restored.ended[0].at.elapsed();
+        assert!(age >= Duration::from_secs(10) && age < ENDED_KEPT);
+    }
+
+    #[tokio::test]
+    async fn widgets_and_images_reach_popups() {
+        let (state, app, pane) = app().await;
+        let opened = call(&app, open_request(pane, "read line"));
+        let id = open_id(&state).await;
+        show(&state, id).await.unwrap();
+        assert_eq!(opened.await.unwrap().0, StatusCode::OK);
+        let body = serde_json::json!({ "type": "confirm", "message": "ok?", "default_yes": false });
+        let widget = call(
+            &app,
+            Request::post(format!("/api/panes/{id}/widget"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        );
+        // No tab reports it shown.
+        let (status, _) = widget.await.unwrap();
+        assert_eq!(status, StatusCode::CONFLICT);
+        let (status, reply) = call(
+            &app,
+            Request::post(format!("/api/panes/{id}/paste-image"))
+                .header("content-type", "image/png")
+                .body(Body::from(vec![0x89, 0x50, 0x4e, 0x47]))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(status, StatusCode::OK);
+        let _ = std::fs::remove_file(reply["path"].as_str().unwrap());
+        close(&state, id).await;
     }
 
     #[tokio::test]

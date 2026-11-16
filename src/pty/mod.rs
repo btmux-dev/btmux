@@ -399,7 +399,8 @@ impl PtyHandle {
                 let exe = server_exe().ok_or("cannot find the btmux executable")?;
                 let cwd = self.spawn_cwd.as_deref().and_then(Path::to_str);
                 std::iter::once(exe.to_string_lossy().into_owned())
-                    .chain(guest.wrapper_args(cwd))
+                    // A popup's directory comes from its guest caller.
+                    .chain(guest.wrapper_args(cwd, popup.is_some()))
                     .chain(popup.iter().flat_map(|popup| popup.command.guest_args()))
                     .collect()
             }
@@ -425,6 +426,11 @@ impl PtyHandle {
         cmd.env("TERM_PROGRAM", "btmux");
         cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.env("BTMUX_PANE_ID", self.env_pane.to_string());
+        // Widgets its programs open show in the popup.
+        match self.popup {
+            Some(_) => cmd.env("BTMUX_POPUP_ID", self.pane_id.to_string()),
+            None => cmd.env_remove("BTMUX_POPUP_ID"),
+        }
         self.bin = server_exe().map(Path::to_path_buf);
         if let Some(exe) = &self.bin {
             cmd.env("BTMUX_BIN", exe);
