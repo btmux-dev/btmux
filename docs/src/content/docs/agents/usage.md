@@ -66,9 +66,12 @@ are bounded. Subscription quotas are not collected by this receiver.
 `GET /api/agent-limits` returns those quotas for the Claude Code and Codex accounts
 logged in on the server: each limit's label, percent used, reset time, and
 severity. btmux asks each CLI, without sending a prompt, and shares a read for
-50 seconds. An agent without a subscription login isn't listed. Both CLI
-interfaces are undocumented or experimental, so a CLI update can make an agent
-disappear from this list.
+50 seconds. An agent without a subscription login isn't listed.
+
+:::caution
+Both CLI interfaces are undocumented or experimental, so a CLI update can make
+an agent disappear from this list.
+:::
 
 ## Claude Code
 

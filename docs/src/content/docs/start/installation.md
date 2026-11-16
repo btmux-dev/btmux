@@ -6,8 +6,11 @@ sidebar:
 
 ## Release installer
 
-The installer supports Apple Silicon macOS and x86-64/ARM64 Linux. Intel macOS
-is not currently supported.
+The installer supports Apple Silicon macOS and x86-64/ARM64 Linux.
+
+:::note
+Intel macOS is not currently supported.
+:::
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/buntec/btmux/main/scripts/install.sh | bash
@@ -175,8 +178,12 @@ desktop menu entry. You can also launch it with `btmux-desktop`.
 
 ## Windows
 
-Windows support (x64 and ARM64) is experimental. Download
-`btmux-x86_64-pc-windows-msvc.exe` or `btmux-aarch64-pc-windows-msvc.exe` from
+:::caution
+Windows support (x64 and ARM64) is experimental.
+:::
+
+Download `btmux-x86_64-pc-windows-msvc.exe` or
+`btmux-aarch64-pc-windows-msvc.exe` from
 [Releases](https://github.com/buntec/btmux/releases/latest), rename it to
 `btmux.exe`, and put it in a directory on your `PATH`. For example, in
 PowerShell:
