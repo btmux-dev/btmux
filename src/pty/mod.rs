@@ -1,5 +1,6 @@
 pub mod colors;
 pub mod kitty_keyboard;
+pub mod program_status;
 pub mod replay;
 pub mod screen;
 #[cfg(unix)]
@@ -19,12 +20,12 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 #[cfg(unix)]
-use unix::{foreground, resize_master, Master, Probe, Stopping};
+use unix::{attached, foreground, resize_master, Master, Probe, Stopping};
 #[cfg(unix)]
 pub use unix::{hang_up, set_cloexec, Handoff};
 use uuid::Uuid;
 #[cfg(windows)]
-use windows::{foreground, resize_master, Master, Probe};
+use windows::{attached, foreground, resize_master, Master, Probe};
 
 /// Largest single write to a PTY's input queue.
 pub const MAX_INPUT: usize = 64 * 1024;
@@ -175,6 +176,8 @@ pub struct PtyHandle {
     /// OSC 133 marks: 0 before the first, odd at a prompt, `2n` while
     /// command `n` runs.
     prompt: Arc<AtomicU32>,
+    /// OSC 7501 records.
+    program_status: Arc<Mutex<program_status::ProgramStatus>>,
     /// Initial working directory for the shell process.
     spawn_cwd: Option<std::path::PathBuf>,
     /// Id of the pane owning this PTY, reported on `exit_tx` when the shell dies.
@@ -251,6 +254,7 @@ impl PtyHandle {
             shell: shell.to_string(),
             dialect: crate::shell::Dialect::of(shell),
             prompt: Arc::default(),
+            program_status: Arc::default(),
             spawn_cwd,
             pane_id,
             exit_tx: env.exit_tx.clone(),
@@ -374,6 +378,33 @@ impl PtyHandle {
     /// The checkpoint and journal, as replayed to a new viewer.
     pub fn journal(&self) -> Vec<Output> {
         self.scrollback.lock().unwrap().snapshot()
+    }
+
+    /// What the OSC 7501 records say, if they changed since the last call.
+    pub fn take_program_status(&self) -> Option<program_status::Change> {
+        self.program_status.lock().unwrap().take_change()
+    }
+
+    /// OSC 7501 records changed since `take_program_status`.
+    pub fn program_status_pending(&self) -> bool {
+        self.program_status.lock().unwrap().pending()
+    }
+
+    pub fn program_summary(&self) -> Option<program_status::Summary> {
+        self.program_status.lock().unwrap().summary()
+    }
+
+    /// Drops OSC 7501 done and error records.
+    pub fn forget_program_results(&self) {
+        self.program_status.lock().unwrap().forget_results();
+    }
+
+    /// Drops OSC 7501 records of programs that exited.
+    pub fn drop_exited_programs(&self) -> bool {
+        self.program_status
+            .lock()
+            .unwrap()
+            .drop_exited(crate::process::group_alive)
     }
 
     pub fn track_screen(&self, enabled: bool) {
@@ -691,6 +722,7 @@ struct OutputPipeline {
     probe: Arc<Mutex<Option<Probe>>>,
     title: Arc<Mutex<Option<String>>>,
     cwd: Arc<Mutex<Option<String>>>,
+    program_status: Arc<Mutex<program_status::ProgramStatus>>,
     scrollback: Arc<Mutex<Replay>>,
     output_tx: broadcast::Sender<Output>,
     pane_id: Uuid,
@@ -721,6 +753,7 @@ impl PtyHandle {
             probe: self.probe.clone(),
             title: self.title.clone(),
             cwd: self.cwd.clone(),
+            program_status: self.program_status.clone(),
             scrollback: self.scrollback.clone(),
             output_tx: self.output_tx.clone(),
             pane_id: self.pane_id,
@@ -765,6 +798,7 @@ impl OutputPipeline {
 
         self.osc_parser
             .feed(&result.scrollback, &self.title, &self.cwd);
+        self.apply_program_status();
         #[cfg(unix)]
         self.poll_cwd();
         let mut sb = self.scrollback.lock().unwrap();
@@ -778,6 +812,33 @@ impl OutputPipeline {
                 .send(Output::Data(exact_bytes(result.broadcast)));
         }
         sent
+    }
+}
+
+impl OutputPipeline {
+    fn apply_program_status(&mut self) {
+        if self.osc_parser.program.is_empty() {
+            return;
+        }
+        let mut group = None;
+        let mut status = self.program_status.lock().unwrap();
+        let mut changed = false;
+        for mut event in self.osc_parser.program.drain(..) {
+            if let program_status::Event::Report(program_status::Report::Set(record)) = &mut event {
+                let group = *group
+                    .get_or_insert_with(|| self.probe.lock().unwrap().as_ref().and_then(attached));
+                // With the shell in the foreground, the reporter exited or
+                // runs in the background, and nothing would end the record.
+                if group.is_none() && program_status::transient(record.state) {
+                    continue;
+                }
+                record.group = group;
+            }
+            changed |= status.apply(event);
+        }
+        if changed {
+            let _ = self.osc_parser.meta_tx.send(());
+        }
     }
 }
 
@@ -853,10 +914,12 @@ fn local_hostname() -> Option<String> {
 }
 
 /// Incremental OSC sequence parser. Handles sequences split across read() chunks.
-/// Parses OSC 0/2 (window title), OSC 7 (working directory URI), and OSC 133
-/// prompt (`A`) and command (`C`) marks.
+/// Parses OSC 0/2 (window title), OSC 7 (working directory URI), OSC 133
+/// prompt (`A`) and command (`C`) marks, and OSC 7501 program status.
 struct OscParser {
     buf: Vec<u8>,
+    /// OSC 7501 reports and what ends records (prompts, RIS), in order.
+    program: Vec<program_status::Event>,
     in_osc: bool,
     /// An OSC 7 arrived; it then owns the cwd.
     reported_cwd: bool,
@@ -880,6 +943,7 @@ impl OscParser {
     ) -> Self {
         Self {
             buf: Vec::new(),
+            program: Vec::new(),
             in_osc: false,
             reported_cwd: false,
             meta_tx,
@@ -918,6 +982,9 @@ impl OscParser {
             } else if b == b']' && self.buf.last() == Some(&0x1b) {
                 self.buf.clear();
                 self.in_osc = true;
+            } else if b == b'c' && self.buf.last() == Some(&0x1b) {
+                self.buf.clear();
+                self.program.push(program_status::Event::Reset);
             } else {
                 self.buf.clear();
             }
@@ -986,9 +1053,18 @@ impl OscParser {
             }
             133 => {
                 match payload.as_bytes().first() {
-                    Some(b'A') => mark_prompt(&self.prompt, false),
+                    Some(b'A') => {
+                        mark_prompt(&self.prompt, false);
+                        self.program.push(program_status::Event::Prompt);
+                    }
                     Some(b'C') => mark_prompt(&self.prompt, true),
                     _ => {}
+                }
+                false
+            }
+            7501 => {
+                if let Some(report) = program_status::parse(payload.as_bytes()) {
+                    self.program.push(program_status::Event::Report(report));
                 }
                 false
             }
@@ -1074,6 +1150,49 @@ mod lifecycle_tests {
     }
     fn cwd(pane: &PtyHandle) -> Option<String> {
         pane.cwd.lock().unwrap().clone()
+    }
+    #[tokio::test]
+    async fn program_status_ends_with_its_program() {
+        let mut pane = pane("/bin/bash");
+        pane.ensure_spawned(80, 24).unwrap();
+        // From the shell itself, only results are kept: nothing would end
+        // the rest.
+        pane.input_tx
+            .send(
+                b"printf '\\033]7501;state=working:id=a\\007\\033]7501;state=done:id=b\\007'\r"
+                    .to_vec(),
+            )
+            .unwrap();
+        wait_until(&pane, |pane| {
+            !pane.program_status.lock().unwrap().records().is_empty()
+        })
+        .await;
+        let ids: Vec<_> = pane
+            .program_status
+            .lock()
+            .unwrap()
+            .records()
+            .iter()
+            .map(|r| r.id.clone())
+            .collect();
+        assert_eq!(ids, ["b"]);
+        pane.input_tx
+            .send(b"printf '\\033]7501;state=clear\\007'; sh -c 'printf \"\\033]7501;state=working\\007\"; exec sleep 30'\r".to_vec())
+            .unwrap();
+        let state = |pane: &PtyHandle| {
+            pane.drop_exited_programs();
+            pane.program_status
+                .lock()
+                .unwrap()
+                .summary()
+                .map(|s| s.state)
+        };
+        wait_until(&pane, |pane| {
+            state(pane) == Some(program_status::State::Working)
+        })
+        .await;
+        pane.input_tx.send(vec![3]).unwrap();
+        wait_until(&pane, |pane| state(pane).is_none()).await;
     }
     #[tokio::test]
     async fn cwd_follows_foreground_shells_without_osc7() {
@@ -1549,6 +1668,24 @@ mod osc_tests {
             Some("/a%20b")
         );
         assert_eq!(cwd_of(b"\x1b]7;/a%20b\x07").as_deref(), Some("/a%20b"));
+    }
+
+    #[test]
+    fn collects_program_status_events_in_order() {
+        use program_status::{Event, Report, State};
+        let mut parser =
+            OscParser::new(mpsc::unbounded_channel().0, Arc::default(), Arc::default());
+        let (title, cwd) = Default::default();
+        parser.feed(
+            b"\x1b]7501;state=working\x1b\\x\x1b]133;A\x07\x1bc\x1b]7501;state=bogus\x07",
+            &title,
+            &cwd,
+        );
+        assert!(matches!(
+            parser.program.as_slice(),
+            [Event::Report(Report::Set(record)), Event::Prompt, Event::Reset]
+                if record.state == State::Working
+        ));
     }
 
     #[test]
