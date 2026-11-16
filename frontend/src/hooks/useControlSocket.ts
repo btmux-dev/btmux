@@ -194,6 +194,8 @@ export function useControlSocket() {
           useStore.getState().setConnect(msg.status);
         } else if (msg.type === 'widgets') {
           useStore.getState().setWidgets(msg.widgets);
+        } else if (msg.type === 'popups') {
+          useStore.getState().setPopups(msg.popups);
         } else if (msg.type === 'github') {
           useStore.getState().setGithub(msg.statuses);
         }

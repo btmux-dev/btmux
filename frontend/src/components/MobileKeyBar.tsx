@@ -72,6 +72,7 @@ export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (me
     }
     const pane = focused?.closest('[data-pane-terminal]');
     for (const term of state.terminals.values()) if (term.element === pane) return term.pressKey(key, modifiers);
+    if (state.popupShown) return state.terminals.get(state.popupShown.id)?.pressKey(key, modifiers);
     const paneId = state.getActivePaneId(sessionId);
     if (!paneId) return;
     if (state.nvimOpen && state.nvimPaneId === paneId) {

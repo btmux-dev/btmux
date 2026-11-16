@@ -207,6 +207,12 @@ pub struct PtyHandle {
     color_reports: Arc<AtomicBool>,
     /// The Multipass guest the shell runs in, through `btmux guest-shell`.
     guest: Option<Arc<crate::multipass::Guest>>,
+    /// A popup's program, run instead of the shell.
+    popup: Option<crate::popup::Spawn>,
+    /// `BTMUX_PANE_ID`: a popup's names the pane it opened over.
+    env_pane: Uuid,
+    /// The shell's exit status once reaped; 128 + the signal if killed.
+    exit_status: Arc<Mutex<Option<i32>>>,
 }
 
 impl PtyHandle {
@@ -259,7 +265,27 @@ impl PtyHandle {
             palette: env.palette.clone(),
             color_reports: Arc::default(),
             guest: None,
+            popup: None,
+            env_pane: pane_id,
+            exit_status: Arc::default(),
         }
+    }
+
+    /// Run a popup's program over `pane` instead of the shell.
+    pub fn with_popup(mut self, pane: Uuid, spawn: crate::popup::Spawn) -> Self {
+        self.env_pane = pane;
+        self.popup = Some(spawn);
+        self
+    }
+
+    /// The exit status, once the shell was reaped.
+    pub fn exit_status(&self) -> Option<i32> {
+        *self.exit_status.lock().unwrap()
+    }
+
+    /// Whether the shell runs and hasn't been reaped.
+    pub fn child_alive(&self) -> bool {
+        self.child.lock().unwrap().is_some()
     }
 
     /// Run the shell in a Multipass guest instead.
@@ -368,19 +394,28 @@ impl PtyHandle {
 
         // Prepare all fallible resources before starting worker threads. The PTY
         // kernel buffer retains initial shell output until the reader starts.
-        let argv = match &self.guest {
-            Some(guest) => {
+        let argv: Vec<String> = match (&self.guest, &self.popup) {
+            (Some(guest), popup) => {
                 let exe = server_exe().ok_or("cannot find the btmux executable")?;
                 let cwd = self.spawn_cwd.as_deref().and_then(Path::to_str);
                 std::iter::once(exe.to_string_lossy().into_owned())
                     .chain(guest.wrapper_args(cwd))
+                    .chain(popup.iter().flat_map(|popup| popup.command.guest_args()))
                     .collect()
             }
-            None => crate::shell::argv(&self.shell),
+            (None, Some(popup)) => popup.command.argv(&self.shell, popup.env.is_none()),
+            (None, None) => crate::shell::argv(&self.shell),
         };
         let (program, args) = argv.split_first().ok_or("no shell configured")?;
         let mut cmd = CommandBuilder::new(program);
         cmd.args(args);
+        // A popup gets its caller's environment; a guest's comes from the guest.
+        if let Some(env) = self.popup.as_ref().and_then(|popup| popup.env.as_ref()) {
+            cmd.env_clear();
+            for (key, value) in env {
+                cmd.env(key, value);
+            }
+        }
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         // Not the server's own terminal, which panes would otherwise inherit.
@@ -389,7 +424,7 @@ impl PtyHandle {
         }
         cmd.env("TERM_PROGRAM", "btmux");
         cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
-        cmd.env("BTMUX_PANE_ID", self.pane_id.to_string());
+        cmd.env("BTMUX_PANE_ID", self.env_pane.to_string());
         self.bin = server_exe().map(Path::to_path_buf);
         if let Some(exe) = &self.bin {
             cmd.env("BTMUX_BIN", exe);
@@ -407,7 +442,7 @@ impl PtyHandle {
                 "http://{}:{}/api/panes/{}/telemetry",
                 crate::config::DEFAULT_HOST,
                 self.port,
-                self.pane_id
+                self.env_pane
             ),
         );
         if std::env::var_os("LANG").is_none() {
@@ -417,7 +452,9 @@ impl PtyHandle {
             cmd.cwd(dir);
         }
         #[cfg(windows)]
-        windows::integrate_shell(&mut cmd, self.dialect, self.spawn_cwd.is_none());
+        if self.popup.is_none() {
+            windows::integrate_shell(&mut cmd, self.dialect, self.spawn_cwd.is_none());
+        }
 
         self.spawn(cmd, cols, rows)
     }

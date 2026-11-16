@@ -30,6 +30,7 @@ import { sendPrefixToVscode } from '../components/VscodeSurface';
 import { colorSchemeLabel, DEFAULT_COLOR_SCHEMES } from '../lib/colorSchemeLabel';
 import { APPEARANCES } from '../lib/appearance';
 import { worktreeLabel } from '../lib/gitIdentity';
+import { popupIndex } from '../lib/actionLabel';
 
 /** How long the display-panes (prefix + q) number overlay stays up, in ms. */
 const DISPLAY_PANES_MS = 1500;
@@ -38,6 +39,12 @@ const DISPLAY_PANES_MS = 1500;
 let paneNumbersTimer = 0;
 
 function sendPrefix(sessionId: string, p: ParsedKey, send: (msg: ClientMessage) => void) {
+  const popup = useStore.getState().popupShown;
+  if (popup) {
+    const text = prefixBytes(p);
+    if (text) send({ type: 'write_pane_input', session_id: sessionId, pane_id: popup.id, text });
+    return;
+  }
   const keys = prefixNvimKeys(p);
   if (keys && useStore.getState().nvimOpen && sendToNvim(keys)) return;
   const { getActivePaneId, browserOpen, browserPaneId, vscodeOpen, vscodePaneId } = useStore.getState();
@@ -597,6 +604,13 @@ export function runAction(
       break;
     }
     default: {
+      const popup = popupIndex(action);
+      if (popup !== null) {
+        const binding = store.config?.popups[popup];
+        if (paneId && binding)
+          send({ type: 'open_popup', pane_id: paneId, command: binding.command, title: binding.title ?? null });
+        break;
+      }
       const m = action.match(/^resize-pane-(left|right|up|down)(?:-(\d+))?$/);
       if (m) resizePane(sessionId, m[1] as ResizeDirection, Number(m[2] ?? 1), send);
       break;

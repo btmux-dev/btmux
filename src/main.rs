@@ -32,6 +32,7 @@ mod multipass;
 mod pane_git;
 mod paste_image;
 mod persistence;
+mod popup;
 mod process;
 #[cfg(test)]
 mod protocol;
@@ -128,6 +129,9 @@ async fn main() {
             std::process::exit(agent_launch::run(agent_launch::Agent::Codex, args))
         }
         Some(config::SubCommand::Pick(args)) => std::process::exit(widget::pick(args).await),
+        Some(config::SubCommand::Popup(popup_args)) => {
+            std::process::exit(popup::run(args.profile.as_deref(), popup_args).await)
+        }
         Some(config::SubCommand::Fzf { args }) => std::process::exit(fzf::run(args).await),
         Some(config::SubCommand::GuestShell(args)) => {
             std::process::exit(multipass::guest_shell(args.clone()).await)

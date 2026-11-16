@@ -58,7 +58,7 @@ import {
 } from '@astryxdesign/core/Layout';
 import { KeyCap } from './KeyHint';
 import { NARROW_DIALOG, NARROW_QUERY, TOUCH_QUERY, plainTextInput } from '../lib/touch';
-import { actionLabel } from '../lib/actionLabel';
+import { actionLabel, popupIndex } from '../lib/actionLabel';
 import { prefixError } from '../lib/prefixKey';
 
 interface Props {
@@ -619,9 +619,12 @@ export function ConfigPage({ config, send, request }: Props) {
 
   const { min: weightMin, max: weightMax } = getFontWeightRange(config.fonts, draft.fontFamily);
 
-  const bindingRows = [...new Map(config.binds.map((bind) => [bind.action, bind])).values()].sort((left, right) =>
-    left.action.localeCompare(right.action),
-  );
+  // `[[popup]]` tables set popup keys, not `[keys]`.
+  const bindingRows = [
+    ...new Map(
+      config.binds.filter((bind) => popupIndex(bind.action) === null).map((bind) => [bind.action, bind]),
+    ).values(),
+  ].sort((left, right) => left.action.localeCompare(right.action));
 
   const goBack = () => setSettingsOpen(false);
   const [osPermission, setOsPermission] = useState<NotificationPermission | 'unsupported'>(() =>

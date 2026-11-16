@@ -271,6 +271,18 @@ pub struct GuestShellArgs {
     cloud_init: Option<String>,
     #[arg(long = "copy")]
     copies: Vec<String>,
+    /// A popup's command line, run instead of the shell.
+    #[arg(long)]
+    run: Option<String>,
+    /// A popup's program and arguments, run instead of the shell.
+    #[arg(last = true)]
+    exec: Vec<String>,
+}
+
+impl GuestShellArgs {
+    fn is_popup(&self) -> bool {
+        self.run.is_some() || !self.exec.is_empty()
+    }
 }
 
 /// The default cloud-init: tools agents expect, the shells, and the agents.
@@ -1164,9 +1176,10 @@ pub async fn guest_shell(args: GuestShellArgs) -> i32 {
             Ok(code) => code,
             Err(error) => return fail(&error),
         };
-        // A shell that exits cleanly closes the pane without the check.
-        if code == 0 {
-            return 0;
+        // A shell that exits cleanly closes the pane without the check; a
+        // popup closes when its program exits.
+        if code == 0 || args.is_popup() {
+            return code;
         }
         let instance = args.instance.clone();
         let gone = tokio::task::spawn_blocking(move || instance_gone(&instance))
@@ -1237,9 +1250,15 @@ async fn enter(args: &GuestShellArgs, pane: &str) -> Result<Command, String> {
             r#"BTMUX_AUTH_TOKEN=$(cat ~/{GUEST_TOKEN}) && export BTMUX_AUTH_TOKEN && exec "$@""#
         ),
         "sh",
-        args.shell.name(),
-        "-l",
     ]);
+    // Interactive login shells, for the PATH the guest's panes have.
+    match (&args.run, args.exec.as_slice()) {
+        (Some(line), _) => command.args([args.shell.name(), "-l", "-i", "-c", line]),
+        (None, []) => command.args([args.shell.name(), "-l"]),
+        (None, argv) => command
+            .args(["bash", "-l", "-i", "-c", r#"exec "$@""#, "bash"])
+            .args(argv),
+    };
     Ok(command)
 }
 
@@ -1602,6 +1621,35 @@ mod tests {
         let args = guest.wrapper_args(Some("/etc"));
         assert!(args.ends_with(&["--cwd".into(), "/src/app".into()]));
         assert!(args.windows(2).any(|w| w == ["--shell", "fish"]));
+    }
+
+    #[test]
+    fn popups_pass_their_command_to_the_wrapper() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Cli {
+            #[command(flatten)]
+            args: GuestShellArgs,
+        }
+        let guest = guest(&["/src/app"]);
+        let parse = |command: crate::popup::PopupCommand| {
+            let args = guest.wrapper_args(None);
+            let argv = args[1..].iter().cloned().chain(command.guest_args());
+            Cli::try_parse_from(std::iter::once("guest-shell".into()).chain(argv))
+                .unwrap()
+                .args
+        };
+        let args = parse(crate::popup::PopupCommand::Exec(vec![
+            "lazygit".into(),
+            "--cwd".into(),
+            "-x".into(),
+        ]));
+        assert_eq!(args.exec, ["lazygit", "--cwd", "-x"]);
+        assert_eq!(args.cwd.as_deref(), Some("/src/app"));
+        let args = parse(crate::popup::PopupCommand::Shell("--version | less".into()));
+        assert_eq!(args.run.as_deref(), Some("--version | less"));
+        assert!(args.is_popup());
+        assert!(!parse(crate::popup::PopupCommand::Exec(vec![])).is_popup());
     }
 
     #[cfg(unix)]

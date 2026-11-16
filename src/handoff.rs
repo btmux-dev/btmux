@@ -17,6 +17,7 @@ use axum::body::Bytes;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::popup::PopupSummary;
 use crate::pty::kitty_keyboard::KittyKeyboard;
 use crate::pty::replay::Output;
 use crate::pty::{set_cloexec, Handoff};
@@ -27,7 +28,7 @@ use crate::ws::control::ServerMessage;
 use crate::AppState;
 
 /// Bump on any change to the handoff file.
-pub const VERSION: u32 = 15;
+pub const VERSION: u32 = 16;
 const ENV: &str = "BTMUX_HANDOFF";
 
 struct Context {
@@ -56,6 +57,8 @@ struct Header {
     listener: RawFd,
     lock: Option<RawFd>,
     sessions: Vec<SessionSnapshot>,
+    /// Started popups, whose PTYs are among `panes`.
+    popups: Vec<PopupSummary>,
     panes: Vec<PaneHeader>,
     telemetry: TelemetryStore,
 }
@@ -98,6 +101,7 @@ pub struct Inherited {
     pub listener: std::net::TcpListener,
     pub lock: Option<OwnedFd>,
     pub sessions: Vec<SessionSnapshot>,
+    pub popups: Vec<PopupSummary>,
     pub panes: Vec<(Uuid, OwnedFd, Handoff)>,
     pub telemetry: TelemetryStore,
 }
@@ -110,7 +114,7 @@ impl Inherited {
     /// Restore the sessions and panes; the listener is returned.
     pub async fn restore(self, state: &AppState) -> std::net::TcpListener {
         let mut mgr = state.write().await;
-        let restored = mgr.restore_handoff(self.sessions, self.panes);
+        let restored = mgr.restore_handoff(self.sessions, self.popups, self.panes);
         mgr.telemetry = self.telemetry;
         tracing::info!("upgraded in place with {} session(s)", restored);
         self.listener
@@ -198,6 +202,7 @@ pub fn take() -> Result<Option<Inherited>, String> {
         listener,
         lock,
         sessions: header.sessions,
+        popups: header.popups,
         panes,
         telemetry: header.telemetry.restored(),
     }))
@@ -324,7 +329,7 @@ async fn execute(state: AppState, context: &Context, exe: &Path) -> String {
     }
     crate::vscode::shutdown().await;
     crate::browser::shutdown().await;
-    let (sessions, panes) = match manager.export_handoff(Duration::from_secs(2)) {
+    let (sessions, popups, panes) = match manager.export_handoff(Duration::from_secs(2)) {
         Ok(exported) => exported,
         Err(error) => {
             crate::vscode::resume();
@@ -336,7 +341,14 @@ async fn execute(state: AppState, context: &Context, exe: &Path) -> String {
             tracing::warn!("failed to persist state to {}: {}", path.display(), error);
         }
     }
-    let error = exec(context, exe, sessions, &panes, manager.telemetry.clone());
+    let error = exec(
+        context,
+        exe,
+        sessions,
+        popups,
+        &panes,
+        manager.telemetry.clone(),
+    );
     let kept = [context.listener]
         .into_iter()
         .chain(context.lock)
@@ -354,6 +366,7 @@ fn exec(
     context: &Context,
     exe: &Path,
     sessions: Vec<SessionSnapshot>,
+    popups: Vec<PopupSummary>,
     panes: &[(Uuid, RawFd, Handoff)],
     telemetry: TelemetryStore,
 ) -> String {
@@ -363,7 +376,7 @@ fn exec(
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .unwrap_or_else(std::env::temp_dir);
-    let file = match write(&dir, context, sessions, panes, telemetry) {
+    let file = match write(&dir, context, sessions, popups, panes, telemetry) {
         Ok(file) => file,
         Err(error) => return format!("cannot write handoff: {error}"),
     };
@@ -388,6 +401,7 @@ fn write(
     dir: &Path,
     context: &Context,
     sessions: Vec<SessionSnapshot>,
+    popups: Vec<PopupSummary>,
     panes: &[(Uuid, RawFd, Handoff)],
     telemetry: TelemetryStore,
 ) -> std::io::Result<File> {
@@ -405,6 +419,7 @@ fn write(
         listener: context.listener,
         lock: context.lock,
         sessions,
+        popups,
         panes: panes
             .iter()
             .map(|(id, fd, pane)| PaneHeader {
@@ -565,6 +580,7 @@ mod tests {
         let schema = [
             Header::decl(&config),
             PaneHeader::decl(&config),
+            PopupSummary::decl(&config),
             Event::decl(&config),
             KittyKeyboard::decl(&config),
             SessionSnapshot::decl(&config),

@@ -3,6 +3,8 @@ import type { PaneTerminal as Terminal } from '../lib/paneTerminal';
 import { Dialog } from '@astryxdesign/core/Dialog';
 import { TerminalPane } from './TerminalPane';
 import { FileBrowserOverlay } from './FileBrowserOverlay';
+import { PopupDialog } from './PopupDialog';
+import { wideDialogProps } from '../lib/wideDialog';
 import { ProcessOverlay } from './ProcessOverlay';
 import { ClientConfig, LayoutRect } from '../state/types';
 import { computeRectsAndDividers, paneIdsInOrder, Divider } from '../state/layout';
@@ -70,6 +72,13 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   const zoomedPaneId =
     activeWindow?.zoomed_pane ?? (narrow && (activeWindow?.panes.length ?? 0) > 1 ? activePaneId : null);
   const focusedPane = activeWindow?.panes.find((pane) => pane.id === (zoomedPaneId ?? activePaneId));
+  // A popup over the active pane, else the newest over another pane of the window.
+  const popups = useStore((s) => s.popups);
+  const shownPopup = isActiveSession
+    ? (popups.find((popup) => popup.pane_id === activePaneId) ??
+      [...popups].reverse().find((popup) => activeWindow?.panes.some((pane) => pane.id === popup.pane_id)))
+    : undefined;
+  const popupOpen = shownPopup !== undefined;
   const focusedAgentState = focusedPane?.agent_status.state ?? null;
   const focusedUnread = focusedPane?.unread != null;
   const attended = useWindowAttended();
@@ -135,6 +144,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
       switcherOpen ||
       browserOwnsActivePane ||
       nvimOwnsActivePane ||
+      popupOpen ||
       !focusId ||
       !isActiveSession
     ) {
@@ -169,6 +179,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
     attended,
     send,
     config,
+    popupOpen,
   ]);
 
   const handleDividerPointerDown = useCallback(
@@ -359,18 +370,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
           }}
           aria-label={fileBrowserMode === 'process' ? 'Processes' : fileBrowserMode === 'git' ? 'Git' : 'Files'}
           padding={0}
-          // Fullscreen's 100dvh ignores the iOS keyboard; useVisualViewport tracks it.
-          {...(narrow || previewFullscreen
-            ? {
-                variant: 'fullscreen',
-                style: {
-                  height: 'var(--btm-viewport-height, 100dvh)',
-                  // padding={0} drops Dialog's safe-area padding.
-                  padding:
-                    'env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) var(--btm-safe-bottom, env(safe-area-inset-bottom, 0px)) env(safe-area-inset-left, 0px)',
-                },
-              }
-            : { width: 'min(1440px, 94vw)', maxHeight: '90dvh', style: { height: '90dvh' } })}
+          {...wideDialogProps(narrow || previewFullscreen)}
         >
           {fileBrowserMode === 'process' ? (
             <ProcessOverlay
@@ -390,6 +390,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
           )}
         </Dialog>
       )}
+      {shownPopup && <PopupDialog key={shownPopup.id} popup={shownPopup} sessionId={sessionId} send={send} />}
       {showPaneNumbers &&
         numberRects.map((rect) => {
           const n = paneNumberById.get(rect.paneId);

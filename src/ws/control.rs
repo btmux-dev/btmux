@@ -106,6 +106,13 @@ fn initial_messages(mgr: &crate::session::manager::SessionManager) -> Vec<String
     // Sent when empty too, replacing what a tab kept from before.
     let statuses = crate::github::statuses();
     messages.push(serde_json::to_string(&ServerMessage::Github { statuses }).unwrap());
+    // Sent when empty too, replacing what a tab kept from before.
+    messages.push(
+        serde_json::to_string(&ServerMessage::Popups {
+            popups: mgr.popups.summaries(),
+        })
+        .unwrap(),
+    );
     // Sent when empty too, to close widgets a previous server had open.
     messages.push(
         serde_json::to_string(&ServerMessage::Widgets {
@@ -270,10 +277,30 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         return Ok(());
     }
 
+    if let ClientMessage::OpenPopup {
+        pane_id,
+        command,
+        title,
+    } = &cmd
+    {
+        let mut mgr = state.write().await;
+        let spawn = crate::popup::Spawn {
+            command: crate::popup::PopupCommand::Shell(command.clone()),
+            env: None,
+        };
+        return crate::popup::open(&mut mgr, *pane_id, spawn, None, title.clone())
+            .map(|_| ())
+            .map_err(|error| error.to_string());
+    }
+    if let ClientMessage::ClosePopup { id } = &cmd {
+        crate::popup::close(state, *id).await;
+        return Ok(());
+    }
+
     if let ClientMessage::WritePaneInput { pane_id, text, .. } = &cmd {
         let mgr = state.read().await;
-        let result = if let Some(pane) = mgr.find_pane(*pane_id) {
-            pane.pty.input_tx.send(text.as_bytes().to_vec())
+        let result = if let Some(pty) = mgr.find_pty(*pane_id) {
+            pty.input_tx.send(text.as_bytes().to_vec())
         } else {
             return Err("Pane no longer exists".into());
         };
@@ -488,6 +515,8 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         | ClientMessage::SaveConfig { .. }
         | ClientMessage::ResetConfig
         | ClientMessage::WritePaneInput { .. }
+        | ClientMessage::OpenPopup { .. }
+        | ClientMessage::ClosePopup { .. }
         | ClientMessage::KillAgent { .. }
         | ClientMessage::OpenFile { .. }
         | ClientMessage::ChangeDirectory { .. }
@@ -1032,11 +1061,22 @@ pub(crate) enum ClientMessage {
         #[cfg_attr(test, ts(type = "number"))]
         agent_id: u64,
     },
+    /// Also a popup's input, by its id.
     WritePaneInput {
         #[allow(dead_code)]
         session_id: Uuid,
         pane_id: Uuid,
         text: String,
+    },
+    /// Run a command line in a popup over the pane, in its directory.
+    OpenPopup {
+        pane_id: Uuid,
+        command: String,
+        title: Option<String>,
+    },
+    /// Hang up a popup's program.
+    ClosePopup {
+        id: Uuid,
     },
     /// Open a file (or, without `path`, just the editor) in the pane's
     /// foreground Neovim, or run `$EDITOR` when the shell is foreground.
@@ -1180,6 +1220,10 @@ pub enum ServerMessage {
     Widgets {
         widgets: Vec<crate::widget::WidgetSummary>,
     },
+    /// All open popups; sent on connect and on change.
+    Popups {
+        popups: Vec<crate::popup::PopupSummary>,
+    },
     /// Pull request and CI status of pane branches; sent on connect and on change.
     Github {
         statuses: Vec<crate::github::GithubStatus>,
@@ -1316,10 +1360,15 @@ mod tests {
             Err(tokio::sync::broadcast::error::RecvError::Lagged(_))
         ));
         let state = std::sync::Arc::new(tokio::sync::RwLock::new(mgr));
-        let [config, snapshot, github, widgets] = &resynchronize(&mut events, &state).await[..]
+        let [config, snapshot, github, popups, widgets] =
+            &resynchronize(&mut events, &state).await[..]
         else {
-            panic!("expected config, state, github, and widgets");
+            panic!("expected config, state, github, popups, and widgets");
         };
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(popups).unwrap(),
+            serde_json::json!({"type": "popups", "popups": []})
+        );
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(github).unwrap(),
             serde_json::json!({"type": "github", "statuses": []})

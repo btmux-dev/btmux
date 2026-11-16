@@ -84,22 +84,34 @@ async fn handle_socket(
     let (mut ws_tx, mut ws_rx) = socket.split();
     let attachment = {
         let mut mgr = state.write().await;
-        mgr.find_pane_mut(pane_id).map(|pane| {
-            pane.pty.ensure_spawned(cols, rows)?;
+        let attachment = mgr.find_pty_mut(pane_id).map(|pty| {
+            pty.ensure_spawned(cols, rows)?;
             if !mirror {
-                pane.pty.attach_viewer(viewer_id, cols, rows);
+                pty.attach_viewer(viewer_id, cols, rows);
             }
-            let (rx, replay) = pane.pty.subscribe_replay();
+            let (rx, replay) = pty.subscribe_replay();
             // After subscribing, so a later resize arrives as a live frame.
-            let size = pane.pty.size();
+            let size = pty.size();
             Ok::<_, String>((
-                pane.pty.input_tx.clone(),
+                pty.input_tx.clone(),
                 rx,
                 replay,
-                pane.pty.subscribe_owner(),
+                pty.subscribe_owner(),
                 size,
             ))
-        })
+        });
+        // A popup whose program can't start ends; one that started wakes its request.
+        if mgr.popups.contains(pane_id) {
+            match &attachment {
+                Some(Err(error)) => {
+                    if mgr.popups.failed(pane_id, error.clone()) {
+                        crate::popup::broadcast(&mgr);
+                    }
+                }
+                _ => mgr.popups.touch(),
+            }
+        }
+        attachment
     };
     let (input_tx, mut output_rx, replay, mut owner_rx, size) = match attachment {
         Some(Ok(attachment)) => attachment,
@@ -220,12 +232,12 @@ async fn handle_socket(
                         continue;
                     };
                     let mut mgr = state.write().await;
-                    if let Some(pane) = mgr.find_pane_mut(pane_id) {
+                    if let Some(pty) = mgr.find_pty_mut(pane_id) {
                         match control {
                             ControlMsg::Resize { cols, rows } => {
-                                pane.pty.resize_viewer(viewer_id, cols, rows)
+                                pty.resize_viewer(viewer_id, cols, rows)
                             }
-                            ControlMsg::Claim => pane.pty.claim_viewer(viewer_id),
+                            ControlMsg::Claim => pty.claim_viewer(viewer_id),
                         }
                     }
                 }
@@ -236,8 +248,8 @@ async fn handle_socket(
     tokio::select! { _ = send => {}, _ = receive => {} }
     if !mirror {
         let mut mgr = state.write().await;
-        if let Some(pane) = mgr.find_pane_mut(pane_id) {
-            pane.pty.detach_viewer(viewer_id);
+        if let Some(pty) = mgr.find_pty_mut(pane_id) {
+            pty.detach_viewer(viewer_id);
         }
     }
 }

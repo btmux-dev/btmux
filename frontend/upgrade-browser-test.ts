@@ -177,6 +177,22 @@ try {
   await picker.waitFor({ state: 'detached' });
   assert.equal(await waitForText(/\nPICKED_(\d+)\n/), '0', 'a menu must work after an upgrade');
 
+  // A popup keeps its program across an upgrade, and its command gets the exit status.
+  const popup = page.locator('[data-popup]');
+  await api(`/api/panes/${pane}/input`, {
+    text: `"$BTMUX_BIN" popup sh -c 'echo "POPUP_$$"; read -r line; exit 5'; printf '\\nPOPPED_%s\\n' "$?"\r`,
+  });
+  await popup.getByText(/POPUP_\d+/).waitFor();
+  const popupText = await popup.getByText(/POPUP_\d+/).innerText();
+  const popupInfo = await api('/api/info');
+  await api('/api/server/upgrade', { executable: popupInfo.executable });
+  await until(async () => (await api('/api/info')).instance !== popupInfo.instance, 'server did not come back');
+  await until(async () => (await popup.getByText(popupText).count()) === 1, 'the popup must come back');
+  await page.waitForFunction(() => document.activeElement?.closest('[data-popup] [data-pane-terminal]') != null);
+  await page.keyboard.press('Enter');
+  await popup.waitFor({ state: 'detached' });
+  assert.equal(await waitForText(/\nPOPPED_(\d+)\n/), '5', 'the popup command must get its exit status');
+
   // The control socket reconnects and follows structural changes again.
   await api(`/api/sessions/${session.id}/windows`, {});
   await waitForAsync(

@@ -106,6 +106,11 @@ on macOS, sockets belonging to inaccessible processes may be omitted entirely.
   the terminal.
 - **`[keys]`.** Each action has one key. Overriding it moves the action off its
   default key rather than adding a second one.
+- **Popups.** `btmux display-popup` (or `popup`) takes `-t -d -e -T -E` and
+  always closes when its program exits. Several arguments run as a program
+  rather than a shell command. Bind one to a key with `[[popup]]` in
+  `config.toml`, where tmux uses `bind-key ... display-popup -E`; see
+  [Popups](automation.md#popups).
 
 ## Not available
 

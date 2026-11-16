@@ -669,6 +669,29 @@ try {
   await picker.waitFor({ state: 'detached' });
   await pickOutput(/rc=130/);
 
+  // A popup fills the screen and brings its own key bar, whose keys reach the program.
+  await api(`/api/panes/${pickPane}/input`, {
+    method: 'POST',
+    body: JSON.stringify({
+      text: `clear; "$BTMUX_BIN" popup sh -c 'echo popup-ready; od -An -c; read x'; echo "rc=$?"`,
+      keys: ['Enter'],
+    }),
+  });
+  const popup = page.locator('[data-popup]');
+  await popup.getByText('popup-ready').waitFor();
+  const popupBox = (await page.locator('dialog[open]').boundingBox())!;
+  assert.equal(Math.round(popupBox.width), page.viewportSize()!.width, 'the popup fills the screen');
+  const popupKeys = (name: string) => popup.getByRole('button', { name, exact: true });
+  await popupKeys('Esc').tap();
+  for (let eof = 0; eof < 2; eof++) {
+    await popupKeys('Ctrl').tap();
+    await page.keyboard.type('d');
+  }
+  await popup.getByText('033').waitFor();
+  await page.keyboard.press('Enter');
+  await popup.waitFor({ state: 'detached' });
+  await pickOutput(/rc=0/);
+
   // Installable: the manifest loads with the session cookie.
   const manifest = await page.evaluate(async () =>
     (await fetch('/manifest.webmanifest', { credentials: 'include' })).json(),
@@ -677,7 +700,7 @@ try {
 
   assert.deepEqual(errors, []);
   console.log(
-    'PASS mobile key bar, sticky modifiers, kitty encoding, swipes, prefix, narrow layout, viewport, process viewer, switcher, pane search, settings, nav drawer, pane widgets, pairing, and manifest',
+    'PASS mobile key bar, sticky modifiers, kitty encoding, swipes, prefix, narrow layout, viewport, process viewer, switcher, pane search, settings, nav drawer, pane widgets, popups, pairing, and manifest',
   );
 } finally {
   await browser.close();

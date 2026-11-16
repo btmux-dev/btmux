@@ -127,6 +127,18 @@ as they delay fish's own.
 Kill confirmation, send-prefix, pane resizing, and `repeat-time` are described in
 [btmux for tmux users](tmux.md).
 
+## Popup keys
+
+A `[[popup]]` table binds a key, after the prefix, that runs a command in a
+popup over the active pane, as `btmux popup` does; repeat it for more keys. See
+[Popups](automation.md#popups).
+
+```toml
+[[popup]]
+key = "G"
+command = "lazygit"
+```
+
 ## macOS editing keys
 
 On macOS, panes translate Cmd editing chords as Ghostty does: Cmd+Left/Right

@@ -178,6 +178,7 @@ btmux kill-pane -t "$pane"
 | `capture-pane` (`capturep`)  | `-t -S` (`-p`, `-J` are implied) |
 | `new-worktree`               | `-t -d -F BRANCH`                |
 | `remove-worktree`            | `-t`                             |
+| `display-popup` (`popup`)    | `-t -d -e -T -E`; see [Popups](#popups) |
 
 For coding agents, [`skills/btmux`](../skills/btmux/SKILL.md) is an
 [Agent Skill](https://agentskills.io) that teaches these commands. Install it
@@ -696,6 +697,61 @@ The commands wrap `POST /api/panes/<pane-id>/widget`, which takes up to 16 MiB:
 
 It replies when the user answers with `{"answer": ...}` (`null` if canceled), or
 409 if no tab shows the pane or it already has a widget open.
+
+## Popups
+
+`btmux popup` (alias `display-popup`) runs a program in a terminal over the
+pane, the size of the file browser, and closes it when the program exits. It
+exits with the program's status:
+
+```sh
+btmux popup lazygit
+btmux popup -T Log git log --oneline --graph
+btmux popup 'git diff | delta'
+```
+
+Several arguments are a program and its arguments, run as given; a single
+argument is a command line for the configured shell. The program runs in the
+command's directory (`-d DIR` for another) and gets its environment, plus `-e
+NAME=VALUE` for each one given. `-T` sets the title, the command by default.
+`-t` opens it over another pane, named as for the
+[tmux-style commands](#tmux-style-commands). `-E` is accepted for tmux scripts;
+popups always close when the program exits.
+
+Every key goes to the program, Esc included, except the prefix: prefix bindings
+still work, and `<prefix> <prefix>` sends the prefix key to the program. A
+popup belongs to its pane: switching windows hides it while it keeps running,
+it outlives tab reloads and `btmux upgrade`, and closing the pane closes it.
+The close button in its title bar hangs the program up (status 129). A pane
+has one popup at a time. Popups of [sandboxed](sandbox.md) panes run in the
+sandbox, in its login shell's environment.
+
+Outside btmux, or if no tab shows the pane within 3 s (over ssh, say), the
+program runs in place instead, so `btmux popup` works in scripts anywhere. A
+program that can't start exits 127.
+
+To open one with a key, add a `[[popup]]` table to `config.toml`. Its `key`
+follows the prefix, as under `[keys]`, and takes the key from any action bound
+to it. The `command` runs through an interactive shell, for the `PATH` panes
+have, in the active pane's directory:
+
+```toml
+[[popup]]
+key = "G"
+command = "lazygit"
+title = "Git" # optional; the command by default
+```
+
+### API
+
+`POST /api/panes/<pane-id>/popup` opens one, with `command` either
+`{"exec": ["program", "arg"]}` or `{"shell": "command line"}`, and optional
+`cwd` (the pane's directory by default), `env` (a list of `[name, value]` pairs that replaces the server's
+environment), and `title`. It replies `{"id": ...}` once a tab has started the
+program, 409 if no tab does within 3 s, 422 if the program can't start, and 423
+if the pane already has a popup. `GET /api/panes/<pane-id>/popup/<id>` waits
+for the program to exit and replies `{"status": n}` (`null` if unknown); exit
+statuses stay available for 5 minutes, so a waiter can reconnect.
 
 ## Notifications
 

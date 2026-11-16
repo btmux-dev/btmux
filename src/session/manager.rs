@@ -27,10 +27,19 @@ pub type PaneStatuses = std::sync::Arc<HashMap<Uuid, Option<AgentStatus>>>;
 #[cfg(unix)]
 pub type HandoffPane = (Uuid, std::os::fd::RawFd, crate::pty::Handoff);
 
+/// Sessions, started popups, and live shells, for an upgraded server.
+#[cfg(unix)]
+pub type HandoffExport = (
+    Vec<SessionSnapshot>,
+    Vec<crate::popup::PopupSummary>,
+    Vec<HandoffPane>,
+);
+
 pub struct SessionManager {
     pub sessions: Vec<Session>,
     pub telemetry: crate::telemetry::TelemetryStore,
     pub widgets: crate::widget::Widgets,
+    pub popups: crate::popup::Popups,
     shell: String,
     cli_shell: Option<String>,
     /// The config as last read from disk. Kept so a session-only override can be
@@ -130,6 +139,7 @@ impl SessionManager {
             clients: 0,
             alert_client: None,
             widgets: Default::default(),
+            popups: Default::default(),
             git: GitTracker::new(pty_env.meta_tx.clone()),
             pty_env,
         }
@@ -289,6 +299,11 @@ impl SessionManager {
                 let pid = pane.pty.shell_pid()?;
                 Some((pane.id, pid, pane.pty.programs_are_descendants()))
             })
+            // A popup's programs count for its pane.
+            .chain(self.popups.iter().filter_map(|popup| {
+                let pid = popup.pty.shell_pid()?;
+                Some((popup.pane_id, pid, popup.pty.programs_are_descendants()))
+            }))
             .collect()
     }
 
@@ -700,6 +715,40 @@ impl SessionManager {
         .with_guest(self.guest(runtime))
     }
 
+    /// A popup's PTY over `pane_id`, in the pane's runtime.
+    pub fn new_popup_pty(
+        &self,
+        id: Uuid,
+        pane_id: Uuid,
+        cwd: Option<std::path::PathBuf>,
+        spawn: Option<crate::popup::Spawn>,
+    ) -> PtyHandle {
+        let pty = self.new_pty(id, cwd, &self.pane_runtime(pane_id));
+        match spawn {
+            Some(spawn) => pty.with_popup(pane_id, spawn),
+            None => pty,
+        }
+    }
+
+    /// A pane's or a popup's PTY.
+    pub fn find_pty(&self, id: Uuid) -> Option<&PtyHandle> {
+        match self.find_pane(id) {
+            Some(pane) => Some(&pane.pty),
+            None => self
+                .popups
+                .iter()
+                .find(|popup| popup.id == id)
+                .map(|popup| &popup.pty),
+        }
+    }
+
+    pub fn find_pty_mut(&mut self, id: Uuid) -> Option<&mut PtyHandle> {
+        if self.find_pane(id).is_some() {
+            return self.find_pane_mut(id).map(|pane| &mut pane.pty);
+        }
+        self.popups.get_mut(id).map(|popup| &mut popup.pty)
+    }
+
     fn runtime_shell_name(&self, runtime: &Runtime) -> String {
         match runtime {
             Runtime::Local => shell_name(&self.shell),
@@ -1004,9 +1053,18 @@ impl SessionManager {
     fn forget_pane(&mut self, pane: &Pane) {
         self.agents.remove(&pane.id);
         self.telemetry.pane_closed(pane.id, pane.pty.is_guest());
+        if self.popups.close_pane(pane.id) {
+            crate::popup::broadcast(self);
+        }
     }
 
     pub async fn handle_pane_exit(&mut self, pane_id: Uuid) {
+        if let Some(ended) = self.popups.exited(pane_id) {
+            if ended {
+                crate::popup::broadcast(self);
+            }
+            return;
+        }
         let Some((si, wi)) = self.sessions.iter().enumerate().find_map(|(si, s)| {
             s.windows
                 .iter()
@@ -1489,6 +1547,9 @@ impl SessionManager {
             }
         }
         self.agents.clear();
+        if self.popups.close_all() {
+            crate::popup::broadcast(self);
+        }
         self.create_session(Some("0".to_string())).await;
     }
 
@@ -1566,23 +1627,23 @@ impl SessionManager {
     }
 
     pub fn kill_window(&mut self, window_id: Uuid) {
+        let mut removed = None;
         for session in &mut self.sessions {
             if let Some(wi) = session.windows.iter().position(|w| w.id == window_id) {
                 if session.windows.len() <= 1 {
                     return;
                 }
-                let removed = session.windows.remove(wi);
-                for pane in removed.panes {
-                    self.telemetry.pane_closed(pane.id, pane.pty.is_guest());
-                    self.agents.remove(&pane.id);
-                }
+                removed = Some(session.windows.remove(wi));
                 if wi < session.active_window {
                     session.active_window -= 1;
                 } else if session.active_window >= session.windows.len() {
                     session.active_window = session.windows.len() - 1;
                 }
-                return;
+                break;
             }
+        }
+        for pane in removed.map(|window| window.panes).unwrap_or_default() {
+            self.forget_pane(&pane);
         }
     }
 
@@ -1718,33 +1779,19 @@ impl SessionManager {
     #[cfg(unix)]
     /// Stop every PTY reader and writer and export the session tree and live shells for
     /// an in-place upgrade. If a pane doesn't stop in time, every shell resumes.
-    pub fn export_handoff(
-        &mut self,
-        timeout: Duration,
-    ) -> Result<(Vec<SessionSnapshot>, Vec<HandoffPane>), String> {
-        let panes = || {
-            self.sessions
-                .iter()
-                .flat_map(|s| &s.windows)
-                .flat_map(|w| &w.panes)
-        };
-        for pane in panes() {
-            pane.pty.stop_io();
+    pub fn export_handoff(&mut self, timeout: Duration) -> Result<HandoffExport, String> {
+        for pty in self.ptys_mut() {
+            pty.stop_io();
         }
         let deadline = Instant::now() + timeout;
         let mut exported = Vec::new();
         let mut stuck = 0;
-        for pane in self
-            .sessions
-            .iter_mut()
-            .flat_map(|s| &mut s.windows)
-            .flat_map(|w| &mut w.panes)
-        {
-            match pane.pty.export_handoff(deadline) {
-                Ok(Some((fd, handoff))) => exported.push((pane.id, fd, handoff)),
+        for (id, pty) in self.ptys_with_ids_mut() {
+            match pty.export_handoff(deadline) {
+                Ok(Some((fd, handoff))) => exported.push((id, fd, handoff)),
                 Ok(None) => {}
                 Err(error) => {
-                    tracing::warn!(id = %pane.id, "cannot hand off shell: {error}");
+                    tracing::warn!(%id, "cannot hand off shell: {error}");
                     stuck += 1;
                 }
             }
@@ -1753,27 +1800,48 @@ impl SessionManager {
             self.resume_handoff(exported);
             return Err(format!("{stuck} pane(s) did not stop in time"));
         }
-        Ok((self.all_snapshots(), exported))
+        // Only started popups have a program to hand off.
+        let popups = self
+            .popups
+            .summaries()
+            .into_iter()
+            .filter(|popup| exported.iter().any(|(id, _, _)| *id == popup.id))
+            .collect();
+        Ok((self.all_snapshots(), popups, exported))
+    }
+
+    #[cfg(unix)]
+    fn ptys_with_ids_mut(&mut self) -> impl Iterator<Item = (Uuid, &mut PtyHandle)> {
+        self.sessions
+            .iter_mut()
+            .flat_map(|s| &mut s.windows)
+            .flat_map(|w| &mut w.panes)
+            .map(|pane| (pane.id, &mut pane.pty))
+            .chain(
+                self.popups
+                    .iter_mut()
+                    .map(|popup| (popup.id, &mut popup.pty)),
+            )
+    }
+
+    #[cfg(unix)]
+    fn ptys_mut(&mut self) -> impl Iterator<Item = &mut PtyHandle> {
+        self.ptys_with_ids_mut().map(|(_, pty)| pty)
     }
 
     #[cfg(unix)]
     /// Restart the shells `export_handoff` stopped, after a failed upgrade.
     pub fn resume_handoff(&mut self, panes: Vec<HandoffPane>) {
         let deadline = Instant::now() + Duration::from_secs(5);
-        for pane in self
-            .sessions
-            .iter_mut()
-            .flat_map(|s| &mut s.windows)
-            .flat_map(|w| &mut w.panes)
-        {
-            if let Err(error) = pane.pty.recover(deadline) {
-                tracing::warn!(id = %pane.id, "cannot resume shell: {error}");
+        for (id, pty) in self.ptys_with_ids_mut() {
+            if let Err(error) = pty.recover(deadline) {
+                tracing::warn!(%id, "cannot resume shell: {error}");
             }
         }
         for (id, _, handoff) in panes {
             let pid = handoff.pid;
-            let resumed = match self.find_pane_mut(id) {
-                Some(pane) => pane.pty.resume(handoff),
+            let resumed = match self.find_pty_mut(id) {
+                Some(pty) => pty.resume(handoff),
                 None => Err("pane not found".into()),
             };
             if let Err(error) = resumed {
@@ -1789,6 +1857,7 @@ impl SessionManager {
     pub fn restore_handoff(
         &mut self,
         sessions: Vec<SessionSnapshot>,
+        popups: Vec<crate::popup::PopupSummary>,
         panes: Vec<(Uuid, std::os::fd::OwnedFd, crate::pty::Handoff)>,
     ) -> usize {
         let unread: Vec<_> = sessions
@@ -1798,16 +1867,42 @@ impl SessionManager {
             .filter_map(|p| Some((p.id, p.unread.clone()?)))
             .collect();
         let restored = self.restore_from_snapshots(sessions);
+        for popup in popups {
+            if self.find_pane(popup.pane_id).is_none() {
+                continue;
+            }
+            let pty = self.new_popup_pty(popup.id, popup.pane_id, None, None);
+            self.popups.insert(crate::popup::Popup {
+                id: popup.id,
+                pane_id: popup.pane_id,
+                title: popup.title,
+                pty,
+            });
+        }
+        let mut adopted = Vec::new();
         for (id, master, handoff) in panes {
             let pid = handoff.pid;
-            let adopted = match self.find_pane_mut(id) {
-                Some(pane) => pane.pty.adopt(master, handoff),
+            let result = match self.find_pty_mut(id) {
+                Some(pty) => pty.adopt(master, handoff),
                 None => Err("pane not found".into()),
             };
-            if let Err(error) = adopted {
-                tracing::warn!(%id, "cannot adopt shell: {error}");
-                crate::pty::hang_up(pid);
+            match result {
+                Ok(()) => adopted.push(id),
+                Err(error) => {
+                    tracing::warn!(%id, "cannot adopt shell: {error}");
+                    crate::pty::hang_up(pid);
+                }
             }
+        }
+        let orphans: Vec<_> = self
+            .popups
+            .iter()
+            .filter(|popup| !adopted.contains(&popup.id))
+            .map(|popup| popup.id)
+            .collect();
+        for id in orphans {
+            self.popups
+                .failed(id, "the popup did not survive the upgrade".into());
         }
         for (id, alert) in unread {
             if let Some(pane) = self.find_pane_mut(id) {

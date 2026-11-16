@@ -165,8 +165,11 @@ impl PtyHandle {
         let exit_tx = self.exit_tx.clone();
         let pane_id = self.pane_id;
         let killer = child.clone_killer();
+        let exit_status = self.exit_status.clone();
         std::thread::spawn(move || {
-            let _ = child.wait();
+            if let Ok(status) = child.wait() {
+                *exit_status.lock().unwrap() = Some(status.exit_code() as i32);
+            }
             child_slot.lock().unwrap().take();
             // Ends the reader: ConPTY keeps its output open until closed.
             drop(child_pty.lock().unwrap().take());
@@ -288,6 +291,17 @@ impl OutputPipeline {
             .response_tx
             .try_send(PtyInput::Raw(b"\x1b[1;1R".to_vec()));
         rest
+    }
+}
+
+impl PtyHandle {
+    /// End the shell and its programs, as closing the pane does.
+    pub fn terminate(&self) {
+        if let Some(master) = &self.master {
+            if self.child.lock().unwrap().is_some() {
+                let _ = master.killer.lock().unwrap().kill();
+            }
+        }
     }
 }
 
