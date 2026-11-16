@@ -160,6 +160,7 @@ struct Ended {
 }
 
 /// Popups, for an upgraded server.
+#[cfg(unix)]
 #[derive(Serialize, Deserialize, Default)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct PopupsHandoff {
