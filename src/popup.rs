@@ -1205,6 +1205,7 @@ mod tests {
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn closing_hangs_up_and_closing_the_pane_closes_it() {
         let (state, app, pane) = app().await;
