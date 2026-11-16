@@ -1019,6 +1019,7 @@ try {
   });
   for (const label of ['Neovim', 'VS Code']) {
     await page.getByRole('button', { name: label, exact: true }).click();
+    await page.getByRole('menuitem', { name: `Show ${label}` }).click();
     const open = label === 'Neovim' ? 'nvimOpen' : 'vscodeOpen';
     await page.waitForFunction((open) => (window as any).nvimStore.getState()[open], open);
     await page.getByRole('button', { name: 'Editor', exact: true }).click();
@@ -1105,6 +1106,40 @@ try {
   assert(probeShown, 'the new tab draws text that was already on screen');
   await second.close();
   console.log('PASS a newly attached tab shows existing window contents');
+
+  // The status bar menu shuts Neovim down, unless it has unsaved changes.
+  const shutDown = async () => {
+    await page.getByRole('button', { name: 'Neovim', exact: true }).click();
+    const item = page.getByRole('menu', { name: 'Neovim' }).getByRole('menuitem', { name: /^Shut down/ });
+    for (const deadline = Date.now() + 10_000; !(await item.isEnabled()); await page.waitForTimeout(50)) {
+      assert(Date.now() < deadline, 'Neovim is running');
+    }
+    await item.click();
+  };
+  await page.evaluate(() => {
+    const store = (window as any).nvimStore;
+    const session = store.getState().allSessions.find((s: any) => s.windows.length);
+    const win = session.windows[session.active_window];
+    store.getState().setNvimOpen(true, win.panes[win.active_pane].id);
+  });
+  const unsaved = await rpc('nvim_exec_lua', [
+    "local b = vim.api.nvim_create_buf(true, false); vim.api.nvim_buf_set_lines(b, 0, -1, false, { 'x' }); return b",
+    [],
+  ]);
+  await shutDown();
+  await page.getByText(/Neovim has unsaved changes/).first().waitFor();
+  assert(await page.evaluate(() => (window as any).nvimStore.getState().nvimOpen), 'Neovim stays open');
+  await rpc('nvim_exec_lua', ['vim.api.nvim_buf_delete(..., { force = true })', [unsaved]]);
+  await shutDown();
+  await page.waitForFunction(() => !(window as any).nvimStore.getState().nvimOpen);
+  assert.deepEqual((await api('/api/editors')).running, [], 'Neovim exited');
+  rpc = null;
+  await page.getByRole('button', { name: 'Neovim', exact: true }).click();
+  const menu = page.getByRole('menu', { name: 'Neovim' });
+  await menu.getByText('Not running').waitFor();
+  assert(await menu.getByRole('menuitem', { name: /^Shut down/ }).isDisabled(), 'nothing to shut down');
+  await page.keyboard.press('Escape');
+  console.log('PASS the status bar menu shuts Neovim down, unless it has unsaved changes');
 } finally {
   if (rpc && scratch !== null) {
     await rpc('nvim_input', ['<Esc>']).catch(() => {});

@@ -118,6 +118,7 @@ pub fn create_app(state: AppState) -> Router {
             axum::routing::post(api_open_editor),
         )
         .route("/api/nvim/file", axum::routing::get(api_nvim_file))
+        .route("/api/editors", get(api_editors))
         .route("/api/vscode", get(crate::vscode::status))
         .route("/api/multipass", get(crate::multipass::api_status))
         .route(
@@ -706,6 +707,24 @@ async fn api_pane_editor_file(
 /// Current file of the built-in Neovim, or `{"path": null}`.
 async fn api_nvim_file() -> Response {
     Json(serde_json::json!({ "path": ws::nvim::current_file().await })).into_response()
+}
+
+/// For `GET /api/editors`: the built-in editors with a running server.
+#[derive(Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct EditorsStatus {
+    pub running: Vec<crate::config::Editor>,
+}
+
+async fn api_editors() -> Json<EditorsStatus> {
+    let mut running = Vec::new();
+    if ws::nvim::running().await {
+        running.push(crate::config::Editor::Neovim);
+    }
+    if crate::vscode::running().await {
+        running.push(crate::config::Editor::Vscode);
+    }
+    Json(EditorsStatus { running })
 }
 
 async fn api_open_file_browser(

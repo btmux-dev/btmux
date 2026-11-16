@@ -310,6 +310,14 @@ pub async fn open(path: &str, line: Option<u32>) -> Result<(), String> {
         .map_err(|()| "Neovim did not open the file".into())
 }
 
+pub async fn running() -> bool {
+    SERVER
+        .lock()
+        .await
+        .as_ref()
+        .is_some_and(NvimServer::running)
+}
+
 /// File of the built-in Neovim's current buffer; `None` if it isn't running.
 pub async fn current_file() -> Option<String> {
     let addr = {

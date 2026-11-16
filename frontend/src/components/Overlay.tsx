@@ -68,6 +68,8 @@ const KEY_SECTIONS: { title: string; actions: string[] }[] = [
       'editor',
       'editor-neovim',
       'editor-vscode',
+      'shut-down-neovim',
+      'shut-down-vscode',
       'browser',
     ],
   },
@@ -147,6 +149,8 @@ const NEW_WINDOW: Command = {
 const UNAVAILABLE_EDITOR: Record<string, (config: ClientConfig | null) => boolean> = {
   'editor-neovim': (config) => !config?.editors.includes('neovim'),
   'editor-vscode': (config) => !config?.editors.includes('vscode'),
+  'shut-down-neovim': (config) => !config?.editors.includes('neovim'),
+  'shut-down-vscode': (config) => !config?.editors.includes('vscode'),
   browser: (config) => !config?.browser,
 };
 

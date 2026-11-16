@@ -826,6 +826,14 @@ pub async fn accept() -> Json<VscodeStatus> {
     status().await
 }
 
+pub async fn running() -> bool {
+    SERVER
+        .lock()
+        .await
+        .as_mut()
+        .is_some_and(|server| matches!(server.child.try_wait(), Ok(None)))
+}
+
 pub async fn shutdown() {
     drop(SERVER.lock().await.take());
 }
