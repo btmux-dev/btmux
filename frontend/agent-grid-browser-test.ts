@@ -125,7 +125,9 @@ const watchLayouts = (page: Page) =>
         const tiles = [...area.children]
           .map((tile) => tile as HTMLElement)
           .filter((tile) => getComputedStyle(tile).opacity !== '0')
-          .map((tile) => ({ x: tile.offsetLeft, y: tile.offsetTop, w: tile.offsetWidth, h: tile.offsetHeight }));
+          .map((tile) => ({ x: tile.offsetLeft, y: tile.offsetTop, w: tile.offsetWidth, h: tile.offsetHeight }))
+          // Not rendered yet (an ancestor still hidden).
+          .filter((tile) => tile.w > 0 && tile.h > 0);
         if (tiles.length) {
           const last = state.layouts.at(-1);
           // Ignore cell measurement rounding.
