@@ -514,17 +514,37 @@ server, without a connection token, on a private Unix socket, and proxies
 picks it, read when it starts: `code` (default) runs `code serve-web` from an
 installed VS Code (`code` on `PATH`, else the macOS app bundle), which
 downloads the matching server on first use; `openvscode-server` (on `PATH`)
-is opt-in. The surface first calls `GET /api/vscode`, which starts the server
+is opt-in. A program only the pane shell's `PATH` has is found as plan limits
+find agent CLIs (at startup too, so the editor list shows it), and the server
+then runs with that `PATH`: `code` sets `VSCODE_CLI`, so VS Code doesn't
+resolve the shell environment itself. The surface first calls `GET /api/vscode`, which starts the server
 and reports `ready`, `license`, or an error. The desktop `code` CLI doesn't
 enforce the VS Code Server license, so btmux asks once per profile
 (`POST /api/vscode/license` writes `<state dir>/vscode/license-accepted`) and
 then always passes `--accept-server-license-terms`. The server runs in its own
-process group, since `code` is a wrapper that starts several processes. User
+process group, since `code` is a wrapper that starts several processes, under a
+`/bin/sh` watchdog (`WATCHDOG`) that kills the group when its stdin, a
+close-on-exec pipe from btmux, closes, so a killed or upgraded btmux takes it
+along. It doesn't inherit what btmux sets for panes (`PANE_ENV`) or the outer
+terminal's variables. `shutdown` (exit, upgrade) keeps reconnecting windows
+from starting it again; a failed upgrade calls `resume`. `SERVER` is held to
+spawn, not while the server starts listening. User
 data and extensions are per profile (`<state dir>/vscode`, the same layout for
 both servers). The iframe is same-origin,
 so the surface replays its keydowns to the keybinding hook and swallows those
-btmux handles. Moving an iframe in the DOM or changing its `src` reloads VS
-Code: it reloads only when opened over a pane in another folder. WKWebView rejects VS
+btmux handles; `prefix prefix` dispatches the prefix to VS Code's focused
+element (`sendPrefixToVscode`), with the US-layout `code`, Shift, and legacy
+key codes VS Code and xterm.js read (`prefixKeyMessages`). Webviews come from another origin (`vscode-cdn.net` for `code
+serve-web`), so their keys reach btmux only as VS Code re-dispatches them,
+after the webview saw them; focus moving into them selects the pane through
+the page's `blur`. Moving an iframe in the DOM or changing its `src` reloads VS
+Code: each time it's shown, it reloads only when the pane's folder differs from
+the one in VS Code's address (`vscodeFolder`, which also follows VS Code
+opening another). That folder is the pane's worktree root, else its cwd, never
+one on another host (`PaneSnapshot.cwd_remote`): `workspaceFolder` in
+`lib/vscodeFolder.ts` and `SessionManager::editor_folder` agree. Over a pane
+of a sandboxed session, the surface warns once per session that VS Code runs
+on the host. WKWebView rejects VS
 Code's `navigator.clipboard` reads, so in the macOS desktop app Cmd+V in its terminal
 skips VS Code and takes the Edit menu's paste. Don't grant the webview clipboard access:
 WebKit's preferences and WebView2's permission let any frame read it without a gesture.
@@ -537,9 +557,12 @@ its files, so any change makes VS Code rescan it. It connects back over
 settings and keybindings, on connect and when their paths change), `style` (the
 base16/24 `color_palette` and the terminal font, on connect and on every
 change), and `open`
-(`editor = "vscode"`, `vscode_open`, `btmux open-editor`). The last open is
-replayed to extension hosts that connect within 30 s, as VS Code may still be
-starting or reloading. The extension writes the palette and font to user
+(`editor = "vscode"`, `vscode_open`, `btmux open-editor`), with the folder the
+surface shows over that pane: windows showing another folder ignore it, and
+one showing it replies `opened` with the open's `id`. The last open is
+replayed to extension hosts that connect before any replied (for up to 5
+minutes: a license prompt, a first start, a reload into that folder) and for
+30 s after, for other windows; shutting VS Code down drops it. The extension writes the palette and font to user
 settings (color customizations and the editor and integrated terminal font,
 the editor at 80% size;
 `btmux.syncTheme` and `btmux.syncFont` turn them off), which VS Code for the
@@ -548,15 +571,35 @@ this page's `@font-face` rules into the iframe on each load. Change both sides
 of this protocol together.
 
 `[vscode] desktop` (or `settings`, `keybindings`, `extensions` paths) shares
-desktop VS Code's user files and extensions. The server parses the JSONC files
-and sends them as `user`; the extension, handling messages in order, replaces
-`vscode-userdata:/User/settings.json` (keeping the theme and font keys it
-wrote, so they don't flicker) and `keybindings.json`. These live in the
-browser's IndexedDB, so no file on disk can seed them, and machine settings
-ignore application-scoped keys. On each start, `link_extensions` registers
-shared extension folders in `extensions.json` by absolute location, reading a
-source's own `extensions.json` (minus `.obsolete`) when it has one, and
-replaces those `<state dir>/vscode/linked-extensions.json` lists.
+desktop VS Code's user files and extensions, the default profile's or
+`profile`'s (by name, from desktop VS Code's `globalStorage/storage.json`,
+honoring its use of the default profile's resources). The server parses the
+JSONC files and sends them as `user`; the extension, handling messages in
+order, merges them into `vscode-userdata:/User/settings.json` and
+`keybindings.json` three ways (`extras/vscode/merge.js`, against the shared
+files as last applied, kept in `globalState`): what the shared file changed
+applies, keybindings in its order (the last match wins) with those added here
+before the shared one they preceded, and changes made in btmux's VS Code (`btmux.syncTheme`, settings
+extensions write) stay; the theme and font keys it wrote stay, so they don't
+flicker, unless the result turns their sync off, which gives back the shared
+values (it then waits for VS Code to load the file before the `style` that
+follows). These live in the browser's IndexedDB, so no file on disk can
+seed them, and machine settings ignore application-scoped keys.
+`link_extensions` registers shared extension folders in `extensions.json` by
+absolute location, reading a source's own `extensions.json` (or a profile's,
+none if it has none; minus `.obsolete`) when it has one, and replaces those `<state
+dir>/vscode/linked-extensions.json` lists; it runs on each start and, while the
+server runs, whenever a source folder changes (desktop VS Code installing or
+updating one), watching its nearest existing ancestor while it is missing. Entries carry no gallery metadata, so btmux's VS Code never
+updates them itself. With `openvscode-server`, Microsoft's and GitHub's
+closed-license extensions (`microsoft_only`) aren't linked, as they run only in
+Microsoft's builds. VS Code's `asExternalUri` returns `localhost` URLs
+unchanged (`code serve-web` sets no tunnel provider), so extensions serving
+pages on the server's localhost work only from a browser on the same machine;
+`docs/vscode.md` lists this with other desktop extensions that can't run.
+Sign-in flows return cross-site to `/vscode/callback`, which carries no
+`SameSite=Strict` cookie: `auth::return_same_site` answers such a document
+request without credentials with a `Refresh` to the same URL, as `/pair` does.
 
 ### Sandboxed sessions (Multipass)
 

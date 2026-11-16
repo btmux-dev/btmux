@@ -48,7 +48,29 @@ export function isPasteChord(
 
 /** The Windows virtual key code, which Chromium's editing needs, for a key from its name. */
 function keyCodeFor(key: string): number {
-  return NAMED_KEY_CODES[key] ?? (/^[a-z\d]$/i.test(key) ? key.toUpperCase().charCodeAt(0) : 0);
+  return usKey(key)?.keyCode ?? 0;
+}
+
+interface PhysicalKey {
+  code: string;
+  keyCode: number;
+  shift: boolean;
+}
+
+/** The physical key that types `key` on a US layout, its Windows virtual key code, and whether it takes Shift. */
+function usKey(key: string): PhysicalKey | null {
+  if (/^[a-z]$/i.test(key)) {
+    const upper = key.toUpperCase();
+    return { code: `Key${upper}`, keyCode: upper.charCodeAt(0), shift: key === upper };
+  }
+  if (/^\d$/.test(key)) return { code: `Digit${key}`, keyCode: key.charCodeAt(0), shift: false };
+  const fkey = key.match(/^F([1-9]|1[0-2])$/);
+  if (fkey) return { code: key, keyCode: 111 + Number(fkey[1]), shift: false };
+  if (key in NAMED_KEY_CODES) return { code: key === ' ' ? 'Space' : key, keyCode: NAMED_KEY_CODES[key], shift: false };
+  const index = US_SYMBOLS.findIndex(([plain, shifted]) => key === plain || key === shifted);
+  if (index < 0) return null;
+  const [plain, , code, keyCode] = US_SYMBOLS[index];
+  return { code, keyCode, shift: key !== plain };
 }
 
 const NAMED_KEY_CODES: Record<string, number> = {
@@ -69,27 +91,44 @@ const NAMED_KEY_CODES: Record<string, number> = {
   ArrowRight: 39,
 };
 
-/** Pressing and releasing the prefix key (`prefix prefix`). */
+/** US layout symbols: unshifted, shifted, `code`, and key code. */
+const US_SYMBOLS: [string, string, string, number][] = [
+  ['`', '~', 'Backquote', 192],
+  ['1', '!', 'Digit1', 49],
+  ['2', '@', 'Digit2', 50],
+  ['3', '#', 'Digit3', 51],
+  ['4', '$', 'Digit4', 52],
+  ['5', '%', 'Digit5', 53],
+  ['6', '^', 'Digit6', 54],
+  ['7', '&', 'Digit7', 55],
+  ['8', '*', 'Digit8', 56],
+  ['9', '(', 'Digit9', 57],
+  ['0', ')', 'Digit0', 48],
+  ['-', '_', 'Minus', 189],
+  ['=', '+', 'Equal', 187],
+  ['[', '{', 'BracketLeft', 219],
+  [']', '}', 'BracketRight', 221],
+  ['\\', '|', 'Backslash', 220],
+  [';', ':', 'Semicolon', 186],
+  ["'", '"', 'Quote', 222],
+  [',', '<', 'Comma', 188],
+  ['.', '>', 'Period', 190],
+  ['/', '?', 'Slash', 191],
+];
+
+/** Pressing and releasing the prefix key (`prefix prefix`), as a US keyboard would. */
 export function prefixKeyMessages(p: ParsedKey): BrowserClientMessage[] {
-  const letter = /^[a-z]$/i.test(p.key);
-  const digit = /^\d$/.test(p.key);
+  const physical = usKey(p.key);
   const event = {
     key: p.key,
-    code: letter
-      ? `Key${p.key.toUpperCase()}`
-      : digit
-        ? `Digit${p.key}`
-        : p.key === ' '
-          ? 'Space'
-          : p.key.length > 1
-            ? p.key
-            : '',
-    keyCode: 0,
+    code: physical?.code ?? '',
+    keyCode: physical?.keyCode ?? 0,
     repeat: false,
     altKey: p.alt,
     ctrlKey: p.ctrl,
     metaKey: false,
-    shiftKey: false,
+    // Ctrl+letter is the same either case.
+    shiftKey: !!physical?.shift && !(p.ctrl && /^[a-z]$/i.test(p.key)),
   };
   return [keyMessage(event, true), keyMessage(event, false)];
 }

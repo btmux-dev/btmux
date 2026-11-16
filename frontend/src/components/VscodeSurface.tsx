@@ -14,6 +14,9 @@ import { STARTUP_THEME } from '../state/startupTheme';
 import { DOUBLE_ESC_MS } from './NvimSurface';
 import { isDesktopApp } from '../lib/desktopApp';
 import { IS_MAC } from '../lib/nvimKeys';
+import type { ParsedKey } from '../lib/prefixKey';
+import { prefixKeyMessages } from '../lib/browserInput';
+import { findPane, findPaneSession, urlFolder, vscodeUrl, workspaceFolder } from '../lib/vscodeFolder';
 
 /**
  * This page's `@font-face` rules with absolute URLs, so the same-origin iframe
@@ -42,7 +45,16 @@ function fontFaceCss(): string {
   return rules.join('\n');
 }
 
-/** VS Code (`/vscode/`, proxied by the backend), pinned over a pane like the Neovim surface. */
+let activePrefix: ((prefix: ParsedKey) => void) | null = null;
+
+/** Press the prefix key in VS Code (`prefix prefix`), where it has focus. */
+export function sendPrefixToVscode(prefix: ParsedKey) {
+  activePrefix?.(prefix);
+}
+
+/** Sandboxed sessions already warned of, once per tab. */
+const warnedSessions = new Set<string>();
+
 // WKWebView rejects VS Code's clipboard read, so its terminal gets the Edit menu's paste,
 // which runs only if nothing sees the key.
 const isTerminalPaste = (e: KeyboardEvent) =>
@@ -55,6 +67,7 @@ const isTerminalPaste = (e: KeyboardEvent) =>
   !e.shiftKey &&
   !!(e.target as Element).classList?.contains('xterm-helper-textarea');
 
+/** VS Code (`/vscode/`, proxied by the backend), pinned over a pane like the Neovim surface. */
 export function VscodeSurface({
   config,
   open,
@@ -63,7 +76,6 @@ export function VscodeSurface({
   focused,
   zoomed,
   onActivate,
-  cwd,
 }: {
   config: ClientConfig | null;
   open: boolean;
@@ -73,23 +85,38 @@ export function VscodeSurface({
   focused: boolean;
   zoomed: boolean;
   onActivate: () => void;
-  /** The pane's folder, opened when the surface is opened or moved. */
-  cwd: string | null;
 }) {
   const visible = open && rect !== null;
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [loaded, setLoaded] = useState(false);
+  const shown = useStore((s) => s.vscodeShown);
   // Changing the iframe's src (or moving it in the DOM) reloads VS Code, so
-  // only switch folders when opened over a pane in another one.
-  const [folder, setFolder] = useState(cwd);
+  // only switch folders when shown over a pane in another one: its worktree
+  // (not each subfolder), never one on another host.
+  const [folder, setFolder] = useState(() => {
+    const { allSessions, vscodeFolder } = useStore.getState();
+    return workspaceFolder(findPane(allSessions, paneId)) ?? vscodeFolder;
+  });
   useEffect(() => {
-    if (open && cwd && cwd !== folder) {
-      setLoaded(false);
-      setFolder(cwd);
+    if (!open) return;
+    const { allSessions, vscodeFolder, setVscodeFolder, showToast } = useStore.getState();
+    const session = findPaneSession(allSessions, paneId);
+    if (session?.runtime.type === 'multipass' && !warnedSessions.has(session.id)) {
+      warnedSessions.add(session.id);
+      showToast('VS Code runs on this host, not in the sandbox', 'attention', {
+        body: 'Its terminals, tasks, and extensions run with your account on files the sandbox can change. Trust only what you reviewed.',
+      });
     }
+    const target = workspaceFolder(findPane(allSessions, paneId));
+    if (!target || target === vscodeFolder) return;
+    setLoaded(false);
+    setVscodeFolder(target);
+    if (target !== folder) setFolder(target);
+    // Already its src: VS Code opened another folder since.
+    else iframeRef.current?.contentWindow?.location.replace(vscodeUrl(target));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, paneId]);
-  const src = `/vscode/${folder ? `?folder=${encodeURIComponent(folder)}` : ''}`;
+  }, [open, paneId, shown]);
+  const src = vscodeUrl(folder);
   const focusedRef = useRef(focused);
   focusedRef.current = focused;
   const onActivateRef = useRef(onActivate);
@@ -134,11 +161,36 @@ export function VscodeSurface({
     const win = iframeRef.current?.contentWindow;
     if (!win) return;
     setLoaded(true);
+    useStore.getState().setVscodeFolder(urlFolder(win.location.href));
     const fonts = win.document.createElement('style');
     fonts.textContent = fontFaceCss();
     win.document.head.append(fonts);
+    // Keys btmux sends VS Code itself, which mustn't be replayed back.
+    const forwarded = new WeakSet<Event>();
+    activePrefix = (prefix) => {
+      const [down] = prefixKeyMessages(prefix);
+      if (down.type !== 'key') return;
+      const target = win.document.activeElement ?? win.document.body;
+      for (const type of ['keydown', 'keyup']) {
+        const event = new (win as typeof window).KeyboardEvent(type, {
+          key: down.key,
+          code: down.code,
+          ctrlKey: prefix.ctrl,
+          altKey: prefix.alt,
+          shiftKey: (down.modifiers & 8) !== 0,
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+        });
+        // VS Code and xterm.js read the legacy key codes, which the constructor can't set.
+        for (const name of ['keyCode', 'which']) Object.defineProperty(event, name, { get: () => down.key_code });
+        forwarded.add(event);
+        target.dispatchEvent(event);
+      }
+    };
     let lastEsc = -Infinity;
     const onKeyDown = (e: KeyboardEvent) => {
+      if (forwarded.has(e)) return;
       const replay = new KeyboardEvent('keydown', {
         key: e.key,
         code: e.code,
@@ -184,6 +236,24 @@ export function VscodeSurface({
     );
     win.addEventListener('mousedown', onMouseDown, true);
   };
+
+  useEffect(
+    () => () => {
+      activePrefix = null;
+    },
+    [],
+  );
+
+  // Focus moving into VS Code, including its webviews (other origins, whose
+  // events never reach this page or VS Code's), selects its pane.
+  useEffect(() => {
+    if (!visible) return;
+    const onBlur = () => {
+      if (document.activeElement === iframeRef.current && !focusedRef.current) onActivateRef.current();
+    };
+    window.addEventListener('blur', onBlur);
+    return () => window.removeEventListener('blur', onBlur);
+  }, [visible]);
 
   // Take focus when its pane is active, and back after a modal closes.
   useEffect(() => {

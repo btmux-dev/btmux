@@ -114,6 +114,7 @@ fn serialize_snapshots(snapshots: &[SessionSnapshot]) -> Result<String, String> 
                 pane.remove("agent_status");
                 pane.remove("unread");
                 pane.remove("git");
+                pane.remove("cwd_remote");
             }
         }
     }
@@ -143,6 +144,7 @@ mod agent_status_tests {
                     id: pane_id,
                     title: None,
                     cwd: None,
+                    cwd_remote: false,
                     agent_status: AgentStatus {
                         state: AgentState::Blocked,
                         agent: Some("codex".to_string()),

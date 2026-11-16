@@ -605,6 +605,8 @@ pub struct VscodeConfig {
     pub server: VscodeServer,
     /// Use desktop VS Code's user settings, keybindings, and extensions.
     pub desktop: bool,
+    /// The desktop profile to use them from, by name; the default profile's otherwise.
+    pub profile: Option<String>,
     /// A `settings.json` to use instead of desktop VS Code's.
     pub settings: Option<String>,
     /// A `keybindings.json` to use instead of desktop VS Code's.
@@ -1919,6 +1921,7 @@ pub fn generate_config_toml() -> String {
 # [vscode]
 # server = "code"   # "code" = `code serve-web` from an installed VS Code, "openvscode-server" = on PATH; read when it starts
 # desktop = false   # use desktop VS Code's settings, keybindings, and extensions
+# profile = "Work"   # from this desktop profile instead of the default one
 # settings = "~/.config/Code/User/settings.json"   # instead of desktop VS Code's
 # keybindings = "~/.config/Code/User/keybindings.json"
 # extensions = ["~/.vscode/extensions"]   # extension folders, or folders of them
@@ -2871,11 +2874,12 @@ palette:
     #[test]
     fn vscode_table_parses_and_the_generated_example_is_valid() {
         let file: FileConfig = toml::from_str(
-            "[vscode]\nserver = \"openvscode-server\"\ndesktop = true\nextensions = [\"~/x\"]",
+            "[vscode]\nserver = \"openvscode-server\"\ndesktop = true\nprofile = \"Work\"\nextensions = [\"~/x\"]",
         )
         .unwrap();
         assert_eq!(file.vscode.server, VscodeServer::OpenvscodeServer);
         assert!(file.vscode.desktop);
+        assert_eq!(file.vscode.profile.as_deref(), Some("Work"));
         assert_eq!(file.vscode.extensions, Some(vec!["~/x".to_string()]));
         assert!(toml::from_str::<FileConfig>("vscode-server = \"code\"").is_err());
 

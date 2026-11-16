@@ -284,8 +284,8 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         return crate::ws::nvim::open(path, *line).await;
     }
 
-    if let ClientMessage::VscodeOpen { path, line } = &cmd {
-        crate::vscode::open(path, *line);
+    if let ClientMessage::VscodeOpen { path, line, folder } = &cmd {
+        crate::vscode::open(path, *line, folder.as_deref());
         return Ok(());
     }
 
@@ -1059,6 +1059,9 @@ pub(crate) enum ClientMessage {
     VscodeOpen {
         path: String,
         line: Option<u32>,
+        /// The workspace of the window to open it in; all windows without one.
+        #[serde(default)]
+        folder: Option<String>,
     },
     /// Quit the built-in Neovim (refused with unsaved changes) or stop VS Code.
     ShutDownEditor {

@@ -27,7 +27,7 @@ use crate::ws::control::ServerMessage;
 use crate::AppState;
 
 /// Bump on any change to the handoff file.
-pub const VERSION: u32 = 14;
+pub const VERSION: u32 = 15;
 const ENV: &str = "BTMUX_HANDOFF";
 
 struct Context {
@@ -326,7 +326,10 @@ async fn execute(state: AppState, context: &Context, exe: &Path) -> String {
     crate::browser::shutdown().await;
     let (sessions, panes) = match manager.export_handoff(Duration::from_secs(2)) {
         Ok(exported) => exported,
-        Err(error) => return error,
+        Err(error) => {
+            crate::vscode::resume();
+            return error;
+        }
     };
     if let Some(path) = &context.state_file {
         if let Err(error) = crate::persistence::save(path, &sessions) {
@@ -342,6 +345,7 @@ async fn execute(state: AppState, context: &Context, exe: &Path) -> String {
         let _ = set_cloexec(fd, true);
     }
     manager.resume_handoff(panes);
+    crate::vscode::resume();
     error
 }
 
