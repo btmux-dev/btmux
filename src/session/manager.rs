@@ -389,6 +389,38 @@ impl SessionManager {
         changed
     }
 
+    /// Applies changed OSC 7501 records, first dropping those of programs
+    /// that exited. A report gives a pane without an agent one; records that
+    /// only ended, such as a done record outliving its program, don't.
+    pub fn sync_program_status(&mut self, now: Instant) -> bool {
+        let mut changed = false;
+        let panes = self
+            .sessions
+            .iter()
+            .flat_map(|session| &session.windows)
+            .flat_map(|window| &window.panes);
+        for pane in panes {
+            pane.pty.drop_exited_programs();
+            let Some(change) = pane.pty.take_program_status() else {
+                continue;
+            };
+            match self.agents.get_mut(&pane.id) {
+                Some(agent) if agent.is_active() => {
+                    changed |= agent.observe_program(change.summary.as_ref(), now);
+                }
+                _ if change.reported => {
+                    if let Some(summary) = change.summary {
+                        self.agents
+                            .insert(pane.id, AgentLifecycle::program(&summary, now));
+                        changed = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        changed
+    }
+
     /// Ends hook-only agents once their pane is back at the shell prompt:
     /// nothing else runs in the foreground, and the agent's reported PID may
     /// belong to a server that never exits (Codex).
@@ -2552,6 +2584,53 @@ mod agent_tests {
         assert_eq!(mgr.running_agent_panes(), vec![pane_id]);
         mgr.set_agent_status(pane_id, AgentStatus::default());
         assert!(mgr.running_agent_panes().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn program_status_names_an_agent_until_cleared() {
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        let mut mgr = SessionManager::new(
+            "/bin/sh".into(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        let session = mgr.create_session(None).await;
+        let pane_id = mgr.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        let pane = mgr.find_pane_mut(pane_id).unwrap();
+        pane.pty.ensure_spawned(80, 24).unwrap();
+        // "deploy?" in base64.
+        let report = b"printf '\\033]7501;state=blocked:app=deploy:msg=ZGVwbG95Pw\\033\\\\'\n";
+        pane.pty.input_tx.send(report.to_vec()).unwrap();
+        let state = |mgr: &mut SessionManager| {
+            mgr.sync_program_status(Instant::now());
+            mgr.agent_status(pane_id).cloned()
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while state(&mut mgr).is_none() && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let status = state(&mut mgr).unwrap();
+        assert_eq!(status.state, AgentState::Blocked);
+        assert_eq!(status.agent.as_deref(), Some("deploy"));
+        assert_eq!(status.message.as_deref(), Some("deploy?"));
+        assert!(!mgr.sync_program_status(Instant::now()));
+
+        let clear = b"printf '\\033]7501;state=clear\\007'\n";
+        mgr.find_pane(pane_id)
+            .unwrap()
+            .pty
+            .input_tx
+            .send(clear.to_vec())
+            .unwrap();
+        while state(&mut mgr).is_some() && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(state(&mut mgr), None);
     }
 
     #[tokio::test]

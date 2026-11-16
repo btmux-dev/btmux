@@ -476,16 +476,32 @@ Screen-only working/blocked transitions to idle or unknown settle for 700 ms to
 avoid redraw flicker. Missing indicators do not prove completion: only
 completion reports set `done`, and idle screens do not acknowledge it.
 
-When hooks and screens disagree, the more reliable evidence wins:
+Programs can also report their own state with OSC 7501
+([program status](https://www.superlogical.com/rex/docs/build/program-status)),
+which btmux answers support queries for. A pane with records counts as an
+agent, named by the record's `app` unless a detected process or hook names it.
+The record most in need of attention sets the state: `blocked`, then
+`working`, `error`, `done`, and `idle`, the newest among equals. `error` is
+shown as `done` with an `Error:` message, and `kind` describes a blocked
+record without a message. As the spec says, `working`, `blocked`, and `idle`
+records end when their program's process group exits or a shell prompt starts
+(OSC 133 `A`), and RIS clears all of them. An idle record does not acknowledge
+`done`. Records survive `btmux upgrade`.
+
+When the sources disagree, the more reliable evidence wins:
 
 1. `POST /agent-status` reports are reporter-controlled; screen detection never
    overrides them.
-2. Hook reports outrank screens. A hook ignores screen evidence produced before
+2. OSC 7501 records outrank hooks and screens: they arrive in order with the
+   program's output, while hooks report over HTTP and can trail it. Hooks from
+   a new agent session still take over until the program reports again. With
+   no records left, the other sources decide again.
+3. Hook reports outrank screens. A hook ignores screen evidence produced before
    it. An unmatched or `unknown` screen never overrides a hook, and a screen that
    agrees keeps the hook's source and message.
-3. A matched screen rule that contradicts a hook for 1.5 s wins, which corrects
+4. A matched screen rule that contradicts a hook for 1.5 s wins, which corrects
    missed hooks such as an interrupt without `Stop`. The next hook takes over again.
-4. Process presence alone reports `unknown` activity.
+5. Process presence alone reports `unknown` activity.
 
 Whatever set the state, the screen also fills `background` with the work an agent
 leaves running between turns, such as Claude Code's background shells and

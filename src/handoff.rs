@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use crate::popup::PopupsHandoff;
 use crate::pty::kitty_keyboard::KittyKeyboard;
+use crate::pty::program_status::Record;
 use crate::pty::replay::Output;
 use crate::pty::{set_cloexec, Handoff};
 use crate::session::manager::SessionSnapshot;
@@ -28,7 +29,7 @@ use crate::ws::control::ServerMessage;
 use crate::AppState;
 
 /// Bump on any change to the handoff file.
-pub const VERSION: u32 = 16;
+pub const VERSION: u32 = 17;
 const ENV: &str = "BTMUX_HANDOFF";
 
 struct Context {
@@ -86,6 +87,7 @@ struct PaneHeader {
     bin: Option<PathBuf>,
     shell_name: Option<String>,
     prompt: u32,
+    programs: Vec<Record>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -194,6 +196,7 @@ pub fn take() -> Result<Option<Inherited>, String> {
                 bin: pane.bin,
                 shell_name: pane.shell_name,
                 prompt: pane.prompt,
+                programs: pane.programs,
             },
         ));
     }
@@ -447,6 +450,7 @@ fn write(
                 bin: pane.bin.clone(),
                 shell_name: pane.shell_name.clone(),
                 prompt: pane.prompt,
+                programs: pane.programs.clone(),
             })
             .collect(),
         telemetry,
@@ -588,6 +592,9 @@ mod tests {
             crate::popup::Outcome::decl(&config),
             Event::decl(&config),
             KittyKeyboard::decl(&config),
+            Record::decl(&config),
+            crate::pty::program_status::State::decl(&config),
+            crate::pty::program_status::Kind::decl(&config),
             SessionSnapshot::decl(&config),
             WindowSnapshot::decl(&config),
             PaneSnapshot::decl(&config),

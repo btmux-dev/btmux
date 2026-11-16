@@ -623,6 +623,15 @@ impl VtQueryInterceptor {
                 .position(|&b| b == b';')
                 .is_some_and(|pos| &data[pos + 1..] == b"?") => {}
 
+            // OSC 7501 ; ? — program status support; reports pass through.
+            7501 if data == b"?" => {
+                let mut reply = b"\x1b]".to_vec();
+                reply.extend_from_slice(super::program_status::QUERY_REPLY);
+                let terminator: &[u8] = if self.osc_st { b"\x1b\\" } else { b"\x07" };
+                reply.extend_from_slice(terminator);
+                result.responses.push(reply);
+            }
+
             // Everything else passes through (OSC 0/2 title, OSC 7 cwd, etc.)
             _ => self.emit_raw(result),
         }
@@ -1070,6 +1079,19 @@ mod tests {
         assert_eq!(result.scrollback, b"");
         assert_eq!(result.broadcast, b"");
         assert!(result.responses.is_empty());
+    }
+
+    #[test]
+    fn answers_program_status_query_and_passes_reports() {
+        let mut interceptor = VtQueryInterceptor::new();
+        let result = interceptor.feed(b"\x1b]7501;?\x1b\\\x1b[c\x1b]7501;state=working\x07");
+        assert_eq!(result.scrollback, b"\x1b]7501;state=working\x07");
+        assert_eq!(result.broadcast, result.scrollback);
+        assert_eq!(result.responses.len(), 2);
+        assert_eq!(
+            result.responses[0],
+            b"\x1b]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth\x1b\\"
+        );
     }
 
     #[test]

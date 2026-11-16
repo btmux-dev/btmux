@@ -121,6 +121,19 @@ pub fn name(pid: Pid) -> Option<String> {
     )
 }
 
+/// Whether process group `group` still has a member.
+#[cfg(unix)]
+pub fn group_alive(group: Pid) -> bool {
+    let sent = unsafe { libc::kill(-group, 0) } == 0;
+    sent || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+/// Whether `group`, a process on Windows, still runs.
+#[cfg(windows)]
+pub fn group_alive(group: Pid) -> bool {
+    windows::running(group)
+}
+
 /// Raise the soft open-file limit to the hard one: each pane holds several
 /// descriptors, and launchd starts services at 256.
 #[cfg(unix)]
@@ -176,7 +189,9 @@ pub fn wait_exit(pid: Pid) {
 mod windows {
     use super::Pid;
     use std::collections::HashMap;
-    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, FILETIME, INVALID_HANDLE_VALUE, WAIT_TIMEOUT,
+    };
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
         TH32CS_SNAPPROCESS,
@@ -232,6 +247,18 @@ mod windows {
                 WaitForSingleObject(handle, INFINITE);
                 CloseHandle(handle);
             }
+        }
+    }
+
+    pub fn running(pid: Pid) -> bool {
+        unsafe {
+            let handle = OpenProcess(PROCESS_SYNCHRONIZE, 0, pid as u32);
+            if handle.is_null() {
+                return false;
+            }
+            let running = WaitForSingleObject(handle, 0) == WAIT_TIMEOUT;
+            CloseHandle(handle);
+            running
         }
     }
 

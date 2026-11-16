@@ -201,6 +201,13 @@ and touch screens get a `MobileKeyBar` inside it, since the dialog is modal.
   `SessionManager::sync_palette` sends `CSI ? 997 ; Ps n` to panes that set
   mode 2031 when the theme changes. Replies are queued once per read and dropped
   if the input queue is full.
+  OSC 7501 program status (`pty/program_status.rs`): the support query is
+  answered the same way; reports pass through and become per-pane records,
+  stamped with the foreground group, which the agent tick drops when the
+  group exits, as OSC 133 `A` does, and RIS clears. Changed records reach the
+  pane's `AgentLifecycle` as `Authority::Program`, above hooks and screens and
+  below explicit `agent-status`; a pane without an agent gets one. They are in
+  the handoff file.
 - **Termios** is set manually on the PTY master (`configure_termios`: `IUTF8`, `ECHOK`, `IMAXBEL`) because `portable-pty` opens the PTY with NULL termios; without `IUTF8`, fish misbehaves.
 - **Working directory**: shells report it with OSC 7. On Unix, until one does,
   the reader takes it from the OS (`/proc/<pid>/cwd`, `proc_pidinfo`) after each

@@ -61,6 +61,8 @@ pub struct Handoff {
     pub shell_name: Option<String>,
     /// The OSC 133 mark count (`PtyHandle::prompt`).
     pub prompt: u32,
+    /// OSC 7501 records.
+    pub programs: Vec<program_status::Record>,
 }
 
 /// What a reader stopped for a handoff leaves behind.
@@ -320,6 +322,8 @@ impl PtyHandle {
         self.spawn_cwd = handoff.spawn_cwd;
         self.bin = handoff.bin;
         self.prompt.store(handoff.prompt, Ordering::Relaxed);
+        *self.program_status.lock().unwrap() =
+            program_status::ProgramStatus::restore(handoff.programs);
         self.color_reports
             .store(handoff.color_reports, Ordering::Relaxed);
         let mut interceptor = vt_query::VtQueryInterceptor::with_colors(
@@ -403,6 +407,7 @@ impl PtyHandle {
                 bin: self.bin.clone(),
                 shell_name: self.shell_name.clone(),
                 prompt: self.prompt.load(Ordering::Relaxed),
+                programs: self.program_status.lock().unwrap().records().to_vec(),
             },
         )))
     }

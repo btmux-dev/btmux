@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use super::detection::{Detection, DetectionInput, Detector};
 use super::{AgentState, AgentStatus};
+use crate::pty::program_status::{self, Kind, Summary};
 use crate::pty::screen::ScreenSnapshot;
 
 pub const UNVERIFIED_AGENT_TTL: Duration = Duration::from_secs(12 * 60 * 60);
@@ -246,6 +247,9 @@ pub enum Authority {
     Screen,
     /// Structured lifecycle reports from the agent.
     Hook,
+    /// OSC 7501 records the program writes with its output, which hooks
+    /// reported over HTTP can trail.
+    Program,
     /// `POST /agent-status`; screen detection never overrides it.
     Explicit,
 }
@@ -317,6 +321,22 @@ impl AgentLifecycle {
             lifecycle.signal_floor = previous.signal_floor;
         }
         lifecycle
+    }
+
+    /// A program known only by its OSC 7501 records.
+    pub fn program(summary: &Summary, now: Instant) -> Self {
+        let (state, message) = program_state(summary);
+        Self::new(
+            AgentStatus {
+                state,
+                agent: summary.app.clone(),
+                source: Some(PROGRAM_SOURCE.into()),
+                message,
+                background: None,
+            },
+            Authority::Program,
+            now,
+        )
     }
 
     pub fn reported(now: Instant) -> Self {
@@ -572,7 +592,7 @@ impl AgentLifecycle {
         }
         let positive = detection.rule.is_some() && detection.state != AgentState::Unknown;
         match self.authority {
-            Authority::Explicit => None,
+            Authority::Explicit | Authority::Program => None,
             Authority::Hook => {
                 positive.then(|| (detection.state.clone(), Some(HOOK_OVERRIDE_SETTLE)))
             }
@@ -584,6 +604,41 @@ impl AgentLifecycle {
                 Some((detection.state.clone(), settle))
             }
         }
+    }
+
+    /// Takes the state the pane's OSC 7501 records now report. Without
+    /// records, other evidence decides again.
+    pub fn observe_program(&mut self, summary: Option<&Summary>, now: Instant) -> bool {
+        if self.authority == Authority::Explicit {
+            return false;
+        }
+        let previous = self.status.clone();
+        match summary {
+            Some(summary) => {
+                let (state, message) = program_state(summary);
+                // Idle does not acknowledge an unread completion.
+                if !(previous.state == AgentState::Done && state == AgentState::Idle) {
+                    self.status.state = state;
+                    self.status.message = message;
+                }
+                self.status.source = Some(PROGRAM_SOURCE.into());
+                if self.status.agent.is_none() {
+                    self.status.agent = summary.app.clone();
+                }
+                self.authority = Authority::Program;
+                self.pending_screen = None;
+                self.last_seen = now;
+            }
+            None if self.authority == Authority::Program => {
+                self.status.state = AgentState::Unknown;
+                self.status.message = None;
+                self.status.source = self.observed.is_some().then(|| "process".into());
+                self.authority = Authority::Process;
+                self.invalidate_screen();
+            }
+            None => {}
+        }
+        self.status != previous
     }
 
     /// Ignores screen and OSC evidence produced before `revision`.
@@ -817,6 +872,9 @@ impl AgentLifecycle {
             }
             AgentEvent::SessionEnd => unreachable!("session end is handled by the manager"),
         };
+        // The program's own records outrank hooks, except from a new instance.
+        let asserted = asserted
+            .filter(|_| self.authority != Authority::Program || different_session || restarted);
         if let Some((state, message)) = asserted {
             self.status.state = state;
             self.status.message = message;
@@ -874,6 +932,35 @@ impl AgentLifecycle {
             && (self.observed.is_some()
                 || self.process.is_some()
                 || self.status.state != AgentState::Unknown)
+    }
+}
+
+const PROGRAM_SOURCE: &str = "osc7501";
+
+/// Errors are finished work that wants attention, like unread completions.
+fn program_state(summary: &Summary) -> (AgentState, Option<String>) {
+    let text = summary.text.clone();
+    match summary.state {
+        program_status::State::Idle => (AgentState::Idle, text),
+        program_status::State::Working => (AgentState::Working, text),
+        program_status::State::Done => (AgentState::Done, text),
+        program_status::State::Error => (
+            AgentState::Done,
+            Some(text.map_or_else(|| "Error".into(), |text| format!("Error: {text}"))),
+        ),
+        program_status::State::Blocked => (
+            AgentState::Blocked,
+            text.or_else(|| {
+                summary.kind.map(|kind| {
+                    match kind {
+                        Kind::Permission => "Waiting for permission",
+                        Kind::Question => "Waiting for an answer",
+                        Kind::Auth => "Waiting for sign-in",
+                    }
+                    .into()
+                })
+            }),
+        ),
     }
 }
 
@@ -1197,6 +1284,89 @@ mod tests {
         clear.ancestors = vec![wrapper];
         assert_eq!(agent.apply(clear, 1, now), Some(false));
         assert!(agent.matches_session(Some("cleared")));
+    }
+
+    fn summary(state: program_status::State) -> Summary {
+        Summary {
+            state,
+            kind: None,
+            app: Some("claude-code".into()),
+            text: None,
+        }
+    }
+
+    #[test]
+    fn program_status_outranks_hooks_and_screens() {
+        use program_status::State;
+        let now = Instant::now();
+        let detector = Detector::new(None);
+        let mut agent = claude(now);
+        agent.apply(report(AgentEvent::TurnStart, "s", Some("t")), 0, now);
+        let blocked = Summary {
+            kind: Some(Kind::Permission),
+            ..summary(State::Blocked)
+        };
+        assert!(agent.observe_program(Some(&blocked), now));
+        assert_eq!(agent.authority(), Authority::Program);
+        assert_eq!(agent.status.agent.as_deref(), Some("claude"));
+        assert_eq!(agent.status.source.as_deref(), Some("osc7501"));
+        assert_eq!(
+            agent.status.message.as_deref(),
+            Some("Waiting for permission")
+        );
+        // A trailing hook and a contradicting screen change nothing.
+        assert_eq!(
+            agent.apply(report(AgentEvent::TurnFinished, "s", Some("t")), 1, now),
+            Some(false)
+        );
+        let idle = screen(CLAUDE_IDLE, "", 2);
+        for ms in [0, 2000, 5000] {
+            assert!(!agent.scan_screen(&detector, &idle, now + Duration::from_millis(ms)));
+        }
+        assert_eq!(agent.status.state, AgentState::Blocked);
+
+        // Idle doesn't acknowledge a completion; errors finish with a message.
+        assert!(agent.observe_program(Some(&summary(State::Done)), now));
+        assert!(!agent.observe_program(Some(&summary(State::Idle)), now));
+        assert_eq!(agent.status.state, AgentState::Done);
+        let failed = Summary {
+            text: Some("tests failed".into()),
+            ..summary(State::Error)
+        };
+        assert!(agent.observe_program(Some(&failed), now));
+        assert_eq!(agent.status.message.as_deref(), Some("Error: tests failed"));
+
+        // Without records, the screen decides again.
+        assert!(agent.observe_program(None, now));
+        assert_eq!(agent.status.state, AgentState::Unknown);
+        assert_eq!(agent.authority(), Authority::Process);
+        assert!(agent.scan_screen(&detector, &screen(CLAUDE_IDLE, "", 3), now));
+        assert_eq!(agent.status.state, AgentState::Idle);
+
+        // A new hook session takes over until the program reports again.
+        assert!(agent.observe_program(Some(&summary(State::Working)), now));
+        agent.apply(report(AgentEvent::SessionStart, "s2", None), 4, now);
+        assert_eq!(agent.status.state, AgentState::Idle);
+        assert_eq!(agent.authority(), Authority::Hook);
+    }
+
+    #[test]
+    fn explicit_statuses_outrank_program_status_and_reporters_need_no_process() {
+        use program_status::State;
+        let now = Instant::now();
+        let status = AgentStatus {
+            state: AgentState::Working,
+            ..AgentStatus::default()
+        };
+        let mut agent = AgentLifecycle::explicit(status, None, now);
+        assert!(!agent.observe_program(Some(&summary(State::Blocked)), now));
+        assert_eq!(agent.status.state, AgentState::Working);
+
+        let mut agent = AgentLifecycle::program(&summary(State::Working), now);
+        assert!(agent.is_active());
+        assert_eq!(agent.status.agent.as_deref(), Some("claude-code"));
+        assert!(agent.observe_program(None, now));
+        assert!(!agent.is_active());
     }
 
     #[test]
