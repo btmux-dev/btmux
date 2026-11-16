@@ -120,6 +120,8 @@ case "$command" in
         export PROMPT_COMMAND='printf "\033]7;file://%s%s\007\033]133;A\007" "$FAKE_GUEST_HOST" "$PWD"'
         export PS0=$'\e]133;C\a'
         echo $$ >> "$state/instances/$instance/pids"
+        # A popup's command line runs as given.
+        [ "$1" = -c ] && exec "${args[@]}" "$@"
         exec "${args[@]}" bash --noprofile --norc -i
         ;;
       *)

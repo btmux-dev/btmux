@@ -68,7 +68,7 @@ fn bash_prompt_command(mount: &str, convert: &str) -> String {
 const BASH_PS0: &str = r"\e]133;C\a";
 
 /// What WSL passes in from Windows; `p` translates paths.
-const WSL_ENV: [&str; 11] = [
+const WSL_ENV: [&str; 12] = [
     "PROMPT_COMMAND/u",
     "PS0/u",
     "TERM/u",
@@ -76,6 +76,7 @@ const WSL_ENV: [&str; 11] = [
     "TERM_PROGRAM/u",
     "TERM_PROGRAM_VERSION/u",
     "BTMUX_PANE_ID/u",
+    "BTMUX_POPUP_ID/u",
     "BTMUX_API_URL/u",
     "BTMUX_OTEL_ENDPOINT/u",
     "BTMUX_AUTH_TOKEN/u",
@@ -165,8 +166,11 @@ impl PtyHandle {
         let exit_tx = self.exit_tx.clone();
         let pane_id = self.pane_id;
         let killer = child.clone_killer();
+        let exit_status = self.exit_status.clone();
         std::thread::spawn(move || {
-            let _ = child.wait();
+            if let Ok(status) = child.wait() {
+                *exit_status.lock().unwrap() = Some(status.exit_code() as i32);
+            }
             child_slot.lock().unwrap().take();
             // Ends the reader: ConPTY keeps its output open until closed.
             drop(child_pty.lock().unwrap().take());
@@ -291,13 +295,22 @@ impl OutputPipeline {
     }
 }
 
-impl Drop for PtyHandle {
-    fn drop(&mut self) {
-        self.probe.lock().unwrap().take();
+impl PtyHandle {
+    /// End the shell and its programs, as closing the pane does.
+    pub fn terminate(&self) {
         if let Some(master) = &self.master {
             if self.child.lock().unwrap().is_some() {
                 let _ = master.killer.lock().unwrap().kill();
             }
+        }
+    }
+}
+
+impl Drop for PtyHandle {
+    fn drop(&mut self) {
+        self.probe.lock().unwrap().take();
+        self.terminate();
+        if let Some(master) = &self.master {
             // Closing the pseudoconsole ends the programs attached to it.
             drop(master.pty.lock().unwrap().take());
         }

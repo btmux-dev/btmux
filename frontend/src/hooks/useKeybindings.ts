@@ -30,6 +30,7 @@ import { sendPrefixToVscode } from '../components/VscodeSurface';
 import { colorSchemeLabel, DEFAULT_COLOR_SCHEMES } from '../lib/colorSchemeLabel';
 import { APPEARANCES } from '../lib/appearance';
 import { worktreeLabel } from '../lib/gitIdentity';
+import { popupIndex } from '../lib/actionLabel';
 
 /** How long the display-panes (prefix + q) number overlay stays up, in ms. */
 const DISPLAY_PANES_MS = 1500;
@@ -38,6 +39,12 @@ const DISPLAY_PANES_MS = 1500;
 let paneNumbersTimer = 0;
 
 function sendPrefix(sessionId: string, p: ParsedKey, send: (msg: ClientMessage) => void) {
+  const popup = useStore.getState().popupShown;
+  if (popup) {
+    const text = prefixBytes(p);
+    if (text) send({ type: 'write_pane_input', session_id: sessionId, pane_id: popup.id, text });
+    return;
+  }
   const keys = prefixNvimKeys(p);
   if (keys && useStore.getState().nvimOpen && sendToNvim(keys)) return;
   const { getActivePaneId, browserOpen, browserPaneId, vscodeOpen, vscodePaneId } = useStore.getState();
@@ -267,6 +274,8 @@ export function runAction(
 ) {
   const store = useStore.getState();
   const paneId = store.getActivePaneId(sessionId);
+  // A shown popup's terminal gets what goes to a terminal; its pane, structural actions.
+  const termId = store.popupShown?.id ?? paneId;
   const openOverlay = (o: Overlay) => store.setOverlay(o);
   const session = store.getSession(sessionId);
 
@@ -323,12 +332,12 @@ export function runAction(
     }
     case 'scroll-page-up':
     case 'scroll-page-down': {
-      const term = paneId ? store.terminals.get(paneId) : undefined;
+      const term = termId ? store.terminals.get(termId) : undefined;
       term?.scrollPages(action === 'scroll-page-up' ? -1 : 1);
       break;
     }
     case 'paste-clipboard': {
-      const term = paneId ? store.terminals.get(paneId) : undefined;
+      const term = termId ? store.terminals.get(termId) : undefined;
       if (!term) break;
       const blocked = () => store.showToast('Clipboard access was blocked by the browser', 'error');
       if (!navigator.clipboard?.readText) {
@@ -348,14 +357,14 @@ export function runAction(
       read()
         .catch(() => navigator.clipboard.readText())
         .then((data) => {
-          if (typeof data !== 'string') return pasteImage(paneId!, term, data);
+          if (typeof data !== 'string') return pasteImage(termId!, term, data);
           if (data) term.paste(data);
         })
         .catch(blocked);
       break;
     }
     case 'search-pane':
-      if (paneId) store.setSearchPaneId(paneId);
+      if (termId) store.setSearchPaneId(termId);
       break;
     case 'toggle-latex':
       if (paneId) store.toggleLatex(paneId);
@@ -597,6 +606,13 @@ export function runAction(
       break;
     }
     default: {
+      const popup = popupIndex(action);
+      if (popup !== null) {
+        const binding = store.config?.popups[popup];
+        if (paneId && binding)
+          send({ type: 'open_popup', pane_id: paneId, command: binding.command, title: binding.title ?? null });
+        break;
+      }
       const m = action.match(/^resize-pane-(left|right|up|down)(?:-(\d+))?$/);
       if (m) resizePane(sessionId, m[1] as ResizeDirection, Number(m[2] ?? 1), send);
       break;

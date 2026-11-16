@@ -106,6 +106,15 @@ pub fn create_app(state: AppState) -> Router {
         )
         .route("/api/widgets/{id}", get(crate::widget::api_widget_request))
         .route(
+            "/api/panes/{pane_id}/popup",
+            axum::routing::post(crate::popup::api_popup)
+                .layer(DefaultBodyLimit::max(crate::popup::MAX_BYTES)),
+        )
+        .route(
+            "/api/panes/{pane_id}/popup/{id}",
+            get(crate::popup::api_wait),
+        )
+        .route(
             "/api/panes/{pane_id}/open-file-browser",
             axum::routing::post(api_open_file_browser),
         )

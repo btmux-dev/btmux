@@ -382,6 +382,11 @@ pub enum SubCommand {
     /// lines; a tab starts a description, which is shown but not printed.
     /// Exits 1 with no items, 2 if no tab shows the pane, and 130 if canceled.
     Pick(crate::widget::PickArgs),
+    /// Run a program in a popup over this pane, closed when it exits, and exit
+    /// with its status. Outside btmux, or if no tab shows the pane, it runs
+    /// here instead.
+    #[command(visible_alias = "display-popup", disable_help_flag = true)]
+    Popup(crate::popup::PopupArgs),
     /// Run fzf with a btmux menu when it can do what the arguments ask, else
     /// the real fzf. Linked as `fzf` on PATH, btmux behaves as this command.
     #[command(disable_help_flag = true)]
@@ -871,6 +876,8 @@ pub struct FileConfig {
     pub window_grid_count: Option<u32>,
     /// Per-action key overrides: action name (kebab-case) -> key string.
     pub keys: BTreeMap<String, String>,
+    /// Keys that run a command in a popup over the active pane.
+    pub popup: Vec<PopupBinding>,
     /// Terminal emulator options (cursor, fonts, scrollback, …).
     pub terminal: TerminalOptions,
     /// Whether the dark or light color scheme is shown; `auto` follows the
@@ -935,6 +942,7 @@ impl Default for FileConfig {
             github: GithubConfig::default(),
             window_grid_count: Some(DEFAULT_WINDOW_GRID_COUNT),
             keys: BTreeMap::new(),
+            popup: Vec::new(),
             terminal: TerminalOptions::default(),
             appearance: Appearance::default(),
             theme_dark: None,
@@ -1126,6 +1134,19 @@ impl BaseTheme {
     }
 }
 
+/// `[[popup]]`: a key (after the prefix) that runs `command` in a popup over
+/// the active pane, through the shell.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct PopupBinding {
+    pub key: String,
+    pub command: String,
+    /// Shown above the popup; the command by default.
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
 /// A single resolved key binding sent to the browser.
 #[derive(Serialize, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -1295,6 +1316,8 @@ pub struct ClientConfig {
     pub cli_shell: Option<String>,
     /// Exact `[keys]` overrides from config.toml. `binds` is the effective table.
     pub keys: BTreeMap<String, String>,
+    /// `[[popup]]` bindings; `binds` maps their keys to `popup-<index>`.
+    pub popups: Vec<PopupBinding>,
     /// Logging levels configured for the server.
     pub log: LogConfig,
     /// OS notification preferences.
@@ -1890,6 +1913,14 @@ pub fn generate_config_toml() -> String {
 # Per-action key overrides. Uncomment a line to rebind that action.
 # [keys]
 {keys_lines}
+# A key (after the prefix) that runs a command in a popup over the active pane,
+# in its directory, through the shell. The popup closes when the command exits.
+# It takes the key from any action bound to it. Repeat the table for more keys.
+# [[popup]]
+# key = "G"
+# command = "lazygit"
+# title = "Git"
+
 # Terminal options. All are optional; absent fields use btmux's built-in
 # defaults shown below.
 # [terminal]
@@ -2077,6 +2108,15 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         }
     }
 
+    // Popup keys win over any other bind of the same key.
+    for (index, popup) in file.popup.iter().enumerate() {
+        binds.retain(|bind| bind.key != popup.key);
+        binds.push(Bind {
+            key: popup.key.clone(),
+            action: format!("popup-{index}"),
+        });
+    }
+
     let has_wallpaper =
         file.wallpaper.is_some() || file.wallpaper_shaders.iter().any(|layer| layer.enabled);
     let wallpaper_opacity = if has_wallpaper {
@@ -2191,6 +2231,7 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         shells: crate::shell::installed(),
         cli_shell: None,
         keys: file.keys.clone(),
+        popups: file.popup.clone(),
         log: file.log.clone(),
         notifications: file.notifications.clone(),
         commands: default_commands(),
@@ -2937,6 +2978,38 @@ palette:
         assert!(FileConfig::default().check_for_updates);
         let file: FileConfig = toml::from_str("check-for-updates = false").unwrap();
         assert!(!file.check_for_updates);
+    }
+
+    #[test]
+    fn popup_keys_take_their_key_from_other_binds() {
+        let example = generate_config_toml();
+        let table = example
+            .lines()
+            .skip_while(|line| *line != "# [[popup]]")
+            .take_while(|line| line.starts_with('#'))
+            .map(|line| line.trim_start_matches('#').trim_start())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let file: FileConfig = toml::from_str(&table).unwrap();
+        assert_eq!(file.popup[0].command, "lazygit");
+
+        let file: FileConfig = toml::from_str(
+            "[[popup]]\nkey = \"c\"\ncommand = \"htop\"\n[[popup]]\nkey = \"M-g\"\ncommand = \"lazygit\"\n",
+        )
+        .unwrap();
+        let resolved = resolve_binds(&file, ColorMode::Dark);
+        let actions = |key: &str| -> Vec<String> {
+            resolved
+                .binds
+                .iter()
+                .filter(|bind| bind.key == key)
+                .map(|bind| bind.action.clone())
+                .collect()
+        };
+        assert_eq!(actions("c"), ["popup-0"]);
+        assert_eq!(actions("M-g"), ["popup-1"]);
+        assert_eq!(resolved.popups[1].command, "lazygit");
+        assert!(toml::from_str::<FileConfig>("[[popup]]\nkey = \"c\"\n").is_err());
     }
 
     #[test]

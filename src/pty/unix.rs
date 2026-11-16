@@ -488,6 +488,7 @@ impl PtyHandle {
         self.shell_name = shell_name;
         *self.child.lock().unwrap() = Some(pid);
         let child = self.child.clone();
+        let exit_status = self.exit_status.clone();
         let child_exit_tx = self.exit_tx.clone();
         let child_pane_id = self.pane_id;
         std::thread::spawn(move || {
@@ -499,6 +500,13 @@ impl PtyHandle {
                     result => break result == pid,
                 }
             };
+            if reaped {
+                *exit_status.lock().unwrap() = Some(if libc::WIFSIGNALED(status) {
+                    128 + libc::WTERMSIG(status)
+                } else {
+                    libc::WEXITSTATUS(status)
+                });
+            }
             child.lock().unwrap().take();
             // Not our child: the reader reports the exit at EOF instead.
             if reaped {
@@ -747,21 +755,27 @@ pub(super) fn is_shell(name: &str) -> bool {
     )
 }
 
-impl Drop for PtyHandle {
-    fn drop(&mut self) {
-        // Invalidate the borrowed descriptor before `master` closes it and the
-        // OS can reuse its number.
-        if let Some(probe) = self.probe.lock().unwrap().take() {
+impl PtyHandle {
+    /// Hang up the foreground program and the shell, as closing the pane does.
+    pub fn terminate(&self) {
+        if let Some(probe) = self.probe.lock().unwrap().as_ref() {
             let pgrp = unsafe { libc::tcgetpgrp(probe.fd) };
             if pgrp > 0 {
-                unsafe {
-                    libc::kill(-pgrp, libc::SIGHUP);
-                }
+                unsafe { libc::kill(-pgrp, libc::SIGHUP) };
             }
         }
         if let Some(pid) = *self.child.lock().unwrap() {
             unsafe { libc::kill(pid, libc::SIGHUP) };
         }
+    }
+}
+
+impl Drop for PtyHandle {
+    fn drop(&mut self) {
+        self.terminate();
+        // Invalidate the borrowed descriptor before `master` closes it and the
+        // OS can reuse its number.
+        self.probe.lock().unwrap().take();
     }
 }
 

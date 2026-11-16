@@ -9,6 +9,7 @@ import type {
   ConnectStatus,
   Editor,
   GithubStatus,
+  PopupSummary,
   TailscaleStatus,
   WidgetSummary,
 } from '../generated/protocol';
@@ -43,6 +44,10 @@ interface AppStore {
   agentPanes: Set<string>;
   /** Open `btmux pick`, `confirm`, and `input` widgets. */
   widgets: WidgetSummary[];
+  /** Open `btmux popup` popups, over their panes. */
+  popups: PopupSummary[];
+  /** The popup this tab shows, which owns the keyboard. */
+  popupShown: PopupSummary | null;
   /** Pull request and CI status by `githubKey(repo_id, branch)`. */
   github: Map<string, GithubStatus>;
   setGithub: (statuses: GithubStatus[]) => void;
@@ -123,6 +128,8 @@ interface AppStore {
   markAgentGridMounted: () => void;
   setAgentPanes: (paneIds: string[]) => void;
   setWidgets: (widgets: WidgetSummary[]) => void;
+  setPopups: (popups: PopupSummary[]) => void;
+  setPopupShown: (popup: PopupSummary | null) => void;
   setTailscale: (status: TailscaleStatus | null) => void;
   setConnect: (status: ConnectStatus | null) => void;
   setPaneNumbersVisible: (visible: boolean) => void;
@@ -199,6 +206,8 @@ export const useStore = create<AppStore>((set, get) => ({
   agentGridMounted: false,
   agentPanes: new Set(),
   widgets: [],
+  popups: [],
+  popupShown: null,
   github: new Map(),
   setGithub: (statuses) => set({ github: new Map(statuses.map((s) => [githubKey(s.repo_id, s.branch), s])) }),
   agentTelemetry: {},
@@ -272,6 +281,8 @@ export const useStore = create<AppStore>((set, get) => ({
   markAgentGridMounted: () => set((s) => (s.agentGridMounted ? s : { agentGridMounted: true })),
   setAgentPanes: (paneIds) => set({ agentPanes: new Set(paneIds) }),
   setWidgets: (widgets) => set({ widgets }),
+  setPopups: (popups) => set({ popups }),
+  setPopupShown: (popupShown) => set({ popupShown }),
   setTailscale: (tailscale) => set({ tailscale }),
   setConnect: (connect) => set({ connect }),
   setPaneNumbersVisible: (visible) => set({ paneNumbersVisible: visible }),

@@ -231,6 +231,24 @@ pub async fn run(profile: Option<&str>, command: TmuxCommand) -> i32 {
     }
 }
 
+/// The pane `target` names, or without one this pane.
+pub async fn resolve_pane(profile: Option<&str>, target: Option<&str>) -> Result<Uuid, String> {
+    let current = profile
+        .is_none()
+        .then(|| std::env::var("BTMUX_PANE_ID").ok())
+        .flatten()
+        .and_then(|id| Uuid::parse_str(&id).ok());
+    match (target, current) {
+        // Guest panes can't list panes.
+        (None, Some(current)) => Ok(current),
+        (None, None) => Err("this must run in a btmux pane, or name one with -t".into()),
+        (Some(target), _) => {
+            let client = Client { profile, current };
+            Ok(client.target(Some(target)).await?.pane_id)
+        }
+    }
+}
+
 struct Client<'a> {
     profile: Option<&'a str>,
     current: Option<Uuid>,

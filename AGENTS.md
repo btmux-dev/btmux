@@ -126,6 +126,38 @@ open or with at most one candidate, and redo keeps Ctrl-R in vi and hybrid norma
 mode, also named `default`, found from fish's preset. It checks at the first prompt,
 as conf.d runs before config.fish, so it changes nothing when off.
 
+### Popups
+
+`popup.rs` implements `btmux popup` (alias `display-popup`): a program in a PTY
+outside the layout tree, owned by the pane it opened over (`Popups` in
+`SessionManager`), shown by tabs showing that pane's window in `PopupDialog`
+(the file browser's size, `lib/wideDialog.ts`), which attaches through
+`/ws/pane/{popup id}` like a pane (`find_pty`), so spawning is lazy and replay,
+size ownership, and query interception are a pane's. Several arguments exec;
+one is a shell command line (`PopupCommand`). The CLI sends its cwd and whole
+environment, which replaces the server's (`Spawn::env`); `[[popup]]` key
+bindings (`popup-<index>` binds, `open_popup`) have none and run the shell
+interactively for the `PATH` panes get. `BTMUX_PANE_ID` in a popup names its
+pane and `BTMUX_POPUP_ID` the popup, where widgets its programs open show
+(`/api/panes/{popup id}/widget`); widgets of panes under a shown popup aren't
+reported shown, so callers fall back. Pane search, scrolling, and clipboard and
+image pastes go to a shown popup. `POST /api/panes/{id}/popup` replies once a tab spawned it, 409 after 3 s
+otherwise, and the CLI then runs the program in place, as it does outside btmux.
+The CLI picks the popup's id and retries the request across an upgrade, which
+finds the popup rather than opening another; one that never ran (`NotShown`)
+opens again. A tab with another modal surface open shows a popup once it
+closes. `GET .../popup/{popup id}` waits for the exit status (`PtyHandle::exit_status`,
+from the waiter; a reader's EOF while the child runs is ignored) and the CLI
+retries it across `btmux upgrade`, which hands popups off with the panes (with
+their command and environment until started), and ended statuses, which are kept 5 minutes (`PopupsHandoff`). Closing a pane closes its popups; `close_popup`
+hangs one up and drops it after 3 s. A guest pane's popup runs in the guest
+(`guest-shell --run`/`-- argv`, without the caller's environment), in the
+directory asked for even outside the mounts, and both routes are guest routes. While a popup is shown it owns the keyboard except the
+prefix; `<prefix> <prefix>` writes to it (`write_pane_input` takes popup ids),
+and touch screens get a `MobileKeyBar` inside it, since the dialog is modal.
+`usePaneTerminal` is the emulator and socket lifecycle `TerminalPane` and
+`PopupDialog` share.
+
 ### Plan limits
 
 `agent_limits.rs` serves `GET /api/agent-limits`: the session, weekly, and per-model subscription limits above agent view's Usage tab (`AgentLimitsPanel.tsx`). It starts each CLI and asks without a prompt, so the CLI does its own auth and btmux never reads a credential: Claude's undocumented `get_usage` control request (`claude -p --safe-mode`; `--safe-mode` skips hooks, MCP, and plugins, while `--bare` skips OAuth too) and Codex's experimental `account/rateLimits/read` (`codex app-server`). Only an open Usage tab in a visible browser tab polls (`useAgentLimits`), each read is shared for 50 s, and a failed one keeps the last limits for 10 minutes, with their age shown. A service's `PATH` lacks what shell startup adds, like `~/.local/bin`, so a CLI missing from it runs with the `PATH` of the pane shell, asked for without a terminal (again every 10 minutes while a CLI stays missing). The Health tab finds and runs them the same way. API keys and no login mean no limits, so that agent isn't shown; so does a CLI too old or changed to answer, with a warning logged once per distinct error. Claude's `limits[]` rows are shown in the server's order and severity, so a new meter needs no change; Codex's windows are named by duration, since the weekly one can be `primary` or `secondary`.

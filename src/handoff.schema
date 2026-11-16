@@ -1,9 +1,21 @@
-// handoff version 15
-type Header = { version: number, listener: number, lock: number | null, sessions: Array<SessionSnapshot>, panes: Array<PaneHeader>, telemetry: TelemetryStore, };
+// handoff version 16
+type Header = { version: number, listener: number, lock: number | null, sessions: Array<SessionSnapshot>, popups: PopupsHandoff, panes: Array<PaneHeader>, telemetry: TelemetryStore, };
 type PaneHeader = { id: string, fd: number, pid: number, cols: number, rows: number,
 journal: Array<Event>, title: string | null, cwd: string | null, cwd_remote: boolean, spawn_cwd: string | null, color_reports: boolean, colors: Array<[number, number, number] | null>, kitty: KittyKeyboard,
 pending: number,
 input: number, bin: string | null, shell_name: string | null, prompt: number, };
+type PopupsHandoff = {
+open: Array<PopupSummary>,
+starting: Array<StartingHandoff>,
+ended: Array<EndedHandoff>, };
+type PopupSummary = { id: string, pane_id: string, title: string, };
+type StartingHandoff = { popup: PopupSummary, spawn: Spawn, cwd: string | null, };
+type Spawn = { command: PopupCommand,
+env: Array<[string, string]> | null, };
+type PopupCommand = { "exec": Array<string> } | { "shell": string };
+type EndedHandoff = { id: string, pane_id: string, outcome: Outcome,
+age_ms: bigint, };
+type Outcome = { "Exited": number | null } | { "Failed": string } | "NotShown";
 type Event = { "Data": number } | { "Size": [number, number] };
 type KittyKeyboard = {
 stacks: [[number, number, number, number, number, number, number, number], [number, number, number, number, number, number, number, number]], alternate: boolean,

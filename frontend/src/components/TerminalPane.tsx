@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { PaneTerminal, type PaneTerminalOptions } from '../lib/paneTerminal';
+import type { PaneTerminal, PaneTerminalOptions } from '../lib/paneTerminal';
+import { usePaneTerminal } from '../hooks/usePaneTerminal';
 import { useStore } from '../state/store';
 import { AgentStatus, LayoutRect, ClientConfig } from '../state/types';
 import { ClientMessage } from '../protocol/messages';
@@ -8,17 +9,14 @@ import { PaneCorner, PaneTitleBar } from './PaneTitleBar';
 import { mix, withAlpha } from '../lib/chrome-colors';
 import { findPaneBorderStyle } from '../lib/paneSwitchBorder';
 import { PaneBorderDraw } from './PaneBorderDraw';
-import { announceWallpaperKeyboardCursor } from '../lib/wallpaperInteraction';
 import { useLatexScan, type PaneLatexMatch } from '../lib/latexScan';
 import { LatexOverlay } from './LatexOverlay';
-import { clipboardImage, pasteImage } from '../lib/pasteImage';
 import { PaneWidget } from './PaneWidget';
 import { PaneSearch } from './PaneSearch';
-import { CONNECTION_STATE_LABEL, type ConnectionState } from '../lib/connectionState';
+import { CONNECTION_STATE_LABEL } from '../lib/connectionState';
 import { clsx } from 'clsx';
 import { desktopTransparency } from '../lib/desktopTransparency';
 import { hasShaderWallpaper } from '../lib/wallpaperCatalog';
-import { paneMessageHandler } from '../lib/paneSocket';
 import {
   CONFIG_DEFAULTS,
   getAnimations,
@@ -122,17 +120,6 @@ export function TerminalPane({
 }: Props) {
   const outerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const termRef = useRef<PaneTerminal | null>(null);
-  // Mirrors termRef for render-time consumers (search, LaTeX scan).
-  const [term, setTerm] = useState<PaneTerminal | null>(null);
-  const fitRef = useRef<(() => void) | null>(null);
-  // Live terminal dimensions, shown as "cols×rows" in the title bar. Updated from
-  // the fit/resize path so the bar tracks the pane's real grid.
-  const [dims, setDims] = useState<{ cols: number; rows: number } | null>(null);
-  // Read inside the ResizeObserver/rAF closures so they always see the current
-  // visibility without re-running the mount effect (which would dispose+rebuild
-  // the terminal). A hidden pane has a 0-size container, so it must neither fit
-  // nor open its socket — doing so would size the PTY to garbage.
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
 
@@ -143,6 +130,8 @@ export function TerminalPane({
   const agentGridOpen = useStore((s) => s.agentGridOpen);
   const switcherOpen = useStore((s) => s.switcherOpen);
   const settingsOpen = useStore((s) => s.settingsOpen);
+  // A popup over this pane's window owns the keyboard.
+  const popupShown = useStore((s) => s.popupShown !== null);
   // Whether a Neovim, VS Code, or browser surface is pinned over this pane.
   const nvimOpen = useStore(
     (s) =>
@@ -152,231 +141,16 @@ export function TerminalPane({
   );
   const fileBrowserOpen = useStore((s) => s.fileBrowserOpen && s.fileBrowserPaneId === paneId);
   const termOptions = useTerminalOptions(config);
-  const [connectionError, setConnectionError] = useState<string | null>(null);
-  const [connection, setConnection] = useState<ConnectionState>('connecting');
-  // Keep a newly-created emulator hidden while the server streams its initial
-  // checkpoint + journal. Parsing writes is synchronous, but paints happen on
-  // animation frames; revealing only after the frame queued by `ready` avoids
-  // showing a long replay as rapidly scrolling terminal output.
-  const [initialReplayRendered, setInitialReplayRendered] = useState(false);
   // Set below; the socket handler calls it after each write to rescan for LaTeX.
   const latexPokeRef = useRef<() => void>(() => {});
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container || !termOptions) return;
-    setConnection('connecting');
-    setInitialReplayRendered(false);
-
-    let disposed = false;
-    let cleanup = () => {};
-    const start = async () => {
-      let term: PaneTerminal;
-      try {
-        term = await PaneTerminal.open(container, termOptions);
-      } catch (e) {
-        if (!disposed) setConnectionError(String(e));
-        return;
-      }
-      if (disposed) {
-        term.dispose();
-        return;
-      }
-      cleanup = mount(term);
-    };
-
-    const mount = (term: PaneTerminal) => {
-      termRef.current = term;
-      setTerm(term);
-      registry?.set(paneId, term);
-      // Also register in the store so actions outside the pane tree (capture-pane
-      // in useKeybindings) can read this pane's emulator buffer.
-      useStore.getState().registerTerminal(paneId, term);
-
-      let ws: WebSocket | null = null;
-      let ready = false;
-
-      const syncDims = () =>
-        setDims((prev) =>
-          prev?.cols === term.cols && prev?.rows === term.rows ? prev : { cols: term.cols, rows: term.rows },
-        );
-
-      // Size ownership: the owner's container size drives the PTY. Followers
-      // report their size (applied when they claim) but keep the server's grid:
-      // a local resize reflows and clears the prompt, and the shell never
-      // redraws because the PTY size did not change.
-      let owner = true;
-      let claimed = false;
-      let serverSize: { cols: number; rows: number } | null = null;
-      let reported = '';
-      const report = (cols: number, rows: number) => {
-        const key = `${cols}x${rows}`;
-        if (ws?.readyState !== WebSocket.OPEN || !visibleRef.current || key === reported) return;
-        reported = key;
-        ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-      };
-      const adoptServerSize = () => {
-        if (serverSize) term.resize(serverSize.cols, serverSize.rows);
-      };
-      const fit = () => {
-        const size = term.proposeDimensions();
-        if (!size) return;
-        if (!owner) adoptServerSize();
-        else term.resize(size.cols, size.rows);
-        report(size.cols, size.rows);
-      };
-      fitRef.current = fit;
-      const claim = () => {
-        if (owner || claimed || ws?.readyState !== WebSocket.OPEN) return;
-        claimed = true;
-        fit();
-        ws.send(JSON.stringify({ type: 'claim' }));
-      };
-      container.addEventListener('keydown', claim, true);
-      container.addEventListener('paste', claim, true);
-      container.addEventListener('mousedown', claim, true);
-      // wterm ignores pastes without text.
-      const onPaste = (e: ClipboardEvent) => {
-        const image = clipboardImage(e.clipboardData);
-        if (!image) return;
-        e.preventDefault();
-        e.stopPropagation();
-        void pasteImage(paneId, term, image);
-      };
-      container.addEventListener('paste', onPaste, true);
-
-      let reconnectTimer = 0;
-      let attempts = 0;
-      let connectRaf = 0;
-      let revealRaf = 0;
-      const connect = () => {
-        if (disposed || ws) return;
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const size = term.proposeDimensions() ?? { cols: term.cols, rows: term.rows };
-        reported = `${size.cols}x${size.rows}`;
-        claimed = false;
-        const socket = new WebSocket(
-          `${protocol}//${window.location.host}/ws/pane/${paneId}?cols=${size.cols}&rows=${size.rows}`,
-        );
-        ws = socket;
-        socket.binaryType = 'arraybuffer';
-        socket.onopen = () => {
-          if (disposed || ws !== socket) return;
-          attempts = 0;
-          setConnectionError(null);
-        };
-        const messages = paneMessageHandler({
-          binary: (bytes) => {
-            if (disposed || ws !== socket) return;
-            term.write(bytes);
-            latexPokeRef.current();
-          },
-          text: (data) => {
-            if (disposed || ws !== socket) return;
-            try {
-              const msg = JSON.parse(data);
-              if (msg.type === 'ready') {
-                ready = true;
-                // wterm paints on the next frame; reveal after it.
-                cancelAnimationFrame(revealRaf);
-                revealRaf = requestAnimationFrame(() =>
-                  requestAnimationFrame(() => {
-                    if (disposed || ws !== socket) return;
-                    term.scrollToBottom();
-                    setInitialReplayRendered(true);
-                    setConnection('connected');
-                  }),
-                );
-              }
-              if (msg.type === 'error') setConnectionError(msg.message);
-              if (msg.type === 'size') {
-                // Applied in stream order, so output is parsed at the size it was
-                // produced for. The owner's own echo is a no-op.
-                serverSize = { cols: msg.cols, rows: msg.rows };
-                term.resize(msg.cols, msg.rows);
-              }
-              if (msg.type === 'owner') {
-                owner = msg.owner;
-                claimed = false;
-                if (owner) fit();
-                else adoptServerSize();
-              }
-            } catch {
-              /* Unknown protocol frames are not terminal input. */
-            }
-          },
-        });
-        socket.onmessage = messages.onMessage;
-        socket.onclose = () => {
-          messages.dispose();
-          if (disposed || ws !== socket) return;
-          ws = null;
-          ready = false;
-          setConnection('reconnecting');
-          reconnectTimer = window.setTimeout(connect, Math.min(1000 * 2 ** attempts++, 10000));
-        };
-        socket.onerror = () => socket.close();
-      };
-      const offData = term.onData((bytes) => {
-        if (ws?.readyState === WebSocket.OPEN && ready) {
-          for (let i = 0; i < bytes.length; i += 16384) ws.send(bytes.slice(i, i + 16384));
-        }
-        const rect = container.getBoundingClientRect();
-        const cursor = term.cursor();
-        announceWallpaperKeyboardCursor(
-          rect.left + ((cursor.col + 0.5) / Math.max(1, term.cols)) * rect.width,
-          rect.top + ((cursor.row + 0.5) / Math.max(1, term.rows)) * rect.height,
-        );
-      });
-      const offResize = term.onResize((cols, rows) => setDims({ cols, rows }));
-      const observer = new ResizeObserver(() => {
-        if (!visibleRef.current) return;
-        fit();
-        syncDims();
-        if (!ws && !reconnectTimer) {
-          cancelAnimationFrame(connectRaf);
-          connectRaf = requestAnimationFrame(() => {
-            if (!visibleRef.current) return;
-            fit();
-            syncDims();
-            connect();
-          });
-        }
-      });
-      observer.observe(container);
-      // Refit after wterm remeasures cells; its observer runs first.
-      term.observeCellSize(observer);
-
-      return () => {
-        clearTimeout(reconnectTimer);
-        offData();
-        offResize();
-        container.removeEventListener('keydown', claim, true);
-        container.removeEventListener('paste', claim, true);
-        container.removeEventListener('paste', onPaste, true);
-        container.removeEventListener('mousedown', claim, true);
-        cancelAnimationFrame(connectRaf);
-        cancelAnimationFrame(revealRaf);
-        observer.disconnect();
-        ws?.close();
-        term.dispose();
-        if (registry && registry.get(paneId) === term) registry.delete(paneId);
-        useStore.getState().unregisterTerminal(paneId, term);
-        termRef.current = null;
-        setTerm(null);
-        fitRef.current = null;
-      };
-    };
-
-    void start();
-
-    return () => {
-      disposed = true;
-      cleanup();
-    };
-    // Rebuilding on termOptions re-themes existing panes after a live config
-    // reload; the pane socket replays scrollback on reconnect so content is kept.
-  }, [paneId, termOptions, registry]);
+  const { term, termRef, fitRef, dims, connection, connectionError, initialReplayRendered } = usePaneTerminal({
+    containerRef,
+    paneId,
+    termOptions,
+    visibleRef,
+    registry,
+    onWriteRef: latexPokeRef,
+  });
 
   // LaTeX detection (lib/latexDetect.ts).
   // A pane under the built-in Neovim keeps its geometry but needn't render.
@@ -456,6 +230,7 @@ export function TerminalPane({
   const prevIsActive = useRef(false);
   const prevOverlay = useRef(overlay);
   const prevFileBrowser = useRef(fileBrowserOpen);
+  const prevPopupShown = useRef(popupShown);
   const prevNvimOpen = useRef(nvimOpen);
   const prevSearchOpen = useRef(searchOpen);
   const prevWidgetId = useRef(widgetId);
@@ -464,6 +239,7 @@ export function TerminalPane({
     const wasActive = prevIsActive.current;
     const hadOverlay = prevOverlay.current;
     const hadFileBrowser = prevFileBrowser.current;
+    const hadPopup = prevPopupShown.current;
     const hadNvimOpen = prevNvimOpen.current;
     const widgetChanged = prevWidgetId.current !== widgetId;
     const hadSearchOpen = prevSearchOpen.current;
@@ -471,6 +247,7 @@ export function TerminalPane({
     prevIsActive.current = isActive;
     prevOverlay.current = overlay;
     prevFileBrowser.current = fileBrowserOpen;
+    prevPopupShown.current = popupShown;
     prevNvimOpen.current = nvimOpen;
     prevSearchOpen.current = searchOpen;
     prevWidgetId.current = widgetId;
@@ -483,6 +260,7 @@ export function TerminalPane({
       agentGridOpen ||
       switcherOpen ||
       fileBrowserOpen ||
+      popupShown ||
       nvimOpen ||
       searchOpen;
 
@@ -496,6 +274,7 @@ export function TerminalPane({
     const overlayClosed =
       (!overlay && !!hadOverlay) ||
       (!fileBrowserOpen && hadFileBrowser) ||
+      (!popupShown && hadPopup) ||
       (!nvimOpen && hadNvimOpen) ||
       (!searchOpen && hadSearchOpen);
     if (becameActive || replayFinished || overlayClosed || widgetChanged) {
@@ -509,6 +288,7 @@ export function TerminalPane({
     agentGridOpen,
     switcherOpen,
     fileBrowserOpen,
+    popupShown,
     nvimOpen,
     searchOpen,
     widgetId,
@@ -656,7 +436,15 @@ export function TerminalPane({
           }}
         />
         {widget && term && initialReplayRendered && (
-          <PaneWidget key={widget.id} id={widget.id} kind={widget.kind} term={term} shown={rendering} send={send} />
+          // Under a popup it can't be used, so callers fall back unless it's shown later.
+          <PaneWidget
+            key={widget.id}
+            id={widget.id}
+            kind={widget.kind}
+            term={term}
+            shown={rendering && !popupShown}
+            send={send}
+          />
         )}
         {searchOpen && term && (
           <PaneSearch

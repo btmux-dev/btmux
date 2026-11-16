@@ -583,8 +583,14 @@ pub fn guest_route(method: &Method, path: &str) -> Option<Option<uuid::Uuid>> {
     let allowed = match route {
         "notify" => matches!(*method, Method::POST | Method::DELETE),
         "agent-status" => matches!(*method, Method::GET | Method::POST | Method::DELETE),
-        "telemetry/v1/logs" | "telemetry/v1/metrics" | "widget" => method == Method::POST,
-        _ => false,
+        "telemetry/v1/logs" | "telemetry/v1/metrics" | "widget" | "popup" => method == Method::POST,
+        // Popups of guest panes run in the guest.
+        route => {
+            method == Method::GET
+                && route
+                    .strip_prefix("popup/")
+                    .is_some_and(|id| id.parse::<uuid::Uuid>().is_ok())
+        }
     };
     allowed.then_some(Some(pane))
 }
@@ -902,6 +908,7 @@ mod middleware_tests {
             "telemetry/v1/logs",
             "telemetry/v1/metrics",
             "widget",
+            "popup",
         ] {
             assert_eq!(
                 route(Method::POST, format!("/api/panes/{pane}/{path}")),
@@ -920,6 +927,25 @@ mod middleware_tests {
         }
         assert_eq!(
             route(Method::GET, format!("/api/panes/{pane}/notify")),
+            None
+        );
+        let popup = uuid::Uuid::new_v4();
+        assert_eq!(
+            route(Method::GET, format!("/api/panes/{pane}/popup/{popup}")),
+            Some(Some(pane))
+        );
+        for path in [
+            format!("popup/{popup}/x"),
+            "popup/x".into(),
+            "popup/".into(),
+        ] {
+            assert_eq!(
+                route(Method::GET, format!("/api/panes/{pane}/{path}")),
+                None
+            );
+        }
+        assert_eq!(
+            route(Method::POST, format!("/api/panes/{pane}/popup/{popup}")),
             None
         );
         assert_eq!(

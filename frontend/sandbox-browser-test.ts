@@ -208,6 +208,32 @@ try {
   assert.equal(calls().filter((args) => args[0] === 'launch').length, 2);
   console.log('PASS the status bar deletes the instance, and panes create it again');
 
+  // A popup runs in the guest, in the directory asked for even outside the mounts.
+  const otherPane = (await snapshot(sandboxed.id)).windows.find((w: { name: string }) => w.name === 'other').panes[0].id;
+  const opened = await (
+    await api(`/api/panes/${otherPane}/popup`, {
+      method: 'POST',
+      body: JSON.stringify({ command: { shell: 'pwd; read line' }, cwd: '/tmp' }),
+    })
+  ).json();
+  const popupExec = await until('the popup in the guest', async () =>
+    calls().find((args) => args[0] === 'exec' && args.includes('pwd; read line')),
+  );
+  assert.equal(popupExec[popupExec.indexOf('-d') + 1], '/tmp');
+  assert(popupExec.includes(`BTMUX_POPUP_ID=${opened.id}`), 'its widgets show in it');
+  assert.equal(await guest(`/api/panes/${opened.id}/widget`), 422, 'the guest reaches its widget route');
+  const popupImage = await (
+    await api(`/api/panes/${opened.id}/paste-image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'image/png' },
+      body: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+    })
+  ).json();
+  assert.match(popupImage.path, /^\/tmp\/btmux-paste-[0-9a-f]+\.png$/, 'its images are copied into the guest');
+  await page.locator('[data-popup]').getByRole('button', { name: 'Close popup' }).click();
+  await page.locator('[data-popup]').waitFor({ state: 'detached' });
+  console.log('PASS a popup runs in the guest in its own directory, with widgets and pasted images');
+
   assert.deepEqual(errors, []);
 } finally {
   await browser.close();

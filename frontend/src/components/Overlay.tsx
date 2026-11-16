@@ -167,7 +167,7 @@ function actionCommands(commands: Command[], config: ClientConfig | null): Comma
       const bound = keys.get(action);
       return {
         id: `${ACTION_ID_PREFIX}${action}`,
-        label: actionLabel(action),
+        label: actionLabel(action, config?.popups),
         description: bound ? `${prefix}, then ${bound.join(' or ')}` : '',
         confirm: null,
       };
@@ -602,7 +602,7 @@ export function Overlay({ sessionId, send, config }: Props) {
                       {binds.map(({ action, keys }) => (
                         <ListItem
                           key={action}
-                          label={actionLabel(action)}
+                          label={actionLabel(action, config?.popups)}
                           endContent={
                             <HStack gap={1}>
                               {keys.map((key) => (
