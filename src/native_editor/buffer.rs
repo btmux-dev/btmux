@@ -202,6 +202,53 @@ pub enum SaveError {
     Io(String),
 }
 
+/// One update as language servers see it: the version after it, and its
+/// `contentChanges`.
+#[derive(Debug)]
+pub struct Applied {
+    pub version: u64,
+    pub changes: Vec<Value>,
+}
+
+/// An LSP position (UTF-16) for a UTF-16 offset.
+pub fn position(rope: &Rope, offset: usize) -> Value {
+    let char = text::char_at(rope, offset.min(text::len_utf16(rope)));
+    let line = rope.char_to_line(char);
+    let start = rope.char_to_utf16_cu(rope.line_to_char(line));
+    serde_json::json!({ "line": line, "character": rope.char_to_utf16_cu(char) - start })
+}
+
+/// The UTF-16 offset of an LSP position, clamped to the line and document.
+pub fn offset(rope: &Rope, position: &Value) -> Option<usize> {
+    let line = position["line"].as_u64()? as usize;
+    let character = position["character"].as_u64()? as usize;
+    if line >= rope.len_lines() {
+        return Some(text::len_utf16(rope));
+    }
+    let start = rope.char_to_utf16_cu(rope.line_to_char(line));
+    let end = if line + 1 < rope.len_lines() {
+        rope.char_to_utf16_cu(rope.line_to_char(line + 1)) - 1
+    } else {
+        text::len_utf16(rope)
+    };
+    Some((start + character).min(end))
+}
+
+/// `contentChanges` for `changes` to `rope`, last first so each range is
+/// still valid when applied in order.
+fn content_changes(rope: &Rope, changes: &[Change]) -> Vec<Value> {
+    changes
+        .iter()
+        .rev()
+        .map(|c| {
+            serde_json::json!({
+                "range": { "start": position(rope, c.from), "end": position(rope, c.to) },
+                "text": c.insert,
+            })
+        })
+        .collect()
+}
+
 pub struct Buffer {
     pub id: Uuid,
     pub path: PathBuf,
@@ -214,6 +261,16 @@ pub struct Buffer {
     pub bom: bool,
     pub disk: Disk,
     pub disk_status: DiskStatus,
+    pub language_id: Option<String>,
+    /// Language servers it is open in.
+    pub servers: Vec<u64>,
+}
+
+/// Updates a push added: from `version`, with what language servers see.
+pub struct Pushed {
+    pub version: u64,
+    pub updates: Vec<Update>,
+    pub applied: Vec<Applied>,
 }
 
 impl Buffer {
@@ -229,6 +286,8 @@ impl Buffer {
             bom: loaded.bom,
             disk: loaded.disk,
             disk_status: DiskStatus::Same,
+            language_id: None,
+            servers: Vec::new(),
         }
     }
 
@@ -236,22 +295,43 @@ impl Buffer {
         self.version != self.saved_version
     }
 
-    /// Apply `updates` made against `base`. `Ok(false)` if `base` is stale:
-    /// the editor rebases on the updates it is missing and pushes again.
-    pub fn push(&mut self, base: u64, updates: &[Update]) -> Result<bool, String> {
-        if base != self.version {
-            return Ok(false);
+    /// Apply `updates` made against `base`. An editor sends every update not
+    /// yet confirmed, so those already applied since `base` are skipped.
+    /// `Ok(None)` if `base` is stale: the editor rebases on the updates it is
+    /// missing and pushes again.
+    pub fn push(&mut self, base: u64, updates: &[Update]) -> Result<Option<Pushed>, String> {
+        let Some(logged) = self.since(base) else {
+            return Ok(None);
+        };
+        let resent = logged.len() <= updates.len()
+            && logged
+                .iter()
+                .zip(updates)
+                .all(|(a, b)| a.client_id == b.client_id && a.changes == b.changes);
+        if !resent {
+            return Ok(None);
         }
+        let fresh = &updates[logged.len()..];
         let mut rope = self.rope.clone();
-        for update in updates {
+        let mut applied = Vec::with_capacity(fresh.len());
+        for (i, update) in fresh.iter().enumerate() {
             let changes = text::parse(&update.changes, text::len_utf16(&rope))?;
+            applied.push(Applied {
+                version: self.version + i as u64 + 1,
+                changes: content_changes(&rope, &changes),
+            });
             text::apply(&mut rope, &changes);
         }
+        let version = self.version;
         self.rope = rope;
-        for update in updates {
+        for update in fresh {
             self.log_update(update.clone());
         }
-        Ok(true)
+        Ok(Some(Pushed {
+            version,
+            updates: fresh.to_vec(),
+            applied,
+        }))
     }
 
     fn log_update(&mut self, update: Update) {
@@ -279,17 +359,8 @@ impl Buffer {
 
     /// Replace the text with `loaded` (a reload) as one minimal update.
     /// Returns the update, if the text changed.
-    pub fn reload(&mut self, loaded: Loaded) -> Option<Update> {
-        let update = text::diff(&self.rope, &loaded.text).map(|change| {
-            let changes = text::to_json(std::slice::from_ref(&change), text::len_utf16(&self.rope));
-            text::apply(&mut self.rope, &[change]);
-            let update = Update {
-                client_id: SERVER_CLIENT.into(),
-                changes,
-            };
-            self.log_update(update.clone());
-            update
-        });
+    pub fn reload(&mut self, loaded: Loaded) -> Option<(Update, Applied)> {
+        let update = text::diff(&self.rope, &loaded.text).map(|change| self.edit(&[change]));
         self.saved_version = self.version;
         self.line_ending = loaded.line_ending;
         self.bom = loaded.bom;
@@ -298,17 +369,21 @@ impl Buffer {
         update
     }
 
-    /// Apply edits btmux makes itself, as one update.
-    #[allow(dead_code)]
-    pub fn edit(&mut self, changes: &[Change]) -> Update {
+    /// Apply sorted edits btmux makes itself, as one update.
+    pub fn edit(&mut self, changes: &[Change]) -> (Update, Applied) {
         let json = text::to_json(changes, text::len_utf16(&self.rope));
+        let lsp = content_changes(&self.rope, changes);
         text::apply(&mut self.rope, changes);
         let update = Update {
             client_id: SERVER_CLIENT.into(),
             changes: json,
         };
         self.log_update(update.clone());
-        update
+        let applied = Applied {
+            version: self.version,
+            changes: lsp,
+        };
+        (update, applied)
     }
 }
 
@@ -334,17 +409,35 @@ mod tests {
     #[test]
     fn accepts_pushes_on_the_current_version_only() {
         let mut b = buffer("ab");
-        assert!(b.push(0, &[update(json!([2, [0, "c"]]))]).unwrap());
+        let c = update(json!([2, [0, "c"]]));
+        let pushed = b.push(0, std::slice::from_ref(&c)).unwrap().unwrap();
+        assert_eq!((pushed.version, pushed.updates.len()), (0, 1));
+        assert_eq!(
+            pushed.applied[0].changes,
+            [json!({ "range": {
+                "start": { "line": 0, "character": 2 },
+                "end": { "line": 0, "character": 2 },
+            }, "text": "c" })]
+        );
         assert_eq!((b.rope.to_string().as_str(), b.version), ("abc", 1));
         assert!(b.dirty());
+        // Sent again with the next update: only that one is new.
+        let d = update(json!([3, [0, "d"]]));
+        let pushed = b.push(0, &[c.clone(), d]).unwrap().unwrap();
+        assert_eq!((pushed.version, pushed.updates.len()), (1, 1));
+        assert_eq!(b.rope.to_string(), "abcd");
         // Stale: another editor's update came first.
-        assert!(!b.push(0, &[update(json!([2, [0, "d"]]))]).unwrap());
-        assert_eq!(b.rope.to_string(), "abc");
+        let other = Update {
+            client_id: "b".into(),
+            changes: json!([2, [0, "e"]]),
+        };
+        assert!(b.push(0, &[other]).unwrap().is_none());
+        assert_eq!(b.rope.to_string(), "abcd");
         // Invalid updates change nothing.
         assert!(b
-            .push(1, &[update(json!([1, [0, "x"]])), update(json!([9]))])
+            .push(2, &[update(json!([1, [0, "x"]])), update(json!([9]))])
             .is_err());
-        assert_eq!((b.rope.to_string().as_str(), b.version), ("abc", 1));
+        assert_eq!((b.rope.to_string().as_str(), b.version), ("abcd", 2));
     }
 
     #[test]
@@ -357,7 +450,7 @@ mod tests {
             } else {
                 json!([len, [0, "x"]])
             };
-            assert!(b.push(i, &[update(changes)]).unwrap());
+            assert!(b.push(i, &[update(changes)]).unwrap().is_some());
         }
         assert_eq!(b.since(1).unwrap().len(), 2);
         assert_eq!(b.since(3).unwrap().len(), 0);
@@ -367,10 +460,11 @@ mod tests {
     #[test]
     fn reloads_as_a_minimal_update() {
         let mut b = buffer("one\ntwo\n");
-        let update = b
+        let (update, applied) = b
             .reload(decode(b"one\n2\n", Disk::default()).unwrap())
             .unwrap();
         assert_eq!(update.changes, json!([4, [3, "2"], 1]));
+        assert_eq!(applied.version, 1);
         assert_eq!(b.rope.to_string(), "one\n2\n");
         assert!(!b.dirty());
     }
@@ -413,5 +507,25 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("btmux-buffer-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+}
+
+#[cfg(test)]
+mod position_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn positions_count_utf16_per_line() {
+        let rope = Rope::from_str("a😀b\nxy\n");
+        assert_eq!(position(&rope, 3), json!({ "line": 0, "character": 3 }));
+        assert_eq!(position(&rope, 6), json!({ "line": 1, "character": 1 }));
+        let at = |line: u64, character: u64| {
+            offset(&rope, &json!({ "line": line, "character": character }))
+        };
+        assert_eq!(at(1, 1), Some(6));
+        // Past the line's end, clamped to before its newline.
+        assert_eq!(at(0, 99), Some(4));
+        assert_eq!(at(9, 0), Some(8));
     }
 }

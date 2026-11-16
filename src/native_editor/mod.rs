@@ -3,6 +3,7 @@
 //! `@codemirror/collab` (`/ws/editor`).
 
 pub mod buffer;
+pub mod lsp;
 pub mod text;
 
 use std::collections::{HashMap, HashSet};
@@ -10,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -44,6 +46,27 @@ pub enum EditorClientMessage {
     Save { req: u32, buffer: Uuid, force: bool },
     /// Discard unsaved changes, reloading the file.
     Revert { req: u32, buffer: Uuid },
+    /// A JSON-RPC message for language server `server`. A request's
+    /// positions are in `buffer` at `version`.
+    Lsp {
+        #[cfg_attr(test, ts(type = "number"))]
+        server: u64,
+        #[cfg_attr(test, ts(type = "unknown"))]
+        message: Value,
+        buffer: Option<Uuid>,
+        #[cfg_attr(test, ts(type = "number | null"))]
+        version: Option<u64>,
+    },
+    /// Apply an LSP `WorkspaceEdit` (a rename) to buffers, loading files as
+    /// needed; its positions are in `buffer` at `version`.
+    ApplyEdit {
+        req: u32,
+        #[cfg_attr(test, ts(type = "unknown"))]
+        edit: Value,
+        buffer: Option<Uuid>,
+        #[cfg_attr(test, ts(type = "number | null"))]
+        version: Option<u64>,
+    },
 }
 
 #[derive(Deserialize, Debug)]
@@ -83,6 +106,15 @@ pub enum EditorServerMessage {
         /// The file changed on disk since it was loaded or saved.
         conflict: bool,
     },
+    /// A JSON-RPC message from language server `server`.
+    Lsp {
+        #[cfg_attr(test, ts(type = "number"))]
+        server: u64,
+        #[cfg_attr(test, ts(type = "unknown"))]
+        message: Value,
+    },
+    /// Every language server, on connect and on change.
+    LspStatus { servers: Vec<lsp::LspServerStatus> },
 }
 
 #[derive(Serialize, Debug)]
@@ -96,6 +128,12 @@ pub struct BufferInfo {
     pub dirty: bool,
     pub disk: DiskStatus,
     pub line_ending: LineEnding,
+    pub language_id: Option<String>,
+    /// The `file://` URI language servers know it by.
+    pub uri: String,
+    /// Its language servers.
+    #[cfg_attr(test, ts(type = "Array<number>"))]
+    pub servers: Vec<u64>,
 }
 
 #[derive(Serialize, Debug, Clone, PartialEq)]
@@ -119,6 +157,7 @@ struct Inner {
     /// The summaries last sent, so unchanged lists aren't resent.
     summaries: Vec<BufferSummary>,
     watcher: Option<watch::Watcher>,
+    lsp: lsp::Lsp,
 }
 
 pub struct Hub {
@@ -236,6 +275,9 @@ impl Hub {
         let _ = tx.try_send(to_json(&EditorServerMessage::Buffers {
             buffers: inner.summaries(),
         }));
+        let _ = tx.try_send(to_json(&EditorServerMessage::LspStatus {
+            servers: inner.lsp_statuses(),
+        }));
         inner.sockets.insert(id, tx);
         (id, rx)
     }
@@ -243,6 +285,7 @@ impl Hub {
     pub fn disconnect(&self, socket: SocketId) {
         let mut inner = self.inner.lock().unwrap();
         inner.sockets.remove(&socket);
+        inner.lsp_disconnected(socket);
         let followed: Vec<Uuid> = inner
             .subs
             .iter()
@@ -287,6 +330,25 @@ impl Hub {
                 let error = self.revert(buffer).await.err();
                 self.reply(socket, req, error, false);
             }
+            EditorClientMessage::Lsp {
+                server,
+                message,
+                buffer,
+                version,
+            } => {
+                let mut inner = self.inner.lock().unwrap();
+                inner.lsp_from_tab(socket, server, message, buffer, version);
+            }
+            EditorClientMessage::ApplyEdit {
+                req,
+                edit,
+                buffer,
+                version,
+            } => {
+                let expect = buffer.zip(version);
+                let error = self.apply_edit(edit, expect).await.err();
+                self.reply(socket, req, error, false);
+            }
         }
     }
 
@@ -310,32 +372,17 @@ impl Hub {
         resume: Option<Resume>,
     ) -> Result<(), String> {
         let path = resolve(path)?;
-        let existing = self.inner.lock().unwrap().by_path.get(&path).copied();
-        let loaded = match existing {
-            Some(_) => None,
-            None => {
-                let p = path.clone();
-                Some(
-                    tokio::task::spawn_blocking(move || buffer::load(&p))
-                        .await
-                        .map_err(|e| e.to_string())??,
-                )
+        let mut tries = 0;
+        let (mut inner, id) = loop {
+            let id = self.load_buffer(path.clone()).await?;
+            let inner = self.inner.lock().unwrap();
+            // A release may have dropped it meanwhile.
+            if inner.buffers.contains_key(&id) {
+                break (inner, id);
             }
-        };
-        let mut inner = self.inner.lock().unwrap();
-        // Another open may have loaded it meanwhile.
-        let id = match inner.by_path.get(&path) {
-            Some(id) => *id,
-            None => {
-                let Some(loaded) = loaded else {
-                    return Err("The buffer closed while opening".into());
-                };
-                let buffer = Buffer::new(path.clone(), loaded);
-                let id = buffer.id;
-                inner.by_path.insert(path.clone(), id);
-                inner.buffers.insert(id, buffer);
-                inner.watch(&path);
-                id
+            tries += 1;
+            if tries == 3 {
+                return Err("The buffer closed while opening".into());
             }
         };
         inner.subs.entry(id).or_default().insert(socket);
@@ -366,9 +413,128 @@ impl Hub {
                     dirty: buffer.dirty(),
                     disk: buffer.disk_status,
                     line_ending: buffer.line_ending,
+                    language_id: buffer.language_id.clone(),
+                    uri: lsp::config::uri(&buffer.path),
+                    servers: buffer.servers.clone(),
                 };
                 inner.send_to(socket, &EditorServerMessage::Opened { req, buffer: info });
             }
+        }
+        inner.send_summaries();
+        Ok(())
+    }
+
+    /// The buffer for `path` (canonical), loading it and starting its
+    /// language servers if it isn't open.
+    async fn load_buffer(&'static self, path: PathBuf) -> Result<Uuid, String> {
+        if let Some(id) = self.inner.lock().unwrap().by_path.get(&path) {
+            return Ok(*id);
+        }
+        let p = path.clone();
+        let config = lsp::config::current();
+        let (loaded, target) = tokio::task::spawn_blocking(move || {
+            (buffer::load(&p), lsp::config::target(&config, &p))
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+        let loaded = loaded?;
+        let mut inner = self.inner.lock().unwrap();
+        // Another open may have loaded it meanwhile.
+        if let Some(id) = inner.by_path.get(&path) {
+            return Ok(*id);
+        }
+        let buffer = Buffer::new(path.clone(), loaded);
+        let id = buffer.id;
+        inner.by_path.insert(path.clone(), id);
+        inner.buffers.insert(id, buffer);
+        inner.watch(&path);
+        if let Some(target) = target {
+            inner.lsp_attach(id, target);
+        }
+        Ok(id)
+    }
+
+    /// Apply an LSP `WorkspaceEdit`. With `expect`, its positions are in
+    /// that buffer at that version, which must still be current.
+    async fn apply_edit(
+        &'static self,
+        edit: Value,
+        expect: Option<(Uuid, u64)>,
+    ) -> Result<(), String> {
+        let mut files: Vec<(String, Vec<Value>)> = Vec::new();
+        if let Some(changes) = edit["changes"].as_object() {
+            for (uri, edits) in changes {
+                files.push((uri.clone(), edits.as_array().cloned().unwrap_or_default()));
+            }
+        }
+        for change in edit["documentChanges"].as_array().into_iter().flatten() {
+            if change.get("kind").is_some() {
+                return Err("Creating, renaming, or deleting files isn't supported".into());
+            }
+            let uri = change["textDocument"]["uri"].as_str().unwrap_or_default();
+            let edits = change["edits"].as_array().cloned().unwrap_or_default();
+            files.push((uri.to_owned(), edits));
+        }
+        let mut targets = Vec::new();
+        for (uri, edits) in files {
+            let path = lsp::config::path(&uri).ok_or_else(|| format!("Cannot edit {uri}"))?;
+            let path = resolve(&path.to_string_lossy())?;
+            targets.push((self.load_buffer(path).await?, edits));
+        }
+        let mut inner = self.inner.lock().unwrap();
+        if let Some((buffer, version)) = expect {
+            if inner.buffers.get(&buffer).map(|b| b.version) != Some(version) {
+                return Err("The file changed meanwhile".into());
+            }
+        }
+        // Check every file's edits before changing any.
+        let mut planned = Vec::new();
+        for (id, edits) in targets {
+            let b = inner.buffers.get(&id).ok_or("A file closed meanwhile")?;
+            let mut changes = Vec::with_capacity(edits.len());
+            for edit in &edits {
+                let range = &edit["range"];
+                let (Some(from), Some(to), Some(insert)) = (
+                    buffer::offset(&b.rope, &range["start"]),
+                    buffer::offset(&b.rope, &range["end"]),
+                    edit["newText"].as_str(),
+                ) else {
+                    return Err("Invalid edit".into());
+                };
+                let insert = insert.replace("\r\n", "\n").replace('\r', "\n");
+                changes.push(text::Change { from, to, insert });
+            }
+            // Stable, so inserts at one position keep their order.
+            changes.sort_by_key(|c| (c.from, c.to));
+            if changes
+                .windows(2)
+                .any(|w| w[0].to > w[1].from || w[0].from > w[0].to)
+            {
+                return Err("Overlapping edits".into());
+            }
+            planned.push((id, changes));
+        }
+        for (id, changes) in &planned {
+            if changes.is_empty() {
+                continue;
+            }
+            let b = inner.buffers.get_mut(id).expect("checked");
+            let version = b.version;
+            let (update, applied) = b.edit(changes);
+            let state = state_message(b);
+            inner.send_to_followers(
+                *id,
+                &EditorServerMessage::Updates {
+                    buffer: *id,
+                    version,
+                    updates: vec![update],
+                },
+            );
+            inner.send_to_followers(*id, &state);
+            inner.lsp_changed(*id, &[applied]);
+        }
+        for (id, _) in planned {
+            inner.collect(id);
         }
         inner.send_summaries();
         Ok(())
@@ -380,16 +546,19 @@ impl Hub {
             return;
         };
         let was_dirty = buffer.dirty();
-        match buffer.push(version, &updates) {
-            Ok(true) => {}
+        let pushed = match buffer.push(version, &updates) {
+            Ok(Some(pushed)) => pushed,
             // Stale: the tab gets the updates it lacks and pushes again.
-            Ok(false) => return,
+            Ok(None) => return,
             Err(error) => {
                 tracing::warn!(path = %buffer.path.display(), "invalid editor update: {error}");
                 // Make the tab start over from the server's text.
                 inner.drop_socket(socket);
                 return;
             }
+        };
+        if pushed.updates.is_empty() {
+            return;
         }
         let dirty = buffer.dirty();
         let state = state_message(buffer);
@@ -397,10 +566,11 @@ impl Hub {
             id,
             &EditorServerMessage::Updates {
                 buffer: id,
-                version,
-                updates,
+                version: pushed.version,
+                updates: pushed.updates,
             },
         );
+        inner.lsp_changed(id, &pushed.applied);
         if dirty != was_dirty {
             inner.send_to_followers(id, &state);
             inner.send_summaries();
@@ -437,6 +607,7 @@ impl Hub {
         b.disk_status = DiskStatus::Same;
         let state = state_message(b);
         inner.send_to_followers(id, &state);
+        inner.lsp_saved(id);
         inner.collect(id);
         inner.send_summaries();
         Ok(())
@@ -568,6 +739,7 @@ impl Inner {
     /// Close a lagging or misbehaving socket; its tab reconnects and catches up.
     fn drop_socket(&mut self, socket: SocketId) {
         self.sockets.remove(&socket);
+        self.lsp_disconnected(socket);
         let followed: Vec<Uuid> = self
             .subs
             .iter()
@@ -598,6 +770,7 @@ impl Inner {
         if let Some(b) = self.buffers.remove(&id) {
             self.by_path.remove(&b.path);
             self.unwatch(&b.path);
+            self.lsp_closed(id, &b.path, &b.servers);
         }
     }
 
@@ -608,7 +781,7 @@ impl Inner {
         let version = b.version;
         let update = b.reload(loaded);
         let state = state_message(b);
-        if let Some(update) = update {
+        if let Some((update, applied)) = update {
             self.send_to_followers(
                 id,
                 &EditorServerMessage::Updates {
@@ -617,6 +790,7 @@ impl Inner {
                     updates: vec![update],
                 },
             );
+            self.lsp_changed(id, &[applied]);
         }
         self.send_to_followers(id, &state);
     }

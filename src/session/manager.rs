@@ -118,6 +118,7 @@ impl SessionManager {
         };
         pty_env.palette.set(Palette::from_theme(&config.theme));
         crate::vscode::configure(&config);
+        crate::native_editor::lsp::config::configure(&file_config, &shell);
         Self {
             sessions: Vec::new(),
             telemetry: crate::telemetry::TelemetryStore::default(),
@@ -616,6 +617,7 @@ impl SessionManager {
         if self.cli_shell.is_none() {
             self.shell = crate::config::resolve_shell(self.config.shell.as_deref());
         }
+        crate::native_editor::lsp::config::configure(&self.file_config, &self.shell);
         self.sync_palette();
         &self.config
     }

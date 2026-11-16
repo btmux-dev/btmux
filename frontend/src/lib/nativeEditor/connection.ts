@@ -4,6 +4,7 @@ import type {
   DiskStatus,
   EditorClientMessage,
   EditorServerMessage,
+  LspServerStatus,
   Update,
 } from '../../generated/protocol';
 
@@ -42,6 +43,10 @@ class EditorConnection {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private summaryListeners = new Set<(buffers: BufferSummary[]) => void>();
   buffers: BufferSummary[] = [];
+  private lspListeners = new Map<number, Set<(message: string) => void>>();
+  private statusListeners = new Set<(servers: LspServerStatus[]) => void>();
+  private connectionListeners = new Set<(open: boolean) => void>();
+  lspStatus: LspServerStatus[] = [];
 
   private url() {
     return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/editor`;
@@ -54,6 +59,7 @@ class EditorConnection {
     this.ws = ws;
     ws.onopen = () => {
       for (const listener of this.listeners) this.sendOpen(listener);
+      for (const fn of this.connectionListeners) fn(true);
     };
     ws.onmessage = (event) => {
       if (typeof event.data === 'string') this.receive(JSON.parse(event.data) as EditorServerMessage);
@@ -66,6 +72,7 @@ class EditorConnection {
       this.byBuffer.clear();
       this.bufferOf.clear();
       for (const listener of this.listeners) listener.disconnected();
+      for (const fn of this.connectionListeners) fn(false);
       if (this.listeners.size > 0) this.reconnectTimer = setTimeout(() => this.connect(), RECONNECT_MS);
     };
   }
@@ -120,6 +127,15 @@ class EditorConnection {
       case 'buffers':
         this.buffers = msg.buffers;
         for (const fn of this.summaryListeners) fn(msg.buffers);
+        return;
+      case 'lsp': {
+        const text = JSON.stringify(msg.message);
+        for (const fn of this.lspListeners.get(msg.server) ?? []) fn(text);
+        return;
+      }
+      case 'lsp_status':
+        this.lspStatus = msg.servers;
+        for (const fn of this.statusListeners) fn(msg.servers);
         return;
       case 'result': {
         const pending = this.pending.get(msg.req);
@@ -185,6 +201,38 @@ class EditorConnection {
       }
       this.pending.set(req, { done: resolve });
     });
+  }
+
+  get connected() {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+
+  /** A JSON-RPC message for language server `server`; requests carry the document version their positions use. */
+  sendLsp(server: number, message: unknown, buffer: string | null, version: number | null): boolean {
+    return this.send({ type: 'lsp', server, message, buffer, version });
+  }
+
+  onLsp(server: number, fn: (message: string) => void): () => void {
+    let set = this.lspListeners.get(server);
+    if (!set) this.lspListeners.set(server, (set = new Set()));
+    set.add(fn);
+    return () => set.delete(fn);
+  }
+
+  /** Called with true each time the socket opens, false when it closes. */
+  onConnection(fn: (open: boolean) => void): () => void {
+    this.connectionListeners.add(fn);
+    return () => this.connectionListeners.delete(fn);
+  }
+
+  onLspStatus(fn: (servers: LspServerStatus[]) => void): () => void {
+    this.statusListeners.add(fn);
+    fn(this.lspStatus);
+    return () => this.statusListeners.delete(fn);
+  }
+
+  applyEdit(edit: unknown, buffer: string | null, version: number | null) {
+    return this.request((req) => ({ type: 'apply_edit', req, edit, buffer, version }));
   }
 
   save(buffer: string, force: boolean) {

@@ -13,7 +13,7 @@ import type { PaneEditor } from '../lib/nativeEditor/paneEditor';
 import type { EditorAppearance } from '../lib/nativeEditor/theme';
 import { onReveal } from '../lib/nativeEditor/reveal';
 import { editorConnection } from '../lib/nativeEditor/connection';
-import type { BufferSummary } from '../generated/protocol';
+import type { BufferSummary, LspServerStatus } from '../generated/protocol';
 import { ClientConfig, LayoutRect } from '../state/types';
 import { ClientMessage } from '../protocol/messages';
 import { useStore } from '../state/store';
@@ -56,6 +56,8 @@ export function NativeEditor({
   const [closing, setClosing] = useState<string | null>(null);
   const [buffers, setBuffers] = useState<BufferSummary[]>([]);
   useEffect(() => editorConnection.subscribeBuffers(setBuffers), []);
+  const [servers, setServers] = useState<LspServerStatus[]>([]);
+  useEffect(() => editorConnection.onLspStatus(setServers), []);
   // Unsaved files this pane doesn't show, as when their pane closed.
   const unsaved = buffers.filter((b) => b.dirty && !state.files.includes(b.path));
   const modalOpen = useStore(
@@ -89,6 +91,7 @@ export function NativeEditor({
         changed,
         hide: () => opRef.current({ kind: 'hide' }),
         error: (message) => useStore.getState().showToast(message, 'error'),
+        open: (path) => opRef.current({ kind: 'open', path, line: null }),
       });
       setEditor(created);
     });
@@ -108,6 +111,10 @@ export function NativeEditor({
   }, [editor, appearance]);
 
   useEffect(() => {
+    if (editor) editor.formatOnSave = !!config?.format_on_save;
+  }, [editor, config?.format_on_save]);
+
+  useEffect(() => {
     if (!editor) return;
     return onReveal(paneId, ({ path, line }) => editor.reveal(path, line));
   }, [editor, paneId]);
@@ -120,7 +127,9 @@ export function NativeEditor({
   }, [editor, visible, focused, modalOpen, state.active]);
 
   const active = state.active;
+  const panelId = `native-editor-${paneId}`;
   const status = active && editor ? editor.status(active) : null;
+  const lsp = status ? servers.filter((s) => status.servers.includes(s.id)) : [];
   const close = (path: string) => {
     if (editor?.status(path)?.dirty) setClosing(path);
     else op({ kind: 'close', path });
@@ -129,6 +138,7 @@ export function NativeEditor({
   return (
     <div
       className="btm-mono"
+      data-editor-pane={paneId}
       inert={!visible}
       aria-hidden={!visible}
       onMouseDown={() => {
@@ -151,7 +161,7 @@ export function NativeEditor({
       }}
     >
       <HStack gap={1} vAlign="center" className="btm-sans shrink-0 pr-1">
-        <TabList size="sm" value={active ?? ''} onChange={(path) => op({ kind: 'activate', path })}>
+        <TabList size="sm" role="tablist" value={active ?? ''} onChange={(path) => op({ kind: 'activate', path })}>
           {state.files.map((path) => {
             const dirty = editor?.status(path)?.dirty;
             return (
@@ -159,6 +169,7 @@ export function NativeEditor({
                 key={path}
                 value={path}
                 label={basename(path)}
+                panelId={panelId}
                 endContent={dirty ? <Circle aria-label="Unsaved" size={8} fill="currentColor" /> : undefined}
               />
             );
@@ -227,7 +238,7 @@ export function NativeEditor({
         />
       )}
       {status?.error && <Banner status="error" container="section" title="Cannot open" description={status.error} />}
-      <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
+      <div id={panelId} role="tabpanel" style={{ position: 'relative', flex: 1, minHeight: 0 }}>
         {/* CodeMirror's own DOM, apart from React's. */}
         <div ref={hostRef} style={{ position: 'absolute', inset: 0 }} />
         {(!editor || (active && status && !status.ready && !status.error)) && (
@@ -256,6 +267,29 @@ export function NativeEditor({
                 {editor.cursor.selected > 0 && ` (${editor.cursor.selected} selected)`}
               </Text>
             )}
+            {editor && (editor.problems.errors > 0 || editor.problems.warnings > 0) && (
+              <Text size="sm" color="secondary" hasTabularNumbers>
+                {editor.problems.errors} errors, {editor.problems.warnings} warnings
+              </Text>
+            )}
+            {lsp.map((server) => (
+              <Text
+                key={server.id}
+                size="sm"
+                color="secondary"
+                maxLines={1}
+                className="min-w-0"
+                aria-label={`Language server ${server.name}`}
+              >
+                {server.state === 'failed'
+                  ? `${server.name}: ${server.message ?? 'failed'}`
+                  : server.progress.length
+                    ? `${server.name}: ${server.progress[0]}`
+                    : server.state === 'starting'
+                      ? `${server.name}…`
+                      : server.name}
+              </Text>
+            ))}
             {status?.language && (
               <Text size="sm" color="secondary">
                 {status.language}

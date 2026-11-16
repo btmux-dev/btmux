@@ -435,6 +435,10 @@ editor: Editor,
  */
 editors: Array<Editor>,
 /**
+ * `[native-editor] format-on-save`.
+ */
+format_on_save: boolean,
+/**
  * Whether the server found Chrome or Chromium for the browser surface.
  */
 browser: boolean,
@@ -528,20 +532,38 @@ export type DiskStatus = "same" | "changed" | "deleted";
 export type Resume = { buffer: string, version: number, };
 
 // prettier-ignore
-export type BufferInfo = { id: string, path: string, text: string, version: number, dirty: boolean, disk: DiskStatus, line_ending: LineEnding, };
+export type BufferInfo = { id: string, path: string, text: string, version: number, dirty: boolean, disk: DiskStatus, line_ending: LineEnding, language_id: string | null,
+/**
+ * The `file://` URI language servers know it by.
+ */
+uri: string,
+/**
+ * Its language servers.
+ */
+servers: Array<number>, };
 
 // prettier-ignore
 export type BufferSummary = { id: string, path: string, dirty: boolean, };
 
 // prettier-ignore
-export type EditorClientMessage = { "type": "open", req: number, path: string, resume: Resume | null, } | { "type": "release", buffer: string, } | { "type": "push", buffer: string, version: number, updates: Array<Update>, } | { "type": "save", req: number, buffer: string, force: boolean, } | { "type": "revert", req: number, buffer: string, };
+export type ServerState = "starting" | "ready" | "failed";
+
+// prettier-ignore
+export type LspServerStatus = { id: number, name: string, root: string, state: ServerState, message: string | null,
+/**
+ * Work in progress (`$/progress`), as "title: message (n%)".
+ */
+progress: Array<string>, };
+
+// prettier-ignore
+export type EditorClientMessage = { "type": "open", req: number, path: string, resume: Resume | null, } | { "type": "release", buffer: string, } | { "type": "push", buffer: string, version: number, updates: Array<Update>, } | { "type": "save", req: number, buffer: string, force: boolean, } | { "type": "revert", req: number, buffer: string, } | { "type": "lsp", server: number, message: unknown, buffer: string | null, version: number | null, } | { "type": "apply_edit", req: number, edit: unknown, buffer: string | null, version: number | null, };
 
 // prettier-ignore
 export type EditorServerMessage = { "type": "opened", req: number, buffer: BufferInfo, } | { "type": "resumed", req: number, buffer: string, } | { "type": "updates", buffer: string, version: number, updates: Array<Update>, } | { "type": "buffer_state", buffer: string, dirty: boolean, disk: DiskStatus, } | { "type": "buffers", buffers: Array<BufferSummary>, } | { "type": "result", req: number, error: string | null,
 /**
  * The file changed on disk since it was loaded or saved.
  */
-conflict: boolean, };
+conflict: boolean, } | { "type": "lsp", server: number, message: unknown, } | { "type": "lsp_status", servers: Array<LspServerStatus>, };
 
 // prettier-ignore
 export type BrowserClientMessage = { "type": "ack" } | { "type": "resize", width: number, height: number, } | { "type": "key", down: boolean, key: string, code: string, key_code: number, text: string | null, modifiers: number, repeat: boolean, } | { "type": "mouse",

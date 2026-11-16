@@ -89,7 +89,7 @@ derived from each browser tab's URL, so session navigation is per-tab.
 
 5. **`/ws/nvim`** (`src/ws/nvim.rs`) — a byte proxy between the browser and a new connection to the shared built-in Neovim's RPC socket. The browser speaks msgpack-RPC itself; see *Built-in Neovim* below.
 
-6. **`/ws/editor`** (`src/ws/editor.rs`) — the native editor's buffers: open, collab pushes and updates, save, revert. See *Native editor* below.
+6. **`/ws/editor`** (`src/ws/editor.rs`) — the native editor's buffers (open, collab pushes and updates, save, revert) and its language servers' JSON-RPC. See *Native editor* below.
 
 7. **`/ws/browser`** (`src/browser.rs`) — the shared server-side Chromium: JPEG frames as binary messages and page state as JSON, with input and navigation coming back as JSON. See *Browser surface* below.
 
@@ -473,6 +473,24 @@ forced. A watcher on open files' directories reloads a clean buffer as one
 minimal update and marks a dirty one changed or deleted. Buffers nobody follows
 are dropped unless dirty; dirty ones stay, listed by the `buffers` message, and
 `btmux upgrade` refuses while any exist (they aren't handed off yet).
+
+Language servers (`native_editor/lsp/`) have btmux as their only client.
+`[[language]]` and `[language-server.NAME]` (Helix-style) override built-in
+ones by name (`lsp/config.rs`); a buffer's servers start when it loads, one
+process per server and root (the nearest root marker, no higher than the Git
+worktree), found as plan limits find agent CLIs, in its own process group.
+The backend sends `didOpen`/`didChange`/`didSave`/`didClose` itself; the LSP
+document version is the collab version. Each tab runs one
+`@codemirror/lsp-client` per server (`lib/nativeEditor/lsp.ts`) over `lsp`
+frames: the router answers its `initialize` from the cached result, drops its
+sync notifications, rewrites request ids, and replies `ContentModified` when a
+request's stamped `version` (synced plus unconfirmed, since tabs push every
+unconfirmed update and the server skips ones it applied) isn't the buffer's.
+The backend answers the server's requests (`workspace/configuration` from
+`config`, `applyEdit`, …), caches diagnostics for tabs connecting later, and
+summarizes `$/progress` in `lsp_status`. Renames go through `apply_edit`, which
+edits every file named, loading unopened ones as unsaved buffers. Crashed
+servers restart up to 3 times a minute; idle ones stop after 60 s.
 
 ### Built-in Neovim
 

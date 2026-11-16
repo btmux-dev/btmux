@@ -31,6 +31,9 @@ export interface DocStatus {
 
 const randomId = () => Math.random().toString(36).slice(2, 12);
 
+/** The doc each view shows. */
+export const viewDocs = new WeakMap<EditorView, Doc>();
+
 /**
  * One editor's copy of a server buffer, kept in sync through
  * `@codemirror/collab`. Its state lives in a view while shown, else here.
@@ -38,11 +41,16 @@ const randomId = () => Math.random().toString(36).slice(2, 12);
 export class Doc implements BufferListener {
   buffer: string | null = null;
   view: EditorView | null = null;
+  languageId: string | null = null;
+  uri: string | null = null;
+  /** Language server ids, from the server. */
+  servers: number[] = [];
   status: DocStatus = { ready: false, error: null, dirty: false, disk: 'same', lineEnding: 'lf' };
   private ownState: EditorState | null = null;
   /** Where the view was scrolled when this doc was last shown. */
   private scroll: StateEffect<unknown> | null = null;
-  private pushing = false;
+  /** Updates already pushed; all unconfirmed ones go with each push, and the server skips repeats. */
+  private sent = new WeakSet<object>();
   private readonly clientID = randomId();
 
   constructor(
@@ -69,11 +77,13 @@ export class Doc implements BufferListener {
     if (this.view) {
       this.ownState = this.view.state;
       this.scroll = this.view.scrollSnapshot();
+      if (viewDocs.get(this.view) === this) viewDocs.delete(this.view);
       this.view = null;
     }
     if (!view) return true;
     if (!this.ownState) return false;
     this.view = view;
+    viewDocs.set(view, this);
     view.setState(this.ownState);
     this.ownState = null;
     if (this.scroll) view.dispatch({ effects: this.scroll });
@@ -99,21 +109,26 @@ export class Doc implements BufferListener {
   opened(info: BufferInfo) {
     const old = this.state;
     const head = Math.min(old?.selection.main.head ?? 0, info.text.length);
+    // Before the state: its extensions read them.
+    this.buffer = info.id;
+    this.languageId = info.language_id;
+    this.uri = info.uri;
+    this.servers = info.servers;
     const state = EditorState.create({
       doc: info.text,
       selection: EditorSelection.single(head),
       extensions: [this.extensions(this, info.text), collab({ startVersion: info.version, clientID: this.clientID })],
     });
-    this.buffer = info.id;
-    this.pushing = false;
+    this.sent = new WeakSet();
     if (this.view) this.view.setState(state);
     else this.ownState = state;
     this.setStatus({ ready: true, error: null, dirty: info.dirty, disk: info.disk, lineEnding: info.line_ending });
   }
 
   resumed() {
-    this.pushing = false;
+    this.sent = new WeakSet();
     this.setStatus({ ready: true, error: null });
+    this.push();
   }
 
   updates(version: number, updates: Update[]) {
@@ -133,8 +148,7 @@ export class Doc implements BufferListener {
         ),
       );
     }
-    // Ours came back (accepted), or others' did (ours was stale): push what's left.
-    this.pushing = false;
+    // Others' changes rebase ours, which then go again.
     this.push();
   }
 
@@ -152,17 +166,23 @@ export class Doc implements BufferListener {
   }
 
   disconnected() {
-    this.pushing = false;
     this.setStatus({ ready: false });
   }
 
-  /** Send local changes, one batch in flight at a time. */
+  /** Send local changes not sent yet, with the unconfirmed ones before them. */
   push() {
     const state = this.state;
-    if (this.pushing || !this.buffer || !state || !this.status.ready) return;
+    if (!this.buffer || !state || !this.status.ready) return;
     const sendable = sendableUpdates(state);
-    if (!sendable.length) return;
+    if (sendable.every((u) => this.sent.has(u))) return;
     const updates = sendable.map((u) => ({ client_id: u.clientID, changes: u.changes.toJSON() }));
-    if (editorConnection.push(this.buffer, getSyncedVersion(state), updates)) this.pushing = true;
+    if (editorConnection.push(this.buffer, getSyncedVersion(state), updates))
+      for (const u of sendable) this.sent.add(u);
+  }
+
+  /** The server's version once it has every change pushed: what language server positions refer to. */
+  version(): number | null {
+    const state = this.state;
+    return state ? getSyncedVersion(state) + sendableUpdates(state).length : null;
   }
 }

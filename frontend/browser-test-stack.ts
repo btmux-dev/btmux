@@ -123,6 +123,7 @@ async function withStack(
         PATH: `${path.join(frontend, 'test-bin')}${path.delimiter}${process.env.PATH}`,
         BTMUX_FAKE_MULTIPASS: path.join(dir, 'multipass'),
         BTMUX_FAKE_GH: path.join(dir, 'gh'),
+        BTMUX_FAKE_LSP: path.join(dir, 'lsp'),
         BTMUX_AUTH_TOKEN: token,
         GIT_CONFIG_GLOBAL: '/dev/null',
         GIT_CONFIG_NOSYSTEM: '1',
@@ -178,6 +179,7 @@ for (const [index, test] of tests.entries()) {
           BTMUX_TEST_CONFIG_HOME: configHome,
           BTMUX_TEST_MULTIPASS: path.join(dir, 'multipass'),
           BTMUX_TEST_GH: path.join(dir, 'gh'),
+          BTMUX_TEST_LSP: path.join(dir, 'lsp'),
         },
       });
       const code = await exited(child);

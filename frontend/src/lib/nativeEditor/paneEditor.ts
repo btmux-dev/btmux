@@ -15,11 +15,15 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { bracketMatching, foldGutter, foldKeymap, indentOnInput, indentUnit } from '@codemirror/language';
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
-import { lintKeymap } from '@codemirror/lint';
+import { forEachDiagnostic, lintKeymap } from '@codemirror/lint';
 import { Doc, type DocStatus } from './doc';
 import { editorConnection } from './connection';
 import { editorTheme, type EditorAppearance } from './theme';
 import { detectIndent, languageFor } from './languages';
+import { format, lspExtension, serverFailed, setDisplay } from './lsp';
+
+/** Longest wait for formatting before a save goes ahead without it. */
+const FORMAT_TIMEOUT_MS = 3000;
 
 /** Max gap between two Esc presses that hide the editor. */
 const DOUBLE_ESC_MS = 300;
@@ -31,12 +35,16 @@ export interface PaneEditorEvents {
   hide(): void;
   /** A save or revert failed. */
   error(message: string): void;
+  /** Open `path` in this pane (a jump to another file). */
+  open(path: string): void;
 }
 
 export interface FileStatus extends DocStatus {
   language: string | null;
   /** The last save found the file changed on disk. */
   conflict: boolean;
+  /** Language server ids. */
+  servers: number[];
 }
 
 /** The native editor over one pane: a CodeMirror view showing one of its open files. */
@@ -50,8 +58,15 @@ export class PaneEditor {
   private appearance: EditorAppearance;
   private readonly themeC = new Compartment();
   private readonly languageC = new Compartment();
+  private readonly lspC = new Compartment();
+  /** Docs whose server had failed when last configured. */
+  private failed = new WeakMap<Doc, boolean>();
+  private stopStatus: () => void;
   private lastEsc = -Infinity;
+  private waiting: { path: string; resolve: (view: EditorView | null) => void }[] = [];
   cursor = { line: 1, column: 1, selected: 0 };
+  problems = { errors: 0, warnings: 0 };
+  formatOnSave = false;
 
   constructor(
     parent: HTMLElement,
@@ -61,6 +76,15 @@ export class PaneEditor {
   ) {
     this.appearance = appearance;
     this.view = new EditorView({ parent, state: this.placeholder() });
+    // Drop a server's features once it fails, and add them back if it recovers.
+    this.stopStatus = editorConnection.onLspStatus(() => {
+      for (const doc of this.docs.values()) {
+        const failed = serverFailed(doc.servers[0]);
+        if (!doc.state || failed === (this.failed.get(doc) ?? false)) continue;
+        this.failed.set(doc, failed);
+        doc.update({ effects: this.lspC.reconfigure(lspExtension(doc)) });
+      }
+    });
   }
 
   private placeholder() {
@@ -77,8 +101,36 @@ export class PaneEditor {
         'data-pane-id': this.paneId,
         'aria-label': 'Editor',
       }),
-      EditorView.domEventHandlers({ keydown: (e) => this.keydown(e) }),
+      EditorView.domEventHandlers({
+        keydown: (e) => this.keydown(e),
+        // Jumps to other files open where the user is.
+        focus: () => setDisplay((path) => this.display(path)),
+      }),
     ];
+  }
+
+  /** Show `path` here; resolves with the view once it is loaded. */
+  private display(path: string): Promise<EditorView | null> {
+    const doc = this.docs.get(path);
+    if (path === this.active && doc?.view && doc.status.ready) return Promise.resolve(this.view);
+    this.events.open(path);
+    return new Promise((resolve) => {
+      const waiter = { path, resolve };
+      this.waiting.push(waiter);
+      setTimeout(() => {
+        if (!this.waiting.includes(waiter)) return;
+        this.waiting = this.waiting.filter((w) => w !== waiter);
+        resolve(null);
+      }, 10_000);
+    });
+  }
+
+  private resolveWaiting() {
+    const doc = this.active ? this.docs.get(this.active) : undefined;
+    if (!doc?.view || !doc.status.ready) return;
+    const ready = this.waiting.filter((w) => w.path === doc.path);
+    this.waiting = this.waiting.filter((w) => w.path !== doc.path);
+    for (const w of ready) w.resolve(this.view);
   }
 
   private extensions(doc: Doc, text: string): Extension {
@@ -102,6 +154,7 @@ export class PaneEditor {
       highlightSelectionMatches(),
       indentUnit.of(detectIndent(text)),
       this.languageC.of(this.languages.get(doc.path)?.support ?? []),
+      this.lspC.of(this.lspFor(doc)),
       keymap.of([
         { key: 'Mod-s', run: () => (void this.save(false), true), preventDefault: true },
         ...closeBracketsKeymap,
@@ -115,9 +168,16 @@ export class PaneEditor {
       ]),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) doc.push();
-        if (doc.view && (update.docChanged || update.selectionSet)) this.updateCursor();
+        if (!doc.view) return;
+        if (update.docChanged || update.selectionSet) this.updateCursor();
+        if (update.docChanged || update.transactions.some((tr) => tr.effects.length > 0)) this.countProblems();
       }),
     ];
+  }
+
+  private lspFor(doc: Doc) {
+    this.failed.set(doc, serverFailed(doc.servers[0]));
+    return lspExtension(doc);
   }
 
   private keydown(e: KeyboardEvent): boolean {
@@ -132,6 +192,17 @@ export class PaneEditor {
       this.lastEsc = e.timeStamp;
     } else this.lastEsc = -Infinity;
     return false;
+  }
+
+  private countProblems() {
+    const problems = { errors: 0, warnings: 0 };
+    forEachDiagnostic(this.view.state, (d) => {
+      if (d.severity === 'error') problems.errors++;
+      else if (d.severity === 'warning') problems.warnings++;
+    });
+    if (problems.errors === this.problems.errors && problems.warnings === this.problems.warnings) return;
+    this.problems = problems;
+    this.events.changed();
   }
 
   private updateCursor() {
@@ -185,6 +256,8 @@ export class PaneEditor {
     doc.update({ effects: this.themeC.reconfigure(editorTheme(this.appearance)) });
     this.applyReveal(doc);
     this.updateCursor();
+    this.countProblems();
+    this.resolveWaiting();
   }
 
   private docChanged(doc: Doc) {
@@ -193,7 +266,10 @@ export class PaneEditor {
       doc.attach(this.view);
       this.afterShow(doc);
       if (focused) this.view.focus();
-    } else if (doc.view) this.applyReveal(doc);
+    } else if (doc.view) {
+      this.applyReveal(doc);
+      this.resolveWaiting();
+    }
     this.events.changed();
   }
 
@@ -236,6 +312,7 @@ export class PaneEditor {
       ...doc.status,
       language: this.languages.get(path)?.name ?? null,
       conflict: this.conflicts.has(path),
+      servers: doc.servers,
     };
   }
 
@@ -251,6 +328,10 @@ export class PaneEditor {
   async save(force: boolean, path = this.active) {
     const doc = path ? this.docs.get(path) : undefined;
     if (!doc?.buffer) return;
+    if (this.formatOnSave && doc.view && !force) {
+      const timeout = new Promise((resolve) => setTimeout(resolve, FORMAT_TIMEOUT_MS));
+      await Promise.race([format(doc.view).catch(() => {}), timeout]);
+    }
     doc.push();
     const result = await editorConnection.save(doc.buffer, force);
     if (result.conflict) this.conflicts.add(doc.path);
@@ -270,6 +351,7 @@ export class PaneEditor {
   }
 
   destroy() {
+    this.stopStatus();
     for (const doc of this.docs.values()) {
       doc.attach(null);
       doc.close();

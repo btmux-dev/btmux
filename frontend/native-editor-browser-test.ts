@@ -1,6 +1,6 @@
 /** Run with `just test-browser`, or against a running stack with BTMUX_TEST_URL and BTMUX_AUTH_TOKEN. */
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, type Page } from 'playwright';
@@ -163,6 +163,161 @@ try {
   await waitForText(page, secondPane, 'const x = 1;\n');
   await waitForText(page, paneId, 'theirs\n');
   console.log('PASS the editor view survives a reload');
+
+  // Language servers, with a fake one (test-bin/fake-lsp).
+  const lspDir = process.env.BTMUX_TEST_LSP;
+  const configHome = process.env.BTMUX_TEST_CONFIG_HOME;
+  if (lspDir && configHome) {
+    mkdirSync(lspDir, { recursive: true });
+    const main = join(dir, 'main.fake');
+    writeFileSync(main, 'let bad = 1;\nuse thing;\n');
+    writeFileSync(join(dir, 'other.fake'), 'thing defined here\n');
+    writeFileSync(join(dir, 'third.fake'), 'more thing\n');
+    mkdirSync(join(configHome, 'btmux'), { recursive: true });
+    writeFileSync(
+      join(configHome, 'btmux', 'config.toml'),
+      [
+        '[native-editor]',
+        'format-on-save = true',
+        '[language-server.fake]',
+        'command = "fake-lsp"',
+        '[[language]]',
+        'name = "fake"',
+        'file-types = ["fake"]',
+        'language-servers = ["fake"]',
+        '',
+      ].join('\n'),
+    );
+    await waitForAsync(page, async () => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      return useStore.getState().config?.format_on_save === true;
+    });
+    await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: main, line: 2, editor: 'native' });
+    await waitForText(page, paneId, 'let bad = 1;\nuse thing;\n');
+    await page.locator(`[data-editor-pane="${paneId}"] .cm-lintRange-error`).first().waitFor();
+    await page.getByLabel('Language server fake').waitFor();
+    await page.getByText('1 errors, 0 warnings').waitFor();
+    console.log('PASS diagnostics from the language server');
+
+    // The rect of `word`'s first occurrence on `line` (0-based), in the pane's editor.
+    const wordRect = (line: number, word: string) =>
+      page.evaluate(
+        ({ id, line, word }) => {
+          const content = document.querySelector(`[data-native-editor][data-pane-id="${id}"]`)!;
+          const el = content.querySelectorAll(':scope > .cm-line')[line];
+          const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            const at = node.textContent!.indexOf(word);
+            if (at < 0) continue;
+            const range = document.createRange();
+            range.setStart(node, at);
+            range.setEnd(node, at + word.length);
+            const r = range.getBoundingClientRect();
+            return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+          }
+          return null;
+        },
+        { id: paneId, line, word },
+      );
+
+    // Typing is synced: a new "bad" gets its own error.
+    const thing = (await wordRect(1, 'thing'))!;
+    await page.mouse.click(thing.x, thing.y);
+    await page.keyboard.press('End');
+    await page.keyboard.type(' bad');
+    await page.getByText('2 errors, 0 warnings').waitFor();
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Backspace');
+    await page.getByText('1 errors, 0 warnings').waitFor();
+    console.log('PASS edits reach the language server incrementally');
+
+    await page.keyboard.press('End');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('fa');
+    await page.locator('.cm-tooltip-autocomplete').getByText('fakeCompletion').click();
+    await waitForText(page, paneId, 'let bad = 1;\nuse thing;\nfakeCompletion\n');
+    console.log('PASS completion');
+
+    const hover = (await wordRect(1, 'thing'))!;
+    await page.mouse.move(hover.x, hover.y);
+    await page.locator('.cm-tooltip').getByText('thing', { exact: true }).waitFor();
+    console.log('PASS hover');
+
+    // F12 jumps to the definition in another file, opened in this pane.
+    await page.mouse.click(hover.x, hover.y);
+    await page.keyboard.press('F12');
+    await waitForAsync(
+      page,
+      async ({ id, path }) => {
+        const { findPaneState, useStore } = await import('/src/state/store.tsx' as string);
+        return findPaneState(useStore.getState(), id)?.editor.active === path;
+      },
+      { id: paneId, path: join(dir, 'other.fake') },
+    );
+    await waitForText(page, paneId, 'thing defined here\n');
+    console.log('PASS go to definition opens the other file');
+
+    // Rename edits every file, open or not; unopened ones wait unsaved.
+    await page.getByRole('tab', { name: 'main.fake' }).click();
+    await waitForText(page, paneId, 'let bad = 1;\nuse thing;\nfakeCompletion\n');
+    const renamed = (await wordRect(1, 'thing'))!;
+    await page.mouse.click(renamed.x, renamed.y);
+    await page.keyboard.press('F2');
+    await page.getByLabel('New name').fill('item');
+    await page.keyboard.press('Enter');
+    await waitForText(page, paneId, 'let bad = 1;\nuse item;\nfakeCompletion\n');
+    const pane = page.locator(`[data-editor-pane="${paneId}"]`);
+    await pane.getByRole('button', { name: 'Other unsaved files' }).click();
+    await page.getByRole('menuitem', { name: /third\.fake/ }).click();
+    await waitForText(page, paneId, 'more item\n');
+    await page.getByRole('tab', { name: 'other.fake' }).click();
+    await waitForText(page, paneId, 'item defined here\n');
+    console.log('PASS rename changes open and unopened files');
+
+    // Format on save.
+    await page.getByRole('tab', { name: 'main.fake' }).click();
+    await waitForText(page, paneId, 'let bad = 1;\nuse item;\nfakeCompletion\n');
+    await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+    await page.keyboard.press('ControlOrMeta+End');
+    await page.keyboard.type('end   ');
+    await page.keyboard.press('ControlOrMeta+s');
+    await waitForText(page, paneId, 'let bad = 1;\nuse item;\nfakeCompletion\nend');
+    for (let i = 0; i < 100 && readFileSync(main, 'utf8') !== 'let bad = 1;\nuse item;\nfakeCompletion\nend'; i++)
+      await page.waitForTimeout(50);
+    assert.equal(readFileSync(main, 'utf8'), 'let bad = 1;\nuse item;\nfakeCompletion\nend');
+    assert.match(readFileSync(join(lspDir, 'log'), 'utf8'), /textDocument\/didSave/);
+    console.log('PASS format on save');
+
+    // A server that isn't installed shows in the status line, and its features stay off.
+    writeFileSync(
+      join(configHome, 'btmux', 'config.toml'),
+      [
+        '[language-server.missing]',
+        'command = "btmux-missing-lsp"',
+        '[[language]]',
+        'name = "nolsp"',
+        'file-types = ["nolsp"]',
+        'language-servers = ["missing"]',
+        '',
+      ].join('\n'),
+    );
+    await waitForAsync(page, async () => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      return useStore.getState().config?.format_on_save === false;
+    });
+    const nolsp = join(dir, 'x.nolsp');
+    writeFileSync(nolsp, 'plain\n');
+    await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: nolsp, line: null, editor: 'native' });
+    await waitForText(page, paneId, 'plain\n');
+    await page.getByText('missing: btmux-missing-lsp not found').waitFor();
+    const plain = (await wordRect(0, 'plain'))!;
+    await page.mouse.move(plain.x, plain.y);
+    await page.waitForTimeout(1000);
+    assert.equal(await page.locator('.cm-lsp-message-error').count(), 0);
+    console.log('PASS a missing language server shows in the status line without errors');
+  }
 } finally {
   await browser.close();
   await api(`/api/sessions/${session.id}`, 'DELETE').catch(() => {});
