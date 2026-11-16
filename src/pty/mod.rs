@@ -65,6 +65,7 @@ pub(crate) const OUTER_TERMINAL_ENV: [&str; 29] = [
 ];
 
 /// What btmux sets for a pane's shell, which processes outside panes mustn't inherit.
+#[cfg(unix)]
 pub(crate) const PANE_ENV: [&str; 7] = [
     "TERM_PROGRAM",
     "TERM_PROGRAM_VERSION",

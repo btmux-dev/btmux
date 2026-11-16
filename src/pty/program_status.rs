@@ -225,6 +225,7 @@ pub struct Change {
 
 impl ProgramStatus {
     /// Records handed over by an upgrade; the first `take_change` reports them.
+    #[cfg(unix)]
     pub fn restore(records: Vec<Record>) -> Self {
         Self {
             revision: u64::from(!records.is_empty()),
@@ -234,6 +235,7 @@ impl ProgramStatus {
         }
     }
 
+    #[cfg(any(unix, test))]
     pub fn records(&self) -> &[Record] {
         &self.records
     }
