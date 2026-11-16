@@ -1037,6 +1037,7 @@ mod tests {
         assert!(state.read().await.popups.summaries().is_empty());
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_popup_started_at_the_deadline_runs_only_there() {
         let (state, app, pane) = app().await;
@@ -1057,6 +1058,7 @@ mod tests {
         close(&state, id).await;
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn retried_requests_find_their_popup() {
         let (state, app, pane) = app().await;
@@ -1133,6 +1135,7 @@ mod tests {
         assert!(error.contains("no such directory"), "{error}");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn waiters_get_the_exit_status() {
         let (state, app, pane) = app().await;
@@ -1271,6 +1274,7 @@ mod tests {
         assert!(age >= Duration::from_secs(10) && age < ENDED_KEPT);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn widgets_and_images_reach_popups() {
         let (state, app, pane) = app().await;
