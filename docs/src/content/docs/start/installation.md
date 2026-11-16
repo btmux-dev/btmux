@@ -140,6 +140,9 @@ the package changes, activation runs `btmux upgrade`, so running shells survive.
 If that is refused (say, unsaved Neovim buffers), activation warns and you can
 run `btmux upgrade` later.
 
+The module also installs bash, fish, and zsh completions when the package
+supports them. `services.btmux` is an alias for `programs.btmux`.
+
 Other options:
 
 - `service.enable = false`: install and configure btmux without starting it.
@@ -151,9 +154,6 @@ Other options:
   [fish integration](../features/fish.md), installed when
   `programs.fish.enable` is set; `fishPickMenus = true` uses `btmux pick` menus
   for Tab, `Ctrl-R`, and `cdh`.
-
-The module also installs bash, fish, and zsh completions when the package
-supports them. `services.btmux` is an alias for `programs.btmux`.
 
 To also install the desktop app:
 
