@@ -30,6 +30,7 @@ let loader: Promise<typeof import('../lib/nativeEditor/paneEditor')> | null = nu
 const loadEditor = () => (loader ??= import('../lib/nativeEditor/paneEditor'));
 
 const basename = (path: string) => path.slice(path.lastIndexOf('/') + 1) || path;
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /** The native editor over a pane, as the server's `PaneEditor` describes it. */
 export function NativeEditor({
@@ -316,16 +317,19 @@ export function NativeEditor({
         )}
       </div>
       {active && (
-        <HStack gap={3} vAlign="center" className="shrink-0 px-2 py-0.5">
+        // A container, so narrow panes drop the least useful items.
+        <HStack gap={3} vAlign="center" className="@container shrink-0 px-2 py-0.5">
           {editor?.vimMode && (
             <Text size="sm" weight="semibold" maxLines={1} className="shrink-0" aria-label="Vim mode">
               {editor.vimMode}
             </Text>
           )}
-          <Text size="sm" color="secondary" maxLines={1} className="min-w-0">
+          {/* The path gives up its room before the items after it. */}
+          <Text size="sm" color="secondary" maxLines={1} className="min-w-0 shrink-[1000]">
             {active}
           </Text>
-          <HStack gap={3} className="ml-auto shrink-0">
+          {/* Items stay on one line; only server names shrink, and past that it clips. */}
+          <HStack gap={3} className="ml-auto min-w-0 overflow-hidden whitespace-nowrap">
             {editor?.git && (editor.git.added > 0 || editor.git.changed > 0 || editor.git.removed > 0) && (
               <Text size="sm" color="secondary" hasTabularNumbers aria-label="Changes from the Git index">
                 {[
@@ -345,7 +349,7 @@ export function NativeEditor({
             )}
             {editor && (editor.problems.errors > 0 || editor.problems.warnings > 0) && (
               <Text size="sm" color="secondary" hasTabularNumbers>
-                {editor.problems.errors} errors, {editor.problems.warnings} warnings
+                {plural(editor.problems.errors, 'error')}, {plural(editor.problems.warnings, 'warning')}
               </Text>
             )}
             {lsp.map((server) => (
@@ -354,7 +358,7 @@ export function NativeEditor({
                 size="sm"
                 color="secondary"
                 maxLines={1}
-                className="min-w-0"
+                className="min-w-0 @max-md:hidden"
                 aria-label={`Language server ${server.name}`}
               >
                 {server.state === 'failed'
@@ -365,12 +369,12 @@ export function NativeEditor({
               </Text>
             ))}
             {status?.language && (
-              <Text size="sm" color="secondary">
+              <Text size="sm" color="secondary" className="@max-md:hidden">
                 {status.language}
               </Text>
             )}
             {status && (
-              <Text size="sm" color="secondary">
+              <Text size="sm" color="secondary" className="@max-md:hidden">
                 {status.lineEnding.toUpperCase()}
               </Text>
             )}

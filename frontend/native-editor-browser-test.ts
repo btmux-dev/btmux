@@ -222,6 +222,14 @@ try {
   await goToFile.waitFor();
   // Without a query: the pane's other files, then recent ones (b.ts, shown in the other pane).
   await editorPane.getByRole('option', { name: /^b\.ts/ }).waitFor();
+  // The picker fills its panel, so the list isn't clipped, and fits the editor.
+  const pickerBox = await editorPane.locator('.cm-btmux-picker').evaluate((picker) => ({
+    picker: picker.getBoundingClientRect().height,
+    panels: picker.closest('.cm-panels')!.clientHeight,
+    editor: picker.closest('.cm-editor')!.clientHeight,
+  }));
+  assert.ok(Math.abs(pickerBox.picker - pickerBox.panels) <= 1, JSON.stringify(pickerBox));
+  assert.ok(pickerBox.panels <= pickerBox.editor / 2, JSON.stringify(pickerBox));
   await page.keyboard.type('qotgt');
   const targetOption = editorPane.getByRole('option', { name: /quickopen-target\.md/ });
   await targetOption.waitFor();
@@ -404,10 +412,34 @@ try {
     await waitForText(page, paneId, 'let bad = 1;\nuse thing;\n');
     await page.locator(`[data-editor-pane="${paneId}"] .cm-lintRange-error`).first().waitFor();
     await page.getByLabel('Language server fake').waitFor();
-    await page.getByText('1 errors, 0 warnings').waitFor();
+    await page.getByText('1 error, 0 warnings').waitFor();
     // Lenses and hints move text as they arrive; positions are measured after.
     await page.locator(`[data-editor-pane="${paneId}"] .cm-lsp-code-lens`).first().waitFor();
     console.log('PASS diagnostics from the language server');
+
+    // A narrow pane's status line drops its least useful items rather than clip.
+    const splits: { pane_id: string }[] = [];
+    splits.push(await api(`/api/panes/${paneId}/split`, 'POST', { direction: 'right', select: false }));
+    const statusLine = () =>
+      page.getByLabel('Language server fake').evaluate((server) => {
+        const line = server.parentElement!.parentElement!;
+        return {
+          server: getComputedStyle(server).display,
+          // On one line, without clipping.
+          fits: line.scrollWidth <= line.clientWidth && line.clientHeight < 30,
+          width: line.clientWidth,
+          text: line.textContent,
+        };
+      });
+    let narrow = await statusLine();
+    for (let i = 0; i < 100 && !(narrow.width < 350 && narrow.server === 'none' && narrow.fits); i++) {
+      await page.waitForTimeout(50);
+      narrow = await statusLine();
+    }
+    assert.ok(narrow.width < 350 && narrow.fits && narrow.text!.includes('1 error, 0 warnings'), JSON.stringify(narrow));
+    for (const { pane_id } of splits) await api(`/api/panes/${pane_id}`, 'DELETE');
+    await page.getByLabel('Language server fake').waitFor();
+    console.log('PASS a narrow status line fits');
 
     // The rect of `word`'s first occurrence on `line` (0-based), in the pane's editor.
     const wordRect = (line: number, word: string) =>
@@ -440,20 +472,78 @@ try {
     await page.keyboard.press('Backspace');
     await page.keyboard.press('Backspace');
     await page.keyboard.press('Backspace');
-    await page.getByText('1 errors, 0 warnings').waitFor();
+    await page.getByText('1 error, 0 warnings').waitFor();
     console.log('PASS edits reach the language server incrementally');
 
     await page.keyboard.press('End');
     await page.keyboard.press('Enter');
     await page.keyboard.type('fa');
+    // Long docs scroll in a box that fits the window, with markdown
+    // paragraphs a line apart, not three.
+    const info = page.locator('.cm-completionInfo');
+    await info.getByText('Completion paragraph 0.').waitFor();
+    const infoBox = await info.evaluate((el) => {
+      el.scrollTop = 100;
+      const [first, second] = Array.from(el.querySelectorAll('p'), (p) => p.getBoundingClientRect());
+      const r = el.getBoundingClientRect();
+      return { top: r.top, bottom: r.bottom, scrollTop: el.scrollTop, gap: second.top - first.bottom, viewport: innerHeight };
+    });
+    assert.ok(infoBox.scrollTop > 0 && infoBox.top >= 0 && infoBox.bottom <= infoBox.viewport, JSON.stringify(infoBox));
+    assert.ok(infoBox.gap < 10, JSON.stringify(infoBox));
     await page.locator('.cm-tooltip-autocomplete').getByText('fakeCompletion').click();
     await waitForText(page, paneId, 'let bad = 1;\nuse thing;\nfakeCompletion\n');
     console.log('PASS completion');
+
+    // Esc hides signature help until it is asked for, a call starts, or it
+    // moves to another parameter. Escs are apart, as two quickly hide the editor.
+    const signature = page.locator('.cm-lsp-signature-tooltip');
+    const escape = async () => {
+      await page.waitForTimeout(400);
+      await page.keyboard.press('Escape');
+      await signature.waitFor({ state: 'hidden' });
+    };
+    await page.keyboard.type(' sig(');
+    await signature.waitFor();
+    await escape();
+    // Typing in the same parameter keeps it hidden.
+    await page.keyboard.type('x');
+    await page.waitForTimeout(400);
+    assert.equal(await signature.isVisible(), false);
+    await page.keyboard.press('ControlOrMeta+Shift+Space');
+    await signature.waitFor();
+    await escape();
+    // A new call to it, at the same parameter: lsp-client keeps the tooltip.
+    await page.keyboard.type(') sig(');
+    await signature.waitFor();
+    await escape();
+    await page.keyboard.type('y,');
+    await signature.waitFor();
+    await page.keyboard.press('End');
+    await page.keyboard.press('Shift+Home');
+    await page.keyboard.type('fakeCompletion');
+    await waitForText(page, paneId, 'let bad = 1;\nuse thing;\nfakeCompletion\n');
+    await signature.waitFor({ state: 'detached' });
+    console.log('PASS Esc closes signature help');
 
     const hover = (await wordRect(1, 'thing'))!;
     await page.mouse.move(hover.x, hover.y);
     await page.locator('.cm-tooltip').getByText('thing', { exact: true }).waitFor();
     console.log('PASS hover');
+
+    // A hover taller than the space left scrolls inside its box.
+    const use = (await wordRect(1, 'use'))!;
+    await page.mouse.move(use.x, use.y);
+    const longHover = page.locator('.cm-tooltip', { hasText: 'Long hover paragraph 0.' });
+    await longHover.waitFor();
+    const longBox = await longHover.evaluate((el) => {
+      el.scrollTop = 100;
+      const r = el.getBoundingClientRect();
+      return { top: r.top, bottom: r.bottom, scrollTop: el.scrollTop, viewport: innerHeight };
+    });
+    assert.ok(longBox.scrollTop > 0 && longBox.top >= 0 && longBox.bottom <= longBox.viewport, JSON.stringify(longBox));
+    await page.mouse.move(0, 0);
+    await longHover.waitFor({ state: 'detached' });
+    console.log('PASS a long hover scrolls');
 
     // F12 jumps to the definition in another file, opened in this pane.
     const definition = (await wordRect(1, 'thing'))!;

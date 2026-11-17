@@ -97,6 +97,18 @@ export function editorTheme(a: EditorAppearance): Extension {
           border: '1px solid var(--color-border)',
           borderRadius: '6px',
         },
+        // CodeMirror shrinks a tooltip that doesn't fit to the space left;
+        // its documentation scrolls there rather than spilling out.
+        '.cm-tooltip.cm-tooltip-hover, .cm-tooltip.cm-lsp-hover-tooltip': {
+          maxWidth: 'min(90ch, 90vw)',
+          maxHeight: '30em',
+          overflow: 'auto',
+        },
+        // CodeMirror caps completion docs' width only.
+        '.cm-tooltip.cm-completionInfo': { maxHeight: 'min(30em, 70vh)', overflow: 'auto' },
+        // Its `pre-line` is for plain text; in rendered markdown it would
+        // turn the newlines between blocks into blank lines.
+        '.cm-completionInfo .cm-lsp-documentation:has(> *)': { whiteSpace: 'normal' },
         '.cm-panels.cm-panels-bottom': { borderRadius: 0, borderWidth: '1px 0 0 0' },
         '.cm-panels input, .cm-panels button': { font: 'inherit' },
         '.cm-tooltip-autocomplete > ul > li[aria-selected]': {

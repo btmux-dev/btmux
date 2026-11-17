@@ -214,7 +214,15 @@ const pickerField = StateField.define<PickerSpec | null>({
 export const pickerExtension = [
   pickerField,
   EditorView.theme({
-    '.cm-btmux-picker': { display: 'flex', flexDirection: 'column', maxHeight: '45%' },
+    // Capped on the panels, as a percentage on the picker would resolve
+    // against their flex-shrunk height and clip the list. Short editors
+    // give it at least 10em, or all of them.
+    '.cm-panels-top:has(.cm-btmux-picker)': {
+      display: 'flex',
+      flexDirection: 'column',
+      maxHeight: 'max(45%, min(100%, 10em))',
+    },
+    '.cm-btmux-picker': { display: 'flex', flexDirection: 'column', minHeight: 0 },
     '.cm-btmux-picker input': {
       font: 'inherit',
       margin: '6px 8px',
@@ -225,8 +233,21 @@ export const pickerExtension = [
       borderRadius: '4px',
       outline: 'none',
     },
-    '.cm-btmux-picker ul': { listStyle: 'none', margin: 0, padding: '0 0 4px', overflowY: 'auto', maxHeight: '240px' },
-    '.cm-btmux-picker li': { padding: '1px 12px', cursor: 'pointer', whiteSpace: 'pre' },
+    '.cm-btmux-picker ul': {
+      listStyle: 'none',
+      margin: 0,
+      padding: '0 0 4px',
+      overflowX: 'hidden',
+      overflowY: 'auto',
+      maxHeight: '240px',
+    },
+    '.cm-btmux-picker li': {
+      padding: '1px 12px',
+      cursor: 'pointer',
+      whiteSpace: 'pre',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+    },
     '.cm-btmux-picker li[aria-selected=true]': { background: 'var(--btm-editor-selection)' },
     '.cm-btmux-picker-detail': { opacity: 0.6, marginLeft: '1em' },
     '.cm-btmux-picker-match': { color: 'var(--btm-editor-blue)', fontWeight: 'bold' },

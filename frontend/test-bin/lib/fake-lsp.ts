@@ -1,8 +1,9 @@
 // A fake language server for browser tests, over stdio. It keeps the
 // documents it is sent and logs each method to $BTMUX_FAKE_LSP/log (if set):
 // - diagnostics: an error on every "bad"
-// - completion: "fakeCompletion"
-// - hover: "Fake hover for WORD", 700 ms late for "slow"
+// - completion: "fakeCompletion", with 100 paragraphs of docs
+// - signature help: in "sig(", the parameter after as many commas
+// - hover: "Fake hover for WORD", 700 ms late for "slow", 200 paragraphs for "use"
 // - definition: WORD's first line in other.fake beside the document
 // - rename: every WORD in the .fake files of the document's directory,
 //   open or not (as edits to the open text or the file on disk)
@@ -91,6 +92,7 @@ function handle(msg: any): unknown {
         capabilities: {
           textDocumentSync: { openClose: true, change: 2, save: { includeText: false } },
           completionProvider: {},
+          signatureHelpProvider: { triggerCharacters: ['(', ','] },
           hoverProvider: true,
           definitionProvider: true,
           renameProvider: true,
@@ -113,9 +115,35 @@ function handle(msg: any): unknown {
     case 'shutdown':
       return null;
     case 'textDocument/completion':
-      return { isIncomplete: false, items: [{ label: 'fakeCompletion', kind: 3 }] };
+      return {
+        isIncomplete: false,
+        items: [
+          {
+            label: 'fakeCompletion',
+            kind: 3,
+            documentation: {
+              kind: 'markdown',
+              value: Array.from({ length: 100 }, (_, i) => `Completion paragraph ${i}.`).join('\n\n'),
+            },
+          },
+        ],
+      };
+    case 'textDocument/signatureHelp': {
+      const line = text(p.textDocument.uri).split('\n')[p.position.line] ?? '';
+      const call = /\bsig\(([^)]*)$/.exec(line.slice(0, p.position.character));
+      if (!call) return null;
+      return {
+        signatures: [{ label: 'sig(a, b)', parameters: [{ label: 'a' }, { label: 'b' }] }],
+        activeSignature: 0,
+        activeParameter: call[1].split(',').length - 1,
+      };
+    }
     case 'textDocument/hover': {
       const word = wordAt(text(p.textDocument.uri), p.position);
+      if (word === 'use') {
+        const value = Array.from({ length: 200 }, (_, i) => `Long hover paragraph ${i}.`).join('\n\n');
+        return { contents: { kind: 'markdown', value } };
+      }
       return { contents: { kind: 'markdown', value: `Fake hover for **${word}**` } };
     }
     case 'textDocument/definition': {
