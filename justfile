@@ -259,7 +259,17 @@ docs-cli:
 
 # Regenerate the docs' option reference from `btmux generate-config`
 docs-config:
-    { printf '%s\n' '---' 'title: "All options"' 'sidebar:' '  order: 3' '---' '' 'Every option with its default, as `btmux generate-config` prints it. Uncomment a line to change it.' '' '```toml'; cargo run -q -- generate-config; echo '```'; } > docs/src/content/docs/configuration/reference.md
+    #!/usr/bin/env bash
+    set -eu
+    reference=docs/src/content/docs/configuration/reference.md
+    temp_dir=$(mktemp -d "${reference%/*}/.docs-config.XXXXXX")
+    trap 'rm -rf "$temp_dir"' EXIT
+    {
+        printf '%s\n' '---' 'title: "All options"' 'sidebar:' '  order: 3' '---' '' 'Every option with its default, as `btmux generate-config` prints it. Uncomment a line to change it.' '' '```toml'
+        cargo run -q -- generate-config
+        echo '```'
+    } > "$temp_dir/page"
+    mv "$temp_dir/page" "$reference"
 
 # Encode recorded demos (just record-desktop-demo) into docs/public/demos
 docs-demos-encode in=".":
