@@ -345,7 +345,7 @@ mod tests {
     fn dir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("btmux-file-ops-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        dir.canonicalize().unwrap()
+        resolve_new(&dir).unwrap()
     }
 
     #[test]
@@ -441,10 +441,15 @@ mod tests {
         };
         assert!(check(&[delete(home.clone())], None).is_err());
         assert!(check(&[delete(PathBuf::from("/"))], None).is_err());
-        // `..` where the path exists, not past it.
         let d = dir();
-        let resolved = resolve_new(&d.join("missing/../x")).unwrap_err();
-        assert!(resolved.contains("Cannot open"), "{resolved}");
+        // `..` where the path exists, not past it (Win32 resolves it lexically).
+        #[cfg(unix)]
+        {
+            let resolved = resolve_new(&d.join("missing/../x")).unwrap_err();
+            assert!(resolved.contains("Cannot open"), "{resolved}");
+        }
+        #[cfg(windows)]
+        assert_eq!(resolve_new(&d.join("missing/../x")).unwrap(), d.join("x"));
         assert_eq!(
             resolve_new(&d.join("../x")).unwrap(),
             d.parent().unwrap().join("x")
