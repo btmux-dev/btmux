@@ -284,10 +284,12 @@ and touch screens get a `MobileKeyBar` inside it, since the dialog is modal.
   polling starts the shell for its `PATH` only once. Only
   github.com and `[github] hosts` are asked, always with `--hostname` (gh sends
   `GH_ENTERPRISE_TOKEN` to any host, and follows `GH_HOST`). The repo's git
-  config on disk gives the GitHub repo: gh's default (`gh-resolved = base`),
-  else `upstream`, else the push remote; a PR's head owner must match the push
-  remote's `pushurl`, else its `url`. The branch's name there is its upstream's
-  only with `push.default = upstream`, as in `git push`. Git config and
+  config on disk gives the GitHub repo: gh's default (`gh-resolved`: `base`
+  or `owner/repo`), else `upstream`, else the push remote (`origin` when it is
+  a bare URL, as `gh pr checkout` leaves a fork's branch); a PR's head owner
+  must match the push remote's `pushurl`, else its `url`. The branch's name
+  there is its upstream's only with `push.default = upstream`, as in `git
+  push`, or when tracking a bare URL. Git config and
   `packed-refs` are reparsed only when their size or mtime changes. Check counts
   come from the rollup's `*CountsByState`, grouped as `gh pr checks` does, names
   from its first 100 contexts. One query per repo covers its branches, all repos
