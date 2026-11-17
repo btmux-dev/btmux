@@ -4,13 +4,20 @@ sidebar:
   order: 5
 ---
 
-`btmux pick`, `confirm`, and `input` show a widget at the cursor of the pane they
-run in, for scripts and shell key bindings. Prefix bindings still work, so you can
-leave and come back: a widget stays open until it is answered or the command is
-killed, including across tab reloads. With several tabs on the pane, each shows it
-and the first answer counts. Status 2 always means it failed: it ran outside
-btmux, or no tab showed the pane within 3 s. Status 130 means it was canceled with
-Esc or `Ctrl+C`.
+`btmux pick`, `confirm`, and `input` show a widget at the cursor of the pane
+they run in, for scripts and shell key bindings.
+
+A widget stays open until it is answered or its command is killed. Prefix
+bindings still work, so you can switch away and come back, and it survives a
+reload. When several clients show the pane, each shows the widget and the
+first answer counts.
+
+| Exit status | Meaning                                                      |
+| ----------- | ------------------------------------------------------------ |
+| 0           | Answered                                                     |
+| 1           | No, or nothing to choose from                                |
+| 2           | Failed: run outside btmux, or no client showed the pane within 3 s |
+| 130         | Canceled with Esc or `Ctrl+C`                                |
 
 ## Menus
 
@@ -20,10 +27,11 @@ Esc or `Ctrl+C`.
 git switch "$(git branch --format='%(refname:short)' | btmux pick --prompt Branch)"
 ```
 
-Items are stdin's lines. A tab starts a description, which is shown and
-filtered on but not printed. Typing filters; Up, Down, Tab, `Ctrl+N`, and
-`Ctrl+P` move; Enter or a click chooses. It exits 0 once an item is chosen and
-printed, and 1 if stdin had no items.
+Items are stdin's lines. A tab character starts a description, which is shown
+and filtered on but not printed.
+
+Typing filters. Up, Down, Tab, `Ctrl+N`, and `Ctrl+P` move, and Enter or a
+click chooses.
 
 | Flag                | Effect                                                                                  |
 | ------------------- | --------------------------------------------------------------------------------------- |
@@ -41,24 +49,28 @@ Status 2 lets a key binding fall back to the terminal, as the
 
 ## fzf
 
-`btmux fzf` takes fzf's arguments and shows the same menu when it can do what they
-ask:
+`btmux fzf` takes fzf's arguments and shows the same menu whenever the menu
+can do what they ask. Otherwise it runs the real fzf, unchanged:
 
 ```sh
 git switch "$(git branch --format='%(refname:short)' | btmux fzf --height=40% --query main)"
 ```
 
-It understands `--query`, `--prompt`, `--multi`, `--no-sort`, `--read0`, `--print0`,
-`--select-1`, `--exit-0`, and `--tac`. As in fzf, marked items print in the order marked. It drops appearance, matching, and preview
-options (the menu always shows no preview and matches every space-separated term), and
-`--bind`s of keys that only name movement, marking, accepting, or canceling. `FZF_DEFAULT_OPTS` and
-`FZF_DEFAULT_OPTS_FILE` apply as they do in fzf.
+- **Understood:** `--query`, `--prompt`, `--multi`, `--no-sort`, `--read0`,
+  `--print0`, `--select-1`, `--exit-0`, and `--tac`. As in fzf, marked items
+  print in the order marked.
+- **Ignored:** appearance, matching, and preview options, and `--bind`s that
+  only rename movement, marking, accepting, or canceling. The menu has no
+  preview and matches every space-separated term.
+- **Handed to the real fzf:** anything else, such as `--expect`,
+  `--print-query`, `--with-nth`, `--header`, or a `--bind` with `reload`,
+  `execute`, or an event. So are a query with `--select-1` or `--exit-0`
+  (fzf's matching decides those), no piped stdin, more than 16 MiB of input,
+  a run outside btmux, and a pane no client can show the menu on.
 
-Everything else runs the real fzf, unchanged: other arguments such as `--expect`,
-`--print-query`, `--with-nth`, `--header`, or `--bind` with `reload`, `execute`, or an
-event such as `load`; a query with `--select-1` or `--exit-0`, since fzf's matching decides those; no piped
-stdin; outside a btmux pane; more than 16 MiB of input; or when no tab can show the menu. Unlike fzf, the menu waits for stdin to end before it opens, so a producer
-that never finishes needs the real one.
+`FZF_DEFAULT_OPTS` and `FZF_DEFAULT_OPTS_FILE` apply as in fzf. Unlike fzf,
+the menu waits for stdin to end before it opens, so a producer that never
+finishes needs the real one.
 
 For programs that run `fzf` themselves, link btmux under that name, ahead of the real
 fzf on your `PATH`. It finds the real one further along, so this is safe outside
@@ -81,8 +93,8 @@ btmux confirm "Delete $file?" && rm -- "$file"
 
 `y` and `n` answer at once. Left, Right, and Tab move between the buttons, and
 Enter answers with the selected one, which starts as No unless you pass
-`--default-yes`. Since any failure is nonzero too, `&&` skips the command then as
-well.
+`--default-yes`. A failure is nonzero too, so `&&` also skips the command
+then.
 
 ## Text
 
@@ -104,5 +116,5 @@ The commands wrap `POST /api/panes/<pane-id>/widget`, which takes up to 16 MiB:
 | `confirm` | `message`, `default_yes`                                                       | `{"type": "confirm", "yes": bool}` |
 | `input`   | optional `prompt` and `default`                                                | `{"type": "input", "text": "..."}` |
 
-It replies when the user answers with `{"answer": ...}` (`null` if canceled), or
-409 if no tab shows the pane or it already has a widget open.
+It replies with `{"answer": ...}` once the user answers (`null` if canceled),
+or with 409 if no client shows the pane or the pane already has a widget open.

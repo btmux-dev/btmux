@@ -12,38 +12,35 @@ the pane whose build is eating the machine.
 ![The process viewer scoped to one session: its processes on the left, and per-pane usage with a listening port on the right](../../../assets/screenshots/process-viewer-dark.png)
 ![The process viewer scoped to one session: its processes on the left, and per-pane usage with a listening port on the right](../../../assets/screenshots/process-viewer-light.png)
 
-It has two sides, the process or port list and per-pane usage, and `Tab`
-switches between them. Its keys work without the prefix:
+It has two sides: a list of processes or ports, and usage per pane. It
+refreshes once a second.
 
-| Key | Action |
-| --- | --- |
-| `p` | Switch between processes and ports |
-| `j` / `k`, arrows | Move between rows |
-| `g` / `G` | Move to the first / last row |
-| `h` / `l`, left / right | Collapse / expand a process tree or port's socket details |
-| `Tab` | Switch between the list and per-pane usage |
-| `Enter`, `Space` | Toggle expansion |
-| `/` | Filter by socket fields or process details; `Enter` / `Esc` clears the filter |
-| `s` | Cycle sort modes; column headers select a sort directly |
-| `F` | Follow the selected process or port group as rows reorder |
-| `V` | Switch between flat and tree process views |
-| `x` / `X` | Request termination / force kill, then confirm with `y` or cancel with `n` / `Esc` |
-| `q` / `Esc` | Close the viewer (`Esc` first clears a filter or cancels confirmation) |
+| Key                     | Action                                              |
+| ----------------------- | --------------------------------------------------- |
+| `Tab`                   | Switch between the list and per-pane usage          |
+| `p`                     | Switch the list between processes and ports         |
+| `j` / `k`, arrows       | Move                                                |
+| `g` / `G`               | First / last row                                    |
+| `h` / `l`, Left / Right | Collapse / expand a process tree or a port's sockets |
+| `Enter`, `Space`        | Toggle the same                                     |
+| `/`                     | Filter                                              |
+| `s`                     | Next sort order; a click on a column header sorts by it |
+| `V`                     | Show processes flat or as a tree                    |
+| `F`                     | Follow the selected row as the list reorders        |
+| `x` / `X`               | Terminate / kill the process (asks first)           |
+| `q`, `Esc`              | Close; Esc first clears a filter                    |
 
-Ports initially sort with TCP listeners first, then by ascending port within
-each category. All connections and UDP sockets remain visible. Choose the PORT
-header for numeric sorting, or **Listeners first** to restore the initial order.
-UDP `BOUND` means a socket has a local port; it does not identify a listening
-service. While filtering, `p` is filter text rather than a mode switch.
+## Ports
 
-Known owners group by local port and PID, with individual sockets and remote
-endpoints available on expansion. Unknown owners group by protocol and local
-and remote endpoints; matching endpoints do not establish a shared process
-owner. Rows without process information cannot be signaled.
+Listening TCP ports come first, then everything else by port number. Click the
+PORT header to sort by number alone, or **Listeners first** to go back.
 
-The viewer samples once per second. Port enumeration runs independently for
-each viewer only while its ports view is open. Permissions can limit visibility:
-on macOS, sockets belonging to inaccessible processes may be omitted entirely.
+- Sockets are grouped by local port and process. Expand a group for its
+  sockets and their remote endpoints.
+- A UDP socket marked `BOUND` has a local port. That doesn't mean a service is
+  listening on it.
+- A socket whose process is unknown can't be signaled. On macOS, sockets of
+  processes btmux isn't allowed to inspect can be missing altogether.
 
 ## Per-pane usage
 

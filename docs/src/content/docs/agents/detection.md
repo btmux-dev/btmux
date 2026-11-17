@@ -31,8 +31,8 @@ btmux combines four kinds of evidence:
 
 When they disagree, the more reliable evidence wins:
 
-1. `POST /agent-status` reports are reporter-controlled; screen detection never
-   overrides them.
+1. A state [reported directly](#reporting-status-yourself) stands until its
+   reporter changes it. Screen detection never overrides it.
 2. OSC 7501 records outrank hooks and screens: they arrive in order with the
    program's output, while hooks report over HTTP and can trail it. Hooks from
    a new agent session still take over until the program reports again. With
@@ -62,9 +62,7 @@ Some consequences:
   stays as it is: an idle agent with a dev server running is still idle. It
   clears once the screen has shown none for 700 ms.
 
-Status is runtime-only and resets when btmux restarts. The generated hooks
-remain useful for session and turn identities, completion messages, and
-notifications. Reinstall older hook snippets to receive those reports.
+States are not saved: they reset when the server restarts.
 
 ## Inspecting a pane
 
@@ -133,7 +131,7 @@ curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" \
   "$BTMUX_API_URL/api/panes/$BTMUX_PANE_ID/notify"
 ```
 
-The existing `/notify` endpoint maps known hook events to state transitions:
+`/notify` maps the hook events it knows to state changes:
 
 - A tool completion or new turn moves a blocked agent back to `working`;
   terminal input alone does not prove that an approval was resolved.
@@ -153,12 +151,11 @@ The snippets the installers write are also in
 
 ## Screen rules
 
-The bundled rules are adapted from Herdr revision
-`5da0a01e1eedda054db0c81dd3a780000c40d9f0` (Claude's from
-`bc8c28988f75c538d4ca058b702f5adbea30566e`); attribution and the upstream license
-live in `third-party/herdr`. Codex is idle when its title has no spinner,
-unless its working timer shows. Unmatched screens produce unknown activity
-rather than an inferred successful completion.
+The bundled rules are adapted from
+[Herdr](https://github.com/herdrdev/herdr); its license and the revisions
+used are in `third-party/herdr`. A screen no rule matches gives `unknown`,
+never a guessed completion. Codex counts as idle when its title has no
+spinner, unless its working timer shows.
 
 A local file replaces an agent's bundled rules:
 
@@ -168,9 +165,9 @@ A local file replaces an agent's bundled rules:
 ~/.config/btmux/agent-detection/gemini.toml
 ```
 
-The directory follows `XDG_CONFIG_HOME`, like `config.toml`. Edits are checked
-every five seconds. Invalid files log a warning and fall back to the bundled
-rules. btmux does not fetch rule updates.
+The directory follows `$XDG_CONFIG_HOME`, like `config.toml`. Edits are picked
+up within five seconds. An invalid file logs a warning, and the bundled rules
+apply instead.
 
 For example, a custom Codex approval rule:
 

@@ -71,14 +71,6 @@ as `application/x-protobuf` or `application/json`, optionally gzipped, up to
 8 MiB after decompression. Requests need `Authorization: Bearer
 $BTMUX_AUTH_TOKEN`, like other APIs.
 
-Older panes derive their endpoint from `BTMUX_API_URL` and `BTMUX_PANE_ID` when
-`BTMUX_OTEL_ENDPOINT` is absent. For panes created before this feature was
-installed, set it first:
-
-```sh
-export BTMUX_OTEL_ENDPOINT="$BTMUX_API_URL/api/panes/$BTMUX_PANE_ID/telemetry"
-```
-
 ### Claude Code
 
 ```sh

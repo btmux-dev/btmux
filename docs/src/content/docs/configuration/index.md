@@ -28,9 +28,11 @@ font-size = 16
 
 Saving the file updates every connected client. A few options are read only
 when something starts: log levels at server start, `[vscode] server` when VS
-Code starts, and most of `[multipass]` when the VM is created. If the file can't be parsed, btmux keeps the last valid configuration
-and shows a banner until it is fixed. The banner's **Show error** button opens
-the full message.
+Code starts, and most of `[multipass]` when the VM is created.
+
+If the file can't be parsed, btmux keeps the last valid configuration and
+shows a banner until it is fixed. The banner's **Show error** button opens the
+full message.
 
 ## Settings
 
@@ -62,5 +64,5 @@ with. Set `check-for-updates = false` to turn the check off.
 | What `<prefix> + e` opens         | [Editors](../features/editors.md)            |
 | The sandbox VM                    | [Sandboxed sessions](../features/sandbox.md) |
 | Notifications                     | [Coding agents](../agents/index.md#notifications) |
-| Separate instances and saved state | [Profiles](profiles.md)                     |
+| Separate servers and saved state  | [Profiles](profiles.md)                      |
 | Server flags and every command    | [All commands](commands.md)                  |

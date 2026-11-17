@@ -15,6 +15,10 @@ sidebar:
 | `"vscode"` | [VS Code](vscode.md) in btmux, with its color scheme and font     |
 | `"pane"`   | The terminal: the pane's running Neovim, else `$EDITOR` in its shell |
 
+With `"pane"`, btmux types into the terminal only when that is safe: if a
+program other than Neovim or the shell is in the foreground, opening a file
+shows an error and leaves that program alone.
+
 ## Over a pane
 
 The editors and the [browser](browser.md) all behave the same way:

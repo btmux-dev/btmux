@@ -4,52 +4,50 @@ sidebar:
   order: 3
 ---
 
-Sessions, windows, and panes can be controlled over HTTP under `/api`.
+Sessions, windows, and panes can be controlled over HTTP under `/api`. Every
+request needs the [access token](index.md#authentication).
 
 ```sh
-curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST http://127.0.0.1:8004/api/sessions \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"build"}'
+api=http://127.0.0.1:8004/api
+auth="Authorization: Bearer $BTMUX_AUTH_TOKEN"
 
-curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST http://127.0.0.1:8004/api/panes/<pane-id>/input \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"echo hi","keys":["Enter"]}'
+# Create a session; the reply has its first pane's ID
+curl -H "$auth" -X POST "$api/sessions" --json '{"name":"build"}'
 
-curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" "http://127.0.0.1:8004/api/panes/<pane-id>/capture?lines=20"
+# Type into a pane, then read its screen
+curl -H "$auth" -X POST "$api/panes/<pane-id>/input" --json '{"text":"echo hi","keys":["Enter"]}'
+curl -H "$auth" "$api/panes/<pane-id>/capture?lines=20"
 
-curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST http://127.0.0.1:8004/api/panes/<pane-id>/open-file-browser \
-  -H 'Content-Type: application/json' \
-  -d '{"path":"/home/user/project","mode":"files"}'
-
-curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" -X POST http://127.0.0.1:8004/api/panes/<pane-id>/focus
+# Bring a pane to the front in every client
+curl -H "$auth" -X POST "$api/panes/<pane-id>/focus"
 ```
 
-`input` sends `text` verbatim, then `keys`: tmux-style key names such as
-`Enter`, `Tab`, `Escape`, `Space`, `BSpace`, `Up`, `PageDown`, `F5`, `C-c`, or
-`M-x`. Cursor keys follow the program's cursor key mode, as in tmux. `capture`
-returns the pane as rendered plain text, like `tmux capture-pane -pJ`: the
-visible screen, or with `scrollback=true` the retained history above it too,
-with wrapped lines joined. `history=N` includes at most N rows of history
-instead, and `lines=N` keeps the last N lines. `output` returns
-the raw bytes instead.
+Inside a pane, `$BTMUX_API_URL` is the server's address, without `/api`.
 
-`split` takes `direction` (`left`, `right`, `up`, or `down`: where the new
-pane goes), optional `cwd`, and `select` (default true), and returns the new
-`pane_id`. Creating a session or window also returns its `pane_id`.
+## Input and output
 
-`focus` switches every connected client to the pane's window and session
-(204, or 404 for an unknown pane).
+- **`input`** sends `text` verbatim, then `keys`: tmux-style key names such as
+  `Enter`, `Tab`, `Escape`, `Space`, `BSpace`, `Up`, `PageDown`, `F5`, `C-c`,
+  or `M-x`. Cursor keys follow the program's cursor key mode, as in tmux.
+- **`capture`** returns the pane as rendered plain text with wrapped lines
+  joined, like `tmux capture-pane -pJ`. It covers the visible screen;
+  `scrollback=true` adds all retained history above it, and `history=N` at
+  most N rows of it. `lines=N` keeps the last N lines.
+- **`output`** returns the raw bytes instead, escapes included.
 
-`open-file-browser`'s `mode` is `"files"` (default), `"git"`, or `"process"`,
-matching the `<prefix> + f` / `<prefix> + g` / `<prefix> + t` overlay. It switches every connected client
-to the pane's window and session before opening the overlay there.
-For file mode, optional `focus_file` names an entry in `path` to focus on open.
+## Panes and windows
 
-When Neovim owns the pane's terminal, selecting a file opens it in that
-instance through its RPC server. If the server is unavailable, the browser
-shows an error. Otherwise, selecting a file runs `$EDITOR` only if the pane's
-shell owns the terminal. If another program is in the foreground, the browser
-shows an error and leaves that program's input untouched.
+- **`split`** takes `direction` (`left`, `right`, `up`, or `down`: where the
+  new pane goes), optional `cwd`, and `select` (default true), and returns the
+  new `pane_id`. Creating a session or window returns its `pane_id` too.
+- **`focus`** switches every connected client to the pane's window and
+  session. It replies 204, or 404 for an unknown pane.
+- **`open-file-browser`** does the same and then opens a dialog there. Its
+  `mode` is `"files"` (default), `"git"`, or `"process"`, as `<prefix> + f`,
+  `g`, and `t` open. In file mode, `path` is the directory and optional
+  `focus_file` names an entry in it to focus.
+
+## Endpoints
 
 | Method and path                                                 | Purpose                                                       |
 | --------------------------------------------------------------- | ------------------------------------------------------------- |

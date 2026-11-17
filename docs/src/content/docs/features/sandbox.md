@@ -23,10 +23,12 @@ a second or two, and a stopped instance is started again.
 The mounted directory appears at the **same path** in the instance, so the
 file browser, Git mode, and the editors work on a sandboxed pane's directory as
 on a local one. A pane `cd`'d outside the mount shows as remote. A worktree
-made from a sandboxed session (`<prefix> + W`) is mounted too. If the mount
-says "Permission denied" in the instance, Multipass can't read the directory:
-on macOS, give `multipassd` Full Disk Access for folders like `~/Documents`, and
-avoid directories inside ones only you can open, such as a per-user temp dir.
+made from a sandboxed session (`<prefix> + W`) is mounted too.
+
+If the mount says "Permission denied" in the instance, Multipass can't read
+the directory. On macOS, give `multipassd` Full Disk Access for folders like
+`~/Documents`, and avoid directories inside ones only you can open, such as a
+per-user temp dir.
 
 btmux puts its own binary in the instance and installs its agent hooks there,
 so agent status, notifications, usage, and `btmux pick` work. The instance
@@ -67,14 +69,13 @@ instance lacks (like `starship init`) fails there; install them with your own
 
 ## What the sandbox doesn't cover
 
-- The mount is read-write, and what the instance writes there runs on the
-  host when you use it: build scripts, `.envrc`, editor settings, and Git's
+- **The mount is read-write, and what the instance writes there can run on
+  the host.** That covers build scripts, `.envrc`, editor settings, and Git's
   hooks and config (`core.fsmonitor`, `core.hooksPath`, filters) in the
-  repository's `.git`, which a mounted repository includes and a linked
-  worktree gets mounted too, since Git needs it there. Review changes before
-  building them or running Git on the host, or run Git in a sandboxed pane.
-  The status and diffs btmux shows run none of them; Git mode's actions,
-  like pull and push, run `git`.
+  repository's `.git`, which is mounted too. Review changes before building
+  them or running Git on the host, or run Git in a sandboxed pane. The status
+  and diffs btmux shows run none of this; Git mode's actions, such as pull
+  and push, run `git`.
 - The process viewer doesn't count programs in the instance.
 - Shells run over Multipass's SSH connection: if the host sleeps or Multipass
   restarts while the instance keeps running, a pane whose shell was cut off

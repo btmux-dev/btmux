@@ -4,12 +4,12 @@ sidebar:
   order: 2
 ---
 
-The `btmux` binary has a subset of tmux's commands, with the same names,
-aliases, and main flags, for scripts and agents. Inside a pane they target that
-pane's server; otherwise the running server of `--profile`.
+`btmux` has a subset of tmux's commands, with the same names, aliases, and
+main flags, for scripts and agents. Inside a pane they target that pane's
+server; elsewhere, the running server of `--profile`.
 
-These are only the tmux-style commands. [All commands](../configuration/commands.md)
-lists every one with its flags.
+[All commands](../configuration/commands.md) lists everything else `btmux`
+can do.
 
 ```sh
 btmux list-panes -F '#{pane_index} #{pane_id} #{pane_current_path}'
@@ -45,7 +45,7 @@ For coding agents, [`skills/btmux`](../../../../../skills/btmux/SKILL.md) is an
 with `npx skills add buntec/btmux`, or copy the folder into your agent's skills
 directory (`~/.claude/skills/` for Claude Code).
 
-Differences from tmux:
+## Differences from tmux
 
 - `-t` takes a pane, window, or session ID, or `SESSION[:WINDOW[.PANE]]` by
   name or index. An empty part is the current one (`:1`, `:.2`, `work:`).
@@ -64,16 +64,17 @@ Differences from tmux:
 - `kill-pane` closes the window with its last pane, and the session with its
   last window, but never the last session.
 
-`new-worktree` and `remove-worktree` aren't tmux commands. `new-worktree
-BRANCH` adds a Git worktree for the target pane's repo, beside its main
-worktree (`../<repo>-<branch>`, or the `worktree-path` setting), and opens a
-window there in the pane's session, printing its pane ID. An existing local
-branch, or a remote one (as a tracking branch), is checked out; a new branch
-starts at the target pane's HEAD. `remove-worktree` removes the linked
-worktree the target pane is in and closes every pane in it, printing its path.
-It refuses the main worktree, uncommitted changes, a locked worktree, and panes
-running a program, and keeps the branch. `<prefix> + W` and `<prefix> + X` do the
-same in the browser.
+## Worktrees
+
+`new-worktree` and `remove-worktree` aren't tmux commands. They do what
+`<prefix> + W` and `<prefix> + X` do; see
+[Worktrees](../features/files-and-git.md#worktrees) for the rules.
+
+- `new-worktree BRANCH` adds a Git worktree for the target pane's repository
+  and opens a window there, in the pane's session. It prints the new pane's
+  ID.
+- `remove-worktree` removes the worktree the target pane is in and closes
+  every pane in it. It prints the worktree's path.
 
 ## Shell completions
 

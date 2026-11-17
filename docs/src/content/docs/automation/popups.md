@@ -48,7 +48,7 @@ title = "Git" # optional; the command by default
   bindings still work, and `<prefix> <prefix>` sends the prefix key to the
   program.
 - A popup belongs to its pane. Switching windows hides it while it keeps
-  running, it outlives tab reloads and `btmux upgrade`, and closing the pane
+  running, it outlives reloads and `btmux upgrade`, and closing the pane
   closes it. A pane has one popup at a time.
 - The close button in its title bar hangs the program up (status 129).
 - [`btmux pick`, `confirm`, and `input`](widgets.md) run in a popup show in
@@ -57,7 +57,7 @@ title = "Git" # optional; the command by default
   its login shell's environment.
 - A popup opened while a dialog such as Settings or the file browser is open
   waits for it to close.
-- Outside btmux, or if no tab shows the pane within 3 s (over ssh, say), the
+- Outside btmux, or if no client shows the pane within 3 s (over ssh, say), the
   program runs in place instead, so `btmux popup` works in scripts anywhere. A
   program that can't start exits 127.
 
@@ -70,7 +70,7 @@ that replaces the server's environment), `title`, and `id`, a UUID the caller
 picks so a retried request finds its popup instead of running the program
 again.
 
-It replies `{"id": ...}` once a tab has started the program, 409 if no tab does
+It replies `{"id": ...}` once a client has started the program, 409 if none does
 within 3 s, 422 if the program can't start, and 423 if the pane already has a
 popup. `GET /api/panes/<pane-id>/popup/<id>` waits for the program to exit and
 replies `{"status": n}` (`null` if unknown). Exit statuses stay available for 5

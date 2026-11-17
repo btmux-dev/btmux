@@ -48,8 +48,8 @@ key.
 | `?` `:`                 | `list-keys`, `command-palette`         |
 
 `editor-native`, `editor-neovim`, and `editor-vscode` are unbound, as are the
-[native editor](../features/native-editor.md#actions)'s `editor-*` actions. Every action is also in the
-command palette.
+[native editor](../features/native-editor.md#actions)'s `editor-*` actions.
+Every action is also in the command palette.
 
 ## Popup keys
 

@@ -1,5 +1,5 @@
 ---
-title: "Replay and multiple viewers"
+title: "Replay and multiple clients"
 sidebar:
   order: 2
 ---

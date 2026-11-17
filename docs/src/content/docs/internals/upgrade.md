@@ -20,9 +20,9 @@ binary:
 - **The PTY connections stay open.** Each pane talks to its shell through a PTY
   master file descriptor. btmux clears the close-on-exec flag on these, so the
   new program inherits them.
-- **The listening socket stays open.** Browsers can reconnect to the same port
+- **The listening socket stays open.** Clients can reconnect to the same port
   right away. No other process can grab the port in between.
-- **The profile lock stays held,** so no other btmux instance can take the
+- **The profile lock stays held,** so no other btmux server can take the
   profile in the meantime.
 
 Open descriptors aren't enough on their own, though. The new program also needs
@@ -41,7 +41,7 @@ the server's in-memory state, which is what the handoff file is for.
      on), it refuses, and you need a normal restart.
    - It refuses to upgrade while the built-in Neovim has unsaved changes.
 
-3. **It tells the browsers.** Each tab gets a toast: "Upgrading btmux to X…"
+3. **It tells the clients.** Each shows a toast: "Upgrading btmux to X…"
 
 4. **It freezes everything:**
    - It takes the session-manager write lock and holds it until the exec, so
@@ -59,7 +59,7 @@ the server's in-memory state, which is what the handoff file is for.
    - A JSON header: the session/window/pane tree, plus for each pane its PTY
      descriptor number, shell process ID, size, title, cwd, and colors the
      program set.
-   - The raw bytes after the header: each pane's replay journal (so browsers
+   - The raw bytes after the header: each pane's replay journal (so clients
      can redraw scrollback), any escape sequence that was half-read when the
      reader stopped, and keyboard input that was accepted but not yet written to
      the shell.
@@ -73,10 +73,9 @@ the server's in-memory state, which is what the handoff file is for.
    file. It then rebuilds sessions and panes and attaches each pane to its
    existing PTY and shell. It never spawns new shells.
 
-8. **Browsers reconnect.** Their WebSockets dropped during the exec, so they
-   reconnect as usual, get the replayed journal, and see their terminals
-   exactly as before. After reconnecting, the frontend notices the server
-   version changed and shows a toast.
+8. **Clients reconnect.** Their WebSockets dropped during the exec, so they
+   reconnect as usual, get the replayed journal, and show their terminals
+   exactly as before, with a toast for the new version.
 
 9. **The CLI confirms the result.** It polls `/api/info` until the server
    instance ID changes, then checks that the process ID did _not_ change. A

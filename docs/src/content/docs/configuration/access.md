@@ -4,13 +4,17 @@ sidebar:
   order: 6
 ---
 
+Every request to a btmux server needs its access token, even on localhost.
+Browsers ask for it once as a password; the desktop app and the `btmux`
+commands handle it for you.
+
 ## Token files
 
-Every request needs the access token, even on localhost. Unless
+Unless
 `BTMUX_AUTH_TOKEN` is set, btmux creates an owner-only `state.token` beside the
 profile's `state.json` and prints its path on startup.
 
-| Instance               | Default token file                      |
+| Server                 | Default token file                      |
 | ---------------------- | --------------------------------------- |
 | `btmux`                | `~/.local/state/btmux/state.token`      |
 | `btmux --profile NAME` | `~/.local/state/btmux/NAME/state.token` |
@@ -26,8 +30,8 @@ it again. Alternatively, start the server with `BTMUX_AUTH_TOKEN` set to at leas
 4 ASCII letters, digits, `-`, or `_`; this overrides the token file.
 
 :::caution
-The token grants access to the instance's shells, sessions, and files available
-to the btmux user. Never put it in URLs.
+The token gives full control of your shells and access to your files. Never
+put it in a URL.
 :::
 
 The browser session uses an HttpOnly, SameSite=Strict cookie; HTTPS public URLs
@@ -36,11 +40,17 @@ for API, MCP, and agent-hook clients.
 
 ## Reverse proxies
 
-For a remote deployment, terminate HTTPS at a trusted reverse proxy and pass its
-external origin explicitly, for example `--public-url https://terminal.example.com`.
-Preserve the public Host header (or use the configured backend authority) and
-forward WebSocket upgrades. Forwarded headers never implicitly grant trust.
-Plain HTTP does not encrypt the access token or terminal traffic.
+To serve btmux at a public address, put it behind a reverse proxy that
+terminates HTTPS, and tell btmux that address:
+
+```sh
+btmux --public-url https://terminal.example.com
+```
+
+The proxy must pass the public `Host` header through and forward WebSocket
+upgrades. btmux trusts only the addresses you name: `X-Forwarded-*` headers
+grant nothing. Don't serve it over plain HTTP, which encrypts neither the
+token nor your terminals.
 
 To reach btmux from your other devices without a proxy, see
 [Remote access](../features/remote-access.mdx).

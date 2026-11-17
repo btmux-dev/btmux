@@ -21,10 +21,12 @@ reopens your last page after a restart.
 
 ## Ads and autoplay
 
-It blocks known ad servers (by host name, so not ads a site serves itself, and
-the empty space they leave stays) and keeps video and audio from playing until
-you click or press a key. Either can be turned off; changing them restarts the
-browser and reopens your page:
+The browser blocks known ad servers and keeps video and audio from playing
+until you click or press a key. Ads are blocked by host name, so ads a site
+serves itself still show, and blocked ones leave their empty space.
+
+Either can be turned off. Changing them restarts the browser and reopens your
+page:
 
 ```toml
 [browser]
@@ -34,12 +36,12 @@ block-autoplay = false
 
 ## Copying
 
-To copy, select text and press Cmd+C (Ctrl+C elsewhere); a page's own copy
-buttons don't reach your clipboard yet.
+To copy, select text and press Cmd+C (Ctrl+C outside macOS). A page's own
+copy buttons don't reach your clipboard.
 
 ## Address bar
 
-Text in its address bar that isn't a URL is searched with DuckDuckGo, or with
+Text in the address bar that isn't a URL is searched with DuckDuckGo, or with
 `search-url`, where `%s` is the text:
 
 ```toml

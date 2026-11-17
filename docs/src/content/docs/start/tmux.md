@@ -47,20 +47,20 @@ Rebind any of them under [`[keys]`](../configuration/keybindings.md).
 - **Window order.** Windows are numbered by display order, which defaults to
   alphabetical (`window-sort`). `n`, `p` and `0`-`9` follow that order, not
   creation order. Set `window-sort = "created"` for tmux numbering.
-- **Sessions are per tab.** The session you see comes from the URL, so two
-  browser tabs can show different sessions. Window and pane selection is shared
-  by all tabs. `L` toggles back to the tab's previous session.
-- **No attach or detach.** Closing the tab is the detach; the server keeps the
-  shells running. After a btmux restart the layout returns but processes and
-  scrollback do not; `btmux upgrade` keeps both.
-- **Size owner.** The first interactive viewer sets a pane's size until it
-  leaves or another viewer types, pastes or clicks in it; tmux sizes to the
-  smallest client by default.
+- **Sessions are per client.** Two clients can show different sessions, while
+  window and pane selection is shared by all of them. `L` goes back to that
+  client's previous session.
+- **No attach or detach.** Closing the client is the detach; the server keeps
+  the shells running. After a server restart the layout returns but programs
+  and scrollback do not; `btmux upgrade` keeps both.
+- **Size owner.** The first client on a pane sets its size until it leaves or
+  another client types, pastes, or clicks in it. tmux sizes to the smallest
+  client by default.
 - **Last pane, window, session.** Killing the last pane closes its window;
   killing the last window kills the session. The last session cannot be killed,
   and exiting its last shell starts a fresh session "0" instead of ending the
   server.
-- **Paste.** The browser may ask for clipboard permission the first time.
+- **Paste.** A browser may ask for clipboard permission the first time.
 - **Prefix timeout.** The prefix expires after 2 seconds; tmux waits
   indefinitely.
 - **Repeat.** `repeat-time` defaults to `0` (off); tmux's default is 500 ms.

@@ -39,9 +39,9 @@ server = "code"
 `server` picks the server, read when it starts:
 
 - `"code"` (default) runs `code serve-web` from an installed VS Code, found on
-  the server's `PATH`, your shell's, or in `/Applications` on macOS. It downloads the matching
-  server on first use. The first time, btmux asks you to accept the VS Code
-  Server license (once per profile).
+  the server's `PATH`, your shell's, or in `/Applications` on macOS. It
+  downloads the matching server on first use, and btmux asks you once per
+  profile to accept the VS Code Server license.
 - `"openvscode-server"` uses `openvscode-server` from `PATH`.
 
 When btmux's `PATH` lacks the server, as a service's may, VS Code runs with your
@@ -118,13 +118,15 @@ browser, so some desktop extensions can't run:
 - Keys typed in a webview (the Markdown preview, extension panels) reach it
   before btmux, so after the prefix, the next key reaches it too.
 
-Signing in to GitHub or Microsoft accounts returns from their sites to btmux,
-which loads the page again from btmux's own site so the browser sends its
-sign-in cookie.
+Signing in to a GitHub or Microsoft account works: their sites return you to
+btmux when you are done.
 
 ## Color scheme and font
 
-A bundled extension syncs btmux's color scheme and terminal font into VS Code,
-over shared settings too; the editor uses the font at 80% of its size. Turn off
-`btmux.syncTheme` or `btmux.syncFont` in VS Code's settings to keep your own;
-turned off in shared settings, VS Code gets their color scheme or font back.
+A bundled extension applies btmux's color scheme and terminal font to VS Code,
+overriding [shared settings](#sharing-desktop-settings-and-extensions). The
+editor uses the font at 80% of its size.
+
+To keep your own, turn off `btmux.syncTheme` or `btmux.syncFont` in VS Code's
+settings. Turned off in shared settings, they give VS Code the shared color
+scheme or font back.

@@ -4,24 +4,29 @@ sidebar:
   order: 5
 ---
 
-By default, session structure is saved to
-`~/.local/state/btmux/state.json` (respecting `$XDG_STATE_HOME`). Named profiles
-let you run isolated instances, each with separate state:
+## What is saved
+
+btmux saves its sessions, windows, pane layouts, names, and each pane's
+directory to a state file:
+
+```text
+~/.local/state/btmux/state.json
+```
+
+It follows `$XDG_STATE_HOME`. Running programs and scrollback are not saved:
+after a restart, each pane starts a fresh shell in its saved directory.
+[`btmux upgrade`](../internals/upgrade.md) keeps both, by moving the running
+server to a new binary without a restart.
+
+## Profiles
+
+A profile is a separate server with its own sessions, state file, and
+[access token](access.md#token-files):
 
 ```sh
 btmux --profile work --port 8005
 btmux --profile personal --port 8006
 ```
 
-Profile state is stored under `$XDG_STATE_HOME/btmux/<profile>/state.json`, or
-`~/.local/state/btmux/<profile>/state.json` when `XDG_STATE_HOME` is unset. The
-default profile continues to use the top-level `state.json`.
-
-Persistence covers the session/window/pane tree, layouts, names, active
-indices, and each pane's last-known working directory. Running shell processes
-and scrollback do not survive a btmux restart. Restored panes lazily start fresh
-shells in their saved working directories. `btmux upgrade` moves a running
-server to a new binary without a restart, keeping both.
-
-A file lock keeps two instances from using the same profile. Each profile has
-its own [access token](access.md#token-files).
+A profile's files are in `~/.local/state/btmux/<profile>/`. Only one server
+can run a profile at a time.
