@@ -206,6 +206,8 @@ struct Inner {
 
 pub struct Hub {
     inner: Mutex<Inner>,
+    /// Signaled when no save is in progress any more.
+    saves_done: tokio::sync::Notify,
 }
 
 static HUB: LazyLock<Hub> = LazyLock::new(Hub::new);
@@ -218,18 +220,14 @@ pub fn hub() -> &'static Hub {
 pub async fn load(path: &str) -> Result<(), String> {
     let path = resolve(path)?;
     let id = hub().load_buffer(path).await?;
-    collect_later(id);
-    Ok(())
-}
-
-/// Drop `id` once no tab followed it for a while, unless it is dirty.
-fn collect_later(id: Uuid) {
+    // Dropped again if no tab follows it by then.
     tokio::spawn(async move {
         tokio::time::sleep(UNFOLLOWED).await;
         let mut inner = hub().inner.lock().unwrap();
         inner.collect(id);
         inner.send_summaries();
     });
+    Ok(())
 }
 
 /// Open buffers, for automation.
@@ -271,11 +269,20 @@ pub struct EditorHandoff {
 #[cfg(unix)]
 const SAVE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// The editor's state, for an upgrade to hand over. Changes are refused
-/// until `thaw`, so none are lost after this; tabs keep unsent edits.
+/// The unsaved buffers, for an upgrade to hand over, once saves in progress
+/// finish. Changes are refused until `thaw`, so none are lost after this;
+/// tabs keep unsent edits.
 #[cfg(unix)]
-pub async fn freeze() -> Result<EditorHandoff, String> {
+pub async fn freeze() -> Result<Vec<buffer::HandedBuffer>, String> {
     hub().freeze().await
+}
+
+/// What the upgrade hands over, just before its exec: language server ids
+/// stop being given out, so the next process gives none out twice.
+#[cfg(unix)]
+pub fn seal(buffers: Vec<buffer::HandedBuffer>) -> EditorHandoff {
+    let servers = hub().inner.lock().unwrap().lsp.seal();
+    EditorHandoff { buffers, servers }
 }
 
 /// The upgrade failed: accept changes again.
@@ -284,36 +291,46 @@ pub fn thaw() {
     hub().thaw();
 }
 
-/// Take over the editor state an upgraded server handed over, before tabs connect.
+/// Take over the editor state an upgraded server handed over, before tabs
+/// connect. Returns the check of the files against the disk, which runs on.
 #[cfg(unix)]
-pub async fn restore(handed: EditorHandoff) {
+pub async fn restore(handed: EditorHandoff) -> tokio::task::JoinHandle<()> {
+    let buffers: Vec<Buffer> = handed.buffers.into_iter().map(Buffer::restored).collect();
+    let paths: Vec<PathBuf> = buffers.iter().map(|b| b.path.clone()).collect();
     let config = lsp::config::current();
-    hub().inner.lock().unwrap().lsp.restore(handed.servers);
-    for handoff in handed.buffers {
-        let buffer = Buffer::restored(handoff);
+    let targets = tokio::task::spawn_blocking(move || {
+        paths
+            .iter()
+            .map(|p| lsp::config::target(&config, p))
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default();
+    let mut inner = hub().inner.lock().unwrap();
+    inner.lsp.restore(handed.servers);
+    let mut restored = Vec::new();
+    let targets = targets.into_iter().chain(std::iter::repeat_with(|| None));
+    for (buffer, target) in buffers.into_iter().zip(targets) {
         let (id, path) = (buffer.id, buffer.path.clone());
-        {
-            let mut inner = hub().inner.lock().unwrap();
-            if inner.by_path.contains_key(&path) {
-                continue;
-            }
-            inner.by_path.insert(path.clone(), id);
-            inner.buffers.insert(id, buffer);
-            inner.watch(&path);
+        if inner.by_path.contains_key(&path) {
+            continue;
         }
-        let (p, config) = (path.clone(), config.clone());
-        let target = tokio::task::spawn_blocking(move || lsp::config::target(&config, &p))
-            .await
-            .ok()
-            .flatten();
+        inner.by_path.insert(path.clone(), id);
+        inner.buffers.insert(id, buffer);
+        inner.watch(&path);
         if let Some(target) = target {
-            hub().inner.lock().unwrap().lsp_attach(id, target);
+            inner.lsp_attach(id, target);
         }
-        // Nothing watched the file during the upgrade.
-        hub().check_disk(path).await;
-        collect_later(id);
+        restored.push(path);
     }
-    hub().inner.lock().unwrap().send_summaries();
+    inner.send_summaries();
+    drop(inner);
+    // Nothing watched the files during the upgrade; their tabs hear of changes.
+    tokio::spawn(async move {
+        for path in restored {
+            hub().check_disk(path).await;
+        }
+    })
 }
 
 /// Apply `op` to the editor over `pane_id`, telling every tab.
@@ -390,32 +407,33 @@ impl Hub {
     fn new() -> Self {
         Self {
             inner: Mutex::new(Inner::default()),
+            saves_done: tokio::sync::Notify::new(),
         }
     }
 
     #[cfg(unix)]
-    async fn freeze(&self) -> Result<EditorHandoff, String> {
+    async fn freeze(&self) -> Result<Vec<buffer::HandedBuffer>, String> {
         self.inner.lock().unwrap().frozen = true;
         // Saves in progress finish first, so the buffers match the disk.
-        let deadline = tokio::time::Instant::now() + SAVE_WAIT;
-        loop {
-            {
-                let inner = self.inner.lock().unwrap();
-                if inner.saving == 0 {
-                    return Ok(EditorHandoff {
-                        buffers: (inner.buffers.values())
-                            .filter(|b| b.dirty())
-                            .map(Buffer::handoff)
-                            .collect(),
-                        servers: inner.lsp.handoff(),
-                    });
+        let settled = async {
+            loop {
+                let done = self.saves_done.notified();
+                {
+                    let inner = self.inner.lock().unwrap();
+                    if inner.saving == 0 {
+                        let dirty = inner.buffers.values().filter(|b| b.dirty());
+                        return dirty.map(Buffer::handoff).collect();
+                    }
                 }
+                done.await;
             }
-            if tokio::time::Instant::now() >= deadline {
+        };
+        match tokio::time::timeout(SAVE_WAIT, settled).await {
+            Ok(buffers) => Ok(buffers),
+            Err(_) => {
                 self.thaw();
-                return Err("the editor is still saving a file".into());
+                Err("the editor is still saving a file".into())
             }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     }
 
@@ -423,6 +441,7 @@ impl Hub {
     fn thaw(&self) {
         let mut inner = self.inner.lock().unwrap();
         inner.frozen = false;
+        inner.lsp.unseal();
         // Their tabs reconnect and resume, sending the dropped edits again.
         for socket in std::mem::take(&mut inner.stalled) {
             inner.drop_socket(socket);
@@ -754,9 +773,14 @@ impl Hub {
             .map_err(|e| SaveError::Io(e.to_string()))
             .and_then(|saved| saved);
             let mut inner = self.inner.lock().unwrap();
+            if let Ok(disk) = saved {
+                inner.saved(id, version, disk);
+            }
             inner.saving -= 1;
-            inner.saved(id, version, saved?);
-            Ok(())
+            if inner.saving == 0 {
+                self.saves_done.notify_waiters();
+            }
+            saved.map(drop)
         })
         .await
         .map_err(|e| SaveError::Io(e.to_string()))?
@@ -1250,11 +1274,15 @@ mod tests {
             inner.by_path.remove(p);
             inner.unwatch(p);
         }
-        let servers = hub().inner.lock().unwrap().lsp.handoff();
+        // Not the shared hub's: sealing it would stop other tests' servers.
+        let servers = lsp::Lsp::default().seal();
         let json = serde_json::to_string(&EditorHandoff { buffers, servers }).unwrap();
-        // Changed on disk meanwhile.
-        std::fs::write(&other, "b\n").unwrap();
-        restore(serde_json::from_str(&json).unwrap()).await;
+        // Changed on disk meanwhile; a new length, as mtimes may not have moved.
+        std::fs::write(&other, "bb\n").unwrap();
+        restore(serde_json::from_str(&json).unwrap())
+            .await
+            .await
+            .unwrap();
         let find = |p: &Path| {
             let inner = hub().inner.lock().unwrap();
             let b = &inner.buffers[&inner.by_path[p]];
@@ -1320,12 +1348,12 @@ mod tests {
         assert!(matches!(hub.save(id, false).await, Err(SaveError::Io(_))));
         {
             let mut inner = hub.inner.lock().unwrap();
-            inner.saving -= 1;
             let disk = inner.buffers[&id].disk;
             inner.saved(id, version, disk);
+            inner.saving -= 1;
+            hub.saves_done.notify_waiters();
         }
-        let handed = freezing.await.unwrap().unwrap();
-        assert!(handed.buffers.is_empty());
+        assert!(freezing.await.unwrap().unwrap().is_empty());
         hub.thaw();
         std::fs::remove_dir_all(dir).unwrap();
     }

@@ -127,6 +127,8 @@ pub(super) struct Lsp {
     next_id: u64,
     /// Ids the server before an upgrade gave, for servers not started again yet.
     handed: HashMap<ServerKey, u64>,
+    /// Ids were handed to an upgrade: none are given out, so none are reused.
+    sealed: bool,
 }
 
 /// Server ids as `btmux upgrade` hands them over: a server started again
@@ -136,28 +138,50 @@ pub(super) struct Lsp {
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct HandedServers {
     next_id: u64,
-    /// Name, root, Multipass instance, and id.
-    ids: Vec<(String, PathBuf, Option<String>, u64)>,
+    servers: Vec<HandedServer>,
+}
+
+#[cfg(unix)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct HandedServer {
+    name: String,
+    #[serde(with = "super::buffer::path_bytes")]
+    #[cfg_attr(test, ts(type = "Array<number>"))]
+    root: PathBuf,
+    /// The Multipass instance.
+    sandbox: Option<String>,
+    id: u64,
 }
 
 #[cfg(unix)]
 impl Lsp {
-    pub(super) fn handoff(&self) -> HandedServers {
+    /// The ids, which stop being given out until `unseal`.
+    pub(super) fn seal(&mut self) -> HandedServers {
+        self.sealed = true;
         let ids = self.by_key.iter().chain(&self.handed);
         HandedServers {
             next_id: self.next_id,
-            ids: ids
-                .map(|((name, root, sandbox), id)| {
-                    (name.clone(), root.clone(), sandbox.clone(), *id)
+            servers: ids
+                .map(|((name, root, sandbox), id)| HandedServer {
+                    name: name.clone(),
+                    root: root.clone(),
+                    sandbox: sandbox.clone(),
+                    id: *id,
                 })
                 .collect(),
         }
     }
 
+    pub(super) fn unseal(&mut self) {
+        self.sealed = false;
+    }
+
     pub(super) fn restore(&mut self, handed: HandedServers) {
         self.next_id = self.next_id.max(handed.next_id);
-        for (name, root, sandbox, id) in handed.ids {
-            self.handed.insert((name, root, sandbox), id);
+        for server in handed.servers {
+            let key = (server.name, server.root, server.sandbox);
+            self.handed.insert(key, server.id);
         }
     }
 }
@@ -406,6 +430,8 @@ impl Inner {
             let key = (name.clone(), root.clone(), target.sandbox.clone());
             let id = match self.lsp.by_key.get(&key) {
                 Some(id) => *id,
+                // Until the exec; its tab reopens the file after it.
+                None if self.lsp.sealed => continue,
                 None => {
                     let id = self.lsp.handed.remove(&key).unwrap_or_else(|| {
                         self.lsp.next_id += 1;

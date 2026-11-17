@@ -17,6 +17,7 @@ use axum::body::Bytes;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::native_editor::buffer::HandedBuffer;
 use crate::native_editor::EditorHandoff;
 use crate::popup::PopupsHandoff;
 use crate::pty::kitty_keyboard::KittyKeyboard;
@@ -115,17 +116,23 @@ impl Inherited {
         self.lock.take().map(crate::persistence::ProfileLock::adopt)
     }
 
-    /// Restore the sessions and panes; the listener is returned.
-    pub async fn restore(self, state: &AppState) -> std::net::TcpListener {
+    /// Restore the sessions and panes; the listener and the editor's state,
+    /// restored once sandboxes are known, are returned.
+    pub async fn restore(self, state: &AppState) -> (std::net::TcpListener, Editor) {
         let mut mgr = state.write().await;
         let restored = mgr.restore_handoff(self.sessions, self.popups, self.panes);
         mgr.telemetry = self.telemetry;
-        // For the restored buffers' language servers.
-        crate::native_editor::lsp::config::set_sandboxes(mgr.sandbox_mounts());
-        drop(mgr);
-        crate::native_editor::restore(self.editor).await;
         tracing::info!("upgraded in place with {} session(s)", restored);
-        self.listener
+        (self.listener, Editor(self.editor))
+    }
+}
+
+/// The native editor's state, restored before the listener serves.
+pub struct Editor(EditorHandoff);
+
+impl Editor {
+    pub async fn restore(self) {
+        crate::native_editor::restore(self.0).await;
     }
 }
 
@@ -347,7 +354,7 @@ async fn execute_frozen(
     manager: &mut crate::session::manager::SessionManager,
     context: &Context,
     exe: &Path,
-    editor: EditorHandoff,
+    editor: Vec<HandedBuffer>,
 ) -> String {
     // Before anything stops: Neovim refuses to quit with unsaved changes.
     if let Err(error) = crate::ws::nvim::quit().await {
@@ -374,7 +381,7 @@ async fn execute_frozen(
         popups,
         &panes,
         manager.telemetry.clone(),
-        editor,
+        crate::native_editor::seal(editor),
     );
     let kept = [context.listener]
         .into_iter()

@@ -476,11 +476,14 @@ dirty ones stay, listed by the `buffers` message. `btmux upgrade` hands
 them off with their id, text, versions, update log, line ending, BOM, and disk
 state, so tabs resume rather than reopen: a reopen can't tell an applied but
 unconfirmed update from an unsent one, and would apply it twice. Language server
-ids are handed off too (`HandedServers`), as resumed tabs keep theirs. `freeze`
+ids are handed off too (`HandedServers`), as resumed tabs keep theirs; `seal`
+takes them just before the exec, after which no ids are given out. `freeze`
 refuses changes until the exec, so tabs keep unsent edits, and first waits up to
 5 s for saves in progress (spawned, so they finish without their tab), so the
-buffers match the disk. The new process restores them (`restore`) before tabs
-connect, starts their language servers, and checks them against the disk once,
+buffers match the disk. Paths go as bytes, since JSON strings must be UTF-8, and
+the disk hash is SHA-256, stable across builds. The new process restores them
+(`restore`, from `main.rs` once sandboxes are known) before the listener
+serves, starts their language servers, and then checks them against the disk,
 as the watcher missed the upgrade.
 
 Language servers (`native_editor/lsp/`) have btmux as their only client.
