@@ -18,29 +18,27 @@ enum Existing {
     Nothing,
     /// A link to this app's binary.
     Ours,
-    /// A link into another btmux app bundle (moved or another copy).
-    App,
-    /// Anything else, such as a standalone or Homebrew btmux.
+    /// A link whose target is gone, such as a moved app's.
+    Broken,
+    /// A folder, which `ln` would link into rather than replace.
+    Directory,
+    /// Anything else, such as another app's or a Homebrew btmux.
     Other(Option<PathBuf>),
 }
 
 fn existing(link: &Path, target: &Path) -> Existing {
+    let Ok(meta) = link.symlink_metadata() else {
+        return Existing::Nothing;
+    };
+    if meta.is_dir() {
+        return Existing::Directory;
+    }
     match std::fs::read_link(link) {
         Ok(dest) if dest == target => Existing::Ours,
-        Ok(dest) if is_app_binary(&dest) => Existing::App,
+        Ok(_) if !link.exists() => Existing::Broken,
         Ok(dest) => Existing::Other(Some(dest)),
-        Err(_) if link.symlink_metadata().is_ok() => Existing::Other(None),
-        Err(_) => Existing::Nothing,
+        Err(_) => Existing::Other(None),
     }
-}
-
-fn is_app_binary(path: &Path) -> bool {
-    path.ends_with("Contents/MacOS/btmux")
-        && path
-            .ancestors()
-            .nth(3)
-            .and_then(Path::extension)
-            .is_some_and(|ext| ext == "app")
 }
 
 /// The bundled binary, if its path is one the link can keep.
@@ -135,7 +133,18 @@ pub fn install(app: AppHandle) {
                     return;
                 }
             }
-            Existing::App | Existing::Nothing => {}
+            Existing::Directory => {
+                return alert(
+                    &app,
+                    MessageDialogKind::Error,
+                    "Could not install the btmux command",
+                    &format!(
+                        "{} is a folder. Remove it, then install the command again.",
+                        link.display()
+                    ),
+                );
+            }
+            Existing::Broken | Existing::Nothing => {}
         }
         match create(&target, &link) {
             Ok(()) => {
@@ -204,6 +213,18 @@ enum Failure {
 }
 
 fn create(target: &Path, link: &Path) -> Result<(), Failure> {
+    link_to(target, link)?;
+    // Whatever appeared at the path meanwhile, `ln` reports success.
+    if std::fs::read_link(link).ok().as_deref() != Some(target) {
+        return Err(Failure::Error(format!(
+            "{} isn't a link to this app's btmux.",
+            link.display()
+        )));
+    }
+    Ok(())
+}
+
+fn link_to(target: &Path, link: &Path) -> Result<(), Failure> {
     // Renamed into place, so the command is never missing.
     let temp = link.with_file_name(format!(".btmux-{}", std::process::id()));
     let _ = std::fs::remove_file(&temp);
@@ -286,20 +307,40 @@ mod tests {
     #[test]
     fn classifies_existing_commands() {
         let dir = std::env::temp_dir().join(format!("btmux-cli-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir(&dir).unwrap();
+        let other = dir.join("Other.app/Contents/MacOS/btmux");
+        std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+        std::fs::write(&other, "").unwrap();
         let link = dir.join("btmux");
         let target = Path::new("/Applications/btmux.app/Contents/MacOS/btmux");
         assert_eq!(existing(&link, target), Existing::Nothing);
         std::os::unix::fs::symlink(target, &link).unwrap();
         assert_eq!(existing(&link, target), Existing::Ours);
-        let moved = Path::new("/Users/me/Applications/btmux.app/Contents/MacOS/btmux");
-        assert_eq!(existing(&link, moved), Existing::App);
+        // Another copy's link: only a missing target is replaced unasked.
+        let moved = dir.join("Moved.app/Contents/MacOS/btmux");
+        assert_eq!(existing(&link, &moved), Existing::Broken);
         std::fs::remove_file(&link).unwrap();
-        std::os::unix::fs::symlink("/opt/homebrew/Cellar/btmux/1/bin/btmux", &link).unwrap();
-        assert!(matches!(existing(&link, target), Existing::Other(Some(_))));
+        std::os::unix::fs::symlink(&other, &link).unwrap();
+        assert_eq!(existing(&link, target), Existing::Other(Some(other)));
         std::fs::remove_file(&link).unwrap();
         std::fs::write(&link, "").unwrap();
         assert_eq!(existing(&link, target), Existing::Other(None));
+        std::fs::remove_file(&link).unwrap();
+        std::fs::create_dir(&link).unwrap();
+        assert_eq!(existing(&link, target), Existing::Directory);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn links_and_verifies() {
+        let dir = std::env::temp_dir().join(format!("btmux-cli-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let (target, link) = (dir.join("target"), dir.join("btmux"));
+        std::fs::write(&link, "old").unwrap();
+        assert!(create(&target, &link).is_ok());
+        assert_eq!(std::fs::read_link(&link).unwrap(), target);
+        std::fs::remove_file(&link).unwrap();
+        std::fs::create_dir(&link).unwrap();
+        assert!(matches!(create(&target, &link), Err(Failure::Error(_))));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
