@@ -23,7 +23,7 @@ import type { EditorServerMessage } from '../../generated/protocol';
 import { IS_MAC } from '../nvimKeys';
 import { editorConnection } from './connection';
 import { viewDocs, type Doc } from './doc';
-import { lspFeatures, refreshEffect, setRawDiagnostics } from './features';
+import { REFRESH_ALL, lspFeatures, refreshEffect, setRawDiagnostics } from './features';
 
 /** btmux's language server clients speak to the server through `/ws/editor`; it syncs documents itself. */
 
@@ -362,8 +362,15 @@ function client(server: number): LSPClient {
 
 function connect(server: number, c: LSPClient) {
   c.connect(transport(server, () => c.workspace as BtmuxWorkspace));
-  // A server that fails to start shows that in the status line.
-  c.initializing.catch(() => {});
+  c.initializing.then(
+    // Requesters that ran before the capabilities arrived ask again.
+    () => {
+      for (const file of (c.workspace as BtmuxWorkspace).files)
+        file.view.dispatch({ effects: refreshEffect.of(REFRESH_ALL) });
+    },
+    // A server that fails to start shows that in the status line.
+    () => {},
+  );
 }
 
 editorConnection.onConnection((open) => {

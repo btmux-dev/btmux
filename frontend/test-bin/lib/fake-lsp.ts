@@ -313,7 +313,9 @@ process.stdin.on('data', (chunk: Buffer) => {
             ? { jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: msg.method } }
             : { jsonrpc: '2.0', id: msg.id, result },
         );
-      if (msg.method === 'textDocument/formatting' && text(msg.params.textDocument.uri).includes('slow'))
+      // Late capabilities: features must ask once they arrive.
+      if (msg.method === 'initialize') setTimeout(reply, 300);
+      else if (msg.method === 'textDocument/formatting' && text(msg.params.textDocument.uri).includes('slow'))
         setTimeout(reply, 700);
       else reply();
     } else if (msg.method) notify(msg);

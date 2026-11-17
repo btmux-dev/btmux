@@ -33,6 +33,8 @@ type Command = { title: string; command: string; arguments?: unknown[] };
 
 /** A server-sent `$/btmux/refresh` (semantic tokens, inlay hints, code lenses). */
 export const refreshEffect = StateEffect.define<string>();
+/** A `refreshEffect` every requester takes: the client (re)initialized. */
+export const REFRESH_ALL = 'initialized';
 
 const plugin = (view: EditorView) => LSPPlugin.get(view);
 const has = (p: LSPPlugin, capability: string) =>
@@ -82,7 +84,9 @@ function requester(
       }
       update(u: ViewUpdate) {
         const refreshed = u.transactions.some((tr) =>
-          tr.effects.some((e) => e.is(refreshEffect) && (!opts.refresh || e.value === opts.refresh)),
+          tr.effects.some(
+            (e) => e.is(refreshEffect) && (!opts.refresh || e.value === opts.refresh || e.value === REFRESH_ALL),
+          ),
         );
         if (u.docChanged || refreshed || (opts.viewport && u.viewportChanged)) this.schedule();
       }
