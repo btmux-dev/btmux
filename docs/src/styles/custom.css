@@ -1,0 +1,42 @@
+:root {
+  --sl-font: "Geist Variable", var(--sl-font-system);
+  --sl-font-mono: "Geist Mono Variable", var(--sl-font-system-mono);
+}
+
+/* The wordmark, as in the app: Geist Pixel's "Grid" instance. */
+.site-title {
+  font-family: "Geist Pixel Variable", var(--sl-font);
+  font-variation-settings: "ELSH" 40;
+  font-weight: 400;
+  font-size: 38px;
+  line-height: 1;
+  letter-spacing: 0;
+  color: var(--sl-color-white);
+}
+
+/* No display here: it would beat Starlight's layered light:/dark:sl-hidden. */
+.sl-markdown-content video {
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--sl-color-gray-5);
+}
+
+/* The landing page's title is the wordmark too. */
+.hero h1 {
+  font-family: "Geist Pixel Variable", var(--sl-font);
+  font-variation-settings: "ELSH" 40;
+  font-weight: 400;
+  letter-spacing: 0;
+  font-size: clamp(4rem, 2rem + 8vw, 7.5rem);
+  line-height: 1;
+}
+
+/* Screenshots come in pairs; show the one for the site's theme. */
+:root[data-theme="light"] .sl-markdown-content img[src*="-dark."],
+:root[data-theme="dark"] .sl-markdown-content img[src*="-light."] {
+  display: none;
+}
+.sl-markdown-content img[src*="/_astro/"] {
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.5rem;
+}
