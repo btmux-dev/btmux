@@ -121,13 +121,12 @@ const watchLayouts = (page: Page) =>
     (window as any).__watch = state;
     const tick = () => {
       const area = document.querySelector<HTMLElement>('[data-agent-tiles]');
-      if (area && getComputedStyle(area).opacity !== '0') {
+      // Not while the dialog is still closed (`display: none`) or the tiles transparent.
+      if (area?.checkVisibility({ opacityProperty: true })) {
         const tiles = [...area.children]
           .map((tile) => tile as HTMLElement)
           .filter((tile) => getComputedStyle(tile).opacity !== '0')
-          .map((tile) => ({ x: tile.offsetLeft, y: tile.offsetTop, w: tile.offsetWidth, h: tile.offsetHeight }))
-          // Not rendered yet (an ancestor still hidden).
-          .filter((tile) => tile.w > 0 && tile.h > 0);
+          .map((tile) => ({ x: tile.offsetLeft, y: tile.offsetTop, w: tile.offsetWidth, h: tile.offsetHeight }));
         if (tiles.length) {
           const last = state.layouts.at(-1);
           // Ignore cell measurement rounding.
