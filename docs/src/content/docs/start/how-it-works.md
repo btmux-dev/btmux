@@ -10,8 +10,8 @@ A few ideas explain most of what btmux does.
 
 Your shells run in a **server**: one background process on one machine. What
 you look at is a **client**: a desktop app window, a browser tab, or a phone.
-Clients only display what the server has. Close one and nothing stops; open
-another and it shows the same thing.
+As long as the server is running, you can reconnect from any client and
+pick up where you left off.
 
 The desktop app starts a server for you, so you may never notice it. On a
 remote machine you run the server yourself and
@@ -38,10 +38,10 @@ Several clients can show the same session at once.
 
 | You do this                              | Layout | Running programs | Scrollback |
 | ---------------------------------------- | ------ | ---------------- | ---------- |
-| Close the window or browser tab          | Kept   | Kept             | Kept       |
+| Close a browser tab                      | Kept   | Kept             | Kept       |
 | `btmux upgrade` to a new version         | Kept   | Kept             | Kept       |
 | Restart the server, or reboot            | Kept   | Lost             | Lost       |
-| Quit the desktop app (its own server)    | Kept   | Lost, unless you [keep it running](desktop.md#keeping-shells-running) | Lost, likewise |
+| Close the last desktop window (its own server) | Kept   | Lost, unless you [keep it running](desktop.md#keeping-shells-running) | Lost, likewise |
 
 After a restart, each pane starts a fresh shell in the directory it was in.
 [How in-place upgrades work](../internals/upgrade.md) explains the second row.

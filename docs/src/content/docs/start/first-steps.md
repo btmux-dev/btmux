@@ -5,8 +5,16 @@ sidebar:
 ---
 
 btmux opens with one session, one window, and one pane running your shell.
-Everything else starts with the **prefix**: press `Ctrl+A`, release, then
-press a key. Below, `<prefix> + %` means exactly that.
+
+## Split your first pane
+
+1. Press `Ctrl+A`, release, then press `%`. A new shell opens to the right.
+2. Type `echo hello` and press Enter. The output appears in the right pane.
+3. Press `Ctrl+A`, release, then press the Left arrow. You can type in the
+   original shell again while the output stays visible on the right.
+
+`Ctrl+A` is the default **prefix**. In the shortcuts below, `<prefix> + %`
+means the sequence you used in step 1.
 
 ![A btmux window split into three panes, with the sidebar on the left and the status bar below](../../../assets/screenshots/panes-dark.png)
 ![A btmux window split into three panes, with the sidebar on the left and the status bar below](../../../assets/screenshots/panes-light.png)
@@ -57,10 +65,14 @@ Windows are like tabs. The status bar at the bottom lists them.
 
 ## Sessions
 
-A session is a group of windows, usually one per project. Sessions live on the
-server: close the app or the browser tab and your shells keep running. Open
-btmux again, from this machine or [another](../features/remote-access.mdx),
-and they are as you left them.
+A session is a group of windows, usually one per project. Close a browser tab
+and your shells keep running on the server. Reconnect from this machine or
+[another](../features/remote-access.mdx) to pick up where you left off.
+
+By default, quitting the desktop app stops its own server. Your layout is
+saved, but running programs end. To keep them alive, choose
+[**Keep it running after btmux quits**](desktop.md#keeping-shells-running)
+when starting the desktop server.
 
 | Key                  | Action                                         |
 | -------------------- | ---------------------------------------------- |

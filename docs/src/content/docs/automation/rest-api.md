@@ -8,7 +8,7 @@ Sessions, windows, and panes can be controlled over HTTP under `/api`. Every
 request needs the [access token](index.md#authentication).
 
 ```sh
-api=http://127.0.0.1:8004/api
+api="${BTMUX_API_URL:-http://127.0.0.1:8004}/api"
 auth="Authorization: Bearer $BTMUX_AUTH_TOKEN"
 
 # Create a session; the reply has its first pane's ID
