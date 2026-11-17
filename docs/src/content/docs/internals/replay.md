@@ -42,6 +42,8 @@ A program has one terminal size, but clients have different window sizes.
   instead of fitting their own window.
 - Another client takes over the size by typing, pasting, or clicking in the
   pane. When the owner disconnects, the longest-attached client takes over.
+- A client whose window is too small for that size shows the pane clipped,
+  with a **Fit to this screen** button that takes over the size.
 - Thumbnails, in the window grid and the agent view, only watch. They never
   set the size or send input.
 

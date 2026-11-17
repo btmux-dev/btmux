@@ -610,7 +610,7 @@ Options:
 
 ### `btmux open-editor`
 
-Open FILE (or just the editor), jumping to LINE. In a btmux pane with `editor = "neovim"` or `"vscode"`, this opens that editor over the pane; otherwise `$EDITOR` (falling back to `vi`)
+Open FILE (or just the editor), jumping to LINE. In a btmux pane, this opens the `editor` setting's editor over the pane; with `editor = "pane"`, or outside btmux, `$EDITOR` (falling back to `vi`)
 
 ```text
 Usage: btmux open-editor [OPTIONS] [FILE] [LINE]
@@ -627,6 +627,7 @@ Options:
           The editor to use instead of the `editor` setting
 
           Possible values:
+          - native: btmux's own editor
           - pane:   The pane's foreground Neovim, or `$EDITOR` in its shell
           - neovim: The built-in Neovim
           - vscode: VS Code

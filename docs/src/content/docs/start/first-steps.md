@@ -98,7 +98,7 @@ Esc; the editor and browser hide with their key, or Esc twice quickly:
 | ---------------- | -------------------------------------------------------- |
 | `<prefix> + f`   | [File browser](../features/files-and-git.md)             |
 | `<prefix> + g`   | [Git mode](../features/files-and-git.md#git-mode)        |
-| `<prefix> + e`   | [Editor](../features/editors.md): Neovim or VS Code      |
+| `<prefix> + e`   | [Editor](../features/editors.md)                          |
 | `<prefix> + b`   | [Browser](../features/browser.md)                        |
 | `<prefix> + t`   | [Process and port viewer](../features/process-viewer.md) |
 | `<prefix> + a`   | [Agent view](../agents/index.md)                         |

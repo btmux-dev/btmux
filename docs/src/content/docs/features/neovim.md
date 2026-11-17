@@ -1,7 +1,7 @@
 ---
 title: "Neovim GUI"
 sidebar:
-  order: 5
+  order: 6
 ---
 
 With `editor = "neovim"`, `<prefix> + e` opens your Neovim in a GUI that btmux
@@ -11,8 +11,8 @@ completion menu, messages, progress, and LSP signature help are native UI
 rather than terminal cells, and floating windows (LSP hover, diagnostics,
 plugin windows) appear as cards.
 
-![LSP completion in the Neovim GUI: a menu of members with their kinds, and the selected item's type beside it](../../../assets/screenshots/neovim-completion-dark.png)
-![LSP completion in the Neovim GUI: a menu of members with their kinds, and the selected item's type beside it](../../../assets/screenshots/neovim-completion-light.png)
+![LSP completion in the Neovim GUI: a menu of members with their kinds, and the selected item's docs beside it](../../../assets/screenshots/neovim-completion-dark.png)
+![LSP completion in the Neovim GUI: a menu of members with their kinds, and the selected item's docs beside it](../../../assets/screenshots/neovim-completion-light.png)
 
 LSP hover, like other floating windows, is a card:
 

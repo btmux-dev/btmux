@@ -1,7 +1,7 @@
 ---
 title: "Appearance"
 sidebar:
-  order: 9
+  order: 10
 ---
 
 Colors, fonts, and wallpapers can all be tried live in

@@ -1,7 +1,7 @@
 ---
 title: "Fish integration"
 sidebar:
-  order: 12
+  order: 13
 ---
 
 The fish integration makes fish's colors follow the btmux color scheme, and

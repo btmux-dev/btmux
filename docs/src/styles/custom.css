@@ -28,6 +28,8 @@
   font-variation-settings: "ELSH" 40;
   font-weight: 400;
   letter-spacing: 0;
+  font-size: clamp(4rem, 2rem + 8vw, 7.5rem);
+  line-height: 1;
 }
 
 /* Screenshots come in pairs; show the one for the site's theme. */

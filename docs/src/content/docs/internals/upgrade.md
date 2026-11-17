@@ -47,7 +47,8 @@ the server's in-memory state, which is what the handoff file is for.
    - It takes the session-manager write lock and holds it until the exec, so
      nothing can change in the meantime.
    - It quits Neovim with `:qall` and stops VS Code. Those don't survive the
-     upgrade; your files are already saved.
+     upgrade; your files are already saved. The native editor's unsaved
+     buffers go into the handoff file instead.
    - It stops every PTY reader and writer. Output the shell produces from now
      on just waits in the kernel's PTY buffer until the new server reads it.
    - It saves `state.json` as usual, as a fallback.

@@ -8,7 +8,7 @@ For macOS, Linux and Windows. Powered by [wterm](https://github.com/vercel-labs/
 - Familiar tmux concepts and key bindings: sessions, windows, splits, zoom, etc.
 - Server-side sessions: connect from any number of clients
 - Tailscale integration: serve over HTTPS on your tailnet; log in from a phone/tablet by scanning a QR code
-- Batteries included: file browser, Git GUI, process viewer, browser, Neovim GUI, VS Code integration
+- Batteries included: file browser, Git GUI, process viewer, browser, an editor with language servers, Neovim GUI, VS Code integration
 - Coding agent state tracking and notifications
 - Sandboxed sessions in a Multipass VM that sees only the directory you mount
 - LaTeX rendering overlay
@@ -94,6 +94,7 @@ Key bindings start with a prefix, as in tmux, by default `C-a` (Ctrl+A). Press
 - [btmux for tmux users](docs/src/content/docs/start/tmux.md): where keys and behavior differ from tmux
 - [Comparison](docs/src/content/docs/project/competitors.md): feature matrix of btmux versus similar projects
 - [Editors](docs/src/content/docs/features/editors.md): choosing what `<prefix> + e` and the file browser open
+- [Native editor](docs/src/content/docs/features/native-editor.md): language servers, Git signs, quick open, and Vim mode
 - [Neovim GUI](docs/src/content/docs/features/neovim.md): the Neovim GUI, its plugin, and config tips
 - [VS Code](docs/src/content/docs/features/vscode.md): VS Code over a pane, its server, and sharing desktop settings and extensions
 - [Browser](docs/src/content/docs/features/browser.md): a server-side Chrome or Chromium over a pane

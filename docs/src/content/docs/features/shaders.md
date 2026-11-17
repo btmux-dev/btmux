@@ -1,7 +1,7 @@
 ---
 title: "Shader wallpapers"
 sidebar:
-  order: 10
+  order: 11
 ---
 
 A shader wallpaper is a stack of up to 8 layers drawn behind your panes.

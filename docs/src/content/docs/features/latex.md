@@ -1,7 +1,7 @@
 ---
 title: "LaTeX overlay"
 sidebar:
-  order: 11
+  order: 12
 ---
 
 btmux scans the visible part of each pane for LaTeX: `$$…$$`, `\[…\]`,

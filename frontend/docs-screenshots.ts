@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { chromium, type Page } from 'playwright';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import { waitForAsync } from './browser-test-utils';
@@ -190,6 +190,27 @@ fn main() -> std::io::Result<()> {
 );
 // Neovim config for the stack: rust-analyzer with native completion, as the
 // Neovim page suggests.
+// More files for quick open to find, and a repository, so the native editor
+// shows Git signs for its edits.
+for (const [file, text] of [
+  ['src/headers.rs', '//! Header names and parsing.\n'],
+  ['src/health.rs', '//! The health check.\n'],
+  ['tests/health.rs', '//! GET /health answers 200.\n'],
+  ['README.md', '# router\n\nA small HTTP server.\n'],
+]) {
+  mkdirSync(path.dirname(path.join(router, file)), { recursive: true });
+  writeFileSync(path.join(router, file), text);
+}
+writeFileSync(path.join(router, '.gitignore'), 'target\nCargo.lock\n');
+for (const args of [
+  ['init', '--initial-branch=main'],
+  ['add', '.'],
+  ['commit', '-m', 'Add the router'],
+])
+  execFileSync('git', ['-c', 'user.name=Ada', '-c', 'user.email=ada@example.invalid', ...args], {
+    cwd: router,
+    env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
+  });
 mkdirSync(path.join(configHome, 'nvim'), { recursive: true });
 writeFileSync(
   path.join(configHome, 'nvim', 'init.lua'),
@@ -438,10 +459,11 @@ try {
       session: string,
       names: string[],
       take: (page: Page, save: (name: string) => Promise<void>) => Promise<void>,
+      viewport = { width: 960, height: 600 },
     ) => {
       if (only.length && !names.some((name) => only.includes(name))) return;
       const small = await browser.newContext({
-        viewport: { width: 960, height: 600 },
+        viewport,
         deviceScaleFactor: 2,
         colorScheme: scheme,
       });
@@ -455,6 +477,8 @@ try {
         });
       } catch (error) {
         console.error(`FAILED ${names}-${scheme}: ${error}`);
+        if (process.env.DOCS_SHOTS_DEBUG)
+          await page.screenshot({ path: `${process.env.DOCS_SHOTS_DEBUG}-${scheme}.png` });
         process.exitCode = 1;
       }
       await small.close();
@@ -530,6 +554,81 @@ try {
         useStore.getState().setNvimOpen(false);
       });
     });
+
+    // The native editor over the same pane, with rust-analyzer.
+    await closeUp(
+      'acme-api',
+      ['editor-completion', 'editor-quick-open'],
+      async (page, save) => {
+        const main = path.join(router, 'src', 'main.rs');
+        const line =
+          readFileSync(main, 'utf8')
+            .split('\n')
+            .findIndex((text) => text.startsWith('fn respond')) + 1;
+        for (const [file, at] of [
+          [path.join(router, 'Cargo.toml'), 1],
+          [main, line],
+        ] as const) {
+          const opened = await fetch(`${url}/api/panes/${server}/open-editor`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ path: file, line: at, editor: 'native' }),
+          });
+          assert(opened.ok, `open-editor: ${opened.status}`);
+          await page.waitForTimeout(1500);
+        }
+        const content = page.locator('.cm-content').last();
+        await content.waitFor();
+        // rust-analyzer loads the crate and the standard library.
+        await page.waitForTimeout(scheme === 'dark' ? 25_000 : 8000);
+        await content.focus();
+        await page.keyboard.press('End');
+        await page.keyboard.press('Enter');
+        await page.keyboard.type('request.', { delay: 80 });
+        // Down to header(), whose docs open beside the menu. The menu can close
+        // while rust-analyzer is still indexing: ask again from the line's end.
+        const menu = page.locator('.cm-tooltip-autocomplete');
+        const selected = menu.locator('[aria-selected="true"]');
+        let found = false;
+        for (let step = 0; step < 30 && !found; step++) {
+          if ((await selected.count()) === 0) {
+            await page.keyboard.press('Control+Space');
+            await page.waitForTimeout(2000);
+            continue;
+          }
+          const current = await selected.textContent({ timeout: 1000 }).catch(() => null);
+          found = !!current?.includes('header(');
+          if (found) break;
+          await page.keyboard.press('ArrowDown');
+          await page.waitForTimeout(300);
+          if ((await menu.count()) === 0) {
+            await page.keyboard.press('ArrowUp');
+            await page.keyboard.press('End');
+          }
+        }
+        assert(found, 'no completion menu from rust-analyzer in the native editor');
+        await page.waitForTimeout(1500);
+        await save('editor-completion');
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(600);
+        await page.keyboard.press('ControlOrMeta+p');
+        await page.waitForTimeout(600);
+        await page.keyboard.type('he', { delay: 80 });
+        await page.waitForTimeout(1200);
+        await save('editor-quick-open');
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(600);
+        // Close the file without saving, so the next scheme opens it as committed.
+        await page.keyboard.press('Alt+w');
+        await page.getByRole('button', { name: "Don't save" }).click();
+        await page.waitForTimeout(600);
+        await page.locator('.cm-content').last().focus();
+        await page.keyboard.press('Escape');
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(600);
+      },
+      { width: 1200, height: 680 },
+    );
     btmux('select-window', '-t', 'acme-api:dev');
 
     await closeUp('website', ['latex'], async (page, save) => {

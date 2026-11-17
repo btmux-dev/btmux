@@ -1,7 +1,7 @@
 ---
 title: "Process and port viewer"
 sidebar:
-  order: 8
+  order: 9
 ---
 
 `<prefix> + t` shows what is running on the server and what it costs: every

@@ -95,10 +95,11 @@ Every option with its default, as `btmux generate-config` prints it. Uncomment a
 # window-sort = "alphabetical"
 
 # The editor prefix + e, the file browser, and Git mode open.
-# "neovim" = your Neovim in btmux's GUI (default if Neovim 0.12+ is on PATH),
+# "native" = btmux's own editor (default),
+# "neovim" = your Neovim in btmux's GUI (needs Neovim 0.12+),
 # "vscode" = VS Code in the browser,
 # "pane" = the terminal: the pane's running Neovim, else $EDITOR in its shell.
-# editor = "neovim"
+# editor = "native"
 
 # How many recently-viewed windows the window-grid (prefix + w) shows as live
 # thumbnails, laid out on a square-ish grid.
@@ -237,6 +238,28 @@ Every option with its default, as `btmux generate-config` prints it. Uncomment a
 # [github]
 # enabled = true
 # hosts = ["github.example.com"]   # GitHub Enterprise hosts to ask too; others never are
+
+# Language servers for the native editor. Built in: rust-analyzer,
+# typescript-language-server, pyright, gopls, clangd, lua-language-server, nil,
+# bash-language-server, taplo, yaml-language-server, and the
+# vscode-langservers-extracted servers (JSON, CSS, HTML), each used when found
+# on PATH. A table of the same name replaces a built-in one.
+# [native-editor]
+# format-on-save = false
+# vim = false   # Vim keybindings; :w saves, :q hides, a double Esc hides only from normal mode
+# [language-server.rust-analyzer]
+# command = "rust-analyzer"
+# args = []
+# environment = {}
+# config = { rust-analyzer = { check = { command = "clippy" } } }   # answers workspace/configuration
+# [[language]]
+# name = "python"
+# file-types = ["py", "pyi"]
+# roots = ["pyproject.toml", "setup.py"]
+# language-servers = ["basedpyright"]
+# [language-server.basedpyright]
+# command = "basedpyright-langserver"
+# args = ["--stdio"]
 
 # OS notifications for agent and pane events while btmux is hidden or
 # unfocused. In-app toasts are unaffected.

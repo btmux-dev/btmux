@@ -68,7 +68,7 @@ regenerate rather than edit them: `just docs-config` (All options, from
 needs a group in `docs/scripts/cli-reference.mjs`), and `just docs-screenshots`
 (`frontend/docs-screenshots.ts`, demo sessions on a browser-test stack; it
 must show nothing of the host, so the process viewer shot is scoped to the
-demo session with the user's name masked; its Neovim shots use rust-analyzer,
+demo session with the user's name masked; its editor and Neovim shots use rust-analyzer,
 which needs `RUST_SRC_PATH` set to the standard library's sources, and a Rust
 tree-sitter parser with queries, taken from your Neovim or `NVIM_TS_RUNTIME`).
 
