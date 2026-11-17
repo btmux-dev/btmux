@@ -549,7 +549,7 @@ every keymap, so its Ctrl chords win; the prefix is still taken first by
 `useKeybindings.ts`, Alt chords try the editor's keymaps first (on macOS
 vim takes them all in normal mode), and quick open's `Mod-p` runs before it
 in `PaneEditor.keydown`. `lib/nativeEditor/vim.ts` keeps vim's
-global definitions in one place: `:w`, `:wq`/`:x`, `:q` reach the editor
+global definitions in one place: `:w`, `:wq`/`:x`, `:q`, `:bd` reach the editor
 through `setVimHost` (save goes through the server like `Mod-s`; `:q` hides;
 `:wq` hides only if `PaneEditor.save` wrote every local edit and the shown
 file and visibility didn't change meanwhile), `gd`, `K` (a hover tooltip of

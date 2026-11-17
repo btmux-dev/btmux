@@ -28,6 +28,8 @@ import { QUICK_OPEN_NEEDS_FOLDER } from './registry';
 import { findPaneState, useStore } from '../../state/store';
 import { workspaceFolder } from '../vscodeFolder';
 import type { VimHost } from './vim';
+import { IS_MAC } from '../nvimKeys';
+import { macOptionText, physicalKey } from '../macOption';
 
 type Vim = typeof import('./vim');
 // Loaded once vim is turned on.
@@ -45,6 +47,17 @@ const QUICK_OPEN_WAIT_MS = 2000;
 /** Max gap between two Esc presses that hide the editor. */
 const DOUBLE_ESC_MS = 300;
 
+/**
+ * Alt-W closes the shown file (Mod-W closes the browser tab). CodeMirror's
+ * keymaps skip Option chords on macOS, so it is matched here, unless Option
+ * types ASCII text there on this layout.
+ */
+function isCloseKey(e: KeyboardEvent): boolean {
+  if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return false;
+  if (!IS_MAC) return e.key === 'w';
+  return macOptionText(e) === null && physicalKey(e) === 'w';
+}
+
 export interface PaneEditorEvents {
   /** Status, cursor, or the active file changed. */
   changed(): void;
@@ -54,6 +67,8 @@ export interface PaneEditorEvents {
   error(message: string): void;
   /** Open `path` in this pane (a jump to another file), on `line` if given. */
   open(path: string, line?: number | null): void;
+  /** Close `path`, asking to save unsaved changes unless `force` discards them. */
+  close(path: string, force: boolean): void;
 }
 
 export interface FileStatus extends DocStatus {
@@ -88,6 +103,7 @@ export class PaneEditor {
     save: (force) => this.save(force),
     epoch: () => this.epoch,
     hide: () => this.events.hide(),
+    close: (force) => this.close(force),
     mode: (mode) => {
       if (mode === this.vimMode) return;
       this.vimMode = mode;
@@ -249,6 +265,10 @@ export class PaneEditor {
       return true;
     }
     this.esc = { last: -Infinity, armed: false };
+    if (isCloseKey(e) && this.close(false)) {
+      e.preventDefault();
+      return true;
+    }
     return runScopeHandlers(view, e, QUICK_OPEN_SCOPE);
   }
 
@@ -406,6 +426,13 @@ export class PaneEditor {
   focus() {
     // Not out of a panel (quick open, search).
     if (!this.view.dom.contains(document.activeElement)) this.view.focus();
+  }
+
+  /** Close the shown file. */
+  close(force: boolean): boolean {
+    if (!this.active) return false;
+    this.events.close(this.active, force);
+    return true;
   }
 
   /** Show quick open, once the active file is loaded. */
