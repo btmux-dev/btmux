@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://btmux.dev/sitemap-index.xml
+Sitemap: https://btmux-dev.github.io/btmux/sitemap-index.xml

@@ -9,6 +9,10 @@ import { generateChangelogPage } from "./scripts/changelog-page.mjs";
 
 const repo = "https://github.com/buntec/btmux";
 
+// Served as a GitHub Pages project site, under /btmux.
+const site = "https://btmux-dev.github.io";
+const base = "/btmux";
+
 // Render the repo-root CHANGELOG.md as the Project > Changelog page.
 const released = generateChangelogPage("https://github.com/btmux-dev/btmux");
 
@@ -16,7 +20,7 @@ const released = generateChangelogPage("https://github.com/btmux-dev/btmux");
 // to its changelog entry: heading anchors drop the dots, `## 0.0.206` is `#00206`.
 const version = readFileSync(new URL("../Cargo.toml", import.meta.url), "utf8")
   .match(/^version = "([^"]+)"/m)[1];
-const versionHref = `/project/changelog/#${
+const versionHref = `${base}/project/changelog/#${
   released.includes(version) ? version.replaceAll(".", "") : "unreleased"
 }`;
 
@@ -33,9 +37,10 @@ const groups = {
 };
 
 export default defineConfig({
-  site: "https://btmux.dev",
+  site,
+  base,
   markdown: {
-    processor: unified({ remarkPlugins: [[remarkRepoLinks, { repo }]] }),
+    processor: unified({ remarkPlugins: [[remarkRepoLinks, { repo, base }]] }),
   },
   vite: {
     define: {
