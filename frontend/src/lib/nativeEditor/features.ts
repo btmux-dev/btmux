@@ -1,7 +1,7 @@
 // Language server features beyond @codemirror/lsp-client's: highlights,
 // inlay hints, semantic tokens, code lenses, folding, selection ranges,
 // range and on-type formatting, code actions, symbols, and hierarchies.
-import { LSPPlugin } from '@codemirror/lsp-client';
+import { LSPPlugin, jumpToDeclaration, jumpToImplementation, jumpToTypeDefinition } from '@codemirror/lsp-client';
 import {
   EditorSelection,
   Prec,
@@ -507,27 +507,31 @@ const foldsField = StateField.define<{ from: number; to: number }[]>({
     return value.map(({ from, to }) => ({ from: tr.changes.mapPos(from), to: tr.changes.mapPos(to) }));
   },
 });
-const foldRequester = requester(800, async (view) => {
-  const p = plugin(view);
-  if (!p || !has(p, 'foldingRangeProvider')) return;
-  const result = await ask<{ startLine: number; endLine: number; startCharacter?: number }[]>(
-    view,
-    'textDocument/foldingRange',
-    () => ({}),
-  );
-  if (!result) return;
-  const doc = view.state.doc;
-  const folds = result
-    .filter((r) => r.endLine > r.startLine && r.endLine < doc.lines)
-    .map((r) => {
-      const start = doc.line(r.startLine + 1);
-      return {
-        from: r.startCharacter !== undefined ? Math.min(start.from + r.startCharacter, start.to) : start.to,
-        to: doc.line(r.endLine + 1).to,
-      };
-    });
-  view.dispatch({ effects: setFolds.of(folds) });
-});
+const foldRequester = requester(
+  800,
+  async (view) => {
+    const p = plugin(view);
+    if (!p || !has(p, 'foldingRangeProvider')) return;
+    const result = await ask<{ startLine: number; endLine: number; startCharacter?: number }[]>(
+      view,
+      'textDocument/foldingRange',
+      () => ({}),
+    );
+    if (!result) return;
+    const doc = view.state.doc;
+    const folds = result
+      .filter((r) => r.endLine > r.startLine && r.endLine < doc.lines)
+      .map((r) => {
+        const start = doc.line(r.startLine + 1);
+        return {
+          from: r.startCharacter !== undefined ? Math.min(start.from + r.startCharacter, start.to) : start.to,
+          to: doc.line(r.endLine + 1).to,
+        };
+      });
+    view.dispatch({ effects: setFolds.of(folds) });
+  },
+  { refresh: 'workspace/foldingRange/refresh' },
+);
 const serverFolds = foldService.of((state, lineStart, lineEnd) => {
   const fold = state.field(foldsField, false)?.find((f) => f.from >= lineStart && f.from <= lineEnd && f.to > lineEnd);
   return fold ?? null;
@@ -895,6 +899,9 @@ export const editorCommands: Record<string, (view: EditorView) => boolean | Prom
   'editor-code-actions': codeActions,
   'editor-document-symbols': documentSymbols,
   'editor-workspace-symbols': workspaceSymbols,
+  'editor-go-to-declaration': jumpToDeclaration,
+  'editor-go-to-implementation': jumpToImplementation,
+  'editor-go-to-type-definition': jumpToTypeDefinition,
   'editor-incoming-calls': hierarchy('incoming'),
   'editor-outgoing-calls': hierarchy('outgoing'),
   'editor-supertypes': hierarchy('supertypes'),
@@ -921,6 +928,7 @@ export const lspFeatures: Extension = [
   Prec.high(
     keymap.of([
       { key: 'Mod-.', run: codeActions, preventDefault: true },
+      { key: 'Mod-F12', run: jumpToImplementation, preventDefault: true },
       { key: 'Mod-Shift-o', run: documentSymbols, preventDefault: true },
       { key: 'Mod-Alt-o', run: workspaceSymbols, preventDefault: true },
       { key: 'Shift-Alt-h', run: hierarchy('incoming'), preventDefault: true },

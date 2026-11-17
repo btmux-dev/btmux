@@ -112,33 +112,66 @@ type PublishParams = {
     codeDescription?: { href: string };
     /** 1 unnecessary (unused), 2 deprecated. */
     tags?: number[];
+    relatedInformation?: { location: { uri: string; range: Range }; message: string }[];
   }[];
 };
 
 const TAG_CLASSES: Record<number, string> = { 1: 'cm-lsp-unnecessary', 2: 'cm-lsp-deprecated' };
 
-/** The message with the diagnostic's code, linked to its documentation if given. */
-function renderMessage(message: string, code: string | number, href: string | undefined) {
+type ServerDiagnostic = PublishParams['diagnostics'][number];
+
+/**
+ * The message with the diagnostic's code, linked to its documentation if
+ * given, and its related information, each linked to its location.
+ */
+function renderMessage(d: ServerDiagnostic) {
   const dom = document.createElement('span');
-  dom.append(message, ' ');
-  const label = `(${code})`;
-  if (href && /^https?:/.test(href)) {
-    const link = document.createElement('a');
-    link.className = 'cm-lsp-diagnostic-code';
-    link.href = href;
-    link.textContent = label;
-    link.addEventListener('click', (e) => {
-      e.preventDefault();
-      window.open(href, '_blank', 'noopener');
-    });
-    dom.append(link);
-  } else {
-    const plain = document.createElement('span');
-    plain.className = 'cm-lsp-diagnostic-code';
-    plain.textContent = label;
-    dom.append(plain);
+  dom.append(d.message);
+  if (d.code !== undefined && d.code !== '') {
+    const href = d.codeDescription?.href;
+    const label = document.createElement(href && /^https?:/.test(href) ? 'a' : 'span');
+    label.className = 'cm-lsp-diagnostic-code';
+    label.textContent = `(${d.code})`;
+    if (label instanceof HTMLAnchorElement) {
+      label.href = href!;
+      label.addEventListener('click', (e) => {
+        e.preventDefault();
+        window.open(href, '_blank', 'noopener');
+      });
+    }
+    dom.append(' ', label);
+  }
+  if (d.relatedInformation?.length) {
+    const list = document.createElement('ul');
+    list.className = 'cm-lsp-related';
+    for (const related of d.relatedInformation) {
+      const item = document.createElement('li');
+      const link = document.createElement('a');
+      const name = pathOf(related.location.uri)?.split('/').pop() ?? related.location.uri;
+      link.textContent = `${name}:${related.location.range.start.line + 1}`;
+      link.href = '#';
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        reveal(related.location.uri, related.location.range.start);
+      });
+      item.append(link, ` ${related.message}`);
+      list.append(item);
+    }
+    dom.append(list);
   }
   return dom;
+}
+
+/** Show `uri` in the focused pane editor, at `at`. */
+function reveal(uri: string, at: Position | null) {
+  const path = pathOf(uri);
+  if (!path || !display) return;
+  void display(path).then((view) => {
+    if (!view || !at) return;
+    const pos = offset(view.state.doc, at);
+    view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
+    view.focus();
+  });
 }
 
 /** The latest diagnostics per client and URI. */
@@ -173,7 +206,7 @@ function showDiagnostics(client: LSPClient, view: EditorView, params: PublishPar
       source: d.source,
       markClass: markClass || undefined,
       renderMessage:
-        code === undefined || code === '' ? undefined : () => renderMessage(d.message, code, d.codeDescription?.href),
+        (code === undefined || code === '') && !d.relatedInformation?.length ? undefined : () => renderMessage(d),
     };
   });
   view.dispatch(setDiagnostics(view.state, list));
@@ -424,6 +457,8 @@ function client(server: number): LSPClient {
         return true;
       },
       'window/showMessage': (_, params: { type: number; message: string }) => {
+        // Log and debug messages aren't for the user.
+        if (params.type >= 4) return true;
         const level = params.type === 1 ? 'error' : params.type === 2 ? 'attention' : 'info';
         useStore.getState().showToast(params.message, level);
         return true;
@@ -551,14 +586,7 @@ editorConnection.serverUi = (msg) => {
     if (/^https?:/.test(msg.uri)) window.open(msg.uri, '_blank', 'noopener');
     return;
   }
-  const path = pathOf(msg.uri);
-  if (!path || !display) return;
-  const selection = msg.selection as { start: Position } | null;
-  void display(path).then((view) => {
-    if (!view || !selection) return;
-    const at = offset(view.state.doc, selection.start);
-    view.dispatch({ selection: { anchor: at }, effects: EditorView.scrollIntoView(at, { y: 'center' }) });
-  });
+  reveal(msg.uri, (msg.selection as { start: Position } | null)?.start ?? null);
 };
 
 type Position = { line: number; character: number };
@@ -656,6 +684,8 @@ export function lspExtension(doc: Doc): Extension {
       '.cm-lsp-deprecated': { textDecoration: 'line-through' },
       '.cm-lintRange-hint.cm-lsp-unnecessary, .cm-lintRange-hint.cm-lsp-deprecated': { backgroundImage: 'none' },
       '.cm-lsp-diagnostic-code': { opacity: '0.7' },
+      '.cm-lsp-related': { margin: '2px 0 0', paddingLeft: '1.2em' },
+      '.cm-lsp-related a': { color: 'inherit', textDecoration: 'underline' },
     }),
   ];
 }

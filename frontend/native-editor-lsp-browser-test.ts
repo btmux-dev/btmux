@@ -424,6 +424,41 @@ try {
   assert.equal(await code.getAttribute('href'), 'https://example.com/D1');
   console.log('PASS diagnostic tags and codes');
 
+  // Related information links to its location.
+  await page.locator('.cm-tooltip .cm-lsp-related a', { hasText: 'other.fake:1' }).click();
+  await until('the related location', async () => (await lines(page, paneId)) === 'thing defined here\n');
+  console.log('PASS related information');
+
+  // Implementations, with Mod-F12, and the palette's declaration and type definition commands.
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: tags, line: 1, editor: 'native' });
+  await until('tags.fake', async () => (await lines(page, paneId)) === 'let unused = old;\n');
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+  await page.keyboard.press('ControlOrMeta+F12');
+  await until('the implementation', async () => (await lines(page, paneId)) === 'thing defined here\n');
+  console.log('PASS go to implementation');
+
+  // Edits re-pull other files' diagnostics when they depend on each other.
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: tags, line: 1, editor: 'native' });
+  await until('tags.fake', async () => (await lines(page, paneId)) === 'let unused = old;\n');
+  const pulls = () =>
+    log()
+      .split('\n')
+      .filter((l) => l === `pull ${main}`).length;
+  const before = pulls();
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.type('withdraw');
+  await until('main.fake pulled again', () => pulls() > before);
+  console.log('PASS dependent diagnostics');
+
+  // A question the server withdraws goes away.
+  await page.keyboard.press('ControlOrMeta+.');
+  await pane.getByRole('option', { name: /Ask, then withdraw/ }).click();
+  await page.getByText('Withdrawn soon?').first().waitFor();
+  await until('the withdrawn question', async () => (await page.getByText('Withdrawn soon?').count()) === 0);
+  await until('its cancellation', () => log().includes('answer window/showMessageRequest undefined'));
+  console.log('PASS withdrawn prompts');
+
   // Inlay hints resolve: a tooltip on hover, a command and a location in their
   // label, and edits on a double click.
   const hinted = join(dir, 'hints.fake');

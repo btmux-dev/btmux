@@ -31,6 +31,7 @@ const METHOD_NOT_FOUND: i64 = -32601;
 const SERVER_NOT_INITIALIZED: i64 = -32002;
 const CONTENT_MODIFIED: i64 = -32801;
 const REQUEST_FAILED: i64 = -32803;
+const REQUEST_CANCELLED: i64 = -32800;
 /// Answers to an edit that needs confirmation.
 const APPLY_ALL: &str = "Apply all changes";
 const SKIP_CONFIRMATIONS: &str = "Skip these changes";
@@ -120,6 +121,8 @@ pub(super) struct Server {
     sandbox: Option<String>,
     /// It wants diagnostics pulled (`textDocument/diagnostic`).
     pull: bool,
+    /// A file's pulled diagnostics depend on other files.
+    inter_file: bool,
     /// The latest scheduled pull per buffer; older ones are skipped.
     pulls: HashMap<Uuid, u64>,
     next_pull: u64,
@@ -281,6 +284,7 @@ fn client_capabilities() -> Value {
                 "documentChanges": true,
                 "resourceOperations": ["create", "rename", "delete"],
                 "failureHandling": "textOnlyTransactional",
+                "normalizesLineEndings": true,
                 "changeAnnotationSupport": { "groupsOnLabel": false },
             },
             "configuration": true,
@@ -302,6 +306,7 @@ fn client_capabilities() -> Value {
             "inlayHint": { "refreshSupport": true },
             "codeLens": { "refreshSupport": true },
             "diagnostics": { "refreshSupport": true },
+            "foldingRange": { "refreshSupport": true },
         },
         "textDocument": {
             "synchronization": { "didSave": true, "dynamicRegistration": false },
@@ -316,12 +321,17 @@ fn client_capabilities() -> Value {
                 "completionList": {
                     "itemDefaults": ["commitCharacters", "editRange", "insertTextFormat", "data"],
                 },
-                "completionItemKind": { "valueSet": [] },
+                // The kinds `completion.ts` shows.
+                "completionItemKind": { "valueSet": (1..=25).collect::<Vec<u8>>() },
                 "contextSupport": true,
             },
             "hover": { "contentFormat": ["markdown", "plaintext"] },
             "formatting": {},
-            "rename": { "prepareSupport": true, "prepareSupportDefaultBehavior": 1 },
+            "rename": {
+                "prepareSupport": true,
+                "prepareSupportDefaultBehavior": 1,
+                "honorsChangeAnnotations": true,
+            },
             "signatureHelp": {
                 "contextSupport": true,
                 "signatureInformation": {
@@ -342,7 +352,13 @@ fn client_capabilities() -> Value {
                 "codeDescriptionSupport": true,
                 "dataSupport": true,
             },
-            "diagnostic": { "relatedDocumentSupport": false },
+            "diagnostic": {
+                "relatedDocumentSupport": false,
+                "relatedInformation": true,
+                "tagSupport": { "valueSet": [1, 2] },
+                "codeDescriptionSupport": true,
+                "dataSupport": true,
+            },
             "codeAction": {
                 "codeActionLiteralSupport": { "codeActionKind": { "valueSet": [
                     "", "quickfix", "refactor", "refactor.extract", "refactor.inline",
@@ -352,6 +368,7 @@ fn client_capabilities() -> Value {
                 "disabledSupport": true,
                 "dataSupport": true,
                 "resolveSupport": { "properties": ["edit"] },
+                "honorsChangeAnnotations": true,
             },
             "codeLens": {},
             "documentHighlight": {},
@@ -528,6 +545,7 @@ impl Inner {
                             config: server_config,
                             sandbox: target.sandbox.clone(),
                             pull: false,
+                            inter_file: false,
                             pulls: HashMap::new(),
                             next_pull: 0,
                             watchers: Vec::new(),
@@ -708,7 +726,14 @@ impl Inner {
             .map(|b| b.servers.clone())
             .unwrap_or_default();
         for id in servers {
-            self.schedule_pull(id, buffer);
+            // Other files' diagnostics may depend on this one.
+            let others: Vec<Uuid> = match self.lsp.servers.get(&id) {
+                Some(s) if s.inter_file => s.buffers.iter().copied().collect(),
+                _ => vec![buffer],
+            };
+            for other in others {
+                self.schedule_pull(id, other);
+            }
         }
     }
 
@@ -1209,7 +1234,9 @@ impl Inner {
             .unwrap_or(1);
         server.full_sync = kind == 1;
         server.save_text = sync["save"]["includeText"].as_bool().unwrap_or(false);
-        server.pull = !result["capabilities"]["diagnosticProvider"].is_null();
+        let provider = &result["capabilities"]["diagnosticProvider"];
+        server.pull = !provider.is_null();
+        server.inter_file = provider["interFileDependencies"] == true;
         server.state = ServerState::Ready;
         server.message = None;
         server.init = Some(result.clone());
@@ -1356,7 +1383,8 @@ impl Inner {
             }
             "workspace/semanticTokens/refresh"
             | "workspace/inlayHint/refresh"
-            | "workspace/codeLens/refresh" => {
+            | "workspace/codeLens/refresh"
+            | "workspace/foldingRange/refresh" => {
                 // Tabs ask again.
                 let refresh = notification("$/btmux/refresh", json!({ "method": method }));
                 let sockets: Vec<_> = server.sockets.iter().copied().collect();
@@ -1411,6 +1439,20 @@ impl Inner {
                         .cloned()
                         .unwrap_or_default();
                     self.publish(id, uri, false, items);
+                }
+                return;
+            }
+            // The server withdrew a prompt.
+            "$/cancelRequest" => {
+                let cancelled = &message["params"]["id"];
+                let token = server.prompts.iter().find_map(|(token, prompt)| {
+                    let (Prompt::Message(rid) | Prompt::Edit(rid, _)) = prompt;
+                    (rid == cancelled).then_some(*token)
+                });
+                if let Some(token) = token {
+                    server.prompts.remove(&token);
+                    server.send(error(cancelled.clone(), REQUEST_CANCELLED, "Cancelled"));
+                    self.prompts_done(id, &[token]);
                 }
                 return;
             }

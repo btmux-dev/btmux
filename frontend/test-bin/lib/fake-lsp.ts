@@ -1,7 +1,11 @@
 // A fake language server for browser tests, over stdio. It keeps the
 // documents it is sent and logs each method to $BTMUX_FAKE_LSP/log (if set):
 // - diagnostics: an error on every "bad"; a hint tagged unnecessary on every
-//   "unused", a warning tagged deprecated, with a code and its link, on every "old"
+//   "unused", a warning tagged deprecated, with a code and its link and
+//   other.fake as related information, on every "old"
+// - implementation: other.fake's first line
+// - pulled diagnostics depend on other files: each pull is logged
+// - code actions on "withdraw": ask the user, then cancel the question
 // - completion: "fakeCompletion", with 100 paragraphs of docs, and
 //   "importedThing", whose resolve adds documentation and an import ("use lib;"
 //   on line 1)
@@ -100,6 +104,15 @@ function publish(uri: string) {
       tags: [2],
       code: 'D1',
       codeDescription: { href: 'https://example.com/D1' },
+      relatedInformation: [
+        {
+          location: {
+            uri: uriOf(join(dirname(pathOf(uri)), 'other.fake')),
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 5 } },
+          },
+          message: 'replaced here',
+        },
+      ],
     })),
   ];
   send({
@@ -126,7 +139,8 @@ function handle(msg: any): unknown {
           definitionProvider: true,
           renameProvider: { prepareProvider: true },
           documentFormattingProvider: true,
-          diagnosticProvider: { interFileDependencies: false, workspaceDiagnostics: false },
+          diagnosticProvider: { interFileDependencies: true, workspaceDiagnostics: false },
+          implementationProvider: true,
           semanticTokensProvider: { legend: { tokenTypes: ['function'], tokenModifiers: [] }, full: true },
           inlayHintProvider: { resolveProvider: true },
           documentHighlightProvider: true,
@@ -137,7 +151,7 @@ function handle(msg: any): unknown {
           codeActionProvider: true,
           foldingRangeProvider: true,
           selectionRangeProvider: true,
-          executeCommandProvider: { commands: ['fake.ask', 'fake.shout', 'fake.hint'] },
+          executeCommandProvider: { commands: ['fake.ask', 'fake.shout', 'fake.hint', 'fake.withdraw'] },
           workspace: {
             fileOperations: Object.fromEntries(
               ['willRename', 'didRename', 'didCreate', 'didDelete'].map((op) => [
@@ -196,6 +210,10 @@ function handle(msg: any): unknown {
       }
       return { contents: { kind: 'markdown', value: `Fake hover for **${word}**` } };
     }
+    case 'textDocument/implementation': {
+      const other = uriOf(join(dirname(pathOf(p.textDocument.uri)), 'other.fake'));
+      return [{ uri: other, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } }];
+    }
     case 'textDocument/definition': {
       const word = wordAt(text(p.textDocument.uri), p.position);
       const other = uriOf(join(dirname(pathOf(p.textDocument.uri)), 'other.fake'));
@@ -238,6 +256,7 @@ function handle(msg: any): unknown {
       return { changes };
     }
     case 'textDocument/diagnostic': {
+      log(`pull ${pathOf(p.textDocument.uri)}`);
       const items = occurrences(text(p.textDocument.uri), 'worse').map((range) => ({
         range,
         severity: 1,
@@ -323,6 +342,11 @@ function handle(msg: any): unknown {
       ];
     case 'workspace/executeCommand':
       log(`execute ${p.command} ${JSON.stringify(p.arguments ?? [])}`);
+      if (p.command === 'fake.withdraw') {
+        const id = nextId;
+        request('window/showMessageRequest', { type: 3, message: 'Withdrawn soon?', actions: [{ title: 'Never' }] });
+        setTimeout(() => send({ jsonrpc: '2.0', method: '$/cancelRequest', params: { id } }), 700);
+      }
       if (p.command === 'fake.ask')
         request('window/showMessageRequest', {
           type: 3,
@@ -356,6 +380,8 @@ function handle(msg: any): unknown {
             { range: { start: at(3), end: at(3) }, newText: '!', annotationId: 'plain' },
           ]),
         });
+      if (t.includes('withdraw'))
+        actions.push({ title: 'Ask, then withdraw', command: { title: 'Withdraw', command: 'fake.withdraw' } });
       if (t.includes('move me')) {
         const dir = dirname(pathOf(uri));
         const extra = uriOf(join(dir, 'mod', 'extra.fake'));

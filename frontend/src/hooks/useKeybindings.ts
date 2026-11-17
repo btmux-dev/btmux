@@ -628,6 +628,9 @@ export function runAction(
     case 'editor-document-symbols':
     case 'editor-workspace-symbols':
     case 'editor-incoming-calls':
+    case 'editor-go-to-declaration':
+    case 'editor-go-to-implementation':
+    case 'editor-go-to-type-definition':
     case 'editor-outgoing-calls':
     case 'editor-supertypes':
     case 'editor-subtypes':

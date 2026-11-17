@@ -528,7 +528,9 @@ Changes whose annotation `needsConfirmation` (`lsp/annotations.rs`)
 are first confirmed in the tab (`applyWorkspaceEdit`), or, for a server's
 `workspace/applyEdit`, through an `lsp_prompt`; either can skip just those
 changes. Diagnostics tagged unnecessary fade and deprecated ones strike
-through (a hint only does), and their codes link to `codeDescription`. Inlay
+through (a hint only does), their codes link to `codeDescription`, and their
+related information links to its locations; pulls follow
+`interFileDependencies`, re-pulling a server's other files after an edit. Inlay
 hints resolve (`inlayHint/resolve`) once the pointer enters them: hovering
 shows their tooltip instead of the server's hover (`hovers` in `features.ts`
 replaces lsp-client's), label parts run their command on click and jump to
