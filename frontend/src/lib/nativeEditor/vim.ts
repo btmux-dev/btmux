@@ -14,6 +14,8 @@ export interface VimHost {
   /** Changes when the shown file or the editor's visibility does. */
   epoch(): number;
   hide(): void;
+  /** Close the shown file; `force` discards unsaved changes. */
+  close(force: boolean): void;
   /** The mode changed: NORMAL, INSERT, …, or null without vim. */
   mode(mode: string | null): void;
 }
@@ -42,6 +44,7 @@ Vim.defineEx('xit', 'x', saveAndHide);
 // Hiding keeps unsaved changes (the server holds them), so `:q` needs no `!`.
 Vim.defineEx('quit', 'q', (cm) => hostOf(cm)?.hide());
 Vim.defineEx('qall', 'qa', (cm) => hostOf(cm)?.hide());
+Vim.defineEx('bdelete', 'bd', (cm, params) => hostOf(cm)?.close(bang(params)));
 
 Vim.defineAction('btmuxDefinition', (cm) => void jumpToDefinition(cm.cm6));
 Vim.defineAction('btmuxHover', (cm) => void showHover(cm.cm6));

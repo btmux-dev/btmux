@@ -885,6 +885,36 @@ try {
       console.log('PASS a slow :wq keeps the editor after switching files');
     }
 
+    // :bd closes the shown file, asking about unsaved changes; :bd! discards them.
+    const bdFile = join(vimDir, 'bd.txt');
+    writeFileSync(bdFile, 'keep\n');
+    const bdTab = page.getByRole('tab', { name: 'bd.txt' });
+    const openBd = async () => {
+      await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: bdFile, line: 1, editor: 'native' });
+      await content.waitFor({ state: 'visible' });
+      await waitForText(page, paneId, 'keep\n');
+      await content.click();
+    };
+    await openBd();
+    await page.keyboard.type('Ax');
+    await page.keyboard.press('Escape');
+    await bdTab.locator('[aria-label="Unsaved"]').waitFor();
+    await command('bd');
+    const saveChanges = page.getByRole('dialog', { name: 'Save changes to bd.txt?' });
+    await saveChanges.waitFor();
+    await saveChanges.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await saveChanges.waitFor({ state: 'hidden' });
+    await bdTab.waitFor();
+    await content.click();
+    await command('bd!');
+    await bdTab.waitFor({ state: 'detached' });
+    assert.equal(readFileSync(bdFile, 'utf8'), 'keep\n');
+    await openBd();
+    await command('bd');
+    await bdTab.waitFor({ state: 'detached' });
+    assert.equal(await saveChanges.count(), 0);
+    console.log('PASS :bd closes the file, asking about unsaved changes; :bd! discards them');
+
     // Turning it off applies live, without remounting the editor.
     await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: vimFile, line: 1, editor: 'native' });
     await waitForText(page, paneId, 'top\nhello alpha\nbeta\n');
@@ -899,6 +929,26 @@ try {
     assert.equal(await handle!.evaluate((el) => el.isConnected), true);
     assert.equal(await page.locator(`[data-editor-pane="${paneId}"] .cm-vimCursorLayer`).count(), 0);
     console.log('PASS turning vim off applies live');
+
+    // Alt-W closes the file, asking about unsaved changes.
+    await page.getByRole('tab', { name: 'vim.txt' }).locator('[aria-label="Unsaved"]').waitFor();
+    await page.keyboard.press('Alt+w');
+    const saveVim = page.getByRole('dialog', { name: 'Save changes to vim.txt?' });
+    await saveVim.getByRole('button', { name: "Don't save", exact: true }).click();
+    await page.getByRole('tab', { name: 'vim.txt' }).waitFor({ state: 'detached' });
+    assert.equal(readFileSync(vimFile, 'utf8'), 'top\nhello alpha\nbeta\n');
+    console.log('PASS Alt-W closes the file');
+
+    // It goes by the physical key with Caps Lock or another layout.
+    for (const key of ['W', 'ц']) {
+      await openBd();
+      await content.evaluate((el, key) => {
+        const init = { key, code: 'KeyW', keyCode: 87, altKey: true, bubbles: true, cancelable: true };
+        el.dispatchEvent(new KeyboardEvent('keydown', init));
+      }, key);
+      await bdTab.waitFor({ state: 'detached' });
+    }
+    console.log('PASS Alt-W closes the file with Caps Lock or another layout');
   }
 } finally {
   await browser.close();

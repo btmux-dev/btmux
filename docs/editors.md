@@ -7,7 +7,8 @@ browser and Git mode open files there. Set `editor` in
 - `"native"` (the default): btmux's own editor. Any number of panes can show
   one, each with its open files as tabs. Every browser tab shows the same files
   and edits the same text, live; unsaved changes live on the server, so a
-  reload keeps them. `Mod-s` saves, a quick double Esc hides the editor, and
+  reload keeps them. `Mod-s` saves, `Alt-w` closes the file (asking to save
+  unsaved changes), a quick double Esc hides the editor, and
   files changed on disk reload unless you have unsaved changes, which get a
   warning instead. Language servers give it its IDE features; see below.
 - `"neovim"`: a Neovim GUI drawn by btmux, with your config and with its command
@@ -41,7 +42,8 @@ vim = true
 - The status line shows the mode (NORMAL, INSERT, VISUAL, …), and normal mode
   has a block cursor in the theme's cursor color.
 - `:w` saves (`:w!` overwrites changes made on disk), `:q` hides the editor,
-  keeping unsaved changes, and `:wq` or `:x` save and hide it.
+  keeping unsaved changes, `:wq` or `:x` save and hide it, and `:bd` closes the
+  file (asking to save unsaved changes; `:bd!` discards them).
 - Esc leaves insert and visual mode. A quick double Esc hides the editor only
   when it starts in normal mode with no command pending, so Escs that leave
   insert mode never hide it.

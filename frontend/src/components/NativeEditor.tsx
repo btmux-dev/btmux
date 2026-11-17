@@ -114,6 +114,7 @@ export function NativeEditor({
         hide: () => opRef.current({ kind: 'hide' }),
         error: (message) => useStore.getState().showToast(message, 'error'),
         open: (path, line) => opRef.current({ kind: 'open', path, line: line ?? null }),
+        close: (path, force) => closeRef.current(path, force),
       });
       setEditor(created);
     });
@@ -166,16 +167,19 @@ export function NativeEditor({
   const status = active && editor ? editor.status(active) : null;
   const lsp = status ? servers.filter((s) => status.servers.includes(s.id)) : [];
   const work = status ? progress.filter((p) => status.servers.includes(p.server)) : [];
-  const close = (path: string) => {
+  const close = (path: string, force = false) => {
     // Another pane showing the file keeps its unsaved changes.
     const elsewhere = useStore
       .getState()
       .allSessions.some((s) =>
         s.windows.some((w) => w.panes.some((p) => p.id !== paneId && p.editor.files.includes(path))),
       );
-    if (editor?.status(path)?.dirty && !elsewhere) setClosing(path);
-    else op({ kind: 'close', path });
+    if (!editor?.status(path)?.dirty || elsewhere) op({ kind: 'close', path });
+    else if (force) void editor.revert(path).then(() => op({ kind: 'close', path }));
+    else setClosing(path);
   };
+  const closeRef = useRef(close);
+  closeRef.current = close;
 
   return (
     <div

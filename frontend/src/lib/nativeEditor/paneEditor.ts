@@ -28,13 +28,15 @@ import { QUICK_OPEN_NEEDS_FOLDER } from './registry';
 import { findPaneState, useStore } from '../../state/store';
 import { workspaceFolder } from '../vscodeFolder';
 import type { VimHost } from './vim';
+import { IS_MAC } from '../nvimKeys';
+import { macOptionText, physicalKey } from '../macOption';
 
 type Vim = typeof import('./vim');
 // Loaded once vim is turned on.
 let vimLoader: Promise<Vim> | null = null;
 
-/** The keymap scope of quick open's chord, run ahead of vim (`keydown`). */
-const QUICK_OPEN_SCOPE = 'btmux-quick-open';
+/** The keymap scope of chords run ahead of vim (`keydown`). */
+const EARLY_SCOPE = 'btmux-early';
 
 /** Longest wait for formatting before a save goes ahead without it. */
 const FORMAT_TIMEOUT_MS = 3000;
@@ -45,6 +47,17 @@ const QUICK_OPEN_WAIT_MS = 2000;
 /** Max gap between two Esc presses that hide the editor. */
 const DOUBLE_ESC_MS = 300;
 
+/**
+ * Alt-W closes the shown file (Mod-W closes the browser tab). CodeMirror's
+ * keymaps skip Option chords on macOS, so there it is matched here, unless
+ * Option types ASCII text on this layout; elsewhere it is a keymap binding,
+ * which also matches other layouts and Caps Lock.
+ */
+function isMacCloseKey(e: KeyboardEvent): boolean {
+  if (!IS_MAC || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return false;
+  return macOptionText(e) === null && physicalKey(e) === 'w';
+}
+
 export interface PaneEditorEvents {
   /** Status, cursor, or the active file changed. */
   changed(): void;
@@ -54,6 +67,8 @@ export interface PaneEditorEvents {
   error(message: string): void;
   /** Open `path` in this pane (a jump to another file), on `line` if given. */
   open(path: string, line?: number | null): void;
+  /** Close `path`, asking to save unsaved changes unless `force` discards them. */
+  close(path: string, force: boolean): void;
 }
 
 export interface FileStatus extends DocStatus {
@@ -88,6 +103,7 @@ export class PaneEditor {
     save: (force) => this.save(force),
     epoch: () => this.epoch,
     hide: () => this.events.hide(),
+    close: (force) => this.close(force),
     mode: (mode) => {
       if (mode === this.vimMode) return;
       this.vimMode = mode;
@@ -148,7 +164,10 @@ export class PaneEditor {
           if (this.active) noteOpened(this.active);
         },
       }),
-      keymap.of([{ key: 'Mod-p', run: () => this.quickOpen(), preventDefault: true, scope: QUICK_OPEN_SCOPE }]),
+      keymap.of([
+        { key: 'Mod-p', run: () => this.quickOpen(), preventDefault: true, scope: EARLY_SCOPE },
+        ...(IS_MAC ? [] : [{ key: 'Alt-w', run: () => this.close(false), preventDefault: true, scope: EARLY_SCOPE }]),
+      ]),
     ];
   }
 
@@ -249,7 +268,11 @@ export class PaneEditor {
       return true;
     }
     this.esc = { last: -Infinity, armed: false };
-    return runScopeHandlers(view, e, QUICK_OPEN_SCOPE);
+    if (isMacCloseKey(e) && this.close(false)) {
+      e.preventDefault();
+      return true;
+    }
+    return runScopeHandlers(view, e, EARLY_SCOPE);
   }
 
   private countProblems() {
@@ -406,6 +429,13 @@ export class PaneEditor {
   focus() {
     // Not out of a panel (quick open, search).
     if (!this.view.dom.contains(document.activeElement)) this.view.focus();
+  }
+
+  /** Close the shown file. */
+  close(force: boolean): boolean {
+    if (!this.active) return false;
+    this.events.close(this.active, force);
+    return true;
   }
 
   /** Show quick open, once the active file is loaded. */
