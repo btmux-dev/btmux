@@ -1,9 +1,9 @@
 /** Run with `just test-browser`, or against a running stack with BTMUX_TEST_URL and BTMUX_AUTH_TOKEN. */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { chromium, type Page } from 'playwright';
+import { chromium, type BrowserContext, type Page } from 'playwright';
 import { waitForAsync } from './browser-test-utils';
 
 const url = process.env.BTMUX_TEST_URL ?? 'http://localhost:5173';
@@ -25,11 +25,13 @@ writeFileSync(fileB, 'const x = 1;\n');
 
 const session: { id: string; name: string } = await api('/api/sessions', 'POST', {
   name: `native-editor-${Date.now()}`,
+  cwd: dir,
 });
 const browser = await chromium.launch({ headless: true, channel: process.env.BTMUX_TEST_BROWSER });
 
-async function openPage(): Promise<Page> {
+async function openPage(setup?: (context: BrowserContext) => Promise<void>): Promise<Page> {
   const context = await browser.newContext({ viewport: { width: 1200, height: 800 } });
+  await setup?.(context);
   const page = await context.newPage();
   page.on('pageerror', (error) => console.error('page error:', error.message));
   await page.goto(url);
@@ -190,6 +192,178 @@ try {
   await page.locator('[aria-label="Unsaved"]').first().waitFor({ state: 'detached' });
   assert.equal(readFileSync(fileA, 'utf8'), 'outside\ntheirs\nUNSENT');
   console.log('PASS edits made while disconnected survive a reopen');
+
+  // Quick open searches the pane's folder and opens the choice in its editor.
+  const editorPane = page.locator(`[data-editor-pane="${paneId}"]`);
+  const goToFile = editorPane.getByRole('combobox', { name: 'Go to file' });
+  const activeFile = (path: string) =>
+    waitForAsync(
+      page,
+      async ({ id, path }) => {
+        const { findPaneState, useStore } = await import('/src/state/store.tsx' as string);
+        return findPaneState(useStore.getState(), id)?.editor.active === path;
+      },
+      { id: paneId, path },
+    );
+  mkdirSync(join(dir, 'deep', 'nested'), { recursive: true });
+  const target = join(dir, 'deep', 'nested', 'quickopen-target.md');
+  writeFileSync(target, 'found me\nline two\nline three\n');
+  // Files viewed in a focused editor are recent.
+  await page.locator(`[data-native-editor][data-pane-id="${secondPane}"]`).click();
+  await input.click();
+  await page.keyboard.press('ControlOrMeta+p');
+  await goToFile.waitFor();
+  // Without a query: the pane's other files, then recent ones (b.ts, shown in the other pane).
+  await editorPane.getByRole('option', { name: /^b\.ts/ }).waitFor();
+  await page.keyboard.type('qotgt');
+  const targetOption = editorPane.getByRole('option', { name: /quickopen-target\.md/ });
+  await targetOption.waitFor();
+  assert.equal(await targetOption.locator('.cm-btmux-picker-match').allTextContents().then((m) => m.join('')), 'qotgt');
+  await page.keyboard.press('Enter');
+  await activeFile(target);
+  await waitForText(page, paneId, 'found me\nline two\nline three\n');
+  console.log('PASS quick open finds a file by fuzzy query and opens it in the pane');
+
+  // `file:line` opens on that line, and `:line` alone moves in the shown file.
+  await page.keyboard.press('ControlOrMeta+p');
+  await page.keyboard.type('qotgt:3');
+  await editorPane.getByRole('option', { name: /quickopen-target\.md:3/ }).waitFor();
+  await page.keyboard.press('Enter');
+  await editorPane.locator('.cm-activeLine', { hasText: /^line three$/ }).waitFor();
+  await page.keyboard.press('ControlOrMeta+p');
+  await page.keyboard.type(':2');
+  await page.keyboard.press('Enter');
+  await editorPane.locator('.cm-activeLine', { hasText: /^line two$/ }).waitFor();
+  console.log('PASS quick open goes to file:line and :line');
+
+  // A file created after the first search shows up for the query typed once
+  // the stale index (over 5 s old) is listed again.
+  const late = join(dir, 'late-arrival.txt');
+  writeFileSync(late, 'late\n');
+  await page.waitForTimeout(5500);
+  await page.keyboard.press('ControlOrMeta+p');
+  await goToFile.waitFor();
+  await page.keyboard.type('latearr');
+  // Enter waits for the search of the new list, past the stale one.
+  await page.keyboard.press('Enter');
+  await activeFile(late);
+  await waitForText(page, paneId, 'late\n');
+  console.log('PASS quick open finds files created after the first search');
+
+  // The command palette shows a hidden editor with quick open.
+  await input.click();
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await input.waitFor({ state: 'hidden' });
+  await page.keyboard.press('Control+a');
+  await page.keyboard.press(':');
+  await page.keyboard.type('editor quick open');
+  await page.keyboard.press('Enter');
+  await goToFile.waitFor();
+  await waitForAsync(page, () => document.activeElement?.getAttribute('aria-label') === 'Go to file');
+  await page.keyboard.type('b.ts');
+  await editorPane.getByRole('option', { name: /^b\.ts/ }).waitFor();
+  await page.keyboard.press('Enter');
+  await activeFile(fileB);
+  await waitForText(page, paneId, 'const x = 1;\n');
+  // And with the editor already shown, typing still goes to quick open.
+  await page.keyboard.press('Control+a');
+  await page.keyboard.press(':');
+  await page.keyboard.type('editor quick open');
+  await page.keyboard.press('Enter');
+  await goToFile.waitFor();
+  await waitForAsync(page, () => document.activeElement?.getAttribute('aria-label') === 'Go to file');
+  await page.keyboard.type('qotgt');
+  assert.equal(await goToFile.inputValue(), 'qotgt');
+  await targetOption.waitFor();
+  await page.keyboard.press('Enter');
+  await activeFile(target);
+  assert.equal(readFileSync(fileB, 'utf8'), 'const x = 1;\n');
+  console.log('PASS the command palette runs quick open');
+
+  // Esc after Enter, before the results arrive, cancels the pick.
+  const slow = await openPage(async (context) => {
+    await context.routeWebSocket(/\/ws\/files/, (ws) => {
+      const server = ws.connectToServer();
+      server.onMessage((message) => setTimeout(() => ws.send(message), 1500));
+    });
+  });
+  const slowInput = slow.locator(`[data-native-editor][data-pane-id="${paneId}"]`);
+  await waitForText(slow, paneId, 'found me\nline two\nline three\n');
+  await slowInput.click();
+  await slow.keyboard.press('ControlOrMeta+p');
+  await slow.locator(`[data-editor-pane="${paneId}"]`).getByRole('combobox', { name: 'Go to file' }).waitFor();
+  await slow.keyboard.type('b.ts');
+  await slow.keyboard.press('Enter');
+  await slow.keyboard.press('Escape');
+  await slow.waitForTimeout(2500);
+  await activeFile(target);
+  await slow.context().close();
+  console.log('PASS Esc cancels a pick waiting for results');
+
+  // Over a symlinked folder, results still show relative to it (the server
+  // searches it with symlinks resolved); and a pane whose cwd is on another
+  // host gets a message, not an editor over it.
+  const link = join(tmpdir(), `btmux-editor-link-${Date.now()}`);
+  symlinkSync(dir, link);
+  const remote: { id: string; name: string; pane_id: string } = await api('/api/sessions', 'POST', {
+    name: `native-editor-remote-${Date.now()}`,
+    cwd: dir,
+  });
+  const paneState = (id: string) =>
+    page.evaluate(async (id) => {
+      const { findPaneState, useStore } = await import('/src/state/store.tsx' as string);
+      const pane = findPaneState(useStore.getState(), id);
+      return { cwd: pane?.cwd, remote: pane?.cwd_remote, shown: pane?.editor.shown };
+    }, id);
+  try {
+    await page.goto(`${url}/s/${encodeURIComponent(remote.name)}`);
+    await page.getByLabel('Terminal').first().waitFor();
+    await api(`/api/panes/${remote.pane_id}/input`, 'POST', {
+      text: `printf '\\033]7;file://${link}\\007'`,
+      keys: ['Enter'],
+    });
+    for (let i = 0; i < 200 && (await paneState(remote.pane_id)).cwd !== link; i++) await page.waitForTimeout(50);
+    assert.equal((await paneState(remote.pane_id)).cwd, link);
+    await api(`/api/panes/${remote.pane_id}/open-editor`, 'POST', { path: fileA, line: null, editor: 'native' });
+    const remoteInput = page.locator(`[data-native-editor][data-pane-id="${remote.pane_id}"]`);
+    await remoteInput.click();
+    await page.keyboard.press('ControlOrMeta+p');
+    const linked = page
+      .locator(`[data-editor-pane="${remote.pane_id}"]`)
+      .getByRole('option', { name: /quickopen-target/ });
+    // Recent files, which have resolved paths, are listed under it…
+    await linked.waitFor();
+    assert.equal(await linked.textContent(), 'quickopen-target.mddeep/nested');
+    // …and so are search results (highlighted, unlike recent files).
+    await page.keyboard.type('qotgt');
+    await linked.locator('.cm-btmux-picker-match').first().waitFor();
+    assert.equal(await linked.textContent(), 'quickopen-target.mddeep/nested');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await remoteInput.waitFor({ state: 'hidden' });
+    console.log('PASS quick open over a symlinked folder shows paths relative to it');
+
+    await api(`/api/panes/${remote.pane_id}/input`, 'POST', {
+      text: "printf '\\033]7;file://elsewhere.example/tmp\\007'",
+      keys: ['Enter'],
+    });
+    for (let i = 0; i < 200 && !(await paneState(remote.pane_id)).remote; i++) await page.waitForTimeout(50);
+    assert.equal((await paneState(remote.pane_id)).remote, true);
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press(':');
+    await page.keyboard.type('editor quick open');
+    await page.keyboard.press('Enter');
+    await page.getByText('Quick open needs a folder on this machine').first().waitFor();
+    assert.equal((await paneState(remote.pane_id)).shown, false);
+  } finally {
+    await api(`/api/sessions/${remote.id}`, 'DELETE');
+    rmSync(link, { force: true });
+  }
+  await page.goto(`${url}/s/${encodeURIComponent(session.name)}`);
+  await input.waitFor();
+  console.log('PASS quick open over a remote cwd shows a message, not the editor');
 
   // Language servers, with a fake one (test-bin/fake-lsp).
   const lspDir = process.env.BTMUX_TEST_LSP;

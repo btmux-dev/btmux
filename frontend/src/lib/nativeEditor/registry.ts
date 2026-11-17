@@ -1,5 +1,6 @@
-/** Language server commands the command palette runs in a pane's native editor. */
+/** Commands the command palette runs in a pane's native editor: quick open and language server commands. */
 export const EDITOR_COMMANDS = [
+  'editor-quick-open',
   'editor-code-actions',
   'editor-document-symbols',
   'editor-workspace-symbols',
@@ -10,17 +11,62 @@ export const EDITOR_COMMANDS = [
   'editor-expand-selection',
 ];
 
-const panes = new Map<string, (action: string) => boolean>();
+export const QUICK_OPEN_NEEDS_FOLDER = 'Quick open needs a folder on this machine';
 
-/** Run commands for the editor over `paneId`; returns the unregister function. */
+/** How long a command waits for the editor to be shown. */
+const QUEUE_MS = 5000;
+/** How long a command waits for modal dialogs to close. */
+const MODAL_WAIT_MS = 2000;
+
+const panes = new Map<string, (action: string) => boolean>();
+const queued = new Map<string, { action: string; failed: () => void; timer: ReturnType<typeof setTimeout> }>();
+
+/**
+ * Run `fn` once no modal dialog is open: the command palette is still open as
+ * it runs a command, keeping focus from the editor, and restores focus as it
+ * closes.
+ */
+function afterModals(fn: () => void, deadline = performance.now() + MODAL_WAIT_MS) {
+  requestAnimationFrame(() => {
+    if (document.querySelector('dialog:modal') && performance.now() < deadline) afterModals(fn, deadline);
+    else fn();
+  });
+}
+
+function runNow(paneId: string, action: string, failed: () => void) {
+  const run = panes.get(paneId);
+  if (!run || !run(action)) failed();
+}
+
+/** Run commands for the shown editor over `paneId`; returns the unregister function. */
 export function registerEditorCommands(paneId: string, run: (action: string) => boolean): () => void {
   panes.set(paneId, run);
+  const waiting = queued.get(paneId);
+  if (waiting) {
+    queued.delete(paneId);
+    clearTimeout(waiting.timer);
+    afterModals(() => runNow(paneId, waiting.action, waiting.failed));
+  }
   return () => {
     if (panes.get(paneId) === run) panes.delete(paneId);
   };
 }
 
-/** Run `action` in the editor over `paneId`; false if it has no file with a language server. */
-export function runEditorCommand(paneId: string, action: string): boolean {
-  return panes.get(paneId)?.(action) ?? false;
+/** Run `action` in the shown editor over `paneId` once modals close; `failed` if there is none or it fails. */
+export function runEditorCommand(paneId: string, action: string, failed: () => void) {
+  afterModals(() => runNow(paneId, action, failed));
+}
+
+/** Like `runEditorCommand`, but waits up to 5 s for the editor over `paneId` to be shown. */
+export function runEditorCommandWhenShown(paneId: string, action: string, failed: () => void) {
+  afterModals(() => {
+    if (panes.has(paneId)) return runNow(paneId, action, failed);
+    const previous = queued.get(paneId);
+    if (previous) clearTimeout(previous.timer);
+    const timer = setTimeout(() => {
+      queued.delete(paneId);
+      failed();
+    }, QUEUE_MS);
+    queued.set(paneId, { action, failed, timer });
+  });
 }

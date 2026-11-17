@@ -67,6 +67,7 @@ const KEY_SECTIONS: { title: string; actions: string[] }[] = [
       'process-view',
       'editor',
       'editor-native',
+      'editor-quick-open',
       'editor-code-actions',
       'editor-document-symbols',
       'editor-workspace-symbols',

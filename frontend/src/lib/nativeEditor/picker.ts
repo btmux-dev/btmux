@@ -6,6 +6,9 @@ export interface PickItem {
   label: string;
   /** Shown dimmed after the label. */
   detail?: string;
+  /** Matched characters (code points) of the label and detail, highlighted. */
+  labelMatches?: number[];
+  detailMatches?: number[];
   run(): void;
 }
 
@@ -13,8 +16,12 @@ export interface PickerSpec {
   title: string;
   /** Fixed items, filtered by what is typed… */
   items?: PickItem[];
-  /** …or items asked for as the query changes (workspace symbols). */
-  query?: (text: string) => Promise<PickItem[]>;
+  /**
+   * …or items asked for as the query changes (workspace symbols, files).
+   * `refresh`, called before the query resolves, replaces them with newer
+   * ones for the same text later; Enter waits for those too.
+   */
+  query?: (text: string, refresh: (items: Promise<PickItem[]>) => void) => Promise<PickItem[]>;
 }
 
 const setPicker = StateEffect.define<PickerSpec | null>();
@@ -32,6 +39,34 @@ export function fuzzyMatch(text: string, query: string): boolean {
 }
 
 let nextId = 0;
+
+/** `text` with the code points at `matches` highlighted. */
+function highlighted(text: string, matches: number[] | undefined): (string | HTMLElement)[] {
+  if (!matches?.length) return [text];
+  const at = new Set(matches);
+  const parts: (string | HTMLElement)[] = [];
+  let run = '';
+  let marked = false;
+  const flush = () => {
+    if (!run) return;
+    if (marked) {
+      const mark = document.createElement('span');
+      mark.className = 'cm-btmux-picker-match';
+      mark.textContent = run;
+      parts.push(mark);
+    } else parts.push(run);
+    run = '';
+  };
+  Array.from(text).forEach((c, i) => {
+    if (at.has(i) !== marked) {
+      flush();
+      marked = !marked;
+    }
+    run += c;
+  });
+  flush();
+  return parts;
+}
 
 function pickerPanel(view: EditorView, spec: PickerSpec): Panel {
   const id = `cm-btmux-picker-${nextId++}`;
@@ -52,7 +87,11 @@ function pickerPanel(view: EditorView, spec: PickerSpec): Panel {
   let shown: PickItem[] = [];
   let selected = 0;
   let generation = 0;
+  // Closed or replaced: pending results and picks are dropped.
+  let closed = false;
   const close = () => {
+    if (closed) return;
+    closed = true;
     view.dispatch({ effects: setPicker.of(null) });
     view.focus();
   };
@@ -63,11 +102,11 @@ function pickerPanel(view: EditorView, spec: PickerSpec): Panel {
         li.id = `${id}-${i}`;
         li.setAttribute('role', 'option');
         li.setAttribute('aria-selected', String(i === selected));
-        li.textContent = item.label;
+        li.append(...highlighted(item.label, item.labelMatches));
         if (item.detail) {
           const detail = document.createElement('span');
           detail.className = 'cm-btmux-picker-detail';
-          detail.textContent = item.detail;
+          detail.append(...highlighted(item.detail, item.detailMatches));
           li.append(detail);
         }
         li.addEventListener('mousedown', (e) => {
@@ -80,16 +119,42 @@ function pickerPanel(view: EditorView, spec: PickerSpec): Panel {
     input.setAttribute('aria-activedescendant', shown.length ? `${id}-${selected}` : '');
     list.children[selected]?.scrollIntoView({ block: 'nearest' });
   };
-  const update = async () => {
+  // The last update and its refreshes, which Enter waits for.
+  let settled = Promise.resolve();
+  const update = () => {
     const text = input.value;
     const g = ++generation;
-    const items = spec.query ? await spec.query(text).catch(() => []) : (spec.items ?? []);
-    if (g !== generation) return;
-    shown = spec.query ? items : items.filter((item) => fuzzyMatch(item.label, text));
-    selected = 0;
-    render();
+    const refreshes: Promise<void>[] = [];
+    const refresh = (next: Promise<PickItem[]>) => {
+      refreshes.push(
+        next.then(
+          (items) => {
+            if (g !== generation || closed) return;
+            // Keep the selected item if it is still there.
+            const current = shown[selected];
+            shown = items;
+            selected = Math.max(
+              0,
+              items.findIndex((item) => item.label === current?.label && item.detail === current?.detail),
+            );
+            render();
+          },
+          () => {},
+        ),
+      );
+    };
+    const first = (async () => {
+      const items = spec.query ? await spec.query(text, refresh).catch(() => []) : (spec.items ?? []);
+      if (g !== generation || closed) return;
+      shown = spec.query ? items : items.filter((item) => fuzzyMatch(item.label, text));
+      selected = 0;
+      render();
+    })();
+    settled = first.then(() => Promise.all(refreshes)).then(() => {});
+    return settled;
   };
   const pick = (i: number) => {
+    if (closed) return;
     const item = shown[i];
     close();
     item?.run();
@@ -97,7 +162,13 @@ function pickerPanel(view: EditorView, spec: PickerSpec): Panel {
   let timer: ReturnType<typeof setTimeout> | undefined;
   input.addEventListener('input', () => {
     clearTimeout(timer);
-    timer = setTimeout(() => void update(), spec.query ? 150 : 0);
+    timer = setTimeout(
+      () => {
+        timer = undefined;
+        void update();
+      },
+      spec.query ? 150 : 0,
+    );
   });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -107,7 +178,13 @@ function pickerPanel(view: EditorView, spec: PickerSpec): Panel {
       render();
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      pick(selected);
+      // Pick from results for what was typed.
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+        void update();
+      }
+      void settled.then(() => pick(selected));
     } else if (e.key === 'Escape') {
       e.preventDefault();
       close();
@@ -121,7 +198,10 @@ function pickerPanel(view: EditorView, spec: PickerSpec): Panel {
     dom,
     top: true,
     mount: () => input.focus(),
-    destroy: () => clearTimeout(timer),
+    destroy: () => {
+      closed = true;
+      clearTimeout(timer);
+    },
   };
 }
 
@@ -149,6 +229,7 @@ export const pickerExtension = [
     '.cm-btmux-picker li': { padding: '1px 12px', cursor: 'pointer', whiteSpace: 'pre' },
     '.cm-btmux-picker li[aria-selected=true]': { background: 'var(--btm-editor-selection)' },
     '.cm-btmux-picker-detail': { opacity: 0.6, marginLeft: '1em' },
+    '.cm-btmux-picker-match': { color: 'var(--btm-editor-blue)', fontWeight: 'bold' },
   }),
 ];
 
