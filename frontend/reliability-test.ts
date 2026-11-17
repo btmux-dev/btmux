@@ -367,6 +367,15 @@ try {
   console.log('PASS keyboard input claims dimension ownership');
   await page.locator('textarea[aria-label="Terminal"]').first().press('Shift');
   await waitForSize(second, ownerSize, true);
+  const fit = second.getByRole('button', { name: 'Fit to this screen' });
+  await fit.click();
+  await waitForSize(second, claimedSize, true);
+  await waitForSize(page, claimedSize, true);
+  await fit.waitFor({ state: 'detached' });
+  assert.equal(await page.getByRole('button', { name: 'Fit to this screen' }).count(), 0);
+  console.log('PASS a clipped follower fits on request');
+  await page.locator('textarea[aria-label="Terminal"]').first().press('Shift');
+  await waitForSize(second, ownerSize, true);
   await page.close();
   await waitForAsync(
     second,
