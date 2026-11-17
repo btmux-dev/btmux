@@ -72,6 +72,7 @@ fn generated_protocol_is_current() {
         crate::native_editor::BufferInfo::decl(&config),
         crate::native_editor::BufferSummary::decl(&config),
         crate::native_editor::lsp::ServerState::decl(&config),
+        crate::native_editor::lsp::LspProgress::decl(&config),
         crate::native_editor::lsp::LspServerStatus::decl(&config),
         crate::native_editor::EditorClientMessage::decl(&config),
         crate::native_editor::EditorServerMessage::decl(&config),

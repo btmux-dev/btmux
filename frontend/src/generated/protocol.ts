@@ -553,11 +553,18 @@ export type BufferSummary = { id: string, path: string, dirty: boolean, };
 export type ServerState = "starting" | "ready" | "failed";
 
 // prettier-ignore
+export type LspProgress = {
+/**
+ * The token, as JSON.
+ */
+token: string, title: string, message: string | null, percent: number | null, };
+
+// prettier-ignore
 export type LspServerStatus = { id: number, name: string, root: string, state: ServerState, message: string | null,
 /**
- * Work in progress (`$/progress`), as "title: message (n%)".
+ * Work in progress (`$/progress`).
  */
-progress: Array<string>, };
+progress: Array<LspProgress>, };
 
 // prettier-ignore
 export type EditorClientMessage = { "type": "open", req: number, path: string, resume: Resume | null, } | { "type": "release", buffer: string, } | { "type": "push", buffer: string, version: number, updates: Array<Update>, } | { "type": "save", req: number, buffer: string, force: boolean, } | { "type": "revert", req: number, buffer: string, } | { "type": "lsp", server: number, message: unknown, buffer: string | null, version: number | null, } | { "type": "lsp_prompt_answer", server: number, token: number, action: string | null, } | { "type": "apply_edit", req: number, edit: unknown, buffer: string | null, version: number | null, };

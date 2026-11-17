@@ -196,6 +196,19 @@ try {
   assert.match(log(), new RegExp(`^open ${join(dir, 'other.fake')} fake$`, 'm'));
   console.log('PASS language ids');
 
+  // Server work shows as a progress toast, finished a moment after it ends.
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.type('busy');
+  const toast = pane.locator('[data-lsp-progress]', { hasText: 'Indexing' });
+  await toast.getByText('1/2').waitFor();
+  await toast.getByRole('progressbar').waitFor();
+  assert.equal(await toast.getByText('fake').count(), 1);
+  for (let i = 0; i < 4; i++) await page.keyboard.press('Backspace');
+  await toast.getByLabel('success').waitFor();
+  await toast.waitFor({ state: 'detached' });
+  console.log('PASS progress toasts');
+
   // The command palette runs them too.
   await page.keyboard.press('Control+a');
   await page.keyboard.press(':');

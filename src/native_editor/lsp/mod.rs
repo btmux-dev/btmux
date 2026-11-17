@@ -49,8 +49,19 @@ pub struct LspServerStatus {
     pub root: String,
     pub state: ServerState,
     pub message: Option<String>,
-    /// Work in progress (`$/progress`), as "title: message (n%)".
-    pub progress: Vec<String>,
+    /// Work in progress (`$/progress`).
+    pub progress: Vec<LspProgress>,
+}
+
+/// One `$/progress` token's work, from its `begin` and later `report`s.
+#[derive(Serialize, Debug, Clone, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct LspProgress {
+    /// The token, as JSON.
+    pub token: String,
+    pub title: String,
+    pub message: Option<String>,
+    pub percent: Option<u32>,
 }
 
 enum Pending {
@@ -85,8 +96,8 @@ pub(super) struct Server {
     next_request: i64,
     /// The latest diagnostics per URI, for tabs that connect later.
     diagnostics: BTreeMap<String, Diagnostics>,
-    /// By token: (title, line).
-    progress: BTreeMap<String, (String, String)>,
+    /// By token.
+    progress: BTreeMap<String, LspProgress>,
     crashes: VecDeque<Instant>,
     config: crate::config::LanguageServerConfig,
     /// The Multipass instance it runs in, for files in a sandbox.
@@ -345,25 +356,17 @@ fn setting(settings: &Value, section: Option<&str>) -> Value {
     value.clone()
 }
 
-/// The title and a short line for `$/progress` work; reports have no title.
-fn progress_line(value: &Value, title: Option<&str>) -> (String, String) {
-    let title = value["title"]
-        .as_str()
-        .or(title)
-        .unwrap_or_default()
-        .to_owned();
-    let mut line = title.clone();
-    if let Some(message) = value["message"].as_str().filter(|m| !m.is_empty()) {
-        line = if line.is_empty() {
-            message.to_owned()
-        } else {
-            format!("{line}: {message}")
-        };
+/// Apply a `$/progress` `begin` or `report`; what a report leaves out stays.
+fn update_progress(progress: &mut LspProgress, value: &Value) {
+    if let Some(title) = value["title"].as_str() {
+        title.clone_into(&mut progress.title);
+    }
+    if let Some(message) = value["message"].as_str() {
+        progress.message = Some(message.to_owned()).filter(|m| !m.is_empty());
     }
     if let Some(percent) = value["percentage"].as_u64() {
-        line = format!("{line} ({percent}%)");
+        progress.percent = Some(percent.min(100) as u32);
     }
-    (title, line)
 }
 
 impl Server {
@@ -374,11 +377,7 @@ impl Server {
             root: crate::fs_ops::client_path(&self.root),
             state: self.state.clone(),
             message: self.message.clone(),
-            progress: self
-                .progress
-                .values()
-                .map(|(_, line)| line.clone())
-                .collect(),
+            progress: self.progress.values().cloned().collect(),
         }
     }
 
@@ -1242,10 +1241,17 @@ impl Inner {
                     Some("end") => {
                         server.progress.remove(&token);
                     }
-                    Some("begin" | "report") => {
-                        let title = server.progress.get(&token).map(|(t, _)| t.as_str());
-                        let entry = progress_line(value, title);
-                        server.progress.insert(token, entry);
+                    Some(kind @ ("begin" | "report")) => {
+                        if kind == "begin" {
+                            server.progress.remove(&token);
+                        }
+                        let entry = server.progress.entry(token.clone()).or_insert(LspProgress {
+                            token,
+                            title: String::new(),
+                            message: None,
+                            percent: None,
+                        });
+                        update_progress(entry, value);
                     }
                     _ => {}
                 }
@@ -1279,14 +1285,25 @@ mod tests {
     }
 
     #[test]
-    fn progress_lines() {
-        let begin = json!({ "kind": "begin", "title": "Indexing", "percentage": 0 });
-        let (title, line) = progress_line(&begin, None);
-        assert_eq!(line, "Indexing (0%)");
-        let report = json!({ "kind": "report", "message": "3/10", "percentage": 30 });
-        assert_eq!(
-            progress_line(&report, Some(&title)).1,
-            "Indexing: 3/10 (30%)"
+    fn progress_updates() {
+        let mut progress = LspProgress {
+            token: "1".into(),
+            title: String::new(),
+            message: None,
+            percent: None,
+        };
+        update_progress(
+            &mut progress,
+            &json!({ "kind": "begin", "title": "Indexing", "message": "0/10", "percentage": 0 }),
         );
+        update_progress(
+            &mut progress,
+            &json!({ "kind": "report", "percentage": 130 }),
+        );
+        assert_eq!(progress.title, "Indexing");
+        assert_eq!(progress.message.as_deref(), Some("0/10"));
+        assert_eq!(progress.percent, Some(100));
+        update_progress(&mut progress, &json!({ "kind": "report", "message": "" }));
+        assert_eq!(progress.message, None);
     }
 }
