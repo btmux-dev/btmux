@@ -172,6 +172,27 @@ try {
   await write(page, '\x1b[<u');
   assert.equal(await takeInput(page), '\x1b[27u');
 
+  // Dictation replaces its guesses in place, so the textarea keeps them.
+  const field = await page.evaluate(() => {
+    const input = document.activeElement as HTMLTextAreaElement;
+    const dictate = (text: string) => {
+      input.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText' }));
+      input.value = '​' + text;
+      input.setSelectionRange(input.value.length, input.value.length);
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
+    };
+    dictate('He');
+    dictate('Hello world');
+    dictate('Hello, world.');
+    return input.value;
+  });
+  assert.equal(field, '​Hello, world.');
+  assert.equal(await takeInput(page), 'Hello world' + '\x7f'.repeat(6) + ', world.');
+  // Other keys end the dictated line.
+  await page.keyboard.press('Enter');
+  assert.equal(await takeInput(page), '\r');
+  assert.equal(await page.evaluate(() => (document.activeElement as HTMLTextAreaElement).value), '​');
+
   // Swipes scroll full-screen applications like the wheel, even after a redraw
   // detaches the touched node, which then alone receives the touch's events.
   await write(page, '\x1b[?1049h\x1b[H\x1b[31mred\x1b[m');
