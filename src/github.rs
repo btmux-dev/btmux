@@ -754,24 +754,36 @@ fn target(
         .or_else(|| url(push_remote))
         .unwrap_or(push_remote);
     let head = parse_remote_url(push_url, hosts)?;
-    // The push remote's fetch URL, which differs from a `pushurl` fork; a
-    // bare URL's PRs are opened against origin.
-    let base = config
-        .subsections("remote")
-        .into_iter()
-        .find(|remote| config.get("remote", Some(remote), "gh-resolved") == Some("base"))
-        .or_else(|| url("upstream").map(|_| "upstream".to_string()))
-        .unwrap_or_else(|| match url(push_remote) {
-            Some(_) => push_remote.to_string(),
-            None => "origin".to_string(),
-        });
-    let base = url(&base)
-        .and_then(|url| parse_remote_url(url, hosts))
+    let bare_url = url(push_remote).is_none();
+    // gh's default repo: `base` is the remote's own, else `owner/repo` on its host.
+    let resolved = config.subsections("remote").into_iter().find_map(|remote| {
+        let value = config.get("remote", Some(&remote), "gh-resolved")?;
+        let repo = parse_remote_url(url(&remote)?, hosts)?;
+        match value {
+            "base" => Some(repo),
+            path => repo_at(repo.host, path),
+        }
+    });
+    // Else the push remote's fetch URL, which differs from a `pushurl` fork;
+    // a bare URL's PRs are opened against origin.
+    let base = resolved
+        .or_else(|| {
+            let remote = if url("upstream").is_some() {
+                "upstream"
+            } else if bare_url {
+                "origin"
+            } else {
+                push_remote
+            };
+            parse_remote_url(url(remote)?, hosts)
+        })
         .filter(|base| base.host == head.host)
         .unwrap_or_else(|| head.clone());
     // `git push` sends a branch to its upstream's name only with `upstream`;
-    // `simple` refuses a different name, and `current` uses the branch's.
-    let to_upstream = matches!(push_default, Some("upstream" | "tracking"))
+    // `simple` refuses a different name, and `current` uses the branch's. A
+    // branch tracking a bare URL (`gh pr checkout --branch`) has only its
+    // upstream's name there.
+    let to_upstream = (bare_url || matches!(push_default, Some("upstream" | "tracking")))
         && config.get("branch", Some(branch), "remote") == Some(push_remote);
     let head_ref = config
         .get("branch", Some(branch), "merge")
@@ -830,7 +842,11 @@ fn parse_remote_url(url: &str, hosts: &[String]) -> Option<Repo> {
         }
         (authority.rsplit('@').next()?, path)
     };
-    let host = github_host(&host.to_ascii_lowercase(), hosts)?;
+    repo_at(github_host(&host.to_ascii_lowercase(), hosts)?, path)
+}
+
+/// The repo at `owner/name` on a GitHub host.
+fn repo_at(host: String, path: &str) -> Option<Repo> {
     let path = path.trim_matches('/');
     let path = path.strip_suffix(".git").unwrap_or(path);
     let (owner, name) = path.split_once('/')?;
@@ -1123,12 +1139,40 @@ mod tests {
 	remote = https://github.com/me/r.git
 	pushremote = https://github.com/me/r.git
 	merge = refs/heads/docs
+[branch "review-42"]
+	remote = https://github.com/me/r.git
+	pushremote = https://github.com/me/r.git
+	merge = refs/heads/feature
 "#,
         );
-        let fork = target(&config, Some("upstream"), "docs", &[]).unwrap();
+        let fork = target(&config, None, "docs", &[]).unwrap();
         assert_eq!(fork.head, repo("me", "r"));
         assert_eq!(fork.base, repo("them", "r"));
         assert_eq!(fork.head_ref, "docs");
+        // `--branch review-42`: the PR's head is still `feature`.
+        let renamed = target(&config, None, "review-42", &[]).unwrap();
+        assert_eq!(renamed.head, repo("me", "r"));
+        assert_eq!(renamed.head_ref, "feature");
+
+        // `gh repo set-default` of a repo with no remote of its own.
+        let config = GitConfig::parse(
+            r#"
+[remote "origin"]
+	url = git@github.com:me/r.git
+	gh-resolved = Them/R
+[branch "pr"]
+	remote = https://github.com/other/r.git
+	pushremote = https://github.com/other/r.git
+	merge = refs/heads/pr
+"#,
+        );
+        assert_eq!(
+            target(&config, None, "feat", &[]).unwrap().base,
+            repo("them", "r")
+        );
+        let pr = target(&config, None, "pr", &[]).unwrap();
+        assert_eq!(pr.head, repo("other", "r"));
+        assert_eq!(pr.base, repo("them", "r"));
 
         // GitHub ignores case, so these are one repo with branch checks.
         let config = GitConfig::parse(
