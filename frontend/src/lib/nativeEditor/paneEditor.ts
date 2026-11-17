@@ -26,7 +26,11 @@ import { noteOpened, quickOpen } from './quickOpen';
 import { QUICK_OPEN_NEEDS_FOLDER } from './registry';
 import { findPaneState, useStore } from '../../state/store';
 import { workspaceFolder } from '../vscodeFolder';
-import { setVimHost, vimExtension, vimIdle } from './vim';
+import type { VimHost } from './vim';
+
+type Vim = typeof import('./vim');
+// Loaded once vim is turned on.
+let vimLoader: Promise<Vim> | null = null;
 
 /** Longest wait for formatting before a save goes ahead without it. */
 const FORMAT_TIMEOUT_MS = 3000;
@@ -75,6 +79,17 @@ export class PaneEditor {
   /** The last Esc of a quick run, and whether the run can hide the editor. */
   private esc = { last: -Infinity, armed: false };
   private vim = false;
+  private vimLib: Vim | null = null;
+  private readonly vimHost: VimHost = {
+    save: (force) => this.save(force),
+    epoch: () => this.epoch,
+    hide: () => this.events.hide(),
+    mode: (mode) => {
+      if (mode === this.vimMode) return;
+      this.vimMode = mode;
+      this.events.changed();
+    },
+  };
   private waiting: { path: string; resolve: (view: EditorView | null) => void }[] = [];
   private quickOpenWaiting = false;
   private destroyed = false;
@@ -95,16 +110,6 @@ export class PaneEditor {
   ) {
     this.appearance = appearance;
     this.view = new EditorView({ parent, state: this.placeholder() });
-    setVimHost(this.view, {
-      save: (force) => this.save(force),
-      epoch: () => this.epoch,
-      hide: () => this.events.hide(),
-      mode: (mode) => {
-        if (mode === this.vimMode) return;
-        this.vimMode = mode;
-        this.events.changed();
-      },
-    });
     // Drop a server's features once it fails, and add them back if it recovers.
     this.stopStatus = editorConnection.onLspStatus(() => {
       for (const doc of this.docs.values()) {
@@ -176,7 +181,7 @@ export class PaneEditor {
     return [
       this.common(),
       // Ahead of the keymaps, so vim's chords win over theirs.
-      this.vimC.of(this.vim ? Prec.high(vimExtension) : []),
+      this.vimC.of(this.vimExtension()),
       lineNumbers(),
       highlightActiveLineGutter(),
       highlightSpecialChars(),
@@ -227,7 +232,7 @@ export class PaneEditor {
     // with nothing pending hides it: one that leaves insert or visual mode,
     // or cancels a command, never does.
     if (e.key === 'Escape' && !e.repeat && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
-      const idle = vimIdle(this.view);
+      const idle = this.vimLib?.vimIdle(this.view) ?? true;
       if (e.timeStamp - this.esc.last >= DOUBLE_ESC_MS) {
         this.esc = { last: e.timeStamp, armed: idle };
         return false;
@@ -356,8 +361,22 @@ export class PaneEditor {
   setVim(on: boolean) {
     if (on === this.vim) return;
     this.vim = on;
-    for (const doc of this.docs.values())
-      doc.update({ effects: this.vimC.reconfigure(on ? Prec.high(vimExtension) : []) });
+    if (!on || this.vimLib) return this.applyVim();
+    void (vimLoader ??= import('./vim')).then((lib) => {
+      if (!this.vimLib) {
+        this.vimLib = lib;
+        lib.setVimHost(this.view, this.vimHost);
+      }
+      this.applyVim();
+    });
+  }
+
+  private vimExtension(): Extension {
+    return this.vim && this.vimLib ? Prec.high(this.vimLib.vimExtension) : [];
+  }
+
+  private applyVim() {
+    for (const doc of this.docs.values()) doc.update({ effects: this.vimC.reconfigure(this.vimExtension()) });
   }
 
   setAppearance(appearance: EditorAppearance) {
@@ -440,13 +459,14 @@ export class PaneEditor {
       await Promise.race([format(doc.view).catch(() => {}), timeout]);
     }
     doc.push();
-    // Edits the server doesn't have yet aren't in what it writes.
-    const complete = !doc.unsent();
+    // Edits the server doesn't have, or dropped as stale, aren't in what it writes.
+    const mark = doc.saveMark();
     const result = await editorConnection.save(doc.buffer, force);
+    const complete = mark !== null && doc.confirmed(mark);
     if (result.conflict) this.conflicts.add(doc.path);
     else this.conflicts.delete(doc.path);
     if (result.error && !result.conflict) this.events.error(result.error);
-    else if (!result.error && !complete) this.events.error('Some edits were not saved: the editor is reconnecting.');
+    else if (!result.error && !complete) this.events.error("Some edits weren't in the save yet; save again.");
     this.events.changed();
     return !result.error && !result.conflict && complete;
   }

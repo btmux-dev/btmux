@@ -2,9 +2,10 @@
 import { getCM, Vim, vim, type CodeMirror } from '@replit/codemirror-vim';
 import { Prec, StateEffect, StateField, type Extension } from '@codemirror/state';
 import { closeCompletion, completionStatus } from '@codemirror/autocomplete';
-import { EditorView, ViewPlugin, showTooltip, type Tooltip } from '@codemirror/view';
+import { EditorView, ViewPlugin, runScopeHandlers, showTooltip, type Tooltip } from '@codemirror/view';
 import { jumpToDefinition, LSPPlugin } from '@codemirror/lsp-client';
 import { forEachDiagnostic } from '@codemirror/lint';
+import { ask, has } from './features';
 
 /** What ex commands and the mode line reach in the editor showing a view. */
 export interface VimHost {
@@ -84,12 +85,16 @@ const vimState = (view: EditorView): VimState | null => (getCM(view)?.state.vim 
 
 /**
  * Whether vim is in normal mode with nothing pending, where Esc does
- * nothing in vim. `true` without vim.
+ * nothing in vim: no search highlight to clear, no macro recording.
  */
 export function vimIdle(view: EditorView): boolean {
   const cm = getCM(view);
   const state = vimState(view);
   if (!cm || !state) return true;
+  const plugin = cm.state.vimPlugin as { query?: unknown } | undefined;
+  const recording = (Vim.getVimGlobalState_() as { macroModeState?: { isRecording?: boolean } }).macroModeState
+    ?.isRecording;
+  if (plugin?.query || recording) return false;
   const input = state.inputState;
   const pending =
     !!input &&
@@ -104,21 +109,63 @@ export function vimIdle(view: EditorView): boolean {
 const modeLabel = (mode: string, subMode?: string) =>
   mode === 'visual' && subMode ? (subMode === 'linewise' ? 'VISUAL LINE' : 'VISUAL BLOCK') : mode.toUpperCase();
 
-/** Reports the mode to the view's host while vim is on. */
+/** Views whose vim state was just replaced in insert mode (a reopen, a file switch). */
+const carried = new WeakSet<EditorView>();
+
+/**
+ * Reports the mode to the view's host while vim is on. Each state starts in
+ * normal mode, so a state replaced in insert mode (Doc.opened, a file
+ * switch) goes back into insert mode, rather than running what's typed next
+ * as commands.
+ */
 const modeReporter = ViewPlugin.define((view) => {
   const cm = getCM(view);
   const host = hosts.get(view);
-  const changed = (e: { mode: string; subMode?: string }) => host?.mode(modeLabel(e.mode, e.subMode));
+  let mode = 'NORMAL';
+  const changed = (e: { mode: string; subMode?: string }) => {
+    mode = modeLabel(e.mode, e.subMode);
+    host?.mode(mode);
+    // However insert mode ends (Esc, Ctrl-[, Ctrl-C), its completions close.
+    if (e.mode !== 'insert' && completionStatus(view.state) !== null) queueMicrotask(() => closeCompletion(view));
+  };
   cm?.on('vim-mode-change', changed);
-  // Each state starts in normal mode.
-  host?.mode('NORMAL');
+  host?.mode(mode);
+  if (cm && carried.has(view)) {
+    carried.delete(view);
+    // Not during the update that made this state.
+    queueMicrotask(() => {
+      if (getCM(view) === cm && !cm.state.vim?.insertMode) Vim.handleKey(cm, 'i', 'mapping');
+    });
+  }
   return {
     destroy() {
       cm?.off('vim-mode-change', changed);
       host?.mode(null);
+      // Only a state replacing this one in the same update takes it.
+      if (mode !== 'INSERT') return;
+      carried.add(view);
+      queueMicrotask(() => carried.delete(view));
     },
   };
 });
+
+/**
+ * Alt chords go to the editor's keymaps first (format selection, incoming
+ * calls, moving lines): on macOS vim takes every one in normal mode, which
+ * keeps option characters out of the text.
+ */
+const altKeys = Prec.highest(
+  EditorView.domEventHandlers({
+    keydown(e, view) {
+      if (!e.altKey || e.ctrlKey || e.metaKey) return false;
+      return runScopeHandlers(view, e, 'editor');
+    },
+  }),
+);
+
+/** Keys that leave a hover up: modifiers alone, and Cmd chords such as copying from it. */
+const keepsHover = (e: KeyboardEvent) =>
+  e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta' || e.metaKey;
 
 // `K`: lsp-client's hover only follows the pointer.
 /** Counts keys, so a hover answered after one (Esc, `i`) isn't shown; a new state gets a new one. */
@@ -128,7 +175,8 @@ const hoverRequests = ViewPlugin.fromClass(
   },
   {
     eventObservers: {
-      keydown(_, view) {
+      keydown(e, view) {
+        if (keepsHover(e)) return;
         this.generation++;
         // Any key closes a `K` hover, and still does what it does.
         if (view.state.field(hoverField, false)) view.dispatch({ effects: setHover.of(null) });
@@ -155,21 +203,15 @@ const markdown = (m: Markup) =>
 
 async function showHover(view: EditorView) {
   const plugin = LSPPlugin.get(view);
-  const capabilities = plugin?.client.serverCapabilities as Record<string, unknown> | null | undefined;
   const requests = view.plugin(hoverRequests);
-  if (!plugin || !requests || !capabilities?.hoverProvider) return;
+  if (!plugin || !requests || !has(plugin, 'hoverProvider')) return;
   const generation = ++requests.generation;
-  const { doc } = view.state;
   const pos = view.state.selection.main.head;
-  plugin.client.sync();
-  const result = await plugin.client
-    .request<object, Hover | null>('textDocument/hover', {
-      textDocument: { uri: plugin.uri },
-      position: plugin.toPosition(pos),
-    })
-    .catch(() => null);
+  const result = await ask<Hover | null>(view, 'textDocument/hover', (p) => ({ position: p.toPosition(pos) })).catch(
+    () => null,
+  );
   const current = view.plugin(hoverRequests) === requests && requests.generation === generation;
-  if (!result || !current || view.state.doc !== doc || view.state.selection.main.head !== pos) return;
+  if (!result || !current || view.state.selection.main.head !== pos) return;
   const parts = Array.isArray(result.contents) ? result.contents : [result.contents];
   const html = parts
     .map((part) => {
@@ -196,15 +238,5 @@ async function showHover(view: EditorView) {
   });
 }
 
-/** Esc closes completions as it leaves insert mode, which vim takes it for. */
-const escCloses = Prec.highest(
-  EditorView.domEventHandlers({
-    keydown(e, view) {
-      if (e.key === 'Escape' && completionStatus(view.state) !== null) closeCompletion(view);
-      return false;
-    },
-  }),
-);
-
 /** Vim, ahead of every keymap so its Ctrl chords win; Esc handling stays the editor's (`PaneEditor.keydown`). */
-export const vimExtension: Extension = [escCloses, vim(), modeReporter, hoverField, hoverRequests];
+export const vimExtension: Extension = [altKeys, vim(), modeReporter, hoverField, hoverRequests];

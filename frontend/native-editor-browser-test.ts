@@ -29,11 +29,15 @@ const session: { id: string; name: string } = await api('/api/sessions', 'POST',
 });
 const browser = await chromium.launch({ headless: true, channel: process.env.BTMUX_TEST_BROWSER });
 
+/** Every URL the pages asked for. */
+const requested: string[] = [];
+
 async function openPage(setup?: (context: BrowserContext) => Promise<void>): Promise<Page> {
   const context = await browser.newContext({ viewport: { width: 1200, height: 800 } });
   await setup?.(context);
   const page = await context.newPage();
   page.on('pageerror', (error) => console.error('page error:', error.message));
+  page.on('request', (request) => requested.push(request.url()));
   await page.goto(url);
   await page.getByLabel('Access token').fill(token!);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
@@ -565,6 +569,9 @@ try {
           'language-servers = ["fake"]',
         ]
       : [];
+    // The vim package loads only once vim is turned on.
+    const vimLoaded = () => requested.some((url) => /codemirror-vim|nativeEditor\/vim\.ts/.test(url));
+    assert.equal(vimLoaded(), false);
     writeFileSync(config, ['[native-editor]', 'vim = true', ...lspConfig, ''].join('\n'));
     const vimMode = (on: boolean) =>
       waitForAsync(
@@ -599,7 +606,8 @@ try {
       return [getComputedStyle(el).backgroundColor, themed];
     });
     assert.equal(background, themed);
-    console.log('PASS vim mode shows NORMAL and a block cursor');
+    assert.equal(vimLoaded(), true);
+    console.log('PASS vim mode shows NORMAL and a block cursor, loading vim on demand');
 
     await page.keyboard.type('ihello ');
     await waitForText(page, paneId, 'hello alpha\nbeta\n');
@@ -635,11 +643,57 @@ try {
     assert.equal(readFileSync(vimFile, 'utf8'), 'hello alpha\nbeta\n');
     console.log('PASS :w saves to disk');
 
+    // The first Esc clears a search highlight, so Esc Esc doesn't hide.
+    await page.keyboard.press('/');
+    await page.locator(`[data-editor-pane="${paneId}"] .cm-vim-panel input`).waitFor();
+    await page.keyboard.type('beta');
+    await page.keyboard.press('Enter');
+    await page.locator(`[data-editor-pane="${paneId}"] .cm-searchMatch`).first().waitFor();
+    await page.waitForTimeout(400);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
+    assert(await content.isVisible(), 'Esc Esc after a search keeps the editor');
+    assert.equal(await page.locator(`[data-editor-pane="${paneId}"] .cm-searchMatch`).count(), 0);
+    await page.keyboard.type('gg');
+    console.log('PASS the first Esc after a search clears its highlight');
+
     await page.keyboard.type('dd');
     await waitForText(page, paneId, 'beta\n');
     await page.keyboard.type('u');
     await waitForText(page, paneId, 'hello alpha\nbeta\n');
     console.log('PASS dd and u');
+
+    // A reopen (a new state) in insert mode stays in insert mode.
+    await page.keyboard.type('ggi');
+    await showsMode('INSERT');
+    const reopened = () =>
+      waitForAsync(
+        page,
+        async (path) => {
+          const { editorConnection } = await import('/src/lib/nativeEditor/connection.ts' as string);
+          const doc = [...(editorConnection as any).listeners].find((l: any) => l.path === path);
+          return doc.status.ready && doc.view && doc.view.state !== (window as any).beforeReopen;
+        },
+        vimFile,
+      );
+    await page.evaluate(async (path) => {
+      const { editorConnection } = await import('/src/lib/nativeEditor/connection.ts' as string);
+      const doc = [...(editorConnection as any).listeners].find((l: any) => l.path === path);
+      (window as any).beforeReopen = doc.view.state;
+      // As when the update log no longer reaches its version: a fresh state.
+      doc.resume = () => null;
+      editorConnection.reopen(doc);
+      delete doc.resume;
+    }, vimFile);
+    await reopened();
+    await page.keyboard.type('Q');
+    await waitForText(page, paneId, 'Qhello alpha\nbeta\n');
+    await showsMode('INSERT');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.press('Escape');
+    await waitForText(page, paneId, 'hello alpha\nbeta\n');
+    console.log('PASS a reopen keeps insert mode');
 
     // Each tab has its own mode; edits still reach both.
     const second = await openPage();
@@ -718,6 +772,36 @@ try {
     await waitForText(page, paneId, 'top\nhello alpha\nbeta\n');
     await command('w');
     await diskIs(vimFile, 'top\nhello alpha\nbeta\n');
+    // And when the server dropped the edit as stale (another tab got there first).
+    await page.evaluate(async () => {
+      const { editorConnection } = await import('/src/lib/nativeEditor/connection.ts' as string);
+      const connection = editorConnection as any;
+      connection.realPush = connection.push;
+      connection.push = (buffer: string, version: number, updates: unknown[]) =>
+        connection.realPush.call(connection, buffer, version - 1, updates);
+    });
+    await page.keyboard.type('ggAZ');
+    await page.keyboard.press('Escape');
+    await waitForText(page, paneId, 'topZ\nhello alpha\nbeta\n');
+    await command('wq');
+    await page.waitForTimeout(1000);
+    assert(await content.isVisible(), ':wq keeps the editor when its edit was dropped');
+    assert.equal(readFileSync(vimFile, 'utf8'), 'top\nhello alpha\nbeta\n');
+    await page.evaluate(async () => {
+      const { editorConnection } = await import('/src/lib/nativeEditor/connection.ts' as string);
+      const connection = editorConnection as any;
+      connection.push = connection.realPush;
+    });
+    // The next edit sends both again.
+    await page.keyboard.type('AW');
+    await page.keyboard.press('Escape');
+    await command('w');
+    await diskIs(vimFile, 'topZW\nhello alpha\nbeta\n');
+    await page.keyboard.type('u');
+    await page.keyboard.type('u');
+    await waitForText(page, paneId, 'top\nhello alpha\nbeta\n');
+    await command('w');
+    await diskIs(vimFile, 'top\nhello alpha\nbeta\n');
     console.log('PASS :wq keeps the editor when the save fails or edits are unsent');
 
     if (lspDir) {
@@ -740,7 +824,23 @@ try {
       await page.locator('.cm-tooltip').getByText('Fake hover for').waitFor();
       await page.keyboard.type('gd');
       await waitForText(page, paneId, 'first\nthing defined here\n');
-      console.log('PASS ]d, K, and gd use the language server');
+      // Alt chords reach the editor's keymaps (vim takes them on macOS).
+      await page.keyboard.press('Shift+Alt+h');
+      await page.locator(`[data-editor-pane="${paneId}"]`).getByRole('listbox', { name: 'Calls to thing' }).waitFor();
+      await page.keyboard.press('Escape');
+      // Ctrl-[ leaves insert mode and closes completions, as Esc does.
+      await content.click();
+      await page.keyboard.type('Gofa');
+      await page.locator('.cm-tooltip-autocomplete').waitFor();
+      await page.keyboard.press('Control+BracketLeft');
+      await showsMode('NORMAL');
+      await page.locator('.cm-tooltip-autocomplete').waitFor({ state: 'detached' });
+      for (let i = 0; i < 3 && (await editorText(page, paneId)) !== 'first\nthing defined here\n'; i++) {
+        await page.keyboard.type('u');
+        await page.waitForTimeout(100);
+      }
+      await waitForText(page, paneId, 'first\nthing defined here\n');
+      console.log('PASS ]d, K, gd, and Alt chords use the language server; Ctrl-[ closes completions');
 
       writeFileSync(config, ['[native-editor]', 'vim = true', 'format-on-save = true', ...lspConfig, ''].join('\n'));
       await waitForAsync(page, async () => {

@@ -37,7 +37,7 @@ export const refreshEffect = StateEffect.define<string>();
 export const REFRESH_ALL = 'initialized';
 
 const plugin = (view: EditorView) => LSPPlugin.get(view);
-const has = (p: LSPPlugin, capability: string) =>
+export const has = (p: LSPPlugin, capability: string) =>
   !!(p.client.serverCapabilities as Record<string, unknown> | null)?.[capability];
 
 function offset(doc: Text, pos: Position) {
@@ -57,7 +57,7 @@ const toast = (message: string, error?: unknown) =>
   });
 
 /** Ask the server; `null` when the doc changed meanwhile (the result is stale). */
-async function ask<T>(view: EditorView, method: string, params: (p: LSPPlugin) => object): Promise<T | null> {
+export async function ask<T>(view: EditorView, method: string, params: (p: LSPPlugin) => object): Promise<T | null> {
   const p = plugin(view);
   if (!p) return null;
   p.client.sync();

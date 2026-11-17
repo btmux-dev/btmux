@@ -54,6 +54,8 @@ function wordAt(text: string, pos: Position) {
 
 function occurrences(text: string, word: string): Range[] {
   const ranges: Range[] = [];
+  // No word at the cursor (an empty line): `\b\b` would match forever.
+  if (!word) return ranges;
   const re = new RegExp(`\\b${word}\\b`, 'g');
   for (let m = re.exec(text); m; m = re.exec(text))
     ranges.push({ start: position(text, m.index), end: position(text, m.index + word.length) });

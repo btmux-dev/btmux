@@ -57,6 +57,8 @@ export class Doc implements BufferListener {
   /** Updates already pushed; all unconfirmed ones go with each push, and the server skips repeats. */
   private sent = new WeakSet<object>();
   private readonly clientID = randomId();
+  /** Echoes of this editor's own updates so far. */
+  private ownConfirmed = 0;
 
   constructor(
     readonly path: string,
@@ -169,6 +171,7 @@ export class Doc implements BufferListener {
     }
     const fresh = updates.slice(from).map((u) => ({ changes: ChangeSet.fromJSON(u.changes), clientID: u.client_id }));
     if (fresh.length) {
+      this.ownConfirmed += fresh.filter((u) => u.clientID === this.clientID).length;
       if (this.synced) this.synced = fresh.reduce((doc, u) => u.changes.apply(doc), this.synced);
       this.apply(receiveUpdates(state, fresh));
     }
@@ -205,10 +208,24 @@ export class Doc implements BufferListener {
       for (const u of sendable) this.sent.add(u);
   }
 
-  /** Some local changes haven't been sent (disconnected or reopening). */
-  unsent(): boolean {
+  /**
+   * Taken right before a save: `null` if some local change hasn't been sent
+   * (disconnected or reopening), else what `confirmed` checks after its reply.
+   */
+  saveMark(): number | null {
     const state = this.state;
-    return !!state && sendableUpdates(state).some((u) => !this.sent.has(u));
+    if (!state) return null;
+    const pending = sendableUpdates(state);
+    if (pending.some((u) => !this.sent.has(u))) return null;
+    return this.ownConfirmed + pending.length;
+  }
+
+  /**
+   * The server applied every change sent before `mark`. Their echoes come
+   * before a later reply on the socket; a push it dropped as stale has none.
+   */
+  confirmed(mark: number): boolean {
+    return this.ownConfirmed >= mark;
   }
 
   /** The server's version once it has every change pushed: what language server positions refer to. */
