@@ -121,6 +121,47 @@ pub enum EditorViewOp {
 }
 
 impl PaneEditor {
+    /// Files at or under `from` moved to `to`, or were deleted (closing
+    /// their tabs); true if any of this editor's were.
+    pub fn moved(&mut self, from: &std::path::Path, to: Option<&std::path::Path>) -> bool {
+        let before = self.clone();
+        let active = self.active.take();
+        let mut closed_at = None;
+        for file in std::mem::take(&mut self.files) {
+            let renamed = match std::path::Path::new(&file).strip_prefix(from) {
+                Err(_) => Some(file.clone()),
+                Ok(rest) => to.map(|to| {
+                    let path = if rest.as_os_str().is_empty() {
+                        to.to_path_buf()
+                    } else {
+                        to.join(rest)
+                    };
+                    crate::fs_ops::client_path(&path)
+                }),
+            };
+            let is_active = active.as_ref() == Some(&file);
+            match renamed {
+                Some(path) => {
+                    if is_active {
+                        self.active = Some(path.clone());
+                    }
+                    if !self.files.contains(&path) {
+                        self.files.push(path);
+                    }
+                }
+                None if is_active => closed_at = Some(self.files.len()),
+                None => {}
+            }
+        }
+        if let Some(i) = closed_at {
+            self.active = self.files.get(i).or_else(|| self.files.last()).cloned();
+        }
+        if self.files.is_empty() {
+            self.shown = false;
+        }
+        *self != before
+    }
+
     pub fn apply(&mut self, op: EditorViewOp) {
         match op {
             EditorViewOp::Show => self.shown = true,
@@ -400,6 +441,27 @@ mod editor_tests {
         assert_eq!(e.files, ["/b", "/a"]);
         e.apply(EditorViewOp::Close { path: "/b".into() });
         e.apply(EditorViewOp::Close { path: "/a".into() });
+        assert_eq!((e.active, e.shown), (None, false));
+    }
+
+    #[test]
+    fn follows_moved_and_deleted_files() {
+        use std::path::Path;
+        let mut e = PaneEditor::default();
+        open(&mut e, "/d/a");
+        open(&mut e, "/d/sub/b");
+        open(&mut e, "/x");
+        e.apply(EditorViewOp::Activate {
+            path: "/d/sub/b".into(),
+        });
+        assert!(e.moved(Path::new("/d"), Some(Path::new("/e"))));
+        assert_eq!(e.files, ["/e/a", "/e/sub/b", "/x"]);
+        assert_eq!(e.active.as_deref(), Some("/e/sub/b"));
+        assert!(!e.moved(Path::new("/nope"), None));
+        assert!(e.moved(Path::new("/e/sub/b"), None));
+        assert_eq!(e.files, ["/e/a", "/x"]);
+        assert_eq!(e.active.as_deref(), Some("/x"));
+        assert!(e.moved(Path::new("/"), None));
         assert_eq!((e.active, e.shown), (None, false));
     }
 }

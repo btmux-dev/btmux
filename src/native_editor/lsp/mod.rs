@@ -267,8 +267,8 @@ fn error(id: Value, code: i64, message: &str) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
 }
 
-/// What btmux supports as a client: `@codemirror/lsp-client`'s features,
-/// plus what btmux answers itself.
+/// What btmux supports as a client: `@codemirror/lsp-client`'s features and
+/// btmux's own (`features.ts`, `completion.ts`), plus what btmux answers itself.
 fn client_capabilities() -> Value {
     json!({
         "general": { "positionEncodings": ["utf-16"], "markdown": { "parser": "marked" } },
@@ -276,6 +276,8 @@ fn client_capabilities() -> Value {
             "applyEdit": true,
             "workspaceEdit": {
                 "documentChanges": true,
+                "resourceOperations": ["create", "rename", "delete"],
+                "failureHandling": "textOnlyTransactional",
                 "changeAnnotationSupport": { "groupsOnLabel": false },
             },
             "configuration": true,
@@ -296,8 +298,12 @@ fn client_capabilities() -> Value {
                     "snippetSupport": true,
                     "documentationFormat": ["markdown", "plaintext"],
                     "insertReplaceSupport": false,
+                    "labelDetailsSupport": true,
+                    "resolveSupport": { "properties": ["documentation", "detail", "additionalTextEdits"] },
                 },
-                "completionList": { "itemDefaults": ["commitCharacters", "editRange", "insertTextFormat"] },
+                "completionList": {
+                    "itemDefaults": ["commitCharacters", "editRange", "insertTextFormat", "data"],
+                },
                 "completionItemKind": { "valueSet": [] },
                 "contextSupport": true,
             },
@@ -726,6 +732,11 @@ impl Inner {
         }
     }
 
+    /// The Multipass instance server `id` runs in, if it is still running.
+    pub(super) fn lsp_sandbox(&self, id: u64) -> Option<Option<String>> {
+        self.lsp.servers.get(&id).map(|s| s.sandbox.clone())
+    }
+
     /// Tell tabs that prompts no longer need an answer.
     fn prompts_done(&mut self, id: u64, tokens: &[u64]) {
         let Some(server) = self.lsp.servers.get(&id) else {
@@ -935,7 +946,7 @@ impl super::Hub {
     /// Apply a server's `workspace/applyEdit`, loading files first.
     fn lsp_apply_edit(&'static self, id: u64, rid: Value, edit: Value) {
         tokio::spawn(async move {
-            let reply = match self.apply_edit(edit, None).await {
+            let reply = match self.apply_edit(edit, None, Some(id)).await {
                 Ok(()) => response(rid, json!({ "applied": true })),
                 Err(e) => not_applied(rid, &e),
             };

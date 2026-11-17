@@ -439,6 +439,7 @@ async fn main() {
     };
     // Before any editor socket opens a sandboxed file.
     native_editor::lsp::config::set_sandboxes(state.read().await.sandbox_mounts());
+    native_editor::set_state(state.clone());
     if let Some(editor) = inherited_editor {
         editor.restore().await;
     }

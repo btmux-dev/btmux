@@ -24,7 +24,7 @@ import { foldService, getIndentUnit, indentUnit } from '@codemirror/language';
 import { useStore } from '../../state/store';
 import type { Overlay } from '../../state/types';
 import { editorConnection } from './connection';
-import { viewDocs } from './doc';
+import { viewDocs, type Doc } from './doc';
 import { openPicker, type PickItem } from './picker';
 
 type Position = { line: number; character: number };
@@ -502,11 +502,14 @@ function choose(title: string, actions: string[]): Promise<string | null> {
   });
 }
 
-/** Apply a workspace edit `title` made in `buffer` at `version`, first asking about changes that need confirmation. */
+/**
+ * Apply workspace edit `title` from `doc`'s language server, its positions in
+ * `doc` at `version`, first asking about changes that need confirmation.
+ */
 export async function applyWorkspaceEdit(
   title: string,
   edit: WorkspaceEdit,
-  buffer: string | null,
+  doc: Doc | undefined,
   version: number | null,
 ) {
   const { labels, rest } = confirmations(edit);
@@ -516,7 +519,7 @@ export async function applyWorkspaceEdit(
     if (chosen === SKIP_CONFIRMATIONS && rest) edit = rest;
     else if (chosen !== APPLY_ALL) return;
   }
-  const result = await editorConnection.applyEdit(edit, buffer, version);
+  const result = await editorConnection.applyEdit(edit, doc?.servers[0] ?? null, doc?.buffer ?? null, version);
   if (result.error) toast(`${title} failed`, result.error);
 }
 
@@ -549,7 +552,7 @@ function codeActions(view: EditorView) {
             if (typeof (action as Command).command === 'string') return void execute(view, action as Command);
             let a = action as CodeAction;
             if (!a.edit && !a.command && resolve) a = await p.client.request('codeAction/resolve', a);
-            if (a.edit) await applyWorkspaceEdit(a.title, a.edit as WorkspaceEdit, doc?.buffer ?? null, version);
+            if (a.edit) await applyWorkspaceEdit(a.title, a.edit as WorkspaceEdit, doc, version);
             if (a.command) await execute(view, a.command);
           } catch (error) {
             toast(`${action.title} failed`, error);

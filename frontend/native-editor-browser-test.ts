@@ -490,7 +490,7 @@ try {
     });
     assert.ok(infoBox.scrollTop > 0 && infoBox.top >= 0 && infoBox.bottom <= infoBox.viewport, JSON.stringify(infoBox));
     assert.ok(infoBox.gap < 10, JSON.stringify(infoBox));
-    await page.locator('.cm-tooltip-autocomplete').getByText('fakeCompletion').click();
+    await page.locator('.cm-tooltip-autocomplete .cm-completionLabel', { hasText: 'fakeCompletion' }).click();
     await waitForText(page, paneId, 'let bad = 1;\nuse thing;\nfakeCompletion\n');
     console.log('PASS completion');
 

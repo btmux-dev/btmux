@@ -1,6 +1,6 @@
 /** Language server features of the native editor, with test-bin/fake-lsp. Run through browser-test-stack.ts. */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, type Page } from 'playwright';
@@ -292,6 +292,43 @@ try {
     JSON.stringify(buffers),
   );
   console.log('PASS MCP editor tools');
+
+  // Completions resolve: documentation for the selected one, an import once applied.
+  const complete = join(dir, 'complete.fake');
+  writeFileSync(complete, 'start\n');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: complete, line: 2, editor: 'native' });
+  await until('complete.fake', async () => (await lines(page, paneId)) === 'start\n');
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.type('imp');
+  const completions = page.locator('.cm-tooltip-autocomplete');
+  await completions.locator('.cm-completionLabel', { hasText: 'importedThing' }).waitFor();
+  await completions.getByText('lib', { exact: true }).waitFor();
+  await page.locator('.cm-completionInfo').getByText('importedThing', { exact: true }).waitFor();
+  await page.locator('.cm-completionInfo').getByText('fn importedThing()').waitFor();
+  await page.keyboard.press('Enter');
+  await until('the import', async () => (await lines(page, paneId)) === 'use lib;\nstart\nimportedThing');
+  assert.match(log(), /^resolve importedThing \{"from":"defaults"\}$/m);
+  console.log('PASS completion resolve');
+
+  // File operations: a file created and edited, the shown one moved with its tab.
+  const moving = join(dir, 'move.fake');
+  const moved = join(dir, 'mod', 'moved.fake');
+  const extra = join(dir, 'mod', 'extra.fake');
+  writeFileSync(moving, 'move me\n');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: moving, line: 1, editor: 'native' });
+  await until('move.fake', async () => (await lines(page, paneId)) === 'move me\n');
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+  await page.keyboard.press('ControlOrMeta+.');
+  await pane.getByRole('option', { name: /Move into a module/ }).click();
+  await pane.getByRole('tab', { name: 'moved.fake' }).waitFor();
+  await until('the moved file', async () => (await lines(page, paneId)) === 'move me\n');
+  assert.equal(await pane.getByRole('tab', { name: 'move.fake' }).count(), 0);
+  assert(!existsSync(moving) && existsSync(moved) && existsSync(extra));
+  await until('the moved file in the server', () => log().includes(`open ${moved} fake`));
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: extra, line: 1, editor: 'native' });
+  await until('the created file, unsaved', async () => (await lines(page, paneId)) === 'created\n');
+  console.log('PASS file operations');
 
   // A restarted server's watches work too.
   const count = (re: RegExp) => (log().match(re) ?? []).length;

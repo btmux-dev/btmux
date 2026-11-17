@@ -3,13 +3,14 @@
 //! `@codemirror/collab` (`/ws/editor`).
 
 pub mod buffer;
+pub mod file_ops;
 pub mod git;
 pub mod lsp;
 pub mod text;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -17,6 +18,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use buffer::{Buffer, DiskStatus, LineEnding, OnDisk, SaveError, Update};
+use file_ops::Step;
 
 /// Messages a socket may queue before it is dropped as lagging; the tab
 /// reconnects and catches up.
@@ -70,12 +72,15 @@ pub enum EditorClientMessage {
         token: u64,
         action: Option<String>,
     },
-    /// Apply an LSP `WorkspaceEdit` (a rename) to buffers, loading files as
-    /// needed; its positions are in `buffer` at `version`.
+    /// Apply an LSP `WorkspaceEdit` from language server `server` (a rename,
+    /// a code action), loading files as needed; its positions are in
+    /// `buffer` at `version`.
     ApplyEdit {
         req: u32,
         #[cfg_attr(test, ts(type = "unknown"))]
         edit: Value,
+        #[cfg_attr(test, ts(type = "number | null"))]
+        server: Option<u64>,
         buffer: Option<Uuid>,
         #[cfg_attr(test, ts(type = "number | null"))]
         version: Option<u64>,
@@ -256,6 +261,13 @@ pub struct Hub {
     inner: Mutex<Inner>,
     /// Signaled when no save is in progress any more.
     saves_done: tokio::sync::Notify,
+    /// For pane editors showing files that move.
+    state: OnceLock<crate::AppState>,
+}
+
+/// Let file operations update pane editors.
+pub fn set_state(state: crate::AppState) {
+    let _ = hub().state.set(state);
 }
 
 static HUB: LazyLock<Hub> = LazyLock::new(Hub::new);
@@ -457,6 +469,7 @@ impl Hub {
         Self {
             inner: Mutex::new(Inner::default()),
             saves_done: tokio::sync::Notify::new(),
+            state: OnceLock::new(),
         }
     }
 
@@ -579,11 +592,12 @@ impl Hub {
             EditorClientMessage::ApplyEdit {
                 req,
                 edit,
+                server,
                 buffer,
                 version,
             } => {
                 let expect = buffer.zip(version);
-                let error = self.apply_edit(edit, expect).await.err();
+                let error = self.apply_edit(edit, expect, server).await.err();
                 self.reply(socket, req, error, false);
             }
             EditorClientMessage::GitStage {
@@ -882,47 +896,75 @@ impl Hub {
         Ok(id)
     }
 
-    /// Apply an LSP `WorkspaceEdit`. With `expect`, its positions are in
-    /// that buffer at that version, which must still be current.
+    /// Apply an LSP `WorkspaceEdit` from language server `server`, step by
+    /// step: each run of text edits all or none, file operations between.
+    /// With `expect`, its positions are in that buffer at that version, which
+    /// must still be current.
     async fn apply_edit(
         &'static self,
         edit: Value,
+        mut expect: Option<(Uuid, u64)>,
+        server: Option<u64>,
+    ) -> Result<(), String> {
+        let steps = file_ops::parse(&edit)?;
+        if steps.iter().any(|s| !s.is_text()) {
+            let sandbox = {
+                let inner = self.inner.lock().unwrap();
+                match server {
+                    Some(id) => inner.lsp_sandbox(id).ok_or("The language server exited")?,
+                    None => None,
+                }
+            };
+            let checked = steps.clone();
+            tokio::task::spawn_blocking(move || file_ops::check(&checked, sandbox.as_deref()))
+                .await
+                .map_err(|e| e.to_string())??;
+        }
+        let mut steps = steps.into_iter().peekable();
+        while let Some(step) = steps.next() {
+            let Step::Text {
+                path,
+                edits,
+                version,
+            } = step
+            else {
+                // The edit's positions are still checked by its first text edits.
+                if let Some((id, version)) = expect {
+                    let inner = self.inner.lock().unwrap();
+                    if inner.buffers.get(&id).map(|b| b.version) != Some(version) {
+                        return Err("The file changed meanwhile".into());
+                    }
+                }
+                self.file_op(step).await?;
+                continue;
+            };
+            let mut run = vec![(path, edits, version)];
+            while let Some(Step::Text { .. }) = steps.peek() {
+                let Some(Step::Text {
+                    path,
+                    edits,
+                    version,
+                }) = steps.next()
+                else {
+                    unreachable!()
+                };
+                run.push((path, edits, version));
+            }
+            self.apply_text(run, expect.take()).await?;
+        }
+        Ok(())
+    }
+
+    /// Text edits to files, all or none.
+    async fn apply_text(
+        &'static self,
+        files: Vec<(PathBuf, Vec<Value>, Option<u64>)>,
         expect: Option<(Uuid, u64)>,
     ) -> Result<(), String> {
-        // Each file's edits, and the version they were made against, if given.
-        let mut files: Vec<(String, Vec<Value>, Option<u64>)> = Vec::new();
-        // `documentChanges` is preferred when a server sends both.
-        if let Some(changes) = edit["documentChanges"].as_array() {
-            for change in changes {
-                if change.get("kind").is_some() {
-                    return Err("Creating, renaming, or deleting files isn't supported".into());
-                }
-                let document = &change["textDocument"];
-                let uri = document["uri"].as_str().unwrap_or_default();
-                let version = match &document["version"] {
-                    Value::Null => None,
-                    v => Some(v.as_u64().ok_or("Invalid document version")?),
-                };
-                let edits = change["edits"].as_array().cloned().unwrap_or_default();
-                files.push((uri.to_owned(), edits, version));
-            }
-        } else if let Some(changes) = edit["changes"].as_object() {
-            for (uri, edits) in changes {
-                let edits = edits.as_array().cloned().unwrap_or_default();
-                files.push((uri.clone(), edits, None));
-            }
-        }
         let mut targets = Vec::new();
         let mut loaded = Ok(());
-        for (uri, edits, version) in files {
-            let id = match lsp::config::path(&uri)
-                .ok_or_else(|| format!("Cannot edit {uri}"))
-                .and_then(|path| resolve(&path.to_string_lossy()))
-            {
-                Ok(path) => self.load_buffer(path).await,
-                Err(e) => Err(e),
-            };
-            match id {
+        for (path, edits, version) in files {
+            match self.load_buffer(path).await {
                 Ok(id) => targets.push((id, edits, version)),
                 Err(e) => {
                     loaded = Err(e);
@@ -939,6 +981,71 @@ impl Hub {
         }
         inner.send_summaries();
         result
+    }
+
+    /// Create, rename, or delete a file or directory. Open buffers move with
+    /// a rename, and so do pane editors' files; deleted files leave them.
+    async fn file_op(&'static self, step: Step) -> Result<(), String> {
+        let moving: Vec<(Uuid, PathBuf)> = {
+            let inner = self.inner.lock().unwrap();
+            if inner.frozen {
+                return Err(UPGRADING.into());
+            }
+            inner.check_file_op(&step)?
+        };
+        let config = lsp::config::current();
+        let op = step.clone();
+        let moved = tokio::task::spawn_blocking(move || -> Result<_, String> {
+            if !file_ops::run(&op)? {
+                return Ok(None);
+            }
+            let Step::Rename { from, to, .. } = &op else {
+                return Ok(Some(Vec::new()));
+            };
+            let moved = moving
+                .into_iter()
+                .filter_map(|(id, old)| {
+                    let new = file_ops::moved(&old, from, to)?;
+                    let target = lsp::config::target(&config, &new);
+                    let git = find_git(&new);
+                    Some((id, new, target, git))
+                })
+                .collect::<Vec<_>>();
+            Ok(Some(moved))
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        let Some(moved) = moved else {
+            return Ok(());
+        };
+        {
+            let mut inner = self.inner.lock().unwrap();
+            for (id, path, target, git) in moved {
+                inner.repath(id, path, target, git);
+            }
+            inner.send_summaries();
+        }
+        let (from, to) = match &step {
+            Step::Rename { from, to, .. } => (from, Some(to.as_path())),
+            Step::Delete { path, .. } => (path, None),
+            _ => return Ok(()),
+        };
+        if let Some(state) = self.state.get() {
+            let mut mgr = state.write().await;
+            let mut changed = false;
+            for pane in mgr
+                .sessions
+                .iter_mut()
+                .flat_map(|s| &mut s.windows)
+                .flat_map(|w| &mut w.panes)
+            {
+                changed |= pane.editor.moved(from, to);
+            }
+            if changed {
+                crate::ws::control::broadcast_state(&mgr);
+            }
+        }
+        Ok(())
     }
 
     fn push(&self, socket: SocketId, id: Uuid, version: u64, updates: Vec<Update>) {
@@ -1092,8 +1199,8 @@ impl Hub {
         let Some(b) = inner.buffers.get_mut(&id) else {
             return;
         };
-        // A save or another check got there first.
-        if b.disk != known {
+        // A save or another check got there first, or it moved.
+        if b.disk != known || b.path != path {
             return;
         }
         match change {
@@ -1349,6 +1456,76 @@ impl Inner {
         }
     }
 
+    /// What a file operation would move, refusing what would lose or
+    /// confuse open buffers: overwriting one, or deleting unsaved changes.
+    fn check_file_op(&self, step: &Step) -> Result<Vec<(Uuid, PathBuf)>, String> {
+        let under = |dir: &Path| {
+            self.by_path
+                .iter()
+                .filter(|(p, _)| p.starts_with(dir))
+                .map(|(p, id)| (*id, p.clone()))
+                .collect::<Vec<_>>()
+        };
+        let open = |p: &Path| format!("{} is open in the editor", p.display());
+        match step {
+            Step::Text { .. } => Ok(Vec::new()),
+            Step::Create {
+                path, overwrite, ..
+            } => match *overwrite && self.by_path.contains_key(path) && path.exists() {
+                true => Err(open(path)),
+                false => Ok(Vec::new()),
+            },
+            Step::Rename {
+                from,
+                to,
+                overwrite,
+                ..
+            } => {
+                if let Some((_, p)) = under(to).first().filter(|_| *overwrite && to.exists()) {
+                    return Err(open(p));
+                }
+                Ok(under(from))
+            }
+            Step::Delete { path, .. } => {
+                for (id, p) in under(path) {
+                    if self.buffers.get(&id).is_some_and(|b| b.dirty()) {
+                        return Err(format!("{} has unsaved changes", p.display()));
+                    }
+                }
+                Ok(Vec::new())
+            }
+        }
+    }
+
+    /// The buffer's file moved to `path`: reopen it there in its language's
+    /// servers and repository.
+    fn repath(
+        &mut self,
+        id: Uuid,
+        path: PathBuf,
+        target: Option<lsp::config::Target>,
+        git: Option<(git::GitFile, git::Snapshot)>,
+    ) {
+        let Some(b) = self.buffers.get_mut(&id) else {
+            return;
+        };
+        let old = std::mem::replace(&mut b.path, path.clone());
+        let servers = std::mem::take(&mut b.servers);
+        b.language_id = None;
+        self.by_path.remove(&old);
+        self.by_path.insert(path.clone(), id);
+        self.unwatch(&old);
+        self.watch(&path);
+        if let Some(g) = self.git.remove(&id) {
+            self.unwatch_dir(&g.file.git_dir);
+        }
+        self.insert_git(id, git);
+        self.lsp_closed(id, &old, &servers);
+        if let Some(target) = target {
+            self.lsp_attach(id, target);
+        }
+    }
+
     /// Track a buffer's repository, watching its index.
     fn insert_git(&mut self, id: Uuid, found: Option<(git::GitFile, git::Snapshot)>) {
         let Some((file, read)) = found else { return };
@@ -1485,9 +1662,9 @@ mod tests {
             }] })
         };
         let text = || hub().inner.lock().unwrap().buffers[&id].rope.to_string();
-        assert!(hub().apply_edit(edit(0), None).await.is_err());
+        assert!(hub().apply_edit(edit(0), None, None).await.is_err());
         assert_eq!(text(), "Xabc\n");
-        hub().apply_edit(edit(1), None).await.unwrap();
+        hub().apply_edit(edit(1), None, None).await.unwrap();
         assert_eq!(text(), "Aabc\n");
         let mut inner = hub().inner.lock().unwrap();
         inner.buffers.remove(&id);
@@ -1515,11 +1692,11 @@ mod tests {
         };
         // A reversed range, and the clean buffer loaded for it is dropped.
         let reversed = json!({ "documentChanges": [change(2, 1, "X")] });
-        assert!(hub().apply_edit(reversed, None).await.is_err());
+        assert!(hub().apply_edit(reversed, None, None).await.is_err());
         assert!(!hub().inner.lock().unwrap().by_path.contains_key(&path));
         // The second edit of a file sees the first.
         let twice = json!({ "documentChanges": [change(0, 1, "AA"), change(0, 2, "B")] });
-        hub().apply_edit(twice, None).await.unwrap();
+        hub().apply_edit(twice, None, None).await.unwrap();
         let mut inner = hub().inner.lock().unwrap();
         let id = inner.by_path.remove(&path).unwrap();
         assert_eq!(inner.buffers.remove(&id).unwrap().rope.to_string(), "Bbc\n");

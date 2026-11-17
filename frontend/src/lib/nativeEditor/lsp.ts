@@ -5,7 +5,6 @@ import {
   jumpToDefinitionKeymap,
   LSPClient,
   LSPPlugin,
-  serverCompletion,
   showSignatureHelp,
   signatureHelp,
   Workspace,
@@ -22,6 +21,7 @@ import { useStore } from '../../state/store';
 import type { Overlay } from '../../state/types';
 import type { EditorServerMessage } from '../../generated/protocol';
 import { IS_MAC } from '../nvimKeys';
+import { serverCompletions } from './completion';
 import { editorConnection } from './connection';
 import { viewDocs, type Doc } from './doc';
 import { REFRESH_ALL, applyWorkspaceEdit, lspFeatures, refreshEffect, setRawDiagnostics } from './features';
@@ -237,7 +237,7 @@ async function rename(view: EditorView, newName: string) {
       'textDocument/rename',
       { textDocument: { uri: plugin.uri }, position: plugin.toPosition(word.from), newName },
     );
-    if (edit) await applyWorkspaceEdit('Rename', edit, doc.buffer, version);
+    if (edit) await applyWorkspaceEdit('Rename', edit, doc, version);
   } catch (error) {
     toast('Rename failed', error);
   }
@@ -340,7 +340,7 @@ function client(server: number): LSPClient {
       },
     },
     extensions: [
-      serverCompletion(),
+      serverCompletions,
       hoverTooltips(),
       signatureHelp(),
       keymap.of([

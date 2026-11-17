@@ -1,7 +1,9 @@
 // A fake language server for browser tests, over stdio. It keeps the
 // documents it is sent and logs each method to $BTMUX_FAKE_LSP/log (if set):
 // - diagnostics: an error on every "bad"
-// - completion: "fakeCompletion", with 100 paragraphs of docs
+// - completion: "fakeCompletion", with 100 paragraphs of docs, and
+//   "importedThing", whose resolve adds documentation and an import ("use lib;"
+//   on line 1)
 // - signature help: in "sig(", the parameter after as many commas
 // - hover: "Fake hover for WORD", 700 ms late for "slow", 200 paragraphs for "use"
 // - definition: WORD's first line in other.fake beside the document
@@ -15,7 +17,9 @@
 // - code lenses: "fake.ask" on line 1, which asks the user (showMessageRequest)
 // - code actions: replace "bad" with "good"; on a last line "end", append "!"
 //   and uppercase it, which needs confirmation, or have the server uppercase
-//   "end!" (workspace/applyEdit, needing confirmation)
+//   "end!" (workspace/applyEdit, needing confirmation); on "move me", create
+//   mod/extra.fake with a line, move the file to mod/moved.fake, and delete
+//   gone.fake if it exists
 // - folding: the first three lines; selection ranges: word, then line
 // - watched files: **/*.fake, logged; a new crash.fake makes it exit, once
 // - opened documents: logged with their language id
@@ -93,7 +97,7 @@ function handle(msg: any): unknown {
       return {
         capabilities: {
           textDocumentSync: { openClose: true, change: 2, save: { includeText: false } },
-          completionProvider: {},
+          completionProvider: { resolveProvider: true },
           signatureHelpProvider: { triggerCharacters: ['(', ','] },
           hoverProvider: true,
           definitionProvider: true,
@@ -119,6 +123,7 @@ function handle(msg: any): unknown {
     case 'textDocument/completion':
       return {
         isIncomplete: false,
+        itemDefaults: { data: { from: 'defaults' } },
         items: [
           {
             label: 'fakeCompletion',
@@ -128,6 +133,7 @@ function handle(msg: any): unknown {
               value: Array.from({ length: 100 }, (_, i) => `Completion paragraph ${i}.`).join('\n\n'),
             },
           },
+          { label: 'importedThing', kind: 6, labelDetails: { description: 'lib' } },
         ],
       };
     case 'textDocument/signatureHelp': {
@@ -140,6 +146,17 @@ function handle(msg: any): unknown {
         activeParameter: call[1].split(',').length - 1,
       };
     }
+    case 'completionItem/resolve':
+      log(`resolve ${p.label} ${JSON.stringify(p.data)}`);
+      return {
+        ...p,
+        detail: `fn ${p.label}()`,
+        documentation: p.documentation ?? { kind: 'markdown', value: `Docs for **${p.label}**` },
+        additionalTextEdits:
+          p.label === 'importedThing'
+            ? [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }, newText: 'use lib;\n' }]
+            : undefined,
+      };
     case 'textDocument/hover': {
       const word = wordAt(text(p.textDocument.uri), p.position);
       if (word === 'use') {
@@ -269,6 +286,25 @@ function handle(msg: any): unknown {
             { range: { start: at(3), end: at(3) }, newText: '!', annotationId: 'plain' },
           ]),
         });
+      if (t.includes('move me')) {
+        const dir = dirname(pathOf(uri));
+        const extra = uriOf(join(dir, 'mod', 'extra.fake'));
+        const start = { line: 0, character: 0 };
+        actions.push({
+          title: 'Move into a module',
+          edit: {
+            documentChanges: [
+              { kind: 'create', uri: extra },
+              {
+                textDocument: { uri: extra, version: null },
+                edits: [{ range: { start, end: start }, newText: 'created\n' }],
+              },
+              { kind: 'rename', oldUri: uri, newUri: uriOf(join(dir, 'mod', 'moved.fake')) },
+              { kind: 'delete', uri: uriOf(join(dir, 'gone.fake')), options: { ignoreIfNotExists: true } },
+            ],
+          },
+        });
+      }
       if (lines[line] === 'end!')
         actions.push({
           title: 'Shout later',

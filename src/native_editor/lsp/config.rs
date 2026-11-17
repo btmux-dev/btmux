@@ -257,7 +257,8 @@ pub fn set_sandboxes(mounts: Vec<(PathBuf, String)>) {
     }
 }
 
-fn sandbox(path: &Path) -> Option<String> {
+/// The Multipass instance whose mount holds `path`.
+pub fn sandbox(path: &Path) -> Option<String> {
     SANDBOXES
         .read()
         .unwrap()

@@ -515,7 +515,11 @@ The backend answers the server's requests (`workspace/configuration` from
 keeps `$/progress` work in `lsp_status`, which editors show as progress toasts
 (`ProgressCard`, shared with the Neovim surface). Renames and code actions go through
 `apply_edit`, which edits every file named, loading unopened ones as unsaved
-buffers. Changes whose annotation `needsConfirmation` (`lsp/annotations.rs`)
+buffers, and runs file operations (`file_ops.rs`) in order between runs of
+text edits (each run all or none), after checking them all against a dry run;
+a sandboxed server's stay in its mounts, deletes go to the trash, and open
+buffers and pane editors' files follow a rename (`repath`, `PaneEditor::moved`).
+Changes whose annotation `needsConfirmation` (`lsp/annotations.rs`)
 are first confirmed in the tab (`applyWorkspaceEdit`), or, for a server's
 `workspace/applyEdit`, through an `lsp_prompt`; either can skip just those
 changes. Crashed servers restart up to 3 times a minute; idle ones stop after
@@ -533,7 +537,9 @@ sandboxed session's mount (`set_sandboxes`, from `broadcast_state`) get servers
 run by `multipass exec` and a login shell in the guest. The browser's other
 features (`lib/nativeEditor/features.ts`: semantic tokens, inlay hints, code
 lenses, highlights, folding and selection ranges, code actions, symbols, call
-and type hierarchy, range and on-type formatting) request through the same
+and type hierarchy, range and on-type formatting) and completions
+(`completion.ts`, after lsp-client's source, adding `completionItem/resolve`
+for docs and additional edits, also after snippets) request through the same
 client; pickers are a CodeMirror panel (`picker.ts`, which highlights matched
 characters, on Enter waits for the query typed and the results it replaces
 them with later, and drops pending results and picks once closed), and the palette's
