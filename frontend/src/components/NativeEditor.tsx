@@ -23,6 +23,8 @@ import { STARTUP_THEME } from '../state/startupTheme';
 import { getTerminalFontFamily, getTerminalFontSize, getTerminalFontWeight } from '../state/configDefaults';
 import { buildFontFamily, terminalTransparency } from './TerminalPane';
 import { Spinner } from './Spinner';
+import { ProgressCard } from './ProgressCard';
+import { lspProgress, type LspProgress } from '../lib/nativeEditor/lspProgress';
 
 let loader: Promise<typeof import('../lib/nativeEditor/paneEditor')> | null = null;
 const loadEditor = () => (loader ??= import('../lib/nativeEditor/paneEditor'));
@@ -59,7 +61,25 @@ export function NativeEditor({
   const [buffers, setBuffers] = useState<BufferSummary[]>([]);
   useEffect(() => editorConnection.subscribeBuffers(setBuffers), []);
   const [servers, setServers] = useState<LspServerStatus[]>([]);
-  useEffect(() => editorConnection.onLspStatus(setServers), []);
+  const [progress, setProgress] = useState<LspProgress[]>([]);
+  useEffect(
+    () =>
+      editorConnection.onLspStatus((servers) => {
+        setServers(servers);
+        setProgress((prev) => lspProgress(prev, servers, Date.now()));
+      }),
+    [],
+  );
+  // Drop finished cards as they expire.
+  useEffect(() => {
+    const times = progress.map((p) => p.expires).filter(Number.isFinite);
+    if (!times.length) return;
+    const id = window.setTimeout(
+      () => setProgress((prev) => prev.filter((p) => p.expires > Date.now())),
+      Math.max(0, Math.min(...times) - Date.now()) + 16,
+    );
+    return () => window.clearTimeout(id);
+  }, [progress]);
   // Unsaved files this pane doesn't show, as when their pane closed.
   const unsaved = buffers.filter((b) => b.dirty && !state.files.includes(b.path));
   const modalOpen = useStore(
@@ -145,6 +165,7 @@ export function NativeEditor({
   const panelId = `native-editor-${paneId}`;
   const status = active && editor ? editor.status(active) : null;
   const lsp = status ? servers.filter((s) => status.servers.includes(s.id)) : [];
+  const work = status ? progress.filter((p) => status.servers.includes(p.server)) : [];
   const close = (path: string) => {
     // Another pane showing the file keeps its unsaved changes.
     const elsewhere = useStore
@@ -267,6 +288,20 @@ export function NativeEditor({
             <Spinner size="lg" label="Opening…" />
           </VStack>
         )}
+        {work.length > 0 && (
+          <VStack
+            gap={1}
+            hAlign="end"
+            className="pointer-events-none absolute inset-x-2 top-2 z-10"
+            onMouseDown={(e) => e.preventDefault()}
+          >
+            {work.map((p) => (
+              <div key={p.id} data-lsp-progress={p.id} className="flex w-full justify-end">
+                <ProgressCard progress={p} />
+              </div>
+            ))}
+          </VStack>
+        )}
         {editor && !active && (
           <VStack hAlign="center" vAlign="center" gap={1} className="btm-sans absolute inset-0">
             <Text color="secondary">No open files</Text>
@@ -309,11 +344,9 @@ export function NativeEditor({
               >
                 {server.state === 'failed'
                   ? `${server.name}: ${server.message ?? 'failed'}`
-                  : server.progress.length
-                    ? `${server.name}: ${server.progress[0]}`
-                    : server.state === 'starting'
-                      ? `${server.name}…`
-                      : server.name}
+                  : server.state === 'starting'
+                    ? `${server.name}…`
+                    : server.name}
               </Text>
             ))}
             {status?.language && (

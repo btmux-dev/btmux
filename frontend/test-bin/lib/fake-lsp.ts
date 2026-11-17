@@ -16,6 +16,7 @@
 // - folding: the first three lines; selection ranges: word, then line
 // - watched files: **/*.fake, logged; a new crash.fake makes it exit, once
 // - opened documents: logged with their language id
+// - progress: "Indexing" at 50% while any document contains "busy"
 import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -247,6 +248,19 @@ function handle(msg: any): unknown {
   return undefined;
 }
 
+let busy = false;
+function progress() {
+  const now = [...docs.values()].some((d) => d.text.includes('busy'));
+  if (now === busy) return;
+  busy = now;
+  const token = 'fake-index';
+  const value = (v: object) => send({ jsonrpc: '2.0', method: '$/progress', params: { token, value: v } });
+  if (!busy) return value({ kind: 'end' });
+  request('window/workDoneProgress/create', { token });
+  value({ kind: 'begin', title: 'Indexing', percentage: 0 });
+  value({ kind: 'report', message: '1/2', percentage: 50 });
+}
+
 function notify(msg: any) {
   const p = msg.params;
   switch (msg.method) {
@@ -254,6 +268,7 @@ function notify(msg: any) {
       log(`open ${pathOf(p.textDocument.uri)} ${p.textDocument.languageId}`);
       docs.set(p.textDocument.uri, { text: p.textDocument.text, version: p.textDocument.version });
       publish(p.textDocument.uri);
+      progress();
       break;
     case 'textDocument/didChange': {
       const doc = docs.get(p.textDocument.uri);
@@ -269,6 +284,7 @@ function notify(msg: any) {
       doc.version = p.textDocument.version;
       log(`version ${doc.version} ${JSON.stringify(doc.text)}`);
       publish(p.textDocument.uri);
+      progress();
       break;
     }
     case 'textDocument/didClose':

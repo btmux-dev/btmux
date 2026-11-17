@@ -5,6 +5,7 @@ import { collab, getSyncedVersion, receiveUpdates, sendableUpdates } from '@code
 import { freshFrom } from './src/lib/nativeEditor/doc';
 import { detectIndent } from './src/lib/nativeEditor/languages';
 import { decodeTokens } from './src/lib/nativeEditor/features';
+import { lspProgress } from './src/lib/nativeEditor/lspProgress';
 import { fuzzyMatch } from './src/lib/nativeEditor/picker';
 import { parseQuery } from './src/lib/nativeEditor/quickOpen';
 import { diff, rebase } from './src/lib/nativeEditor/rebase';
@@ -111,4 +112,39 @@ test('quick open splits a trailing line (and ignored column) from the query', ()
   expect(parseQuery('main.rs:0')).toEqual({ query: 'main.rs', line: null });
   expect(parseQuery(':12')).toEqual({ query: '', line: 12 });
   expect(parseQuery('a:b')).toEqual({ query: 'a:b', line: null });
+});
+
+test('language server progress keeps its order, then finishes or fails and expires', () => {
+  const server = (id: number, state: 'ready' | 'starting', tokens: string[]) => ({
+    id,
+    name: `s${id}`,
+    root: '/',
+    state,
+    message: null,
+    progress: tokens.map((token) => ({ token, title: `T${token}`, message: 'm', percent: 50 })),
+  });
+  let cards = lspProgress([], [server(1, 'ready', ['2'])], 0);
+  cards = lspProgress(cards, [server(1, 'ready', ['1', '2']), server(2, 'ready', ['1'])], 0);
+  expect(cards.map((c) => [c.id, c.status])).toEqual([
+    ['1:2', 'running'],
+    ['1:1', 'running'],
+    ['2:1', 'running'],
+  ]);
+  // Server 1's work ends; server 2 crashes and restarts.
+  cards = lspProgress(cards, [server(1, 'ready', ['1']), server(2, 'starting', [])], 100);
+  expect(cards.map((c) => [c.id, c.status, c.text])).toEqual([
+    ['1:2', 'success', ''],
+    ['1:1', 'running', 'm'],
+    ['2:1', 'failed', ''],
+  ]);
+  expect(cards[0].expires).toBe(1600);
+  // The same token begins again, then the finished cards expire.
+  cards = lspProgress(cards, [server(1, 'ready', ['1', '2']), server(2, 'ready', [])], 200);
+  expect(cards.map((c) => [c.id, c.status])).toEqual([
+    ['1:2', 'running'],
+    ['1:1', 'running'],
+    ['2:1', 'failed'],
+  ]);
+  cards = lspProgress(cards, [server(1, 'ready', ['1', '2']), server(2, 'ready', [])], 2000);
+  expect(cards.map((c) => c.id)).toEqual(['1:2', '1:1']);
 });
