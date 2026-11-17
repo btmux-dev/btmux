@@ -21,7 +21,9 @@ Windows.
 brew install --cask buntec/btmux/btmux
 ```
 
-The app is signed and notarized. Intel Macs are not supported.
+The app is signed and notarized. Intel Macs are not supported. To use its
+`btmux` command in a terminal, choose **btmux → Install Command-Line Tool…**
+(skip this if you also installed the `btmux` formula).
 
 </TabItem>
 <TabItem label="Linux">
@@ -33,12 +35,15 @@ Download `btmux-desktop-<arch>-unknown-linux-gnu.deb` from
 sudo apt install ./btmux-desktop-*.deb
 ```
 
+It installs the `btmux` command as `/usr/bin/btmux`.
+
 </TabItem>
 <TabItem label="Windows">
 
 Run `btmux-desktop-<arch>-pc-windows-msvc-setup.exe` from
 [Releases](https://github.com/buntec/btmux/releases/latest). It installs for the
-current user, without admin rights.
+current user, without admin rights, and adds the `btmux` command to your
+`PATH`.
 
 :::caution
 Windows support is experimental. The installer is unsigned; if SmartScreen

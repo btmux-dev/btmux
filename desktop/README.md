@@ -24,6 +24,8 @@ While the window is hidden, attention and error notifications from connected ser
 
 On macOS, the window is transparent with a theme-colored tint, defaulting to 95% opacity. Set `desktop-background-opacity = 0.95` in `config.toml` to adjust the tint from clear (`0`) to opaque (`1`); changes reload live. Linux and Windows windows remain opaque. macOS transparency requires Tauri's `macos-private-api` feature, so this build cannot be distributed through the Mac App Store.
 
+The bundled server is the `btmux` command-line tool, which the app also installs. The Linux `.deb` installs it as `/usr/bin/btmux`. The Windows installer adds a hard link to it, `bin\btmux.exe` in the install folder, to your user `PATH` (open a new terminal to use it) and removes it on uninstall; a `btmux.exe` earlier in `PATH` still wins. On macOS, choose **btmux → Install Command-Line Tool…**: it links `/usr/local/bin/btmux` to the app's copy, asking for an administrator password since that folder belongs to root, and warns if your shell finds another `btmux` first. Choosing it again offers to remove the link. The link follows app updates, so it needs the app in a lasting location such as `/Applications`, not a disk image, and isn't offered for the Nix package, which moves on every update. After updating the app, `btmux upgrade` moves a running command-line server to the new version.
+
 Each target architecture needs its own bundled `btmux` binary. On macOS, sign and notarize the bundle before distributing it to other users (release CI does this with Tauri's `APPLE_*` variables).
 
 `app-icon.svg` is the desktop icon source. After editing it, run `cd desktop && bunx tauri icon app-icon.svg` to regenerate the bundled icons.
