@@ -10,6 +10,18 @@ actions, saved state, and API types can change in any release.
 
 ### Added
 
+- A documentation site with a desktop walkthrough and references for commands
+  and configuration. ([#135](https://github.com/btmux-dev/btmux/pull/135))
+
+### Fixed
+
+- GitHub status finds pull requests for branches pushed to a URL and for
+  renamed fork checkouts. ([#149](https://github.com/btmux-dev/btmux/pull/149))
+
+## [0.0.207] - 2026-11-17
+
+### Added
+
 - **A native editor**, now the default for `<prefix> + e`: shared live between
   clients, with language servers, quick open, Vim mode, and Git signs.
   ([#134](https://github.com/btmux-dev/btmux/pull/134), [#137](https://github.com/btmux-dev/btmux/pull/137), [#138](https://github.com/btmux-dev/btmux/pull/138), [#143](https://github.com/btmux-dev/btmux/pull/143),
