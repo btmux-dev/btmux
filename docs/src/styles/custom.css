@@ -8,8 +8,7 @@
   font-family: "Geist Pixel Variable", var(--sl-font);
   font-variation-settings: "ELSH" 40;
   font-weight: 400;
-  /* Below 40px it loses its pixel grid. */
-  font-size: 40px;
+  font-size: 38px;
   line-height: 1;
   letter-spacing: 0;
   color: var(--sl-color-white);
