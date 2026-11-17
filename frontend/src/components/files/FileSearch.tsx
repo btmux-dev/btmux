@@ -8,7 +8,13 @@ import { Placeholder } from './Placeholder';
 import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
 import { clsx } from 'clsx';
 import { useFileStore } from '@/state/fileStore';
-import type { FileSearchResult, SearchResult, ServerFileMessage } from '@/protocol/file-messages';
+import {
+  searchFiles,
+  type FileSearchResponse,
+  type FileSearchResult,
+  type SearchResult,
+  type ServerFileMessage,
+} from '@/protocol/file-messages';
 
 interface FileSearchProps {
   fileSend: (type: string, payload: Record<string, unknown>) => Promise<ServerFileMessage>;
@@ -55,22 +61,16 @@ export function FileSearch({ fileSend, currentPath, focusedIndex, onPreview }: F
       setIsLoading(true);
       try {
         if (searchMode === 'files') {
-          const request = { query: searchQuery, path: '.', root: currentPath };
-          const resp = await fileSend('search_files', request);
-          const payload = resp.payload as { results: FileSearchResult[]; refreshing?: boolean };
-          if (generation === searchGenerationRef.current) {
-            store.getState().setSearchResults(payload.results ?? []);
-          }
-          // A stale list was searched: search again once the folder is listed.
-          if (payload.refreshing) {
-            fileSend('search_files', { ...request, fresh: true }).then(
-              (fresh) => {
-                if (generation === searchGenerationRef.current)
-                  store.getState().setSearchResults((fresh.payload as { results: FileSearchResult[] }).results ?? []);
-              },
+          const send = async (payload: Record<string, unknown>) =>
+            (await fileSend('search_files', payload)).payload as unknown as FileSearchResponse;
+          const current = () => generation === searchGenerationRef.current;
+          const payload = await searchFiles(send, { query: searchQuery, path: '.', root: currentPath }, (fresh) =>
+            fresh.then(
+              (response) => current() && store.getState().setSearchResults(response.results ?? []),
               () => {},
-            );
-          }
+            ),
+          );
+          if (current()) store.getState().setSearchResults(payload.results ?? []);
         } else {
           const resp = await fileSend('search_content', { query: searchQuery, path: '.', root: currentPath });
           const payload = resp.payload as { results: SearchResult[] };

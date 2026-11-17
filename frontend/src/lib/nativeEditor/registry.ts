@@ -11,6 +11,8 @@ export const EDITOR_COMMANDS = [
   'editor-expand-selection',
 ];
 
+export const QUICK_OPEN_NEEDS_FOLDER = 'Quick open needs a folder on this machine';
+
 /** How long a command waits for the editor to be shown. */
 const QUEUE_MS = 5000;
 /** How long a command waits for modal dialogs to close. */

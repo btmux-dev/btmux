@@ -201,15 +201,25 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .get("fresh")
                 .and_then(|f| f.as_bool())
                 .unwrap_or(false);
+            let boost: std::collections::HashMap<String, u32> = request
+                .payload
+                .get("boost")
+                .and_then(|b| serde_json::from_value(b.clone()).ok())
+                .unwrap_or_default();
             let search_root = fs_ops::validate_path(&root, path).unwrap_or_else(|_| root.clone());
 
-            match state.file_index.search(query, &search_root, fresh).await {
+            match state
+                .file_index
+                .search(query, &search_root, fresh, &boost)
+                .await
+            {
                 Ok(search) => ServerMessage {
                     id,
                     msg_type: "search_files_result".to_string(),
                     payload: serde_json::json!({
                         "results": search.results,
                         "refreshing": search.refreshing,
+                        "root": search.root,
                         "done": true,
                     }),
                 },

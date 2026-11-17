@@ -18,9 +18,10 @@ export interface PickerSpec {
   items?: PickItem[];
   /**
    * …or items asked for as the query changes (workspace symbols, files).
-   * `refresh` replaces them with newer ones for the same text later.
+   * `refresh`, called before the query resolves, replaces them with newer
+   * ones for the same text later; Enter waits for those too.
    */
-  query?: (text: string, refresh: (items: PickItem[]) => void) => Promise<PickItem[]>;
+  query?: (text: string, refresh: (items: Promise<PickItem[]>) => void) => Promise<PickItem[]>;
 }
 
 const setPicker = StateEffect.define<PickerSpec | null>();
@@ -118,29 +119,40 @@ function pickerPanel(view: EditorView, spec: PickerSpec): Panel {
     input.setAttribute('aria-activedescendant', shown.length ? `${id}-${selected}` : '');
     list.children[selected]?.scrollIntoView({ block: 'nearest' });
   };
-  // The last update, which Enter waits for.
+  // The last update and its refreshes, which Enter waits for.
   let settled = Promise.resolve();
-  const update = () =>
-    (settled = (async () => {
-      const text = input.value;
-      const g = ++generation;
-      const refresh = (items: PickItem[]) => {
-        if (g !== generation || closed) return;
-        // Keep the selected item if it is still there.
-        const current = shown[selected];
-        shown = items;
-        selected = Math.max(
-          0,
-          items.findIndex((item) => item.label === current?.label && item.detail === current?.detail),
-        );
-        render();
-      };
+  const update = () => {
+    const text = input.value;
+    const g = ++generation;
+    const refreshes: Promise<void>[] = [];
+    const refresh = (next: Promise<PickItem[]>) => {
+      refreshes.push(
+        next.then(
+          (items) => {
+            if (g !== generation || closed) return;
+            // Keep the selected item if it is still there.
+            const current = shown[selected];
+            shown = items;
+            selected = Math.max(
+              0,
+              items.findIndex((item) => item.label === current?.label && item.detail === current?.detail),
+            );
+            render();
+          },
+          () => {},
+        ),
+      );
+    };
+    const first = (async () => {
       const items = spec.query ? await spec.query(text, refresh).catch(() => []) : (spec.items ?? []);
       if (g !== generation || closed) return;
       shown = spec.query ? items : items.filter((item) => fuzzyMatch(item.label, text));
       selected = 0;
       render();
-    })());
+    })();
+    settled = first.then(() => Promise.all(refreshes)).then(() => {});
+    return settled;
+  };
   const pick = (i: number) => {
     if (closed) return;
     const item = shown[i];

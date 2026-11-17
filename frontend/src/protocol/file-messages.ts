@@ -40,6 +40,29 @@ export interface FileSearchResult {
   score: number;
 }
 
+/** A `search_files` reply. */
+export interface FileSearchResponse {
+  results: FileSearchResult[];
+  /** The list searched was stale and is being listed again. */
+  refreshing?: boolean;
+  /** The folder searched, symlinks resolved, as result paths start. */
+  root: string;
+}
+
+/**
+ * `search_files` through `send`. When the server searched a stale list,
+ * `refreshed` gets the search repeated with `fresh`, which waits for the new one.
+ */
+export async function searchFiles(
+  send: (payload: Record<string, unknown>) => Promise<FileSearchResponse>,
+  payload: Record<string, unknown>,
+  refreshed: (fresh: Promise<FileSearchResponse>) => void,
+): Promise<FileSearchResponse> {
+  const response = await send({ ...payload, fresh: false });
+  if (response.refreshing) refreshed(send({ ...payload, fresh: true }));
+  return response;
+}
+
 export interface SearchResult {
   path: string;
   line: number | null;

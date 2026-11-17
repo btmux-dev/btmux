@@ -23,11 +23,15 @@ import { detectIndent, languageFor } from './languages';
 import { format, lspExtension, serverFailed, setDisplay } from './lsp';
 import { editorCommands, serverFoldsChanged } from './features';
 import { noteOpened, quickOpen } from './quickOpen';
+import { QUICK_OPEN_NEEDS_FOLDER } from './registry';
 import { findPaneState, useStore } from '../../state/store';
 import { workspaceFolder } from '../vscodeFolder';
 
 /** Longest wait for formatting before a save goes ahead without it. */
 const FORMAT_TIMEOUT_MS = 3000;
+
+/** Longest wait for the active file to load before quick open shows anyway. */
+const QUICK_OPEN_WAIT_MS = 2000;
 
 /** Max gap between two Esc presses that hide the editor. */
 const DOUBLE_ESC_MS = 300;
@@ -68,6 +72,8 @@ export class PaneEditor {
   private stopStatus: () => void;
   private lastEsc = -Infinity;
   private waiting: { path: string; resolve: (view: EditorView | null) => void }[] = [];
+  private quickOpenWaiting = false;
+  private destroyed = false;
   cursor = { line: 1, column: 1, selected: 0 };
   problems = { errors: 0, warnings: 0 };
   formatOnSave = false;
@@ -108,7 +114,10 @@ export class PaneEditor {
       EditorView.domEventHandlers({
         keydown: (e) => this.keydown(e),
         // Jumps to other files open where the user is.
-        focus: () => setDisplay((path) => this.display(path)),
+        focus: () => {
+          setDisplay((path) => this.display(path));
+          if (this.active) noteOpened(this.active);
+        },
       }),
       keymap.of([{ key: 'Mod-p', run: () => this.quickOpen(), preventDefault: true }]),
     ];
@@ -122,8 +131,8 @@ export class PaneEditor {
     return this.whenShown(path);
   }
 
-  /** Resolves with the view once `path` is shown and loaded, or null after 10 s. */
-  private whenShown(path: string): Promise<EditorView | null> {
+  /** Resolves with the view once `path` is shown and loaded, or null after `timeout` ms. */
+  private whenShown(path: string, timeout = 10_000): Promise<EditorView | null> {
     return new Promise((resolve) => {
       const waiter = { path, resolve };
       this.waiting.push(waiter);
@@ -131,7 +140,7 @@ export class PaneEditor {
         if (!this.waiting.includes(waiter)) return;
         this.waiting = this.waiting.filter((w) => w !== waiter);
         resolve(null);
-      }, 10_000);
+      }, timeout);
     });
   }
 
@@ -252,7 +261,8 @@ export class PaneEditor {
       const focused = this.view.hasFocus;
       if (this.active) this.docs.get(this.active)?.attach(null);
       this.active = active && this.docs.has(active) ? active : null;
-      if (this.active) noteOpened(this.active);
+      // Recent files are those viewed here, not other tabs' or restored ones.
+      if (this.active && focused) noteOpened(this.active);
       const doc = this.active ? this.docs.get(this.active) : undefined;
       // Not loaded yet: shown once it is (docChanged).
       if (!doc || !doc.attach(this.view)) this.view.setState(this.placeholder());
@@ -338,21 +348,26 @@ export class PaneEditor {
 
   /** Show quick open, once the active file is loaded. */
   quickOpen(): boolean {
-    const pane = findPaneState(useStore.getState(), this.paneId);
-    const root = workspaceFolder(pane);
-    if (!pane || !root) {
-      useStore.getState().showToast('Quick open needs a folder on this machine', 'info');
-      return true;
-    }
+    if (this.quickOpenWaiting) return true;
     const show = () => {
+      if (this.destroyed) return;
+      const pane = findPaneState(useStore.getState(), this.paneId);
+      const root = workspaceFolder(pane);
+      if (!pane || !root) return useStore.getState().showToast(QUICK_OPEN_NEEDS_FOLDER, 'info');
       this.view.focus();
       quickOpen(this.view, { root, files: pane.editor.files, active: this.active }, (path, line) =>
         this.events.open(path, line),
       );
     };
+    // Loading replaces the state, and the picker with it.
     const doc = this.active ? this.docs.get(this.active) : undefined;
-    if (doc && !doc.view && !doc.status.error) void this.whenShown(doc.path).then((view) => view && show());
-    else show();
+    if (doc && !doc.view && !doc.status.error) {
+      this.quickOpenWaiting = true;
+      void this.whenShown(doc.path, QUICK_OPEN_WAIT_MS).then(() => {
+        this.quickOpenWaiting = false;
+        show();
+      });
+    } else show();
     return true;
   }
 
@@ -394,6 +409,7 @@ export class PaneEditor {
   }
 
   destroy() {
+    this.destroyed = true;
     this.stopStatus();
     for (const doc of this.docs.values()) {
       doc.attach(null);

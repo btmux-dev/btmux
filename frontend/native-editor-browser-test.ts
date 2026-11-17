@@ -1,6 +1,6 @@
 /** Run with `just test-browser`, or against a running stack with BTMUX_TEST_URL and BTMUX_AUTH_TOKEN. */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, type BrowserContext, type Page } from 'playwright';
@@ -208,6 +208,8 @@ try {
   mkdirSync(join(dir, 'deep', 'nested'), { recursive: true });
   const target = join(dir, 'deep', 'nested', 'quickopen-target.md');
   writeFileSync(target, 'found me\nline two\nline three\n');
+  // Files viewed in a focused editor are recent.
+  await page.locator(`[data-native-editor][data-pane-id="${secondPane}"]`).click();
   await input.click();
   await page.keyboard.press('ControlOrMeta+p');
   await goToFile.waitFor();
@@ -242,9 +244,8 @@ try {
   await page.keyboard.press('ControlOrMeta+p');
   await goToFile.waitFor();
   await page.keyboard.type('latearr');
-  const lateOption = editorPane.getByRole('option', { name: /late-arrival\.txt/ });
-  await lateOption.waitFor();
-  await lateOption.click();
+  // Enter waits for the search of the new list, past the stale one.
+  await page.keyboard.press('Enter');
   await activeFile(late);
   await waitForText(page, paneId, 'late\n');
   console.log('PASS quick open finds files created after the first search');
@@ -299,6 +300,70 @@ try {
   await activeFile(target);
   await slow.context().close();
   console.log('PASS Esc cancels a pick waiting for results');
+
+  // Over a symlinked folder, results still show relative to it (the server
+  // searches it with symlinks resolved); and a pane whose cwd is on another
+  // host gets a message, not an editor over it.
+  const link = join(tmpdir(), `btmux-editor-link-${Date.now()}`);
+  symlinkSync(dir, link);
+  const remote: { id: string; name: string; pane_id: string } = await api('/api/sessions', 'POST', {
+    name: `native-editor-remote-${Date.now()}`,
+    cwd: dir,
+  });
+  const paneState = (id: string) =>
+    page.evaluate(async (id) => {
+      const { findPaneState, useStore } = await import('/src/state/store.tsx' as string);
+      const pane = findPaneState(useStore.getState(), id);
+      return { cwd: pane?.cwd, remote: pane?.cwd_remote, shown: pane?.editor.shown };
+    }, id);
+  try {
+    await page.goto(`${url}/s/${encodeURIComponent(remote.name)}`);
+    await page.getByLabel('Terminal').first().waitFor();
+    await api(`/api/panes/${remote.pane_id}/input`, 'POST', {
+      text: `printf '\\033]7;file://${link}\\007'`,
+      keys: ['Enter'],
+    });
+    for (let i = 0; i < 200 && (await paneState(remote.pane_id)).cwd !== link; i++) await page.waitForTimeout(50);
+    assert.equal((await paneState(remote.pane_id)).cwd, link);
+    await api(`/api/panes/${remote.pane_id}/open-editor`, 'POST', { path: fileA, line: null, editor: 'native' });
+    const remoteInput = page.locator(`[data-native-editor][data-pane-id="${remote.pane_id}"]`);
+    await remoteInput.click();
+    await page.keyboard.press('ControlOrMeta+p');
+    const linked = page
+      .locator(`[data-editor-pane="${remote.pane_id}"]`)
+      .getByRole('option', { name: /quickopen-target/ });
+    // Recent files, which have resolved paths, are listed under it…
+    await linked.waitFor();
+    assert.equal(await linked.textContent(), 'quickopen-target.mddeep/nested');
+    // …and so are search results (highlighted, unlike recent files).
+    await page.keyboard.type('qotgt');
+    await linked.locator('.cm-btmux-picker-match').first().waitFor();
+    assert.equal(await linked.textContent(), 'quickopen-target.mddeep/nested');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await remoteInput.waitFor({ state: 'hidden' });
+    console.log('PASS quick open over a symlinked folder shows paths relative to it');
+
+    await api(`/api/panes/${remote.pane_id}/input`, 'POST', {
+      text: "printf '\\033]7;file://elsewhere.example/tmp\\007'",
+      keys: ['Enter'],
+    });
+    for (let i = 0; i < 200 && !(await paneState(remote.pane_id)).remote; i++) await page.waitForTimeout(50);
+    assert.equal((await paneState(remote.pane_id)).remote, true);
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press(':');
+    await page.keyboard.type('editor quick open');
+    await page.keyboard.press('Enter');
+    await page.getByText('Quick open needs a folder on this machine').first().waitFor();
+    assert.equal((await paneState(remote.pane_id)).shown, false);
+  } finally {
+    await api(`/api/sessions/${remote.id}`, 'DELETE');
+    rmSync(link, { force: true });
+  }
+  await page.goto(`${url}/s/${encodeURIComponent(session.name)}`);
+  await input.waitFor();
+  console.log('PASS quick open over a remote cwd shows a message, not the editor');
 
   // Language servers, with a fake one (test-bin/fake-lsp).
   const lspDir = process.env.BTMUX_TEST_LSP;

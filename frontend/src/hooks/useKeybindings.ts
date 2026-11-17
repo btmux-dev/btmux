@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { editorShown, nativeEditorInput, nativeEditorOver, useStore } from '../state/store';
+import { editorShown, findPaneState, nativeEditorInput, nativeEditorOver, useStore } from '../state/store';
 import { dispatchKey } from '../lib/paneTerminal';
-import { runEditorCommand, runEditorCommandWhenShown } from '../lib/nativeEditor/registry';
+import { QUICK_OPEN_NEEDS_FOLDER, runEditorCommand, runEditorCommandWhenShown } from '../lib/nativeEditor/registry';
+import { workspaceFolder } from '../lib/vscodeFolder';
 import { ClientMessage } from '../protocol/messages';
 import type { Appearance } from '../state/types';
 import { Overlay, PickerItem } from '../state/types';
@@ -608,6 +609,11 @@ export function runAction(
       const win = session?.windows[session.active_window];
       const paneId = win?.zoomed_pane ?? win?.panes[win.active_pane]?.id ?? null;
       if (!paneId) break;
+      // Without a folder, don't show the editor for every tab only to say so.
+      if (!workspaceFolder(findPaneState(store, paneId))) {
+        store.showToast(QUICK_OPEN_NEEDS_FOLDER, 'info');
+        break;
+      }
       // Show the editor first if it isn't.
       if (!nativeEditorOver(store, paneId)) {
         if (!editorShown(store, paneId)) send({ type: 'editor_view', pane_id: paneId, op: { kind: 'show' } });
