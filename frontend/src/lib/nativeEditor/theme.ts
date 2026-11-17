@@ -123,6 +123,8 @@ export function editorTheme(a: EditorAppearance): Extension {
       style: [
         `--btm-editor-fg: ${theme.foreground}`,
         `--btm-editor-blue: ${theme.blue}`,
+        `--btm-editor-green: ${theme.green}`,
+        `--btm-editor-red: ${theme.red}`,
         `--btm-editor-yellow: ${theme.yellow}`,
         `--btm-editor-cyan: ${theme.cyan}`,
         `--btm-editor-selection: ${theme.selectionBackground}`,

@@ -140,7 +140,7 @@ fn read(path: &Path, meta: &std::fs::Metadata) -> Result<Vec<u8>, String> {
     std::fs::read(path).map_err(|e| format!("Cannot read {}: {e}", path.display()))
 }
 
-fn decode(bytes: &[u8], disk: Disk) -> Result<Loaded, String> {
+pub(super) fn decode(bytes: &[u8], disk: Disk) -> Result<Loaded, String> {
     if crate::fs_ops::looks_binary(&bytes[..bytes.len().min(8192)]) {
         return Err("binary file".into());
     }
@@ -166,7 +166,7 @@ fn decode(bytes: &[u8], disk: Disk) -> Result<Loaded, String> {
     })
 }
 
-fn encode(text: &str, line_ending: LineEnding, bom: bool) -> Vec<u8> {
+pub(super) fn encode(text: &str, line_ending: LineEnding, bom: bool) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len() + 3);
     if bom {
         out.extend_from_slice("\u{feff}".as_bytes());

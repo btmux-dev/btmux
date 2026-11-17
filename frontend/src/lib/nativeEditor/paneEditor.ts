@@ -23,6 +23,7 @@ import { editorTheme, type EditorAppearance } from './theme';
 import { detectIndent, languageFor } from './languages';
 import { format, lspExtension, serverFailed, setDisplay } from './lsp';
 import { editorCommands, serverFoldsChanged } from './features';
+import { gitCommands, gitSigns, gitSummary } from './gitSigns';
 import { noteOpened, quickOpen } from './quickOpen';
 import { QUICK_OPEN_NEEDS_FOLDER } from './registry';
 import { findPaneState, useStore } from '../../state/store';
@@ -115,6 +116,8 @@ export class PaneEditor {
   private destroyed = false;
   cursor = { line: 1, column: 1, selected: 0 };
   problems = { errors: 0, warnings: 0 };
+  /** Lines changed from the Git index; `null` outside Git. */
+  git: { added: number; changed: number; removed: number } | null = null;
   formatOnSave = false;
   /** Changes when the shown file or the editor's visibility does. */
   private epoch = 0;
@@ -206,6 +209,7 @@ export class PaneEditor {
       // Ahead of the keymaps, so vim's chords win over theirs.
       this.vimC.of(this.vimExtension()),
       lineNumbers(),
+      gitSigns(() => doc.git),
       highlightActiveLineGutter(),
       highlightSpecialChars(),
       history(),
@@ -239,7 +243,10 @@ export class PaneEditor {
         if (update.docChanged) doc.push();
         if (!doc.view) return;
         if (update.docChanged || update.selectionSet) this.updateCursor();
-        if (update.docChanged || update.transactions.some((tr) => tr.effects.length > 0)) this.countProblems();
+        if (update.docChanged || update.transactions.some((tr) => tr.effects.length > 0)) {
+          this.countProblems();
+          this.countGit();
+        }
       }),
     ];
   }
@@ -283,6 +290,20 @@ export class PaneEditor {
     });
     if (problems.errors === this.problems.errors && problems.warnings === this.problems.warnings) return;
     this.problems = problems;
+    this.events.changed();
+  }
+
+  private countGit() {
+    const git = gitSummary(this.view.state);
+    const same =
+      git === this.git ||
+      (git &&
+        this.git &&
+        git.added === this.git.added &&
+        git.changed === this.git.changed &&
+        git.removed === this.git.removed);
+    if (same) return;
+    this.git = git;
     this.events.changed();
   }
 
@@ -341,6 +362,7 @@ export class PaneEditor {
     this.applyReveal(doc);
     this.updateCursor();
     this.countProblems();
+    this.countGit();
     this.resolveWaiting();
   }
 
@@ -466,7 +488,7 @@ export class PaneEditor {
   /** Run a palette command (`editorCommands`, quick open) on the shown file. */
   command(action: string): boolean {
     if (action === 'editor-quick-open') return this.quickOpen();
-    const run = editorCommands[action];
+    const run = editorCommands[action] ?? gitCommands[action];
     const doc = this.active ? this.docs.get(this.active) : undefined;
     if (!run || !doc?.view) return false;
     this.view.focus();

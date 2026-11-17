@@ -1479,7 +1479,7 @@ pub struct ClientConfig {
 /// and intentionally absent here, as are `kill-session`, `last-window`,
 /// `editor-native`, `editor-neovim`, `editor-vscode`, `shut-down-neovim`,
 /// `shut-down-vscode`, and the native editor's `editor-*` commands (quick
-/// open and language server commands; unbound by default).
+/// open, language server, and Git commands; unbound by default).
 const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("%", "split-vertical"),
     ("\"", "split-horizontal"),

@@ -326,6 +326,17 @@ export function NativeEditor({
             {active}
           </Text>
           <HStack gap={3} className="ml-auto shrink-0">
+            {editor?.git && (editor.git.added > 0 || editor.git.changed > 0 || editor.git.removed > 0) && (
+              <Text size="sm" color="secondary" hasTabularNumbers aria-label="Changes from the Git index">
+                {[
+                  editor.git.added && `+${editor.git.added}`,
+                  editor.git.changed && `~${editor.git.changed}`,
+                  editor.git.removed && `-${editor.git.removed}`,
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+              </Text>
+            )}
             {editor && (
               <Text size="sm" color="secondary" hasTabularNumbers>
                 Ln {editor.cursor.line}, Col {editor.cursor.column}

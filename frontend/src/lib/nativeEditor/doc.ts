@@ -3,7 +3,7 @@ import {
   EditorSelection,
   EditorState,
   type Extension,
-  type Text,
+  Text,
   type Transaction,
   type TransactionSpec,
 } from '@codemirror/state';
@@ -14,6 +14,7 @@ import type { BufferInfo, DiskStatus, LineEnding, Update } from '../../generated
 import { useStore } from '../../state/store';
 import { editorConnection, type BufferListener } from './connection';
 import { rebase } from './rebase';
+import { setGitBase, type GitBase } from './gitSigns';
 
 /**
  * Which of `count` updates starting at `version` are new to an editor synced
@@ -48,6 +49,8 @@ export class Doc implements BufferListener {
   uri: string | null = null;
   /** Language server ids, from the server. */
   servers: number[] = [];
+  /** The file's Git index text, which git signs diff against. */
+  git: GitBase | null = null;
   status: DocStatus = { ready: false, error: null, dirty: false, disk: 'same', lineEnding: 'lf' };
   private ownState: EditorState | null = null;
   /** The document at the synced version: what unconfirmed changes apply to. */
@@ -186,6 +189,14 @@ export class Doc implements BufferListener {
 
   bufferState(dirty: boolean, disk: DiskStatus) {
     this.setStatus({ dirty, disk });
+  }
+
+  gitBase(generation: number, text: string | null, untracked: boolean) {
+    if (text === null && this.git === null) return;
+    this.git = text === null ? null : { generation, text: Text.of(text.split('\n')), untracked };
+    const state = this.state;
+    if (state) this.apply(state.update({ effects: setGitBase.of(this.git) }));
+    this.onStatus();
   }
 
   failed(error: string) {

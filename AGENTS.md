@@ -542,6 +542,22 @@ ignored) opens on that line through `open`'s `line`; `:line` alone moves in the
 shown file. MCP has
 `open_in_editor`, `editor_buffers`, and `editor_diagnostics`.
 
+Git signs (`native_editor/git.rs`, `lib/nativeEditor/gitSigns.ts`), after
+gitsigns.nvim: the hub sends each buffer's index text (`git_base`, LF and no
+BOM like buffers; empty for untracked files, `null` outside Git or when
+ignored) on open and whenever its worktree's `index` changes (the watcher also
+watches each buffer's git dir), with a `generation`. Tabs diff it against the
+buffer with `@codemirror/merge`'s `Chunk`, updated incrementally per change,
+for gutter signs, the status line counts, navigation, and inline previews.
+Resetting is a local edit. Staging sends the whole new index text
+(`git_stage`), written with git2 in the index blob's own line ending and BOM
+and with zeroed stat data, so git rereads the worktree file; it is refused if
+the generation or the index moved. `git_blame` runs `git blame --porcelain
+--contents -` on the buffer encoded as on disk, only at the version the tab
+names (`stale` otherwise, and the tab retries). Line blame is per tab
+(`localStorage`). Vim gets gitsigns' suggested mappings with `\` as leader
+(codemirror-vim has no `<leader>`).
+
 `[native-editor] vim` (`ClientConfig.vim_mode`, a Settings toggle through
 `ConfigUpdate`) adds `@replit/codemirror-vim`, loaded once it is first turned
 on, through a compartment (`PaneEditor.setVim`), at `Prec.high` and ahead of

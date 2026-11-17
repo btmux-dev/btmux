@@ -1,4 +1,5 @@
 import type {
+  Blame,
   BufferInfo,
   BufferSummary,
   DiskStatus,
@@ -19,6 +20,8 @@ export interface BufferListener {
   resumed(): void;
   updates(version: number, updates: Update[]): void;
   bufferState(dirty: boolean, disk: DiskStatus): void;
+  /** The file's Git index text (`null` outside Git), at `generation`. */
+  gitBase(generation: number, text: string | null, untracked: boolean): void;
   failed(error: string): void;
   /** The socket dropped; unconfirmed pushes are lost. */
   disconnected(): void;
@@ -29,7 +32,13 @@ export interface SaveResult {
   conflict: boolean;
 }
 
-type Pending = { listener?: BufferListener; done?: (result: SaveResult) => void };
+export type BlameResult = { blame: Blame | null; stale: boolean; error: string | null };
+
+type Pending = {
+  listener?: BufferListener;
+  done?: (result: SaveResult) => void;
+  blame?: (result: BlameResult) => void;
+};
 
 /** The tab's `/ws/editor` socket, shared by every editor view. */
 class EditorConnection {
@@ -71,7 +80,10 @@ class EditorConnection {
     ws.onclose = () => {
       if (this.ws !== ws) return;
       this.ws = null;
-      for (const p of this.pending.values()) p.done?.({ error: 'The editor connection closed', conflict: false });
+      for (const p of this.pending.values()) {
+        p.done?.({ error: 'The editor connection closed', conflict: false });
+        p.blame?.({ blame: null, stale: false, error: 'The editor connection closed' });
+      }
       this.pending.clear();
       this.byBuffer.clear();
       this.bufferOf.clear();
@@ -128,6 +140,15 @@ class EditorConnection {
       case 'buffer_state':
         for (const l of this.byBuffer.get(msg.buffer) ?? []) l.bufferState(msg.dirty, msg.disk);
         return;
+      case 'git_base':
+        for (const l of this.byBuffer.get(msg.buffer) ?? []) l.gitBase(msg.generation, msg.text, msg.untracked);
+        return;
+      case 'git_blame': {
+        const pending = this.pending.get(msg.req);
+        this.pending.delete(msg.req);
+        pending?.blame?.({ blame: msg.blame, stale: msg.stale, error: msg.error });
+        return;
+      }
       case 'buffers':
         this.buffers = msg.buffers;
         for (const fn of this.summaryListeners) fn(msg.buffers);
@@ -254,6 +275,23 @@ class EditorConnection {
 
   revert(buffer: string) {
     return this.request((req) => ({ type: 'revert', req, buffer }));
+  }
+
+  /** Make `text` the file's index content, if the index is still at `generation`. */
+  gitStage(buffer: string, generation: number, text: string) {
+    return this.request((req) => ({ type: 'git_stage', req, buffer, generation, text }));
+  }
+
+  /** Blame 1-based `line` of the buffer at `version`. */
+  gitBlame(buffer: string, version: number, line: number, full: boolean): Promise<BlameResult> {
+    return new Promise((resolve) => {
+      const req = this.nextReq++;
+      if (!this.send({ type: 'git_blame', req, buffer, version, line, full })) {
+        resolve({ blame: null, stale: false, error: 'The editor is not connected' });
+        return;
+      }
+      this.pending.set(req, { blame: resolve });
+    });
   }
 
   /** Every buffer on the server, while subscribed. */

@@ -106,3 +106,34 @@ actions (unbound by default; bind them in `[keys]`), plus calls from the
 symbol, supertypes, and subtypes. Renames and code actions change files that
 aren't open too: they wait in the editor, unsaved, under "Other unsaved files".
 A server's questions come up in the browser tab you're using.
+
+## Git signs
+
+In a Git worktree, the native editor marks lines that differ from the Git
+index, as [gitsigns.nvim](https://github.com/lewis6991/gitsigns.nvim) does: a
+green bar for added lines, blue for changed ones, and a red marker where lines
+were removed. Untracked files show every line as added; ignored files show
+nothing. The signs follow your edits as you type and the index as it changes,
+whether btmux or `git` changes it. The status line counts added, changed, and
+removed lines.
+
+Click a sign to preview its hunk inline: the index's lines above the buffer's,
+with the changed words marked, and buttons to stage or reset the hunk.
+
+| Action | Keys | Vim |
+| --- | --- | --- |
+| Next / previous hunk | Alt-F5 / Shift-Alt-F5 | `]c` / `[c` |
+| Preview the hunk | click its sign | `\hp` |
+| Stage the hunk (or the selection's hunks) | | `\hs` |
+| Reset the hunk to the index | | `\hr` |
+| Stage the whole buffer | | `\hS` |
+| Reset the whole buffer | | `\hR` |
+| Blame the line, with the full commit message | | `\hb` |
+| Toggle blame at the end of the cursor line | | `\tb` |
+| The hunk's lines as a text object (`dih`, `vih`) | | `ih` |
+
+Staging writes the buffer's text to the index, saved or not, as gitsigns does;
+resetting edits the buffer, so undo brings the change back. The command palette
+has each as an `editor-*` action (`editor-next-hunk`, `editor-stage-hunk`,
+`editor-toggle-line-blame`, …), unbound by default; bind them in `[keys]`.
+Line blame stays on or off per browser.
