@@ -61,7 +61,7 @@ server and project root (the nearest directory with one of the language's root
 markers, such as `Cargo.toml`, within the Git worktree). Servers are found on
 the server's `PATH`, else your shell's. Built in: rust-analyzer,
 typescript-language-server (TypeScript and JavaScript), pyright, gopls, clangd,
-lua-language-server, nil (Nix, formatting with nixfmt), bash-language-server, taplo (TOML),
+lua-language-server, nil (Nix), bash-language-server, taplo (TOML),
 yaml-language-server, and vscode-langservers-extracted (JSON, CSS, HTML).
 Every browser tab shares the servers. The status line shows each server's state
 and progress. Add or replace languages and servers in `config.toml`:
@@ -80,9 +80,13 @@ config = { basedpyright = { analysis = { typeCheckingMode = "strict" } } }
 ```
 
 `config` answers the server's `workspace/configuration` requests; changes
-apply to servers started after them. The Health tab of About lists the
-configured servers and whether btmux finds them. Files in a sandboxed session's
-mounts get servers inside its Multipass instance, found by a login shell there.
+apply to servers started after them. nil releases since 2025-06-13 format with
+nixfmt by default (Nixpkgs builds in its own); for older ones, or another
+formatter, set `config = { nil = { formatting = { command = ["alejandra"] } } }`
+under `[language-server.nil]`, along with `command = "nil"`. The Health tab of
+About lists the configured servers and whether btmux finds them. Files in a
+sandboxed session's mounts get servers inside its Multipass instance, found by
+a login shell there.
 
 What servers provide, where they support it:
 

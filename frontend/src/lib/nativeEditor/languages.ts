@@ -7,7 +7,7 @@ export const languages = [
   LanguageDescription.of({
     name: 'Nix',
     extensions: ['nix'],
-    load: () => import('@replit/codemirror-lang-nix').then((m) => m.nix()),
+    load: () => import('./nix').then((m) => m.nix()),
   }),
 ];
 
