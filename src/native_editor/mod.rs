@@ -62,7 +62,7 @@ pub enum EditorClientMessage {
         #[cfg_attr(test, ts(type = "number | null"))]
         version: Option<u64>,
     },
-    /// Answer a server's `window/showMessageRequest`; `action` is the chosen title.
+    /// Answer a server's prompt (`lsp_prompt`); `action` is the chosen title.
     LspPromptAnswer {
         #[cfg_attr(test, ts(type = "number"))]
         server: u64,
@@ -147,7 +147,8 @@ pub enum EditorServerMessage {
     },
     /// Every language server, on connect and on change.
     LspStatus { servers: Vec<lsp::LspServerStatus> },
-    /// A server asks the user to choose one of `actions` (`window/showMessageRequest`).
+    /// A server asks the user to choose one of `actions` (`window/showMessageRequest`,
+    /// or `workspace/applyEdit` with changes that need confirmation).
     LspPrompt {
         #[cfg_attr(test, ts(type = "number"))]
         server: u64,

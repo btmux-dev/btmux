@@ -22,6 +22,7 @@ import {
 } from '@codemirror/view';
 import { foldService, getIndentUnit, indentUnit } from '@codemirror/language';
 import { useStore } from '../../state/store';
+import type { Overlay } from '../../state/types';
 import { editorConnection } from './connection';
 import { viewDocs } from './doc';
 import { openPicker, type PickItem } from './picker';
@@ -442,10 +443,81 @@ type CodeAction = {
   data?: unknown;
 };
 
-async function applyWorkspaceEdit(view: EditorView, edit: unknown, version: number | null) {
-  const doc = viewDocs.get(view);
-  const result = await editorConnection.applyEdit(edit, doc?.buffer ?? null, version);
-  if (result.error) toast('Could not apply the change', result.error);
+type Annotated = { annotationId?: string };
+type WorkspaceEdit = {
+  changes?: Record<string, Annotated[]>;
+  documentChanges?: (Annotated & { kind?: string; edits?: Annotated[] })[];
+  changeAnnotations?: Record<string, { label: string; needsConfirmation?: boolean }>;
+};
+
+// As in `lsp/mod.rs`, whose prompts tabs answer with these titles.
+const APPLY_ALL = 'Apply all changes';
+const SKIP_CONFIRMATIONS = 'Skip these changes';
+
+/** The labels of changes in `edit` that need confirmation, and `edit` without them (null if nothing is left). */
+function confirmations(edit: WorkspaceEdit) {
+  const labels = new Set<string>();
+  const keep = (change: Annotated) => {
+    const annotation = change.annotationId ? edit.changeAnnotations?.[change.annotationId] : undefined;
+    if (!annotation?.needsConfirmation) return true;
+    labels.add(annotation.label);
+    return false;
+  };
+  let rest: WorkspaceEdit | null;
+  if (edit.documentChanges) {
+    const documentChanges = edit.documentChanges.flatMap((c) => {
+      if (!c.edits) return keep(c) ? [c] : [];
+      const edits = c.edits.filter(keep);
+      return edits.length ? [{ ...c, edits }] : [];
+    });
+    rest = documentChanges.length ? { ...edit, documentChanges } : null;
+  } else {
+    const files = Object.entries(edit.changes ?? {})
+      .map(([uri, edits]) => [uri, edits.filter(keep)] as const)
+      .filter(([, edits]) => edits.length);
+    rest = files.length ? { ...edit, changes: Object.fromEntries(files) } : null;
+  }
+  return { labels: [...labels], rest };
+}
+
+/** The action chosen, null if dismissed. */
+function choose(title: string, actions: string[]): Promise<string | null> {
+  return new Promise((resolve) => {
+    let chosen: string | null = null;
+    const overlay: Overlay = {
+      mode: 'picker',
+      title,
+      items: actions.map((a) => ({ id: a, label: a })),
+      onSelect: (action) => {
+        chosen = action;
+        useStore.getState().setOverlay(null);
+      },
+    };
+    const stop = useStore.subscribe((s) => {
+      if (s.overlay === overlay) return;
+      stop();
+      resolve(chosen);
+    });
+    useStore.getState().setOverlay(overlay);
+  });
+}
+
+/** Apply a workspace edit `title` made in `buffer` at `version`, first asking about changes that need confirmation. */
+export async function applyWorkspaceEdit(
+  title: string,
+  edit: WorkspaceEdit,
+  buffer: string | null,
+  version: number | null,
+) {
+  const { labels, rest } = confirmations(edit);
+  if (labels.length) {
+    const actions = rest ? [APPLY_ALL, SKIP_CONFIRMATIONS] : [APPLY_ALL];
+    const chosen = await choose(`${title} includes changes that need confirmation: ${labels.join(', ')}`, actions);
+    if (chosen === SKIP_CONFIRMATIONS && rest) edit = rest;
+    else if (chosen !== APPLY_ALL) return;
+  }
+  const result = await editorConnection.applyEdit(edit, buffer, version);
+  if (result.error) toast(`${title} failed`, result.error);
 }
 
 function codeActions(view: EditorView) {
@@ -477,7 +549,7 @@ function codeActions(view: EditorView) {
             if (typeof (action as Command).command === 'string') return void execute(view, action as Command);
             let a = action as CodeAction;
             if (!a.edit && !a.command && resolve) a = await p.client.request('codeAction/resolve', a);
-            if (a.edit) await applyWorkspaceEdit(view, a.edit, version);
+            if (a.edit) await applyWorkspaceEdit(a.title, a.edit as WorkspaceEdit, doc?.buffer ?? null, version);
             if (a.command) await execute(view, a.command);
           } catch (error) {
             toast(`${action.title} failed`, error);

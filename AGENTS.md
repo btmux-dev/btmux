@@ -515,7 +515,10 @@ The backend answers the server's requests (`workspace/configuration` from
 keeps `$/progress` work in `lsp_status`, which editors show as progress toasts
 (`ProgressCard`, shared with the Neovim surface). Renames and code actions go through
 `apply_edit`, which edits every file named, loading unopened ones as unsaved
-buffers. Crashed servers restart up to 3 times a minute; idle ones stop after
+buffers. Changes whose annotation `needsConfirmation` (`lsp/annotations.rs`)
+are first confirmed in the tab (`applyWorkspaceEdit`), or, for a server's
+`workspace/applyEdit`, through an `lsp_prompt`; either can skip just those
+changes. Crashed servers restart up to 3 times a minute; idle ones stop after
 60 s. The backend also pulls diagnostics (`textDocument/diagnostic`) after
 changes settle, publishing them with pushed ones; watches the root for
 registered `didChangeWatchedFiles` globs (`lsp/watch.rs`: never home or above,

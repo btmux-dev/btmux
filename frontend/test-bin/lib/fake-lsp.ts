@@ -13,7 +13,9 @@
 // - inlay hints: ": hint" after every "let NAME"
 // - document highlights, symbols, call hierarchy: occurrences of WORD
 // - code lenses: "fake.ask" on line 1, which asks the user (showMessageRequest)
-// - code actions: replace "bad" with "good"
+// - code actions: replace "bad" with "good"; on a last line "end", append "!"
+//   and uppercase it, which needs confirmation, or have the server uppercase
+//   "end!" (workspace/applyEdit, needing confirmation)
 // - folding: the first three lines; selection ranges: word, then line
 // - watched files: **/*.fake, logged; a new crash.fake makes it exit, once
 // - opened documents: logged with their language id
@@ -108,7 +110,7 @@ function handle(msg: any): unknown {
           codeActionProvider: true,
           foldingRangeProvider: true,
           selectionRangeProvider: true,
-          executeCommandProvider: { commands: ['fake.ask'] },
+          executeCommandProvider: { commands: ['fake.ask', 'fake.shout'] },
         },
         serverInfo: { name: 'fake-lsp' },
       };
@@ -240,14 +242,39 @@ function handle(msg: any): unknown {
           message: 'Proceed?',
           actions: [{ title: 'Yes' }, { title: 'No' }],
         });
+      if (p.command === 'fake.shout') {
+        const [uri, line] = p.arguments;
+        const range = { start: { line, character: 0 }, end: { line, character: 4 } };
+        request('workspace/applyEdit', {
+          label: 'Shout',
+          edit: shout(uri, [{ range, newText: 'END!', annotationId: 'shout' }]),
+        });
+      }
       return null;
     case 'textDocument/codeAction': {
       const uri = p.textDocument.uri;
       const t = text(uri);
       const edits = occurrences(t, 'bad').map((range) => ({ range, newText: 'good' }));
-      return edits.length
+      const actions: unknown[] = edits.length
         ? [{ title: 'Replace bad with good', kind: 'quickfix', edit: { changes: { [uri]: edits } } }]
         : [];
+      const lines = t.split('\n');
+      const line = lines.length - 2;
+      const at = (character: number) => ({ line, character });
+      if (lines[line] === 'end')
+        actions.push({
+          title: 'Shout',
+          edit: shout(uri, [
+            { range: { start: at(0), end: at(3) }, newText: 'END', annotationId: 'shout' },
+            { range: { start: at(3), end: at(3) }, newText: '!', annotationId: 'plain' },
+          ]),
+        });
+      if (lines[line] === 'end!')
+        actions.push({
+          title: 'Shout later',
+          command: { title: 'Shout later', command: 'fake.shout', arguments: [uri, line] },
+        });
+      return actions;
     }
     case 'textDocument/foldingRange':
       return [{ startLine: 0, endLine: 2 }];
@@ -274,6 +301,17 @@ function handle(msg: any): unknown {
     }
   }
   return undefined;
+}
+
+/** `edits` in `uri`, annotated: "shout" needs confirmation. */
+function shout(uri: string, edits: unknown[]) {
+  return {
+    documentChanges: [{ textDocument: { uri, version: null }, edits }],
+    changeAnnotations: {
+      shout: { label: 'Uppercase end', needsConfirmation: true },
+      plain: { label: 'Exclaim' },
+    },
+  };
 }
 
 let busy = false;

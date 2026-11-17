@@ -3,6 +3,7 @@
 //! `@codemirror/lsp-client`, which takes btmux for the server) with ids of
 //! its own, answering what the server asks of its client.
 
+pub mod annotations;
 pub mod config;
 pub mod process;
 pub mod watch;
@@ -29,6 +30,9 @@ const METHOD_NOT_FOUND: i64 = -32601;
 const SERVER_NOT_INITIALIZED: i64 = -32002;
 const CONTENT_MODIFIED: i64 = -32801;
 const REQUEST_FAILED: i64 = -32803;
+/// Answers to an edit that needs confirmation.
+const APPLY_ALL: &str = "Apply all changes";
+const SKIP_CONFIRMATIONS: &str = "Skip these changes";
 
 #[derive(Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -71,6 +75,15 @@ enum Pending {
     Pull(String),
 }
 
+/// What a tab's answer to a prompt goes to.
+enum Prompt {
+    /// `window/showMessageRequest`, by its request id.
+    Message(Value),
+    /// `workspace/applyEdit` with changes that need confirmation: its
+    /// request id and edit.
+    Edit(Value, Value),
+}
+
 /// After a change, wait this long for more before pulling diagnostics.
 const PULL_DELAY: Duration = Duration::from_millis(250);
 
@@ -110,8 +123,8 @@ pub(super) struct Server {
     /// `workspace/didChangeWatchedFiles` registrations, by id.
     watchers: Vec<(String, Vec<watch::FileWatcher>)>,
     root_watch: Option<watch::RootWatch>,
-    /// `window/showMessageRequest`s waiting for a tab, by token.
-    prompts: HashMap<u64, Value>,
+    /// Prompts waiting for a tab, by token.
+    prompts: HashMap<u64, Prompt>,
     next_prompt: u64,
 }
 
@@ -244,6 +257,12 @@ fn response(id: Value, result: Value) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "result": result })
 }
 
+fn not_applied(id: Value, reason: &str) -> Value {
+    response(id, json!({ "applied": false, "failureReason": reason }))
+}
+
+const NO_TAB: &str = "No editor is open to confirm the changes";
+
 fn error(id: Value, code: i64, message: &str) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
 }
@@ -255,7 +274,10 @@ fn client_capabilities() -> Value {
         "general": { "positionEncodings": ["utf-16"], "markdown": { "parser": "marked" } },
         "workspace": {
             "applyEdit": true,
-            "workspaceEdit": { "documentChanges": true },
+            "workspaceEdit": {
+                "documentChanges": true,
+                "changeAnnotationSupport": { "groupsOnLabel": false },
+            },
             "configuration": true,
             "workspaceFolders": true,
             "didChangeConfiguration": { "dynamicRegistration": false },
@@ -694,8 +716,11 @@ impl Inner {
             // Nobody is left to answer.
             if had && server.sockets.is_empty() {
                 let prompts: Vec<_> = server.prompts.drain().collect();
-                for (_, rid) in prompts {
-                    server.send(response(rid, Value::Null));
+                for (_, prompt) in prompts {
+                    server.send(match prompt {
+                        Prompt::Message(rid) => response(rid, Value::Null),
+                        Prompt::Edit(rid, _) => not_applied(rid, NO_TAB),
+                    });
                 }
             }
         }
@@ -873,18 +898,52 @@ impl super::Hub {
         inner.pull_now(id, buffer);
     }
 
-    /// A tab answered `window/showMessageRequest`; the first answer wins.
-    pub(super) fn lsp_prompt_answer(&self, id: u64, token: u64, action: Option<String>) {
+    /// A tab answered a prompt; the first answer wins.
+    pub(super) fn lsp_prompt_answer(&'static self, id: u64, token: u64, action: Option<String>) {
         let mut inner = self.inner.lock().unwrap();
         let Some(server) = inner.lsp.servers.get_mut(&id) else {
             return;
         };
-        let Some(rid) = server.prompts.remove(&token) else {
+        let Some(prompt) = server.prompts.remove(&token) else {
             return;
         };
-        let result = action.map_or(Value::Null, |title| json!({ "title": title }));
-        server.send(response(rid, result));
+        let apply = match prompt {
+            Prompt::Message(rid) => {
+                let result = action.map_or(Value::Null, |title| json!({ "title": title }));
+                server.send(response(rid, result));
+                None
+            }
+            Prompt::Edit(rid, mut edit) => match action.as_deref() {
+                Some(APPLY_ALL) => Some((rid, edit)),
+                Some(SKIP_CONFIRMATIONS) => {
+                    annotations::skip_confirmations(&mut edit);
+                    Some((rid, edit))
+                }
+                _ => {
+                    server.send(not_applied(rid, "Declined"));
+                    None
+                }
+            },
+        };
         inner.prompts_done(id, &[token]);
+        drop(inner);
+        if let Some((rid, edit)) = apply {
+            self.lsp_apply_edit(id, rid, edit);
+        }
+    }
+
+    /// Apply a server's `workspace/applyEdit`, loading files first.
+    fn lsp_apply_edit(&'static self, id: u64, rid: Value, edit: Value) {
+        tokio::spawn(async move {
+            let reply = match self.apply_edit(edit, None).await {
+                Ok(()) => response(rid, json!({ "applied": true })),
+                Err(e) => not_applied(rid, &e),
+            };
+            let inner = self.inner.lock().unwrap();
+            if let Some(server) = inner.lsp.servers.get(&id) {
+                server.send(reply);
+            }
+        });
     }
 
     fn lsp_files_changed(&self, id: u64, generation: u32, changes: Vec<(PathBuf, u8)>) {
@@ -943,23 +1002,9 @@ impl super::Hub {
                         }
                     }
                     Answer::Later => {}
-                    // Loads files first.
                     Answer::ApplyEdit => {
-                        let edit = message["params"]["edit"].clone();
                         drop(inner);
-                        tokio::spawn(async move {
-                            let result = self.apply_edit(edit, None).await;
-                            let reply = match result {
-                                Ok(()) => response(rid, json!({ "applied": true })),
-                                Err(e) => {
-                                    response(rid, json!({ "applied": false, "failureReason": e }))
-                                }
-                            };
-                            let inner = self.inner.lock().unwrap();
-                            if let Some(server) = inner.lsp.servers.get(&id) {
-                                server.send(reply);
-                            }
-                        });
+                        self.lsp_apply_edit(id, rid, message["params"]["edit"].clone());
                     }
                 }
             }
@@ -1101,7 +1146,32 @@ impl Inner {
             return Answer::Later;
         };
         Answer::Reply(match method {
-            "workspace/applyEdit" => return Answer::ApplyEdit,
+            "workspace/applyEdit" => {
+                let edit = &params["edit"];
+                let labels = annotations::confirmations(edit);
+                if labels.is_empty() {
+                    return Answer::ApplyEdit;
+                }
+                if server.sockets.is_empty() {
+                    not_applied(rid, NO_TAB)
+                } else {
+                    let mut rest = edit.clone();
+                    let mut actions = vec![APPLY_ALL.to_owned()];
+                    if annotations::skip_confirmations(&mut rest) {
+                        actions.push(SKIP_CONFIRMATIONS.to_owned());
+                    }
+                    let what = match params["label"].as_str() {
+                        Some(label) => format!("{}: {label} includes", server.name),
+                        None => format!("{} wants to make", server.name),
+                    };
+                    let message = format!(
+                        "{what} changes that need confirmation: {}",
+                        labels.join(", ")
+                    );
+                    self.prompt(id, Prompt::Edit(rid, edit.clone()), 2, message, actions);
+                    return Answer::Later;
+                }
+            }
             "workspace/configuration" => {
                 let settings = toml_json(&server.config.config);
                 let items = params["items"].as_array().cloned().unwrap_or_default();
@@ -1159,25 +1229,15 @@ impl Inner {
                 if server.sockets.is_empty() {
                     response(rid, Value::Null)
                 } else {
-                    let token = server.next_prompt;
-                    server.next_prompt += 1;
-                    server.prompts.insert(token, rid);
-                    let msg = super::to_json(&EditorServerMessage::LspPrompt {
-                        server: id,
-                        token,
-                        level: params["type"].as_u64().unwrap_or(3) as u8,
-                        message: params["message"].as_str().unwrap_or_default().to_owned(),
-                        actions: params["actions"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .filter_map(|a| a["title"].as_str().map(str::to_owned))
-                            .collect(),
-                    });
-                    let sockets: Vec<_> = server.sockets.iter().copied().collect();
-                    for socket in sockets {
-                        self.send_raw(socket, msg.clone());
-                    }
+                    let level = params["type"].as_u64().unwrap_or(3) as u8;
+                    let message = params["message"].as_str().unwrap_or_default().to_owned();
+                    let actions = params["actions"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|a| a["title"].as_str().map(str::to_owned))
+                        .collect();
+                    self.prompt(id, Prompt::Message(rid), level, message, actions);
                     return Answer::Later;
                 }
             }
@@ -1215,6 +1275,34 @@ impl Inner {
             "window/workDoneProgress/create" => response(rid, Value::Null),
             _ => error(rid, METHOD_NOT_FOUND, "Not supported by btmux"),
         })
+    }
+
+    /// Ask every tab of server `id`; the first focused one shows it.
+    fn prompt(
+        &mut self,
+        id: u64,
+        prompt: Prompt,
+        level: u8,
+        message: String,
+        actions: Vec<String>,
+    ) {
+        let Some(server) = self.lsp.servers.get_mut(&id) else {
+            return;
+        };
+        let token = server.next_prompt;
+        server.next_prompt += 1;
+        server.prompts.insert(token, prompt);
+        let msg = super::to_json(&EditorServerMessage::LspPrompt {
+            server: id,
+            token,
+            level,
+            message,
+            actions,
+        });
+        let sockets: Vec<_> = server.sockets.iter().copied().collect();
+        for socket in sockets {
+            self.send_raw(socket, msg.clone());
+        }
     }
 
     fn server_notification(&mut self, id: u64, method: &str, message: Value) {

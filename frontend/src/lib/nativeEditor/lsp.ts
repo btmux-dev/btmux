@@ -24,7 +24,7 @@ import type { EditorServerMessage } from '../../generated/protocol';
 import { IS_MAC } from '../nvimKeys';
 import { editorConnection } from './connection';
 import { viewDocs, type Doc } from './doc';
-import { REFRESH_ALL, lspFeatures, refreshEffect, setRawDiagnostics } from './features';
+import { REFRESH_ALL, applyWorkspaceEdit, lspFeatures, refreshEffect, setRawDiagnostics } from './features';
 
 /** btmux's language server clients speak to the server through `/ws/editor`; it syncs documents itself. */
 
@@ -233,14 +233,11 @@ async function rename(view: EditorView, newName: string) {
   plugin.client.sync();
   const version = doc.version();
   try {
-    const edit = await plugin.client.request('textDocument/rename', {
-      textDocument: { uri: plugin.uri },
-      position: plugin.toPosition(word.from),
-      newName,
-    });
-    if (!edit) return;
-    const result = await editorConnection.applyEdit(edit, doc.buffer, version);
-    if (result.error) toast('Rename failed', result.error);
+    const edit = await plugin.client.request<object, Parameters<typeof applyWorkspaceEdit>[1] | null>(
+      'textDocument/rename',
+      { textDocument: { uri: plugin.uri }, position: plugin.toPosition(word.from), newName },
+    );
+    if (edit) await applyWorkspaceEdit('Rename', edit, doc.buffer, version);
   } catch (error) {
     toast('Rename failed', error);
   }

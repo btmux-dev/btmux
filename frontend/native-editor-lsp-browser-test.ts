@@ -137,9 +137,7 @@ try {
 
   // Mod-i grows the selection to the word.
   await page.keyboard.press('ControlOrMeta+i');
-  await until('the word selected', () =>
-    page.evaluate(() => getSelection()?.toString() === 'thing'),
-  );
+  await until('the word selected', () => page.evaluate(() => getSelection()?.toString() === 'thing'));
   console.log('PASS selection ranges');
 
   // Code actions apply through the server's edit.
@@ -154,6 +152,22 @@ try {
   await until('the fix', async () => (await lines(page, paneId))?.startsWith('let thing = good;') ?? false);
   await pane.getByText('1 error, 0 warnings').waitFor();
   console.log('PASS code actions');
+
+  // Changes that need confirmation ask first, here and from the server.
+  const last = async () => (await lines(page, paneId))?.split('\n').at(-2);
+  await page.keyboard.press('ControlOrMeta+.');
+  await pane.getByRole('option', { name: /^Shout/ }).click();
+  await page.getByText('Shout includes changes that need confirmation: Uppercase end').waitFor();
+  await page.getByText('Skip these changes', { exact: true }).click();
+  await until('the change not needing confirmation', async () => (await last()) === 'end!');
+  await page.keyboard.press('ControlOrMeta+.');
+  await pane.getByRole('option', { name: /Shout later/ }).click();
+  await page.getByText('fake: Shout includes changes that need confirmation: Uppercase end').waitFor();
+  assert.equal(await page.getByText('Skip these changes', { exact: true }).count(), 0);
+  await page.getByText('Apply all changes', { exact: true }).click();
+  await until('the server edit', async () => (await last()) === 'END!');
+  await until('its answer', () => log().includes('answer workspace/applyEdit {"applied":true}'));
+  console.log('PASS change annotations needing confirmation');
 
   // Document symbols jump within the file.
   await page.keyboard.press('ControlOrMeta+Shift+o');
@@ -273,7 +287,10 @@ try {
     JSON.stringify(found),
   );
   const buffers = await call('editor_buffers', {});
-  assert(buffers.some((b: any) => b.path === main && b.language === 'fake'), JSON.stringify(buffers));
+  assert(
+    buffers.some((b: any) => b.path === main && b.language === 'fake'),
+    JSON.stringify(buffers),
+  );
   console.log('PASS MCP editor tools');
 
   // A restarted server's watches work too.
