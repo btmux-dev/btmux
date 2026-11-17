@@ -326,14 +326,15 @@ mod tests {
     fn watchers_match_paths() {
         let any = FileWatcher::parse(&json!({ "globPattern": "**/Cargo.toml" })).unwrap();
         assert!(any.matches(Path::new("/w/crate/Cargo.toml"), CHANGED));
+        let root = Path::new(if cfg!(windows) { r"C:\w" } else { "/w" });
         let relative = FileWatcher::parse(&json!({
-            "globPattern": { "baseUri": "file:///w", "pattern": "*.json" },
+            "globPattern": { "baseUri": super::super::config::uri(root), "pattern": "*.json" },
             "kind": 1,
         }))
         .unwrap();
-        assert!(relative.matches(Path::new("/w/a.json"), CREATED));
-        assert!(!relative.matches(Path::new("/w/a.json"), CHANGED));
-        assert!(!relative.matches(Path::new("/w/x/a.json"), CREATED));
-        assert!(!relative.matches(Path::new("/v/a.json"), CREATED));
+        assert!(relative.matches(&root.join("a.json"), CREATED));
+        assert!(!relative.matches(&root.join("a.json"), CHANGED));
+        assert!(!relative.matches(&root.join("x").join("a.json"), CREATED));
+        assert!(!relative.matches(&root.with_file_name("v").join("a.json"), CREATED));
     }
 }
