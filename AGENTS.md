@@ -543,8 +543,10 @@ shown file. MCP has
 chords win; the prefix is still taken first by `useKeybindings.ts`.
 `lib/nativeEditor/vim.ts` keeps vim's global definitions in one place: `:w`,
 `:wq`/`:x`, `:q` reach the editor through `setVimHost` (save goes through the
-server like `Mod-s`; `:q` hides), `gd`, `K` (a hover tooltip of its own, since
-lsp-client's follows the pointer), and `]d`/`[d`. The double-Esc hide in
+server like `Mod-s`; `:q` hides; `:wq` hides only if `PaneEditor.save` wrote
+every local edit and the shown file and visibility didn't change meanwhile),
+`gd`, `K` (a hover tooltip of its own, since lsp-client's follows the pointer;
+any key drops a pending one), and `]d`/`[d`. The double-Esc hide in
 `PaneEditor.keydown` runs at `Prec.highest`, before vim: a quick run of Escs
 hides only if its first came in normal mode with nothing pending (`vimIdle`),
 so leaving insert or visual mode never hides. Vim's state lives in a view

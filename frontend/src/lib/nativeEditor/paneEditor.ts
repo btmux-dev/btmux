@@ -81,6 +81,9 @@ export class PaneEditor {
   cursor = { line: 1, column: 1, selected: 0 };
   problems = { errors: 0, warnings: 0 };
   formatOnSave = false;
+  /** Changes when the shown file or the editor's visibility does. */
+  private epoch = 0;
+  private visible = true;
   /** Vim's mode while vim is on, for the status line. */
   vimMode: string | null = null;
 
@@ -93,12 +96,8 @@ export class PaneEditor {
     this.appearance = appearance;
     this.view = new EditorView({ parent, state: this.placeholder() });
     setVimHost(this.view, {
-      save: async (force) => {
-        const path = this.active;
-        await this.save(force);
-        const status = path ? this.status(path) : null;
-        return !!status && !status.dirty && !status.conflict;
-      },
+      save: (force) => this.save(force),
+      epoch: () => this.epoch,
       hide: () => this.events.hide(),
       mode: (mode) => {
         if (mode === this.vimMode) return;
@@ -294,6 +293,7 @@ export class PaneEditor {
       this.active = active && this.docs.has(active) ? active : null;
       // Recent files are those viewed here, not other tabs' or restored ones.
       if (this.active && focused) noteOpened(this.active);
+      this.epoch++;
       const doc = this.active ? this.docs.get(this.active) : undefined;
       // Not loaded yet: shown once it is (docChanged).
       if (!doc || !doc.attach(this.view)) this.view.setState(this.placeholder());
@@ -421,20 +421,34 @@ export class PaneEditor {
     return ran instanceof Promise ? true : ran;
   }
 
-  /** Write the active file; `force` overwrites outside changes. */
-  async save(force: boolean, path = this.active) {
+  /** Shown over its pane, or hidden. */
+  setVisible(visible: boolean) {
+    if (visible === this.visible) return;
+    this.visible = visible;
+    this.epoch++;
+  }
+
+  /**
+   * Write the active file; `force` overwrites outside changes. Resolves
+   * true once the file holds every local change.
+   */
+  async save(force: boolean, path = this.active): Promise<boolean> {
     const doc = path ? this.docs.get(path) : undefined;
-    if (!doc?.buffer) return;
+    if (!doc?.buffer) return false;
     if (this.formatOnSave && doc.view && !force) {
       const timeout = new Promise((resolve) => setTimeout(resolve, FORMAT_TIMEOUT_MS));
       await Promise.race([format(doc.view).catch(() => {}), timeout]);
     }
     doc.push();
+    // Edits the server doesn't have yet aren't in what it writes.
+    const complete = !doc.unsent();
     const result = await editorConnection.save(doc.buffer, force);
     if (result.conflict) this.conflicts.add(doc.path);
     else this.conflicts.delete(doc.path);
     if (result.error && !result.conflict) this.events.error(result.error);
+    else if (!result.error && !complete) this.events.error('Some edits were not saved: the editor is reconnecting.');
     this.events.changed();
+    return !result.error && !result.conflict && complete;
   }
 
   /** Reload the active file from disk, dropping unsaved changes. */

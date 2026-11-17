@@ -8,8 +8,10 @@ import { forEachDiagnostic } from '@codemirror/lint';
 
 /** What ex commands and the mode line reach in the editor showing a view. */
 export interface VimHost {
-  /** Save the shown file; resolves true once it is saved. */
+  /** Save the shown file; resolves true once it holds every edit. */
   save(force: boolean): Promise<boolean>;
+  /** Changes when the shown file or the editor's visibility does. */
+  epoch(): number;
   hide(): void;
   /** The mode changed: NORMAL, INSERT, …, or null without vim. */
   mode(mode: string | null): void;
@@ -24,9 +26,12 @@ const hostOf = (cm: CodeMirror) => hosts.get(cm.cm6);
 // `:w!` parses as `w` with the argument `!`.
 const bang = (params: { argString?: string }) => params.argString?.trim().startsWith('!') ?? false;
 
+// Hides only if the save worked and the editor still shows that file, unhidden.
 const saveAndHide = (cm: CodeMirror, params: { argString?: string }) => {
   const host = hostOf(cm);
-  void host?.save(bang(params)).then((saved) => saved && host.hide());
+  if (!host) return;
+  const epoch = host.epoch();
+  void host.save(bang(params)).then((saved) => saved && host.epoch() === epoch && host.hide());
 };
 
 // Global to vim, so defined once; each resolves the editor from its view.
@@ -116,6 +121,22 @@ const modeReporter = ViewPlugin.define((view) => {
 });
 
 // `K`: lsp-client's hover only follows the pointer.
+/** Counts keys, so a hover answered after one (Esc, `i`) isn't shown; a new state gets a new one. */
+const hoverRequests = ViewPlugin.fromClass(
+  class {
+    generation = 0;
+  },
+  {
+    eventObservers: {
+      keydown(_, view) {
+        this.generation++;
+        // Any key closes a `K` hover, and still does what it does.
+        if (view.state.field(hoverField, false)) view.dispatch({ effects: setHover.of(null) });
+      },
+    },
+  },
+);
+
 const setHover = StateEffect.define<Tooltip | null>();
 const hoverField = StateField.define<Tooltip | null>({
   create: () => null,
@@ -135,7 +156,9 @@ const markdown = (m: Markup) =>
 async function showHover(view: EditorView) {
   const plugin = LSPPlugin.get(view);
   const capabilities = plugin?.client.serverCapabilities as Record<string, unknown> | null | undefined;
-  if (!plugin || !capabilities?.hoverProvider) return;
+  const requests = view.plugin(hoverRequests);
+  if (!plugin || !requests || !capabilities?.hoverProvider) return;
+  const generation = ++requests.generation;
   const { doc } = view.state;
   const pos = view.state.selection.main.head;
   plugin.client.sync();
@@ -145,7 +168,8 @@ async function showHover(view: EditorView) {
       position: plugin.toPosition(pos),
     })
     .catch(() => null);
-  if (!result || view.state.doc !== doc || view.state.selection.main.head !== pos) return;
+  const current = view.plugin(hoverRequests) === requests && requests.generation === generation;
+  if (!result || !current || view.state.doc !== doc || view.state.selection.main.head !== pos) return;
   const parts = Array.isArray(result.contents) ? result.contents : [result.contents];
   const html = parts
     .map((part) => {
@@ -172,13 +196,6 @@ async function showHover(view: EditorView) {
   });
 }
 
-/** Any key closes a `K` hover, and still does what it does. */
-const hoverKeys = EditorView.domEventObservers({
-  keydown(_, view) {
-    if (view.state.field(hoverField, false)) view.dispatch({ effects: setHover.of(null) });
-  },
-});
-
 /** Esc closes completions as it leaves insert mode, which vim takes it for. */
 const escCloses = Prec.highest(
   EditorView.domEventHandlers({
@@ -190,4 +207,4 @@ const escCloses = Prec.highest(
 );
 
 /** Vim, ahead of every keymap so its Ctrl chords win; Esc handling stays the editor's (`PaneEditor.keydown`). */
-export const vimExtension: Extension = [escCloses, vim(), modeReporter, hoverField, hoverKeys];
+export const vimExtension: Extension = [escCloses, vim(), modeReporter, hoverField, hoverRequests];

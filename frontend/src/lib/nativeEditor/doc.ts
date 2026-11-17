@@ -205,6 +205,12 @@ export class Doc implements BufferListener {
       for (const u of sendable) this.sent.add(u);
   }
 
+  /** Some local changes haven't been sent (disconnected or reopening). */
+  unsent(): boolean {
+    const state = this.state;
+    return !!state && sendableUpdates(state).some((u) => !this.sent.has(u));
+  }
+
   /** The server's version once it has every change pushed: what language server positions refer to. */
   version(): number | null {
     const state = this.state;

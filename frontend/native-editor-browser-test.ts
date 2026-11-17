@@ -1,6 +1,6 @@
 /** Run with `just test-browser`, or against a running stack with BTMUX_TEST_URL and BTMUX_AUTH_TOKEN. */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, type BrowserContext, type Page } from 'playwright';
@@ -673,6 +673,53 @@ try {
     assert.equal(readFileSync(vimFile, 'utf8'), 'top\nhello alpha\nbeta\n');
     console.log('PASS a double Esc from normal mode, :q, and :wq hide the editor');
 
+    const diskIs = async (path: string, text: string) => {
+      for (let i = 0; i < 100 && readFileSync(path, 'utf8') !== text; i++) await page.waitForTimeout(50);
+      assert.equal(readFileSync(path, 'utf8'), text);
+    };
+    // A failed write keeps the editor, even for a clean file.
+    await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: vimFile, line: 1, editor: 'native' });
+    await content.waitFor({ state: 'visible' });
+    await waitForText(page, paneId, 'top\nhello alpha\nbeta\n');
+    chmodSync(vimFile, 0o444);
+    await content.click();
+    await command('wq');
+    await page.waitForTimeout(1000);
+    chmodSync(vimFile, 0o644);
+    assert(await content.isVisible(), ':wq keeps the editor when the write fails');
+    // So does one while disconnected, with edits the server doesn't have.
+    await page.evaluate(async () => {
+      const { editorConnection } = await import('/src/lib/nativeEditor/connection.ts' as string);
+      const connection = editorConnection as any;
+      connection.held = connection.connect;
+      connection.connect = () => (connection.reconnectTimer = null);
+      connection.ws.close();
+    });
+    await page.waitForTimeout(200);
+    await page.keyboard.type('ggAY');
+    await page.keyboard.press('Escape');
+    await command('wq');
+    await page.waitForTimeout(1000);
+    assert(await content.isVisible(), ':wq keeps the editor while disconnected');
+    assert.equal(readFileSync(vimFile, 'utf8'), 'top\nhello alpha\nbeta\n');
+    await page.evaluate(async () => {
+      const { editorConnection } = await import('/src/lib/nativeEditor/connection.ts' as string);
+      const connection = editorConnection as any;
+      connection.connect = connection.held;
+      connection.connect();
+    });
+    // Saves made before the edits are sent again are refused, so retry.
+    for (let i = 0; i < 40 && readFileSync(vimFile, 'utf8') !== 'topY\nhello alpha\nbeta\n'; i++) {
+      await command('w');
+      await page.waitForTimeout(250);
+    }
+    await diskIs(vimFile, 'topY\nhello alpha\nbeta\n');
+    await page.keyboard.type('u');
+    await waitForText(page, paneId, 'top\nhello alpha\nbeta\n');
+    await command('w');
+    await diskIs(vimFile, 'top\nhello alpha\nbeta\n');
+    console.log('PASS :wq keeps the editor when the save fails or edits are unsent');
+
     if (lspDir) {
       writeFileSync(join(vimDir, 'main.fake'), 'use thing;\nlet bad = 1;\n');
       writeFileSync(join(vimDir, 'other.fake'), 'first\nthing defined here\n');
@@ -694,6 +741,36 @@ try {
       await page.keyboard.type('gd');
       await waitForText(page, paneId, 'first\nthing defined here\n');
       console.log('PASS ]d, K, and gd use the language server');
+
+      writeFileSync(config, ['[native-editor]', 'vim = true', 'format-on-save = true', ...lspConfig, ''].join('\n'));
+      await waitForAsync(page, async () => {
+        const { useStore } = await import('/src/state/store.tsx' as string);
+        return useStore.getState().config?.format_on_save === true;
+      });
+      const slow = join(vimDir, 'slow.fake');
+      writeFileSync(slow, 'slow   \n');
+      await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: slow, line: 1, editor: 'native' });
+      await waitForText(page, paneId, 'slow   \n');
+      // A hover answered (700 ms late) after Esc isn't shown.
+      await content.click();
+      await page.keyboard.type('gg');
+      await page.keyboard.type('K');
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(1200);
+      assert.equal(await page.locator('.cm-tooltip', { hasText: 'Fake hover for' }).count(), 0);
+      await page.keyboard.type('K');
+      await page.locator('.cm-tooltip').getByText('Fake hover for').waitFor();
+      await page.keyboard.press('Escape');
+      console.log('PASS a late hover after Esc is dropped');
+
+      // Switching files while :wq formats (700 ms) keeps the editor.
+      await command('wq');
+      await page.getByRole('tab', { name: 'vim.txt' }).click();
+      await waitForText(page, paneId, 'top\nhello alpha\nbeta\n');
+      await diskIs(slow, 'slow\n');
+      await page.waitForTimeout(300);
+      assert(await content.isVisible(), 'a late :wq leaves a newly shown file alone');
+      console.log('PASS a slow :wq keeps the editor after switching files');
     }
 
     // Turning it off applies live, without remounting the editor.

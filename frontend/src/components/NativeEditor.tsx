@@ -121,6 +121,10 @@ export function NativeEditor({
   }, [editor, config?.vim_mode]);
 
   useEffect(() => {
+    editor?.setVisible(visible);
+  }, [editor, visible]);
+
+  useEffect(() => {
     if (!editor || !visible) return;
     return registerEditorCommands(paneId, (action) => editor.command(action));
   }, [editor, paneId, visible]);
@@ -348,8 +352,8 @@ export function NativeEditor({
             onClick={() => {
               const path = closing!;
               setClosing(null);
-              void editor?.save(false, path).then(() => {
-                if (!editor?.status(path)?.dirty) op({ kind: 'close', path });
+              void editor?.save(false, path).then((saved) => {
+                if (saved) op({ kind: 'close', path });
               });
             }}
           />
