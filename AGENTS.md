@@ -35,7 +35,11 @@ followed by upgrade, Astryx interaction, theme, Git, and mobile (WebKit) checks
 run on demand, the shader wallpapers). `frontend/browser-test-stack.ts`
 gives each file a fresh stack (debug backend and Vite on free ports, a random token,
 `/bin/sh`, temporary XDG and Git config), so a running `just dev`, user config, and
-repo state don't affect it; failures keep the stack logs. Stacks put a fake
+repo state don't affect it; failures keep the stack logs (CI uploads them).
+Files run up to 4 at once by core count (`--jobs N`, 1 in CI, where the job is
+split into four `--shard I/N` jobs instead), with Vite's dependency cache built
+first (`vite optimize`) so concurrent stacks don't race to build it, and output
+printed per file as it ends. Stacks put a fake
 `multipass` (`frontend/test-bin`) first on the server's `PATH`, logging its calls
 to the stack's `multipass` dir (`sandbox-browser-test.ts`), so no test starts a VM. Async page predicates must
 use `waitForAsync` (`browser-test-utils.ts`): `page.waitForFunction` treats a
