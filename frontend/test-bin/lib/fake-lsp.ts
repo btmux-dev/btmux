@@ -2,7 +2,7 @@
 // documents it is sent and logs each method to $BTMUX_FAKE_LSP/log (if set):
 // - diagnostics: an error on every "bad"
 // - completion: "fakeCompletion"
-// - hover: "Fake hover for WORD", 700 ms late for "slow"
+// - hover: "Fake hover for WORD", 700 ms late for "slow", 200 paragraphs for "use"
 // - definition: WORD's first line in other.fake beside the document
 // - rename: every WORD in the .fake files of the document's directory,
 //   open or not (as edits to the open text or the file on disk)
@@ -116,6 +116,10 @@ function handle(msg: any): unknown {
       return { isIncomplete: false, items: [{ label: 'fakeCompletion', kind: 3 }] };
     case 'textDocument/hover': {
       const word = wordAt(text(p.textDocument.uri), p.position);
+      if (word === 'use') {
+        const value = Array.from({ length: 200 }, (_, i) => `Long hover paragraph ${i}.`).join('\n\n');
+        return { contents: { kind: 'markdown', value } };
+      }
       return { contents: { kind: 'markdown', value: `Fake hover for **${word}**` } };
     }
     case 'textDocument/definition': {

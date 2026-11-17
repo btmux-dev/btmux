@@ -222,6 +222,14 @@ try {
   await goToFile.waitFor();
   // Without a query: the pane's other files, then recent ones (b.ts, shown in the other pane).
   await editorPane.getByRole('option', { name: /^b\.ts/ }).waitFor();
+  // The picker fills its panel, so the list isn't clipped, and fits the editor.
+  const pickerBox = await editorPane.locator('.cm-btmux-picker').evaluate((picker) => ({
+    picker: picker.getBoundingClientRect().height,
+    panels: picker.closest('.cm-panels')!.clientHeight,
+    editor: picker.closest('.cm-editor')!.clientHeight,
+  }));
+  assert.ok(Math.abs(pickerBox.picker - pickerBox.panels) <= 1, JSON.stringify(pickerBox));
+  assert.ok(pickerBox.panels <= pickerBox.editor / 2, JSON.stringify(pickerBox));
   await page.keyboard.type('qotgt');
   const targetOption = editorPane.getByRole('option', { name: /quickopen-target\.md/ });
   await targetOption.waitFor();
@@ -454,6 +462,21 @@ try {
     await page.mouse.move(hover.x, hover.y);
     await page.locator('.cm-tooltip').getByText('thing', { exact: true }).waitFor();
     console.log('PASS hover');
+
+    // A hover taller than the space left scrolls inside its box.
+    const use = (await wordRect(1, 'use'))!;
+    await page.mouse.move(use.x, use.y);
+    const longHover = page.locator('.cm-tooltip', { hasText: 'Long hover paragraph 0.' });
+    await longHover.waitFor();
+    const longBox = await longHover.evaluate((el) => {
+      el.scrollTop = 100;
+      const r = el.getBoundingClientRect();
+      return { top: r.top, bottom: r.bottom, scrollTop: el.scrollTop, viewport: innerHeight };
+    });
+    assert.ok(longBox.scrollTop > 0 && longBox.top >= 0 && longBox.bottom <= longBox.viewport, JSON.stringify(longBox));
+    await page.mouse.move(0, 0);
+    await longHover.waitFor({ state: 'detached' });
+    console.log('PASS a long hover scrolls');
 
     // F12 jumps to the definition in another file, opened in this pane.
     const definition = (await wordRect(1, 'thing'))!;

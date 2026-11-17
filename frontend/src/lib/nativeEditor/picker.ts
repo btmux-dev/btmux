@@ -214,7 +214,10 @@ const pickerField = StateField.define<PickerSpec | null>({
 export const pickerExtension = [
   pickerField,
   EditorView.theme({
-    '.cm-btmux-picker': { display: 'flex', flexDirection: 'column', maxHeight: '45%' },
+    // Capped on the panels, as a percentage on the picker would resolve
+    // against their flex-shrunk height and clip the list.
+    '.cm-panels-top:has(.cm-btmux-picker)': { display: 'flex', flexDirection: 'column', maxHeight: '45%' },
+    '.cm-btmux-picker': { display: 'flex', flexDirection: 'column', minHeight: 0 },
     '.cm-btmux-picker input': {
       font: 'inherit',
       margin: '6px 8px',
