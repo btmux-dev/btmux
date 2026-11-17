@@ -215,6 +215,8 @@ try {
   await listed.nth(1).getByRole('button', { name: /^Remove / }).click();
   await page.getByRole('alertdialog').getByRole('button', { name: 'Remove passkey' }).click();
   await awaitListed(1, 'after removing');
+  // Its cut sockets reload it into the sign-in page; evaluate only after.
+  await signIn(otherPage).waitFor({ timeout: 10_000 });
   const removedStatus = await otherPage.evaluate(() => fetch('/api/sessions', { cache: 'no-store' }).then((r) => r.status));
   assert(removedStatus === 401, `a removed passkey's browser answered ${removedStatus}`);
   await other.close();
@@ -259,6 +261,8 @@ try {
   await page.goto(`${origin}/connect/login?reauth`);
   await signIn(page).click();
   await page.waitForURL(`${origin}/`);
+  // Booted first: an app still starting when cookies clear reloads itself.
+  await page.getByLabel('Terminal').first().waitFor({ state: 'attached', timeout: 15_000 });
 
   // Signed out, a deep link shows the sign-in page, then opens what it asked for.
   await context.clearCookies();
@@ -307,6 +311,7 @@ try {
     eleventh,
   );
   assert(refused === 409, `an eleventh passkey answered ${refused}`);
+  await page.getByLabel('Terminal').first().waitFor({ state: 'attached', timeout: 15_000 });
   await context.clearCookies();
   await page.goto(`${origin}/`);
   await signIn(page).click();

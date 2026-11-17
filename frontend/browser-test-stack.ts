@@ -4,22 +4,44 @@
  * temporary XDG and Git config, so neither the user's config, profiles, shell,
  * nor a running `just dev` affects it. A fake `multipass` (`test-bin`) logs to
  * the stack's `multipass` directory, and a fake `gh` answers from its `gh`
- * directory. Usage: bun browser-test-stack.ts <test.ts>...
+ * directory.
+ *
+ * Usage: bun browser-test-stack.ts [--jobs N] [--shard I/N] <test.ts>...
+ * `--jobs` runs that many files at once (default `BTMUX_TEST_JOBS`, else 1 in
+ * CI and up to 4 by core count elsewhere), printing each file's output when it
+ * ends. `--shard I/N` runs every Nth file, starting with the Ith.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, mkdtempSync, openSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, openSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { tmpdir } from 'node:os';
+import { availableParallelism, tmpdir } from 'node:os';
 import path from 'node:path';
 
 const frontend = import.meta.dir;
 const root = path.dirname(frontend);
-const tests = process.argv.slice(2);
-if (!tests.length) {
-  console.error('usage: bun browser-test-stack.ts <test.ts>...');
+
+function usage(): never {
+  console.error('usage: bun browser-test-stack.ts [--jobs N] [--shard I/N] <test.ts>...');
   process.exit(2);
 }
+
+let jobs =
+  Number(process.env.BTMUX_TEST_JOBS) ||
+  (process.env.CI ? 1 : Math.min(4, Math.max(1, Math.floor(availableParallelism() / 4))));
+let shard = { index: 1, count: 1 };
+let tests: string[] = [];
+const args = process.argv.slice(2);
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === '--jobs') jobs = Number(args[++i]);
+  else if (args[i] === '--shard') {
+    const match = /^(\d+)\/(\d+)$/.exec(args[++i] ?? '');
+    if (!match) usage();
+    shard = { index: Number(match[1]), count: Number(match[2]) };
+  } else tests.push(args[i]);
+}
+if (!tests.length || !Number.isInteger(jobs) || jobs < 1 || shard.index < 1 || shard.index > shard.count) usage();
+tests = tests.filter((_, i) => i % shard.count === shard.index - 1);
 
 let interrupted = false;
 const live = new Set<ChildProcess>();
@@ -154,19 +176,32 @@ async function withStack(
   }
 }
 
+const temp = mkdtempSync(path.join(tmpdir(), 'btmux-browser-test-'));
+// Vite's dependency cache is shared, so it's built once before stacks start.
+const optimizeLog = path.join(temp, 'vite-optimize.log');
+const optimize = start('bunx', ['vite', 'optimize'], { cwd: frontend, env: baseEnv(), log: optimizeLog });
 const build = start('cargo', ['build'], { cwd: root, env: process.env });
-if ((await exited(build)) !== 0) process.exit(1);
+const [built, optimized] = await Promise.all([exited(build), exited(optimize)]);
 live.delete(build);
+live.delete(optimize);
+if (built !== 0) process.exit(1);
+if (optimized !== 0) {
+  console.error(readFileSync(optimizeLog, 'utf8'));
+  process.exit(1);
+}
 const binary = path.resolve(root, process.env.CARGO_TARGET_DIR ?? 'target', 'debug', 'btmux');
 
-const temp = mkdtempSync(path.join(tmpdir(), 'btmux-browser-test-'));
 const failed: string[] = [];
-for (const [index, test] of tests.entries()) {
-  if (interrupted) break;
+
+async function runFile(index: number, test: string) {
   const dir = path.join(temp, `${index + 1}-${path.basename(test, '.ts')}`);
   mkdirSync(dir);
-  console.log(`\n=== ${test}`);
+  // Run alone, output streams; otherwise it's printed whole at the end.
+  const log = jobs > 1 ? path.join(dir, 'test.log') : undefined;
+  if (!log) console.log(`\n=== ${test}`);
+  const startedAt = Date.now();
   let code: number;
+  let error = '';
   try {
     code = await withStack(dir, async (url, backendUrl, token, configHome) => {
       const child = start('bun', [test], {
@@ -181,20 +216,42 @@ for (const [index, test] of tests.entries()) {
           BTMUX_TEST_GH: path.join(dir, 'gh'),
           BTMUX_TEST_LSP: path.join(dir, 'lsp'),
         },
+        log,
       });
       const code = await exited(child);
       live.delete(child);
       return code;
     });
-  } catch (error) {
-    console.error(String(error));
+  } catch (caught) {
+    error = String(caught);
     code = 1;
   }
+  if (log) {
+    console.log(`\n=== ${test}`);
+    try {
+      process.stdout.write(readFileSync(log, 'utf8'));
+    } catch {}
+  }
+  if (error) console.error(error);
+  const seconds = Math.round((Date.now() - startedAt) / 1000);
   if (code !== 0) {
     failed.push(test);
-    console.error(`FAIL ${test}; stack logs in ${dir}`);
+    console.error(`FAIL ${test} (${seconds}s); stack logs in ${dir}`);
+  } else {
+    console.log(`ok ${test} (${seconds}s)`);
+    rmSync(dir, { recursive: true, force: true });
   }
 }
+
+let next = 0;
+await Promise.all(
+  Array.from({ length: Math.min(jobs, tests.length) }, async () => {
+    while (!interrupted && next < tests.length) {
+      const index = next++;
+      await runFile(index, tests[index]);
+    }
+  }),
+);
 
 if (failed.length || interrupted) {
   if (failed.length) console.error(`\n${failed.length} of ${tests.length} failed: ${failed.join(', ')}`);
