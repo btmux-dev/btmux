@@ -110,7 +110,7 @@ try {
   const context = await browser.newContext({ ...devices['iPhone 15'] });
   const page = await context.newPage();
   const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('pageerror', (error) => errors.push(error.stack || error.message));
   await connect(page);
   const keys = (name: string) => page.getByRole('button', { name, exact: true });
   await keys('Esc').waitFor();
@@ -174,10 +174,12 @@ try {
 
   // Swipes scroll full-screen applications like the wheel, even after a redraw
   // detaches the touched node, which then alone receives the touch's events.
-  await write(page, '\x1b[?1049h\x1b[31mred\x1b[m');
+  await write(page, '\x1b[?1049h\x1b[H\x1b[31mred\x1b[m');
   await page.locator('[data-pane-terminal] .term-row span', { hasText: 'red' }).waitFor();
-  const lines = await page.evaluate(() => {
-    const term = (window as unknown as { term: { measureCell(): { height: number } } }).term;
+  const lines = await page.evaluate(async () => {
+    const term = (
+      window as unknown as { term: { measureCell(): { height: number }; write(data: string): void } }
+    ).term;
     const element = document.querySelector('[data-pane-terminal]')!;
     const target = [...element.querySelectorAll('.term-row span')].find((span) => span.textContent === 'red')!;
     const rect = element.getBoundingClientRect();
@@ -191,7 +193,13 @@ try {
     send('touchstart', rect.top + 300);
     for (let y = rect.top + 290; y >= rect.top + 200; y -= 10) {
       send('touchmove', y);
-      if (y === rect.top + 280) target.remove();
+      // Recolored, wterm replaces the span on its next frame. Removing it here
+      // instead would desync wterm's row parts, and a later paint would throw.
+      if (y === rect.top + 280) {
+        term.write('\x1b[H\x1b[32mred\x1b[m');
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        if (target.isConnected) throw new Error('the redraw kept the touched node');
+      }
     }
     send('touchend', rect.top + 200);
     return Math.trunc(100 / term.measureCell().height);
@@ -259,9 +267,13 @@ try {
           return rect.width > 0 && rect.height > 0 && element.checkVisibility();
         }).length,
     );
+  // The new pane's emulator opens asynchronously; until then nothing is shown.
   await waitForAsync(page, async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
-    return useStore.getState().terminals.size >= 3;
+    const state = useStore.getState();
+    const session = state.allSessions[0];
+    const panes = session.windows[session.active_window].panes;
+    return panes.length === 2 && panes.every((pane: { id: string }) => state.terminals.has(pane.id));
   });
   assert.equal(await shown(), 1);
   const activePane = () =>
