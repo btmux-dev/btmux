@@ -515,7 +515,9 @@ characters, and on Enter waits for the query typed), and the palette's
 own `/ws/files` socket under the pane's `workspaceFolder` (none for a remote
 cwd); an empty query lists the pane's other open files, then this tab's recent
 ones (`localStorage`) under that folder, and open and recent files get a small
-score boost over the server's order. MCP has
+score boost over the server's order. A trailing `:line` (`:line:column`, column
+ignored) opens on that line through `open`'s `line`; `:line` alone moves in the
+shown file. MCP has
 `open_in_editor`, `editor_buffers`, and `editor_diagnostics`.
 
 ### Built-in Neovim

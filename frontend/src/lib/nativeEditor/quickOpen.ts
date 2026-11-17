@@ -106,17 +106,35 @@ export interface QuickOpenPane {
   active: string | null;
 }
 
-/** Show quick open in `view`; `open` opens the chosen file in the pane. */
-export function quickOpen(view: EditorView, pane: QuickOpenPane, open: (path: string) => void) {
+/** Split `file:line` (or `file:line:column`, whose column is ignored) into its query and line. */
+export function parseQuery(text: string): { query: string; line: number | null } {
+  const match = /:(\d*)(?::\d*)?$/.exec(text);
+  if (!match) return { query: text, line: null };
+  const line = Number.parseInt(match[1], 10);
+  return { query: text.slice(0, match.index), line: line > 0 ? line : null };
+}
+
+/** Show quick open in `view`; `open` opens the chosen file in the pane, on `line` if given. */
+export function quickOpen(view: EditorView, pane: QuickOpenPane, open: (path: string, line: number | null) => void) {
   const prefix = pane.root.endsWith('/') ? pane.root : `${pane.root}/`;
-  const item = (path: string, matches?: number[]): PickItem => ({
-    ...describe(path, prefix, matches),
-    run: () => open(path),
-  });
   openPicker(view, {
     title: 'Go to file',
-    query: async (text) => {
+    query: async (typed) => {
+      const { query: text, line } = parseQuery(typed);
+      const item = (path: string, matches?: number[]): PickItem => {
+        const described = describe(path, prefix, matches);
+        return {
+          ...described,
+          label: line ? `${described.label}:${line}` : described.label,
+          run: () => open(path, line),
+        };
+      };
       const recent = recentFiles();
+      // `:line` alone goes to a line of the shown file.
+      if (!text.trim() && line && pane.active) {
+        const active = pane.active;
+        return [{ label: `Go to line ${line}`, detail: describe(active, prefix).label, run: () => open(active, line) }];
+      }
       if (!text.trim()) {
         const opened = pane.files.filter((p) => p !== pane.active);
         const others = recent.filter((p) => p !== pane.active && !pane.files.includes(p) && p.startsWith(prefix));

@@ -93,7 +93,7 @@ export function NativeEditor({
         changed,
         hide: () => opRef.current({ kind: 'hide' }),
         error: (message) => useStore.getState().showToast(message, 'error'),
-        open: (path) => opRef.current({ kind: 'open', path, line: null }),
+        open: (path, line) => opRef.current({ kind: 'open', path, line: line ?? null }),
       });
       setEditor(created);
     });

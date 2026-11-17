@@ -6,6 +6,7 @@ import { freshFrom } from './src/lib/nativeEditor/doc';
 import { detectIndent } from './src/lib/nativeEditor/languages';
 import { decodeTokens } from './src/lib/nativeEditor/features';
 import { fuzzyMatch } from './src/lib/nativeEditor/picker';
+import { parseQuery } from './src/lib/nativeEditor/quickOpen';
 import { diff, rebase } from './src/lib/nativeEditor/rebase';
 
 test('updates are skipped up to the synced version, and a gap is detected', () => {
@@ -100,4 +101,14 @@ test('edits made while disconnected rebase onto the reopened text', () => {
   expect(merged.changes.apply(server).toString()).toBe('zero\none\ntwo UNSENT\nthree\nfour\n');
   // The cursor, after the typed text, stays after it.
   expect(merged.after.mapPos(14)).toBe(19);
+});
+
+test('quick open splits a trailing line (and ignored column) from the query', () => {
+  expect(parseQuery('main.rs')).toEqual({ query: 'main.rs', line: null });
+  expect(parseQuery('main.rs:42')).toEqual({ query: 'main.rs', line: 42 });
+  expect(parseQuery('main.rs:42:7')).toEqual({ query: 'main.rs', line: 42 });
+  expect(parseQuery('main.rs:')).toEqual({ query: 'main.rs', line: null });
+  expect(parseQuery('main.rs:0')).toEqual({ query: 'main.rs', line: null });
+  expect(parseQuery(':12')).toEqual({ query: '', line: 12 });
+  expect(parseQuery('a:b')).toEqual({ query: 'a:b', line: null });
 });

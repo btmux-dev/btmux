@@ -39,8 +39,8 @@ export interface PaneEditorEvents {
   hide(): void;
   /** A save or revert failed. */
   error(message: string): void;
-  /** Open `path` in this pane (a jump to another file). */
-  open(path: string): void;
+  /** Open `path` in this pane (a jump to another file), on `line` if given. */
+  open(path: string, line?: number | null): void;
 }
 
 export interface FileStatus extends DocStatus {
@@ -346,7 +346,9 @@ export class PaneEditor {
     }
     const show = () => {
       this.view.focus();
-      quickOpen(this.view, { root, files: pane.editor.files, active: this.active }, (path) => this.events.open(path));
+      quickOpen(this.view, { root, files: pane.editor.files, active: this.active }, (path, line) =>
+        this.events.open(path, line),
+      );
     };
     const doc = this.active ? this.docs.get(this.active) : undefined;
     if (doc && !doc.view && !doc.status.error) void this.whenShown(doc.path).then((view) => view && show());

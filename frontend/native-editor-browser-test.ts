@@ -206,7 +206,7 @@ try {
     );
   mkdirSync(join(dir, 'deep', 'nested'), { recursive: true });
   const target = join(dir, 'deep', 'nested', 'quickopen-target.md');
-  writeFileSync(target, 'found me\n');
+  writeFileSync(target, 'found me\nline two\nline three\n');
   await input.click();
   await page.keyboard.press('ControlOrMeta+p');
   await goToFile.waitFor();
@@ -218,8 +218,20 @@ try {
   assert.equal(await targetOption.locator('.cm-btmux-picker-match').allTextContents().then((m) => m.join('')), 'qotgt');
   await page.keyboard.press('Enter');
   await activeFile(target);
-  await waitForText(page, paneId, 'found me\n');
+  await waitForText(page, paneId, 'found me\nline two\nline three\n');
   console.log('PASS quick open finds a file by fuzzy query and opens it in the pane');
+
+  // `file:line` opens on that line, and `:line` alone moves in the shown file.
+  await page.keyboard.press('ControlOrMeta+p');
+  await page.keyboard.type('qotgt:3');
+  await editorPane.getByRole('option', { name: /quickopen-target\.md:3/ }).waitFor();
+  await page.keyboard.press('Enter');
+  await editorPane.locator('.cm-activeLine', { hasText: /^line three$/ }).waitFor();
+  await page.keyboard.press('ControlOrMeta+p');
+  await page.keyboard.type(':2');
+  await page.keyboard.press('Enter');
+  await editorPane.locator('.cm-activeLine', { hasText: /^line two$/ }).waitFor();
+  console.log('PASS quick open goes to file:line and :line');
 
   // A file created after the first search shows up once the index refreshes.
   const late = join(dir, 'late-arrival.txt');
