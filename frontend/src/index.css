@@ -309,18 +309,15 @@
     btm-agent-in 320ms cubic-bezier(0.2, 0, 0, 1) both,
     btm-agent-breathe 2.4s ease-in-out 320ms infinite;
 }
-/* Working dots breathe as a gentle wave. */
-.btm-agent-dot[data-agent-animate][data-agent-state='working']:nth-child(2) {
+/* Working dots breathe as a gentle wave along each row. */
+.btm-agent-dot[data-agent-animate][data-agent-state='working']:nth-child(4n + 2) {
   animation-delay: 0ms, 620ms;
 }
-.btm-agent-dot[data-agent-animate][data-agent-state='working']:nth-child(3) {
+.btm-agent-dot[data-agent-animate][data-agent-state='working']:nth-child(4n + 3) {
   animation-delay: 0ms, 920ms;
 }
-.btm-agent-dot[data-agent-animate][data-agent-state='working']:nth-child(4) {
+.btm-agent-dot[data-agent-animate][data-agent-state='working']:nth-child(4n + 4) {
   animation-delay: 0ms, 1220ms;
-}
-.btm-agent-dot[data-agent-animate][data-agent-state='working']:nth-child(5) {
-  animation-delay: 0ms, 1520ms;
 }
 .btm-agent-dot[data-agent-animate][data-agent-state='waiting']::after {
   animation: btm-agent-halo 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;

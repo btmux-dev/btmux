@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Bot } from 'lucide-react';
 import { Icon } from '@astryxdesign/core/Icon';
 import { SideNavItem } from '@astryxdesign/core/SideNav';
-import { HStack } from '@astryxdesign/core/Layout';
+import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { Text } from '@astryxdesign/core/Text';
 import { useStore } from '../state/store';
@@ -21,7 +21,7 @@ const GROUP_OF: Record<AgentState, AgentGroup> = {
   unknown: 'idle',
 };
 const DOT_VARIANT = { waiting: 'warning', working: 'accent', done: 'success', idle: 'neutral' } as const;
-const MAX_RAIL_DOTS = 5;
+const RAIL_DOTS_PER_ROW = 4;
 
 /** Agents nav entry with live per-state agent indicators. */
 export function AgentNavItem({ collapsed, onClick }: { collapsed: boolean; onClick: () => void }) {
@@ -46,15 +46,18 @@ export function AgentNavItem({ collapsed, onClick }: { collapsed: boolean; onCli
       // The collapsed rail's tooltip shows the label, so it carries the counts.
       label={collapsed && summary ? `Agents · ${summary}` : 'Agents'}
       aria-label={summary ? `Agents, ${summary}` : undefined}
+      // Rows of rail dots grow the item rather than overflow it.
+      className={collapsed ? 'h-auto min-h-(--size-element-md) py-1' : undefined}
       icon={
-        // Lift the glyph so glyph and rail dots center together.
-        <HStack
-          className={`relative shrink-0 transition-transform ${collapsed && agents.length > 0 ? '-translate-y-0.5' : ''}`}
-        >
+        <VStack hAlign="center" gap={0.5} className="shrink-0">
           <Icon icon={Bot} size="sm" color="secondary" />
           {collapsed && agents.length > 0 && (
-            <HStack gap={0.5} aria-hidden className="absolute top-full left-1/2 mt-0.5 -translate-x-1/2">
-              {agents.slice(0, MAX_RAIL_DOTS).map((agent) => (
+            <div
+              aria-hidden
+              className="grid gap-0.5"
+              style={{ gridTemplateColumns: `repeat(${Math.min(agents.length, RAIL_DOTS_PER_ROW)}, auto)` }}
+            >
+              {agents.map((agent) => (
                 // Keyed by state so each transition replays the entrance.
                 <span
                   key={`${agent.id}:${agent.group}`}
@@ -63,9 +66,9 @@ export function AgentNavItem({ collapsed, onClick }: { collapsed: boolean; onCli
                   data-agent-animate={animate}
                 />
               ))}
-            </HStack>
+            </div>
           )}
-        </HStack>
+        </VStack>
       }
       endContent={
         counts.length > 0 ? (
