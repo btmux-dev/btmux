@@ -191,7 +191,44 @@ try {
   // Other keys end the dictated line.
   await page.keyboard.press('Enter');
   assert.equal(await takeInput(page), '\r');
-  assert.equal(await page.evaluate(() => (document.activeElement as HTMLTextAreaElement).value), '​');
+  const fieldValue = () => page.evaluate(() => (document.activeElement as HTMLTextAreaElement).value);
+  const select = (start: number, end: number) =>
+    page.evaluate(([start, end]) => (document.activeElement as HTMLTextAreaElement).setSelectionRange(start, end), [
+      start,
+      end,
+    ]);
+  assert.equal(await fieldValue(), '​');
+  // Backspace over a selection of retained text deletes all of it.
+  await page.keyboard.insertText('hello world');
+  assert.equal(await takeInput(page), 'hello world');
+  await select(7, 12);
+  await page.keyboard.press('Backspace');
+  assert.equal(await takeInput(page), '\x7f'.repeat(5));
+  assert.equal(await fieldValue(), '​hello ');
+  // So does a paste over one, without clipboard data.
+  await select(1, 7);
+  await page.evaluate(() => {
+    const input = document.activeElement as HTMLTextAreaElement;
+    input.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertFromPaste' }));
+    input.value = '​hey';
+    input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste' }));
+  });
+  assert.equal(await takeInput(page), '\x7f'.repeat(4) + 'y');
+  assert.equal(await fieldValue(), '​');
+  // Deleting a grapheme of several code points is left undone.
+  await page.keyboard.insertText('ok 👍🏽');
+  assert.equal(await takeInput(page), 'ok 👍🏽');
+  await page.keyboard.press('Backspace');
+  assert.equal(await takeInput(page), '');
+  assert.equal(await fieldValue(), '​ok 👍🏽');
+  // Accepted text disarms Escape → Tab leaving the terminal.
+  await page.keyboard.press('Escape');
+  await page.keyboard.insertText('hi');
+  await page.keyboard.press('Tab');
+  assert.equal(await takeInput(page), '\x1bhi\t');
+  assert(await focusedInput());
+  await page.keyboard.press('Enter');
+  await takeInput(page);
 
   // Swipes scroll full-screen applications like the wheel, even after a redraw
   // detaches the touched node, which then alone receives the touch's events.

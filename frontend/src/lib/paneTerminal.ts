@@ -102,6 +102,12 @@ interface WTermInput {
   deliveredKeys: Set<string>;
   // Backspace as the touch keyboard sends it, in the key protocol in use.
   sendTouchDelete(): void;
+  // Sends text as a paste (bracketed when the application asks).
+  sendPaste(text: string): void;
+  // State wterm's input handler clears for each input.
+  suppressNextTouchDeleteInput: boolean;
+  recentCompositionCommit: unknown;
+  selectionActions?: { clearSelection(): void } | null;
 }
 
 /** `KeyboardEvent.code` for a key, for listeners that match physical keys. */
@@ -252,12 +258,19 @@ export class PaneTerminal {
     if (input) input.style.visibility = 'visible';
     const wtermInput = (wterm as unknown as { input: WTermInput | null }).input;
     if (input && wtermInput && IOS && isTouchPrimary()) {
-      term.stopKeepingText = keepInsertedText(
-        element,
-        input,
-        (text) => term.emit(text),
-        () => wtermInput.sendTouchDelete(),
-      );
+      term.stopKeepingText = keepInsertedText(element, input, {
+        accept: () => {
+          wtermInput.tabExitArmed = false;
+          wtermInput.suppressNextTouchDeleteInput = false;
+          wtermInput.recentCompositionCommit = null;
+        },
+        send: (text) => {
+          wtermInput.selectionActions?.clearSelection();
+          term.emit(text);
+        },
+        paste: (text) => wtermInput.sendPaste(text),
+        deleteBack: () => wtermInput.sendTouchDelete(),
+      });
     }
     return term;
   }
