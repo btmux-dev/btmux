@@ -5,6 +5,8 @@ import type { Theme } from '../state/types';
 import { macEditKey } from './macEditKeys';
 import { macOptionText } from './macOption';
 import { findUrls } from './urlDetect';
+import { IOS, keepInsertedText } from './dictation';
+import { isTouchPrimary } from './touch';
 
 export interface PaneTerminalOptions {
   theme: Theme;
@@ -98,6 +100,14 @@ interface WTermInput {
   tabExitArmed: boolean;
   // Keys whose press reached the application; wterm encodes their repeats.
   deliveredKeys: Set<string>;
+  // Backspace as the touch keyboard sends it, in the key protocol in use.
+  sendTouchDelete(): void;
+  // Sends text as a paste (bracketed when the application asks).
+  sendPaste(text: string): void;
+  // State wterm's input handler clears for each input.
+  suppressNextTouchDeleteInput: boolean;
+  recentCompositionCommit: unknown;
+  selectionActions?: { clearSelection(): void } | null;
 }
 
 /** `KeyboardEvent.code` for a key, for listeners that match physical keys. */
@@ -169,6 +179,7 @@ export class PaneTerminal {
   private touchTarget: EventTarget | null = null;
   private focusTarget: HTMLElement | null = null;
   private renderListeners = new Set<() => void>();
+  private stopKeepingText = () => {};
 
   private constructor(wterm: WTerm, element: HTMLElement, core: GhosttyCore, inputDisabled: boolean) {
     this.wterm = wterm;
@@ -245,6 +256,22 @@ export class PaneTerminal {
     // Stay focusable while the pane hides its replay.
     const input = element.querySelector('textarea');
     if (input) input.style.visibility = 'visible';
+    const wtermInput = (wterm as unknown as { input: WTermInput | null }).input;
+    if (input && wtermInput && IOS && isTouchPrimary()) {
+      term.stopKeepingText = keepInsertedText(element, input, {
+        accept: () => {
+          wtermInput.tabExitArmed = false;
+          wtermInput.suppressNextTouchDeleteInput = false;
+          wtermInput.recentCompositionCommit = null;
+        },
+        send: (text) => {
+          wtermInput.selectionActions?.clearSelection();
+          term.emit(text);
+        },
+        paste: (text) => wtermInput.sendPaste(text),
+        deleteBack: () => wtermInput.sendTouchDelete(),
+      });
+    }
     return term;
   }
 
@@ -750,6 +777,7 @@ export class PaneTerminal {
     this.element.removeEventListener('touchstart', this.onTouchStart);
     this.element.removeEventListener('touchmove', this.onTouchMove);
     this.onTouchEnd();
+    this.stopKeepingText();
     document.removeEventListener('keydown', this.onLinkModifier, true);
     document.removeEventListener('keyup', this.onLinkModifier, true);
     this.dataListeners.clear();

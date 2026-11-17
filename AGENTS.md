@@ -372,6 +372,12 @@ instead, and it has a key to hide an editor covering the active pane, since
 VS Code ignores synthetic keys. Armed Ctrl, Alt, or prefix apply to the next single
 character typed, including text sent without key events or committed by a
 composition; longer text (a suggestion) passes through and disarms them.
+On iOS, text inserted without key events stays in wterm's textarea and
+changes reach the PTY as backspaces and text (`lib/dictation.ts`): dictation
+replaces its guesses only while they are before the caret, and stops when
+wterm empties the field. Other keys empty it. An edit deleting a grapheme of
+several code points is undone instead, since shells delete those differently
+(fish a grapheme per Backspace, bash a code point).
 `useVisualViewport` sizes `#root` to the visual
 viewport, since iOS doesn't resize the layout for the keyboard. Swipes in
 alternate-screen or mouse-tracking programs become wheel events. Below 768px,
