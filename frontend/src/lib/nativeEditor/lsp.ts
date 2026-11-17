@@ -6,12 +6,13 @@ import {
   LSPClient,
   LSPPlugin,
   serverCompletion,
+  showSignatureHelp,
   signatureHelp,
   Workspace,
   type Transport,
   type WorkspaceFile,
 } from '@codemirror/lsp-client';
-import { StateEffect, StateField, type Extension, type Text } from '@codemirror/state';
+import { EditorState, Facet, Prec, StateEffect, StateField, type Extension, type Text } from '@codemirror/state';
 import { EditorView, keymap, showPanel, type Panel, type Tooltip } from '@codemirror/view';
 import { getIndentUnit, indentUnit, LanguageDescription } from '@codemirror/language';
 import { setDiagnostics, type Diagnostic } from '@codemirror/lint';
@@ -476,10 +477,16 @@ export const serverFailed = (server: number | undefined) =>
   editorConnection.lspStatus.find((s) => s.id === server)?.state === 'failed';
 
 // lsp-client's signature help has no key to close it, so Esc hides the
-// tooltip shown until another replaces it (a new parameter, a new call).
-// Its state field is the first extension `signatureHelp` returns.
+// tooltip shown until another replaces it (a new parameter) or a trigger
+// character is typed (a new call, which lsp-client may answer with the same
+// tooltip) or help is asked for. Its state field is the first extension
+// `signatureHelp` returns.
 const signatureField = (signatureHelp() as readonly Extension[])[0] as StateField<{ tooltip: Tooltip } | null>;
-const dismissSignature = StateEffect.define<Tooltip['create']>();
+const dismissSignature = StateEffect.define<Tooltip['create'] | null>();
+/** The server's signature help trigger characters. */
+const signatureTriggers = Facet.define<() => readonly string[], () => readonly string[]>({
+  combine: (values) => values[0] ?? (() => []),
+});
 const dismissedSignature = StateField.define<Tooltip['create'] | null>({
   create: () => null,
   update: (value, tr) => tr.effects.reduce((v, e) => (e.is(dismissSignature) ? e.value : v), value),
@@ -492,6 +499,27 @@ const signatureDismissal: Extension = [
       ? { class: 'cm-btmux-signature-dismissed' }
       : {};
   }),
+  EditorState.transactionExtender.of((tr) => {
+    if (!tr.docChanged || !tr.isUserEvent('input.type') || !tr.startState.field(dismissedSignature)) return null;
+    const triggers = tr.startState.facet(signatureTriggers)();
+    let typed = false;
+    tr.changes.iterChanges((_fromA, _toA, _fromB, _toB, inserted) => {
+      const text = inserted.toString();
+      if (triggers.some((c) => text.includes(c))) typed = true;
+    });
+    return typed ? { effects: dismissSignature.of(null) } : null;
+  }),
+  Prec.highest(
+    keymap.of([
+      {
+        key: 'Mod-Shift-Space',
+        run: (view) => {
+          if (view.state.field(dismissedSignature)) view.dispatch({ effects: dismissSignature.of(null) });
+          return showSignatureHelp(view);
+        },
+      },
+    ]),
+  ),
   // An observer, so Esc still reaches vim and closes completions.
   EditorView.domEventObservers({
     keydown(e, view) {
@@ -513,6 +541,7 @@ export function lspExtension(doc: Doc): Extension {
     client(server).plugin(doc.uri, doc.languageId),
     lspFeatures,
     signatureDismissal,
+    signatureTriggers.of(() => client(server).serverCapabilities?.signatureHelpProvider?.triggerCharacters ?? []),
     // Cmd-click (Ctrl elsewhere) jumps to the definition.
     EditorView.domEventHandlers({
       mousedown(e, view) {

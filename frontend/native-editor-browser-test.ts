@@ -494,16 +494,29 @@ try {
     await waitForText(page, paneId, 'let bad = 1;\nuse thing;\nfakeCompletion\n');
     console.log('PASS completion');
 
-    // Esc hides signature help until it moves to another parameter.
-    await page.keyboard.type(' sig(');
+    // Esc hides signature help until it is asked for, a call starts, or it
+    // moves to another parameter. Escs are apart, as two quickly hide the editor.
     const signature = page.locator('.cm-lsp-signature-tooltip');
+    const escape = async () => {
+      await page.waitForTimeout(400);
+      await page.keyboard.press('Escape');
+      await signature.waitFor({ state: 'hidden' });
+    };
+    await page.keyboard.type(' sig(');
     await signature.waitFor();
-    await page.keyboard.press('Escape');
-    await signature.waitFor({ state: 'hidden' });
+    await escape();
+    // Typing in the same parameter keeps it hidden.
     await page.keyboard.type('x');
     await page.waitForTimeout(400);
     assert.equal(await signature.isVisible(), false);
-    await page.keyboard.type(',');
+    await page.keyboard.press('ControlOrMeta+Shift+Space');
+    await signature.waitFor();
+    await escape();
+    // A new call to it, at the same parameter: lsp-client keeps the tooltip.
+    await page.keyboard.type(') sig(');
+    await signature.waitFor();
+    await escape();
+    await page.keyboard.type('y,');
     await signature.waitFor();
     await page.keyboard.press('End');
     await page.keyboard.press('Shift+Home');
