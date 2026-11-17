@@ -551,7 +551,10 @@ sandboxed session's mount (`set_sandboxes`, from `broadcast_state`) get servers
 run by `multipass exec` and a login shell in the guest. The browser's other
 features (`lib/nativeEditor/features.ts`: semantic tokens, inlay hints, code
 lenses, highlights, folding and selection ranges, code actions, symbols, call
-and type hierarchy, range and on-type formatting) and completions
+and type hierarchy, range and on-type formatting), inline completions
+(`inlineCompletion.ts`: ghost text asked for once typing pauses or with
+Alt-\\, kept while typing matches it; Tab accepts, Mod-Right accepts a word,
+Alt-] and Alt-[ cycle, Esc dismisses), and completions
 (`completion.ts`, after lsp-client's source, adding `completionItem/resolve`
 for docs and additional edits, also after snippets) request through the same
 client; pickers are a CodeMirror panel (`picker.ts`, which highlights matched

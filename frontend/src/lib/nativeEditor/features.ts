@@ -413,7 +413,7 @@ const semanticRequester = requester(
 );
 
 // Code lenses, as lines above the code.
-async function execute(view: EditorView, command: Command) {
+export async function execute(view: EditorView, command: Command) {
   const p = plugin(view);
   if (!p) return;
   try {

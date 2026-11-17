@@ -382,6 +382,7 @@ fn client_capabilities() -> Value {
                     "properties": ["tooltip", "textEdits", "label.tooltip", "label.location", "label.command"],
                 },
             },
+            "inlineCompletion": {},
             "callHierarchy": {},
             "typeHierarchy": {},
             "semanticTokens": {

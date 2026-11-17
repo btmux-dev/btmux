@@ -21,6 +21,7 @@ import type { Overlay } from '../../state/types';
 import type { EditorServerMessage } from '../../generated/protocol';
 import { IS_MAC } from '../nvimKeys';
 import { serverCompletions } from './completion';
+import { inlineCompletions } from './inlineCompletion';
 import { editorConnection } from './connection';
 import { viewDocs, type Doc } from './doc';
 import { REFRESH_ALL, applyWorkspaceEdit, lspFeatures, refreshEffect, setRawDiagnostics } from './features';
@@ -662,6 +663,7 @@ export function lspExtension(doc: Doc): Extension {
   return [
     client(server).plugin(doc.uri, doc.languageId),
     lspFeatures,
+    inlineCompletions,
     signatureDismissal,
     signatureTriggers.of(() => client(server).serverCapabilities?.signatureHelpProvider?.triggerCharacters ?? []),
     // Cmd-click (Ctrl elsewhere) jumps to the definition.

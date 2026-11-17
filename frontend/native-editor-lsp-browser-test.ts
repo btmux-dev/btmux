@@ -546,6 +546,39 @@ try {
   await until('the location', async () => (await lines(page, paneId)) === 'thing defined here\n');
   console.log('PASS inlay hint resolve');
 
+  // Inline completions: ghost text to type through, cycle, accept, or dismiss.
+  const inline = join(dir, 'inline.fake');
+  writeFileSync(inline, 'x\n');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: inline, line: 1, editor: 'native' });
+  await until('inline.fake', async () => (await lines(page, paneId)) === 'x\n');
+  const ghost = pane.locator('.cm-inline-completion');
+  const ghostText = async () => ((await ghost.count()) ? await ghost.textContent() : null);
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.type('fn ');
+  await until('the ghost text', async () => (await ghostText()) === 'main() {}');
+  assert.match(log(), /^inline 2$/m);
+  await page.keyboard.press('Alt+]');
+  await until('the next suggestion', async () => (await ghostText()) === 'other() {}');
+  await page.keyboard.press('Alt+[');
+  await until('the first again', async () => (await ghostText()) === 'main() {}');
+  await page.keyboard.type('m');
+  await until('typed through', async () => (await ghostText()) === 'ain() {}');
+  await page.keyboard.press('ControlOrMeta+ArrowRight');
+  await until('a word accepted', async () => (await ghostText()) === '() {}');
+  await page.keyboard.press('Tab');
+  await until('accepted', async () => (await lines(page, paneId)) === 'x\nfn main() {}');
+  await until('its command', () => log().includes('execute fake.hint ["inline"]'));
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('fn ');
+  await until('the ghost text again', async () => (await ghostText()) === 'main() {}');
+  await page.keyboard.press('Escape');
+  await until('dismissed', async () => (await ghostText()) === null);
+  await page.keyboard.press('Alt+\\');
+  await until('asked for', async () => (await ghostText()) === 'main() {}');
+  assert.match(log(), /^inline 1$/m);
+  console.log('PASS inline completions');
+
   // A restarted server's watches work too.
   const count = (re: RegExp) => (log().match(re) ?? []).length;
   writeFileSync(join(dir, 'crash.fake'), 'x\n');

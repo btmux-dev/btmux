@@ -4,6 +4,8 @@
 //   "unused", a warning tagged deprecated, with a code and its link and
 //   other.fake as related information, on every "old"
 // - implementation: other.fake's first line
+// - inline completion after "fn ": "fn main() {}" (running fake.hint), then
+//   "fn other() {}", replacing from "fn"
 // - pulled diagnostics depend on other files: each pull is logged
 // - code actions on "withdraw": ask the user, then cancel the question
 // - completion: "fakeCompletion", with 100 paragraphs of docs, and
@@ -141,6 +143,7 @@ function handle(msg: any): unknown {
           documentFormattingProvider: true,
           diagnosticProvider: { interFileDependencies: true, workspaceDiagnostics: false },
           implementationProvider: true,
+          inlineCompletionProvider: true,
           semanticTokensProvider: { legend: { tokenTypes: ['function'], tokenModifiers: [] }, full: true },
           inlayHintProvider: { resolveProvider: true },
           documentHighlightProvider: true,
@@ -215,6 +218,23 @@ function handle(msg: any): unknown {
         return { contents: { kind: 'markdown', value } };
       }
       return { contents: { kind: 'markdown', value: `Fake hover for **${word}**` } };
+    }
+    case 'textDocument/inlineCompletion': {
+      log(`inline ${p.context.triggerKind}`);
+      const t = text(p.textDocument.uri);
+      const before = t.split('\n')[p.position.line]?.slice(0, p.position.character) ?? '';
+      if (!before.endsWith('fn ')) return { items: [] };
+      const range = { start: { ...p.position, character: p.position.character - 3 }, end: p.position };
+      return {
+        items: [
+          {
+            insertText: 'fn main() {}',
+            range,
+            command: { title: 'Accepted', command: 'fake.hint', arguments: ['inline'] },
+          },
+          { insertText: 'fn other() {}', range },
+        ],
+      };
     }
     case 'textDocument/implementation': {
       const other = uriOf(join(dirname(pathOf(p.textDocument.uri)), 'other.fake'));
