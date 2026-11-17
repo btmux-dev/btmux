@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use git2::{IndexEntry, IndexTime, Repository};
+use git2::{Index, IndexEntry, IndexTime, Repository};
 use serde::Serialize;
 
 use super::buffer::{self, LineEnding};
@@ -70,12 +70,35 @@ fn index_path(rel: &Path) -> Vec<u8> {
     s.as_bytes().to_vec()
 }
 
+/// What git signs follow: the index text, and the commit blame starts from.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct Snapshot {
+    pub base: Option<Base>,
+    pub head: Option<git2::Oid>,
+}
+
+pub fn read(file: &GitFile) -> Snapshot {
+    let Ok(repo) = Repository::open(&file.workdir) else {
+        return Snapshot::default();
+    };
+    Snapshot {
+        base: repo
+            .index()
+            .ok()
+            .and_then(|i| base_in(&repo, &i, &file.rel)),
+        head: repo.refname_to_id("HEAD").ok(),
+    }
+}
+
 /// The file's index text: `None` if it is ignored, binary, a submodule, or
 /// conflicted.
-pub fn read_base(file: &GitFile) -> Option<Base> {
-    let repo = Repository::open(&file.workdir).ok()?;
-    let index = repo.index().ok()?;
-    match index.get_path(&file.rel, 0) {
+#[cfg(test)]
+fn read_base(file: &GitFile) -> Option<Base> {
+    read(file).base
+}
+
+fn base_in(repo: &Repository, index: &Index, rel: &Path) -> Option<Base> {
+    match index.get_path(rel, 0) {
         Some(entry) => {
             // Submodules and symlinks.
             if entry.mode & 0o170000 != 0o100000 {
@@ -94,8 +117,8 @@ pub fn read_base(file: &GitFile) -> Option<Base> {
             })
         }
         None => {
-            let conflicted = (1..=3).any(|stage| index.get_path(&file.rel, stage).is_some());
-            let ignored = repo.is_path_ignored(&file.rel).unwrap_or(true);
+            let conflicted = (1..=3).any(|stage| index.get_path(rel, stage).is_some());
+            let ignored = repo.is_path_ignored(rel).unwrap_or(true);
             (!conflicted && !ignored).then(|| Base {
                 text: String::new(),
                 line_ending: LineEnding::Lf,
@@ -106,8 +129,11 @@ pub fn read_base(file: &GitFile) -> Option<Base> {
     }
 }
 
+const CHANGED: &str = "The index changed meanwhile; try again";
+
 /// Write `text` to the index as the file's content, if the index still has
-/// `expected`. New entries take the file's encoding and mode from disk.
+/// `expected`. Tracked files keep the index blob's encoding; new ones are
+/// encoded as on disk and cleaned as `git add` would.
 pub fn stage(
     file: &GitFile,
     expected: &Base,
@@ -115,18 +141,26 @@ pub fn stage(
     line_ending: LineEnding,
     bom: bool,
 ) -> Result<(), String> {
-    if read_base(file).as_ref() != Some(expected) {
-        return Err("The index changed meanwhile; try again".into());
-    }
     let repo = Repository::open(&file.workdir).map_err(|e| e.to_string())?;
-    let mut index = repo.index().map_err(|e| e.to_string())?;
-    let (mode, line_ending, bom) = match index.get_path(&file.rel, 0) {
-        Some(entry) => (entry.mode, expected.line_ending, expected.bom),
-        None => (new_mode(&file.workdir.join(&file.rel)), line_ending, bom),
+    let (id, mode) = if expected.untracked {
+        let data = buffer::encode(text, line_ending, bom);
+        let mode = new_mode(&file.workdir.join(&file.rel));
+        (clean_blob(file, &data)?, mode)
+    } else {
+        let data = buffer::encode(text, expected.line_ending, expected.bom);
+        (repo.blob(&data).map_err(|e| e.to_string())?, 0)
     };
-    let data = buffer::encode(text, line_ending, bom);
-    // No stat data: git compares the worktree file's content, which a
-    // matching stat would let it skip.
+    let lock = IndexLock::take(&file.git_dir)?;
+    let mut index = lock.index(&repo)?;
+    if base_in(&repo, &index, &file.rel).as_ref() != Some(expected) {
+        return Err(CHANGED.into());
+    }
+    let mode = match index.get_path(&file.rel, 0) {
+        Some(entry) => entry.mode,
+        None => mode,
+    };
+    // No stat data, and a zero size, which git takes as never read: it
+    // compares the worktree file's content.
     let zero = IndexTime::new(0, 0);
     let entry = IndexEntry {
         ctime: zero,
@@ -136,18 +170,124 @@ pub fn stage(
         mode,
         uid: 0,
         gid: 0,
-        file_size: data.len() as u32,
-        id: git2::Oid::ZERO_SHA1,
+        file_size: 0,
+        id,
         flags: 0,
         flags_extended: 0,
         path: index_path(&file.rel),
     };
     index
-        .add_frombuffer(&entry, &data)
+        .add(&entry)
         .map_err(|e| format!("Cannot stage: {}", e.message()))?;
-    index
-        .write()
-        .map_err(|e| format!("Cannot write the index: {}", e.message()))
+    lock.commit(index)
+}
+
+/// `data` as a blob after the path's clean conversion (`text`, `eol`,
+/// filters), as `git add` stores it.
+fn clean_blob(file: &GitFile, data: &[u8]) -> Result<git2::Oid, String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut path = std::ffi::OsString::from("--path=");
+    path.push(&file.rel);
+    let mut child = Command::new("git")
+        .args(["hash-object", "-w", "--stdin"])
+        .arg(path)
+        .current_dir(&file.workdir)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to run git: {e}"))?;
+    let written = child.stdin.take().map(|mut pipe| pipe.write_all(data));
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("Failed to run git: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "Cannot stage: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    if let Some(Err(e)) = written {
+        return Err(format!("Failed to write to git: {e}"));
+    }
+    git2::Oid::from_str(String::from_utf8_lossy(&out.stdout).trim()).map_err(|e| e.to_string())
+}
+
+/// Temporary index files [`IndexLock`] writes in the git dir.
+pub const SCRATCH_PREFIX: &str = "index.btmux-";
+
+/// Git's `index.lock`, held from reading the index to replacing it, so no
+/// other writer's change is lost in between.
+struct IndexLock {
+    git_dir: PathBuf,
+    scratch: PathBuf,
+}
+
+impl IndexLock {
+    fn take(git_dir: &Path) -> Result<Self, String> {
+        let path = git_dir.join("index.lock");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        loop {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(_) => break,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if std::time::Instant::now() >= deadline {
+                        return Err("Another Git process holds the index lock; try again".into());
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(e) => return Err(format!("Cannot lock the index: {e}")),
+            }
+        }
+        Ok(Self {
+            git_dir: git_dir.to_path_buf(),
+            scratch: git_dir.join(format!("{SCRATCH_PREFIX}{}", uuid::Uuid::new_v4())),
+        })
+    }
+
+    /// The index as it is now, in a scratch copy, owned by `repo`.
+    fn index(&self, repo: &Repository) -> Result<Index, String> {
+        let current = self.git_dir.join("index");
+        match std::fs::read(&current) {
+            Ok(bytes) => {
+                std::fs::write(&self.scratch, bytes).map_err(|e| e.to_string())?;
+                // Keep the index's time for racy-git checks.
+                if let Ok(mtime) = std::fs::metadata(&current).and_then(|m| m.modified()) {
+                    let _ = std::fs::File::options()
+                        .write(true)
+                        .open(&self.scratch)
+                        .and_then(|f| f.set_modified(mtime));
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("Cannot read the index: {e}")),
+        }
+        let mut index = Index::open(&self.scratch).map_err(|e| e.to_string())?;
+        repo.set_index(&mut index).map_err(|e| e.to_string())?;
+        Ok(index)
+    }
+
+    /// Replace the index with `index`, then release the lock.
+    fn commit(self, mut index: Index) -> Result<(), String> {
+        index
+            .write()
+            .map_err(|e| format!("Cannot write the index: {}", e.message()))?;
+        std::fs::rename(&self.scratch, self.git_dir.join("index"))
+            .map_err(|e| format!("Cannot write the index: {e}"))
+    }
+}
+
+impl Drop for IndexLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.scratch);
+        let _ = std::fs::remove_file(self.git_dir.join("index.lock"));
+    }
 }
 
 #[cfg(unix)]
@@ -305,6 +445,75 @@ mod tests {
 
         std::fs::write(dir.join("ignored"), "i\n").unwrap();
         assert!(read_base(&locate(&dir.join("ignored")).unwrap()).is_none());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn git_out(dir: &Path, args: &[&str]) -> Vec<u8> {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap()
+            .stdout
+    }
+
+    #[test]
+    fn stages_new_files_as_git_add_does() {
+        let dir = repo();
+        std::fs::write(dir.join(".gitattributes"), "*.txt text eol=lf\n").unwrap();
+        std::fs::write(dir.join("new.txt"), "a\r\nb\r\n").unwrap();
+        let file = locate(&dir.join("new.txt")).unwrap();
+        let base = read_base(&file).unwrap();
+        stage(&file, &base, "a\nb\n", LineEnding::Crlf, false).unwrap();
+        assert_eq!(git_out(&dir, &["show", ":new.txt"]), b"a\nb\n");
+        // Fully staged: nothing left in the worktree.
+        assert_eq!(
+            git_out(&dir, &["status", "--porcelain", "new.txt"]),
+            b"A  new.txt\n"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn stages_under_the_index_lock() {
+        let dir = repo();
+        std::fs::write(dir.join("f.txt"), "a\n").unwrap();
+        std::fs::write(dir.join("g.txt"), "g\n").unwrap();
+        git(&dir, &["add", "f.txt", "g.txt"]);
+        let file = locate(&dir.join("f.txt")).unwrap();
+        let base = read_base(&file).unwrap();
+        // Another writer holds the lock: refused, and its lock is kept.
+        std::fs::write(dir.join(".git/index.lock"), "").unwrap();
+        assert!(stage(&file, &base, "b\n", LineEnding::Lf, false).is_err());
+        assert!(dir.join(".git/index.lock").exists());
+        std::fs::remove_file(dir.join(".git/index.lock")).unwrap();
+        // Other entries are kept.
+        std::fs::write(dir.join("g.txt"), "G\n").unwrap();
+        git(&dir, &["add", "g.txt"]);
+        stage(&file, &base, "b\n", LineEnding::Lf, false).unwrap();
+        assert_eq!(git_out(&dir, &["show", ":f.txt"]), b"b\n");
+        assert_eq!(git_out(&dir, &["show", ":g.txt"]), b"G\n");
+        let names: Vec<_> = std::fs::read_dir(dir.join(".git"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert!(!names.iter().any(|n| n.starts_with("index.")), "{names:?}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn follows_head() {
+        let dir = repo();
+        std::fs::write(dir.join("f.txt"), "a\n").unwrap();
+        let file = locate(&dir.join("f.txt")).unwrap();
+        assert!(read(&file).head.is_none());
+        git(&dir, &["add", "f.txt"]);
+        git(&dir, &["commit", "-q", "-m", "First"]);
+        let first = read(&file);
+        git(&dir, &["commit", "-q", "--allow-empty", "-m", "Second"]);
+        let second = read(&file);
+        assert_eq!(first.base, second.base);
+        assert!(first.head.is_some() && first.head != second.head);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

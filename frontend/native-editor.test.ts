@@ -9,6 +9,7 @@ import { lspProgress } from './src/lib/nativeEditor/lspProgress';
 import { fuzzyMatch } from './src/lib/nativeEditor/picker';
 import { parseQuery } from './src/lib/nativeEditor/quickOpen';
 import { diff, rebase } from './src/lib/nativeEditor/rebase';
+import { gitSigns, gitSummary } from './src/lib/nativeEditor/gitSigns';
 
 test('updates are skipped up to the synced version, and a gap is detected', () => {
   expect(freshFrom(3, 3)).toBe(0);
@@ -147,4 +148,23 @@ test('language server progress keeps its order, then finishes or fails and expir
   ]);
   cards = lspProgress(cards, [server(1, 'ready', ['1', '2']), server(2, 'ready', [])], 2000);
   expect(cards.map((c) => c.id)).toEqual(['1:2', '1:1']);
+});
+
+test('git signs count lines as Git does, with no line in an empty text', () => {
+  const summary = (base: string, doc: string, untracked = false) =>
+    gitSummary(
+      EditorState.create({
+        doc,
+        extensions: gitSigns(() => ({ generation: 1, text: Text.of(base.split('\n')), untracked })),
+      }),
+    );
+  expect(summary('', 'hello', true)).toEqual({ added: 1, changed: 0, removed: 0 });
+  expect(summary('', 'hello\n', true)).toEqual({ added: 1, changed: 0, removed: 0 });
+  expect(summary('a\n', 'a\nb')).toEqual({ added: 1, changed: 0, removed: 0 });
+  expect(summary('a', '')).toEqual({ added: 0, changed: 0, removed: 1 });
+  expect(summary('a\n', '')).toEqual({ added: 0, changed: 0, removed: 1 });
+  expect(summary('a\nb\n', 'a\n')).toEqual({ added: 0, changed: 0, removed: 1 });
+  expect(summary('a', 'a\n')).toEqual({ added: 0, changed: 1, removed: 0 });
+  expect(summary('x', 'y')).toEqual({ added: 0, changed: 1, removed: 0 });
+  expect(summary('a\n', 'x\ny')).toEqual({ added: 1, changed: 1, removed: 0 });
 });

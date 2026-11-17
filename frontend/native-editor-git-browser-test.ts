@@ -164,6 +164,9 @@ try {
   await page.locator('.cm-git-blame', { hasText: 'Ada, just now · Add f' }).waitFor();
   await page.keyboard.press('ArrowDown');
   await page.locator('.cm-git-blame', { hasText: 'Uncommitted changes' }).waitFor();
+  // A commit from outside btmux changes it in place.
+  git('commit', '-q', '-m', 'Shout');
+  await page.locator('.cm-git-blame', { hasText: 'Ada, just now · Shout' }).waitFor();
   // And the full commit in a tooltip.
   await page.keyboard.press('ArrowUp');
   await run('editor-blame-line');
@@ -184,6 +187,24 @@ try {
   assert.equal(git('show', ':u.txt'), 'a\nb\n');
   console.log('PASS untracked files show as added and can be staged');
 
+  // The preview's removed words follow an edit that keeps the hunk's size.
+  const words = path.join(repo, 'w.txt');
+  writeFileSync(words, 'hello world\n');
+  git('add', 'w.txt');
+  writeFileSync(words, 'HELLO world\n');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: words, line: 1, editor: 'native' });
+  await waitFor(() => signs(page), ['1:change']);
+  await page.locator('.cm-git-change').first().click();
+  const removedWords = () => preview.locator('.cm-git-removed-line del').allTextContents();
+  await waitFor(removedWords, ['hello']);
+  await content.click();
+  await page.keyboard.press('ControlOrMeta+Home');
+  await page.keyboard.press('Shift+End');
+  await page.keyboard.insertText('hello WORLD');
+  await waitFor(removedWords, ['world']);
+  await page.keyboard.press('ControlOrMeta+z');
+  console.log('PASS the preview marks the words the current text removed');
+
   // Vim gets gitsigns' suggested mappings.
   const configHome = process.env.BTMUX_TEST_CONFIG_HOME;
   if (configHome) {
@@ -193,7 +214,7 @@ try {
       const { useStore } = await import('/src/state/store.tsx' as string);
       return useStore.getState().config?.vim_mode === true;
     });
-    git('reset', '-q');
+    git('reset', '-q', 'HEAD~');
     writeFileSync(file, 'one\nTWO\nthree\nfour\nfive\nsix\nseven\nEIGHT\nNINE\n');
     await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: file, line: 1, editor: 'native' });
     await waitFor(() => signs(page), ['2:change', '8:add', '9:add']);

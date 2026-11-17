@@ -245,7 +245,9 @@ struct Inner {
 struct GitState {
     file: git::GitFile,
     base: Option<git::Base>,
-    /// Counts changes of `base`.
+    /// The commit blame starts from.
+    head: Option<git2::Oid>,
+    /// Counts changes of `base` and `head`.
     generation: u64,
 }
 
@@ -685,7 +687,7 @@ impl Hub {
         });
     }
 
-    /// Reread the index for `ids`, telling followers of changed bases.
+    /// Reread the index and HEAD for `ids`, telling followers of changes.
     async fn refresh_git(&self, ids: Vec<Uuid>) {
         let files: Vec<(Uuid, git::GitFile)> = {
             let inner = self.inner.lock().unwrap();
@@ -699,29 +701,34 @@ impl Hub {
         let bases = tokio::task::spawn_blocking(move || {
             files
                 .into_iter()
-                .map(|(id, file)| (id, git::read_base(&file)))
+                .map(|(id, file)| (id, git::read(&file)))
                 .collect::<Vec<_>>()
         })
         .await
         .unwrap_or_default();
         let mut inner = self.inner.lock().unwrap();
-        for (id, base) in bases {
+        for (id, read) in bases {
             let Some(g) = inner.git.get_mut(&id) else {
                 continue;
             };
-            if g.base == base {
+            if g.base == read.base && g.head == read.head {
                 continue;
             }
-            g.base = base;
+            g.base = read.base;
+            g.head = read.head;
             g.generation += 1;
             let msg = base_message(id, g);
             inner.send_to_followers(id, &msg);
         }
     }
 
-    /// `path` changed: if it is a watched index, reread it for its buffers.
+    /// `path` changed: if it is in a watched git dir (the index, `HEAD`,
+    /// `ORIG_HEAD`, …), reread the index and HEAD for its buffers.
     async fn check_git(&self, path: &Path) {
-        if path.file_name().is_none_or(|n| n != "index") {
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            return;
+        };
+        if name.ends_with(".lock") || name.starts_with(git::SCRATCH_PREFIX) {
             return;
         }
         let ids: Vec<Uuid> = {
@@ -1115,11 +1122,11 @@ fn base_message(id: Uuid, g: &GitState) -> EditorServerMessage {
     }
 }
 
-/// The repository holding `path` and the file's index text.
-fn find_git(path: &Path) -> Option<(git::GitFile, Option<git::Base>)> {
+/// The repository holding `path` and what git signs follow there.
+fn find_git(path: &Path) -> Option<(git::GitFile, git::Snapshot)> {
     let file = git::locate(path)?;
-    let base = git::read_base(&file);
-    Some((file, base))
+    let read = git::read(&file);
+    Some((file, read))
 }
 
 fn state_message(b: &Buffer) -> EditorServerMessage {
@@ -1342,14 +1349,15 @@ impl Inner {
     }
 
     /// Track a buffer's repository, watching its index.
-    fn insert_git(&mut self, id: Uuid, found: Option<(git::GitFile, Option<git::Base>)>) {
-        let Some((file, base)) = found else { return };
+    fn insert_git(&mut self, id: Uuid, found: Option<(git::GitFile, git::Snapshot)>) {
+        let Some((file, read)) = found else { return };
         self.watch_dir(&file.git_dir);
         self.git.insert(
             id,
             GitState {
                 file,
-                base,
+                base: read.base,
+                head: read.head,
                 generation: 1,
             },
         );

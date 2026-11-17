@@ -74,10 +74,23 @@ interface Hunk {
   kind: SignKind;
 }
 
+/**
+ * The lines `from`–`to` covers, as Git counts them: the empty line CodeMirror
+ * has after a final newline, or in an empty text, is none.
+ */
+function gitLines(text: Text, from: number, to: number): { first: number; last: number } | null {
+  if (to <= from) return null;
+  const first = text.lineAt(from).number;
+  let last = text.lineAt(Math.min(to - 1, text.length)).number;
+  if (last === text.lines && text.line(last).length === 0) last--;
+  return last >= first ? { first, last } : null;
+}
+
 function hunkOf(chunk: Chunk, base: Text, doc: Text): Hunk {
-  const removed = chunk.toA > chunk.fromA ? base.lineAt(chunk.endA).number - base.lineAt(chunk.fromA).number + 1 : 0;
-  if (chunk.toB > chunk.fromB) {
-    const lines = { first: doc.lineAt(chunk.fromB).number, last: doc.lineAt(chunk.endB).number };
+  const a = gitLines(base, chunk.fromA, chunk.toA);
+  const removed = a ? a.last - a.first + 1 : 0;
+  const lines = gitLines(doc, chunk.fromB, chunk.toB);
+  if (lines) {
     const added = lines.last - lines.first + 1;
     const kind = removed === 0 ? 'add' : removed > added ? 'changedelete' : 'change';
     return { chunk, lines, removed, anchor: lines.first, kind };
@@ -88,6 +101,8 @@ function hunkOf(chunk: Chunk, base: Text, doc: Text): Hunk {
   if (atStart && line.number === 1) return { chunk, lines: null, removed, anchor: 1, kind: 'topdelete' };
   return { chunk, lines: null, removed, anchor: atStart ? line.number - 1 : line.number, kind: 'delete' };
 }
+
+const added = (h: Hunk) => (h.lines ? h.lines.last - h.lines.first + 1 : 0);
 
 interface GitState {
   base: GitBase | null;
@@ -143,10 +158,9 @@ export function gitSummary(state: EditorState): { added: number; changed: number
   if (!base) return null;
   const sum = { added: 0, changed: 0, removed: 0 };
   for (const h of list) {
-    const added = h.lines ? h.lines.last - h.lines.first + 1 : 0;
-    const changed = Math.min(added, h.removed);
+    const changed = Math.min(added(h), h.removed);
     sum.changed += changed;
-    sum.added += added - changed;
+    sum.added += added(h) - changed;
     sum.removed += h.removed - changed;
   }
   return sum;
@@ -170,6 +184,8 @@ function selectedHunks(state: EditorState): Hunk[] {
 const info = (message: string) => useStore.getState().showToast(message, 'info');
 
 const inGit = (view: EditorView) => !!view.state.field(gitField, false)?.base;
+
+const gitGeneration = (state: EditorState) => state.field(gitField, false)?.base?.generation;
 
 function needsGit(run: (view: EditorView) => boolean) {
   return (view: EditorView) => {
@@ -298,15 +314,19 @@ class RemovedLines extends WidgetType {
   }
 
   eq(other: RemovedLines) {
-    const a = this.hunk.chunk;
-    const b = other.hunk.chunk;
+    const a = this.hunk;
+    const b = other.hunk;
     return (
       this.index === other.index &&
       this.count === other.count &&
       this.base === other.base &&
-      a.fromA === b.fromA &&
-      a.toA === b.toA &&
-      a.toB - a.fromB === b.toB - b.fromB
+      a.chunk.fromA === b.chunk.fromA &&
+      a.chunk.toA === b.chunk.toA &&
+      a.removed === b.removed &&
+      added(a) === added(b) &&
+      // The removed words marked.
+      a.chunk.changes.length === b.chunk.changes.length &&
+      a.chunk.changes.every((c, i) => c.fromA === b.chunk.changes[i].fromA && c.toA === b.chunk.changes[i].toA)
     );
   }
 
@@ -315,9 +335,8 @@ class RemovedLines extends WidgetType {
     dom.className = 'cm-git-preview';
     const bar = document.createElement('div');
     bar.className = 'cm-git-preview-bar';
-    const added = this.hunk.lines ? this.hunk.lines.last - this.hunk.lines.first + 1 : 0;
     const label = document.createElement('span');
-    label.textContent = `Hunk ${this.index + 1} of ${this.count}  +${added} −${this.hunk.removed}`;
+    label.textContent = `Hunk ${this.index + 1} of ${this.count}  +${added(this.hunk)} −${this.hunk.removed}`;
     bar.append(label);
     const button = (text: string, title: string, run: () => void) => {
       const b = document.createElement('button');
@@ -344,12 +363,12 @@ class RemovedLines extends WidgetType {
     button('Close', 'Close the preview', () => view.dispatch({ effects: togglePreview.of(null) }));
     dom.append(bar);
     const { chunk } = this.hunk;
-    if (chunk.toA > chunk.fromA) {
-      const end = Math.min(chunk.endA, this.base.length);
+    const removed = gitLines(this.base, chunk.fromA, chunk.toA);
+    if (removed) {
       // Removed text within changed lines, as words gitsigns' word_diff marks.
       const marks = this.hunk.lines ? chunk.changes.map((c) => [chunk.fromA + c.fromA, chunk.fromA + c.toA]) : [];
-      for (let pos = chunk.fromA; pos <= end;) {
-        const line = this.base.lineAt(pos);
+      for (let n = removed.first; n <= removed.last; n++) {
+        const line = this.base.line(n);
         const row = document.createElement('div');
         row.className = 'cm-git-removed-line';
         let at = line.from;
@@ -367,7 +386,6 @@ class RemovedLines extends WidgetType {
         // Keeps empty lines their height.
         if (!row.textContent) row.append('​');
         dom.append(row);
-        pos = line.to + 1;
       }
     }
     return dom;
@@ -500,7 +518,8 @@ class BlameWidget extends WidgetType {
 const blamePlugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet = Decoration.none;
-    shown: { line: number; doc: Text; text: string } | null = null;
+    /** At `generation` of the Git state (`git_base`), which commits change too. */
+    shown: { line: number; doc: Text; git: number | undefined; text: string } | null = null;
     timer: ReturnType<typeof setTimeout> | undefined;
     generation = 0;
 
@@ -526,8 +545,11 @@ const blamePlugin = ViewPlugin.fromClass(
     refresh() {
       clearTimeout(this.timer);
       const line = this.cursorLine();
-      const current = lineBlame && this.shown?.doc === this.view.state.doc && this.shown.line === line;
-      this.decorations = current
+      const git = gitGeneration(this.view.state);
+      // Kept on screen while a changed Git state is blamed again.
+      const shown = lineBlame && this.shown?.doc === this.view.state.doc && this.shown.line === line;
+      const current = shown && this.shown!.git === git;
+      this.decorations = shown
         ? Decoration.set(
             Decoration.widget({ widget: new BlameWidget(this.shown!.text), side: 1 }).range(
               this.view.state.doc.line(line).to,
@@ -540,8 +562,14 @@ const blamePlugin = ViewPlugin.fromClass(
         const doc = this.view.state.doc;
         requestBlame(this.view, line, false)
           .then((blame) => {
-            if (!blame || generation !== this.generation || this.view.state.doc !== doc) return;
-            this.shown = { line, doc, text: blameText(blame) };
+            if (generation !== this.generation || this.view.state.doc !== doc) return;
+            if (!blame) {
+              if (!this.shown) return;
+              this.shown = null;
+              this.view.dispatch({ effects: blameRedraw.of(null) });
+              return;
+            }
+            this.shown = { line, doc, git, text: blameText(blame) };
             this.view.dispatch({ effects: blameRedraw.of(null) });
           })
           .catch(() => {});
