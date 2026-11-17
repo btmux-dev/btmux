@@ -519,7 +519,9 @@ keeps `$/progress` work in `lsp_status`, which editors show as progress toasts
 buffers, and runs file operations (`file_ops.rs`) in order between runs of
 text edits (each run all or none), after checking them all against a dry run;
 a sandboxed server's stay in its mounts, deletes go to the trash, a symlink
-is moved or deleted itself (not its target), a rename onto a path an open
+is moved or deleted itself (not its target) and text edits resolve symlinks
+only when their turn comes, a create reloads a clean buffer of the file it
+replaces, a rename onto a path an open
 buffer has is refused (also from the file browser: one buffer per path), and
 open buffers and pane editors' files follow a rename (`repath`, `PaneEditor::moved`).
 Servers whose `fileOperations` filters match hear of those, and of the file

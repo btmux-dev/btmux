@@ -5,7 +5,7 @@
 //   other.fake as related information, on every "old"
 // - implementation: other.fake's first line
 // - inline completion after "fn ": "fn main() {}" (running fake.hint), then
-//   "fn other() {}", replacing from "fn"
+//   "fn other() {}", replacing from "fn"; after "lazy ", "slowSuggestion" 700 ms late
 // - pulled diagnostics depend on other files: each pull is logged
 // - code actions on "withdraw": ask the user, then cancel the question
 // - completion: "fakeCompletion", with 100 paragraphs of docs, and
@@ -245,6 +245,7 @@ function handle(msg: any): unknown {
       log(`inline ${p.context.triggerKind}`);
       const t = text(p.textDocument.uri);
       const before = t.split('\n')[p.position.line]?.slice(0, p.position.character) ?? '';
+      if (before.endsWith('lazy ')) return { items: [{ insertText: 'slowSuggestion' }] };
       if (!before.endsWith('fn ')) return { items: [] };
       const range = { start: { ...p.position, character: p.position.character - 3 }, end: p.position };
       return {
@@ -627,6 +628,14 @@ process.stdin.on('data', (chunk: Buffer) => {
       else if (msg.method === 'textDocument/formatting' && text(msg.params.textDocument.uri).includes('slow'))
         setTimeout(reply, 700);
       else if (msg.method === 'completionItem/resolve' && msg.params.label === 'slowImport') setTimeout(reply, 700);
+      else if (
+        msg.method === 'textDocument/inlineCompletion' &&
+        text(msg.params.textDocument.uri)
+          .split('\n')
+          [msg.params.position.line]?.slice(0, msg.params.position.character)
+          .endsWith('lazy ')
+      )
+        setTimeout(reply, 700);
       else if (
         msg.method === 'textDocument/hover' &&
         wordAt(text(msg.params.textDocument.uri), msg.params.position) === 'slow'

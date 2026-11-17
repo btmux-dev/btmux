@@ -616,6 +616,19 @@ try {
   assert.match(log(), /^inline 1$/m);
   console.log('PASS inline completions');
 
+  // Esc drops a suggestion still on its way, too.
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('lazy ');
+  await optionKey('Backslash', '«');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(1500);
+  assert.equal(await ghostText(), null);
+  assert.match(log(), /^\$\/cancelRequest$/m);
+  console.log('PASS dismissed inline completions stay dismissed');
+
   // A restarted server's watches work too.
   const count = (re: RegExp) => (log().match(re) ?? []).length;
   writeFileSync(join(dir, 'crash.fake'), 'x\n');

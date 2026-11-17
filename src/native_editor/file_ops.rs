@@ -10,7 +10,9 @@ use super::lsp;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Step {
-    /// A file's text edits, made against `version` if given.
+    /// A file's text edits, made against `version` if given. Its path is an
+    /// entry's, like file operations': a symlink there is resolved only once
+    /// the steps before it ran, which may replace it.
     Text {
         path: PathBuf,
         edits: Vec<Value>,
@@ -74,14 +76,6 @@ pub fn resolve_entry(path: &Path) -> Result<PathBuf, String> {
     }
 }
 
-/// The file a text edit's URI names, symlinks resolved, as buffers know it.
-fn path_of(uri: &Value) -> Result<PathBuf, String> {
-    let uri = uri.as_str().unwrap_or_default();
-    lsp::config::path(uri)
-        .ok_or_else(|| format!("Cannot edit {uri}"))
-        .and_then(|p| resolve_new(&p))
-}
-
 /// The entry a file operation's URI names (`resolve_entry`).
 fn entry_of(uri: &Value) -> Result<PathBuf, String> {
     let uri = uri.as_str().unwrap_or_default();
@@ -129,7 +123,7 @@ pub fn parse(edit: &Value) -> Result<Vec<Step>, String> {
                         v => Some(v.as_u64().ok_or("Invalid document version")?),
                     };
                     Step::Text {
-                        path: path_of(&document["uri"])?,
+                        path: entry_of(&document["uri"])?,
                         edits: change["edits"].as_array().cloned().unwrap_or_default(),
                         version,
                     }
@@ -139,7 +133,7 @@ pub fn parse(edit: &Value) -> Result<Vec<Step>, String> {
     } else if let Some(changes) = edit["changes"].as_object() {
         for (uri, edits) in changes {
             steps.push(Step::Text {
-                path: path_of(&Value::String(uri.clone()))?,
+                path: entry_of(&Value::String(uri.clone()))?,
                 edits: edits.as_array().cloned().unwrap_or_default(),
                 version: None,
             });

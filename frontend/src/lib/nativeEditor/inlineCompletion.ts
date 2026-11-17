@@ -94,8 +94,13 @@ class GhostWidget extends WidgetType {
   }
 }
 
-/** Ask for suggestions at the cursor; `explicit` when the user asked. */
-async function request(view: EditorView, explicit: boolean, previous: { cancel(): void } | null) {
+/** Ask for suggestions at the cursor; `explicit` when the user asked. Shown only while `current`. */
+async function request(
+  view: EditorView,
+  explicit: boolean,
+  previous: { cancel(): void } | null,
+  current: () => boolean,
+) {
   const p = LSPPlugin.get(view);
   if (!p || !(p.client.serverCapabilities as Record<string, unknown> | null)?.inlineCompletionProvider) return null;
   const state = view.state;
@@ -115,7 +120,8 @@ async function request(view: EditorView, explicit: boolean, previous: { cancel()
     done: pending.then(
       (result) => {
         // Typed or moved meanwhile: a new request follows, or nothing applies.
-        if (!result || view.state.doc !== state.doc || view.state.selection.main.head !== head) return;
+        // Dismissed, typed, or moved meanwhile: a new request follows, or nothing applies.
+        if (!current() || !result || view.state.doc !== state.doc || view.state.selection.main.head !== head) return;
         if (LSPPlugin.get(view) !== p) return;
         const items = Array.isArray(result) ? result : result.items;
         const suggestions: Suggestion[] = items.map((item) => {
@@ -142,6 +148,8 @@ const requester = ViewPlugin.fromClass(
   class {
     timer: ReturnType<typeof setTimeout> | undefined;
     inFlight: { cancel(): void } | null = null;
+    /** Bumped by each request and by dismissal; older answers are dropped. */
+    generation = 0;
     constructor(readonly view: EditorView) {}
     update(u: ViewUpdate) {
       const typed = u.transactions.some((tr) => tr.isUserEvent('input') || tr.isUserEvent('delete'));
@@ -150,7 +158,8 @@ const requester = ViewPlugin.fromClass(
       this.timer = setTimeout(() => this.ask(false), DELAY_MS);
     }
     ask(explicit: boolean) {
-      void request(this.view, explicit, this.inFlight).then((r) => {
+      const generation = ++this.generation;
+      void request(this.view, explicit, this.inFlight, () => generation === this.generation).then((r) => {
         if (!r) return;
         this.inFlight = r.handle;
         void r.done.then(() => {
@@ -158,9 +167,15 @@ const requester = ViewPlugin.fromClass(
         });
       });
     }
-    destroy() {
+    /** Drop the scheduled request and the one in flight. */
+    dismiss() {
       clearTimeout(this.timer);
       this.inFlight?.cancel();
+      this.inFlight = null;
+      this.generation++;
+    }
+    destroy() {
+      this.dismiss();
     }
   },
 );
@@ -262,6 +277,7 @@ export const inlineCompletions: Extension = [
         key: 'Escape',
         // Dismissed, and Esc still does what it does.
         run: (view) => {
+          view.plugin(requester)?.dismiss();
           if (view.state.field(ghostField, false)) view.dispatch({ effects: setGhost.of(null) });
           return false;
         },

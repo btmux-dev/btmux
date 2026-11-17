@@ -960,7 +960,12 @@ impl Hub {
         let mut targets = Vec::new();
         let mut loaded = Ok(());
         for (path, edits, version) in files {
-            match self.load_buffer(path).await {
+            // Symlinks as earlier steps left them.
+            let id = match file_ops::resolve_new(&path) {
+                Ok(path) => self.load_buffer(path).await,
+                Err(e) => Err(e),
+            };
+            match id {
                 Ok(id) => targets.push((id, edits, version)),
                 Err(e) => {
                     loaded = Err(e);
@@ -1015,6 +1020,9 @@ impl Hub {
         .await
         .map_err(|e| e.to_string())??;
         if let Some(change) = change {
+            if let Step::Create { path, .. } = &step {
+                self.reload_clean(path).await;
+            }
             let kind = match step {
                 Step::Create { .. } => FileKind::Create,
                 Step::Rename { .. } => FileKind::Rename,
@@ -1031,6 +1039,31 @@ impl Hub {
         changes
             .iter()
             .try_for_each(|c| inner.check_destination(&c.old, &c.new))
+    }
+
+    /// Reload the clean buffer at `path`, if any, from the file there now:
+    /// later edits in the same workspace edit see a created file's text,
+    /// not that of the one it replaced. The watcher would come too late.
+    async fn reload_clean(&'static self, path: &Path) {
+        let id = {
+            let inner = self.inner.lock().unwrap();
+            let Some(id) = inner.by_path.get(path).copied() else {
+                return;
+            };
+            if inner.buffers.get(&id).is_none_or(|b| b.dirty()) {
+                return;
+            }
+            id
+        };
+        let p = path.to_path_buf();
+        let Ok(Ok(loaded)) = tokio::task::spawn_blocking(move || buffer::load(&p)).await else {
+            return;
+        };
+        let mut inner = self.inner.lock().unwrap();
+        if inner.buffers.get(&id).is_some_and(|b| !b.dirty()) {
+            inner.reload(id, loaded);
+            inner.send_summaries();
+        }
     }
 
     /// Before files are created, renamed, or deleted (from the file
@@ -1575,9 +1608,11 @@ impl Inner {
             Step::Text { .. } => Ok(()),
             Step::Create {
                 path, overwrite, ..
-            } => match *overwrite && self.by_path.contains_key(path) && path.exists() {
-                true => Err(open(path)),
-                false => Ok(()),
+            } => match self.by_path.get(path).and_then(|id| self.buffers.get(id)) {
+                // A buffer of a deleted file: the new one replaces it, unless unsaved.
+                Some(b) if b.dirty() => Err(format!("{} has unsaved changes", path.display())),
+                Some(_) if *overwrite && path.exists() => Err(open(path)),
+                _ => Ok(()),
             },
             Step::Rename { from, to, .. } => self.check_destination(from, to),
             Step::Delete { path, .. } => {
@@ -1810,6 +1845,76 @@ mod tests {
             inner.by_path.remove(path);
         }
         drop(inner);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Drop the buffers at `paths` a test loaded.
+    fn forget(paths: &[&Path]) {
+        let mut inner = hub().inner.lock().unwrap();
+        for path in paths {
+            if let Some(id) = inner.by_path.remove(*path) {
+                inner.buffers.remove(&id);
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn text_edits_follow_symlinks_as_earlier_steps_left_them() {
+        let dir = std::env::temp_dir().join(format!("btmux-steps-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        std::fs::write(dir.join("old.txt"), "old text\n").unwrap();
+        std::fs::write(dir.join("target.txt"), "target text\n").unwrap();
+        std::os::unix::fs::symlink(dir.join("target.txt"), dir.join("dest.txt")).unwrap();
+        let uri = |name: &str| lsp::config::uri(&dir.join(name));
+        let edit = json!({ "documentChanges": [
+            { "kind": "rename", "oldUri": uri("old.txt"), "newUri": uri("dest.txt"), "options": { "overwrite": true } },
+            { "textDocument": { "uri": uri("dest.txt"), "version": null }, "edits": [{ "range": {
+                "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 3 },
+            }, "newText": "NEW" }] },
+        ] });
+        hub().apply_edit(edit, None, None).await.unwrap();
+        let (dest, target) = (dir.join("dest.txt"), dir.join("target.txt"));
+        {
+            let inner = hub().inner.lock().unwrap();
+            assert_eq!(
+                inner.buffers[&inner.by_path[&dest]].rope.to_string(),
+                "NEW text\n"
+            );
+            assert!(!inner.by_path.contains_key(&target));
+        }
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "target text\n");
+        forget(&[&dest]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_created_file_replaces_a_clean_buffer_of_the_old_one() {
+        let dir = std::env::temp_dir().join(format!("btmux-recreate-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("replaced.txt");
+        std::fs::write(&path, "old content\n").unwrap();
+        let path = resolve(&path.to_string_lossy()).unwrap();
+        hub().load_buffer(path.clone()).await.unwrap();
+        // Deleted (outside, not into the trash), then created and edited.
+        std::fs::remove_file(&path).unwrap();
+        let uri = lsp::config::uri(&path);
+        let edit = json!({ "documentChanges": [
+            { "kind": "create", "uri": uri },
+            { "textDocument": { "uri": uri, "version": null }, "edits": [{ "range": {
+                "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 0 },
+            }, "newText": "new content\n" }] },
+        ] });
+        hub().apply_edit(edit, None, None).await.unwrap();
+        {
+            let inner = hub().inner.lock().unwrap();
+            assert_eq!(
+                inner.buffers[&inner.by_path[&path]].rope.to_string(),
+                "new content\n"
+            );
+        }
+        forget(&[&path]);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
