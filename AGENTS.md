@@ -467,18 +467,19 @@ it), a stale push is dropped and the tab rebases on the updates it gets. Changes
 are `ChangeSet.toJSON()` in UTF-16 code units (`text.rs`). A reconnecting tab
 resumes from its version when the log still reaches it, else reopens. Buffers
 hold `\n` only; the file's line ending and BOM are kept for saving. Files must
-be UTF-8 text under 16 MiB. Saving writes atomically (`fs_ops::write_atomic`)
-and refuses if the file changed on disk since it was loaded or saved, unless
-forced. A watcher on open files' directories reloads a clean buffer as one
+be UTF-8 text under 16 MiB. Saving writes the file in place, as editors do (a
+rename would drop its mode, owner, and hard links), and refuses if the file
+changed on disk since it was loaded or saved, unless forced. A watcher on open files' directories reloads a clean buffer as one
 minimal update and marks a dirty one changed or deleted. Buffers nobody follows
-are dropped unless dirty; dirty ones stay, listed by the `buffers` message, and
+are dropped unless dirty (one loaded by MCP gets 60 s for a tab to follow it);
+dirty ones stay, listed by the `buffers` message, and
 `btmux upgrade` refuses while any exist (they aren't handed off yet).
 
 Language servers (`native_editor/lsp/`) have btmux as their only client.
 `[[language]]` and `[language-server.NAME]` (Helix-style) override built-in
 ones by name (`lsp/config.rs`); a buffer's servers start when it loads, one
-process per server and root (the nearest root marker, no higher than the Git
-worktree), found as plan limits find agent CLIs, in its own process group.
+process per server and root (the outermost root marker, as in Helix, no higher
+than the Git worktree), found as plan limits find agent CLIs, in its own process group.
 The backend sends `didOpen`/`didChange`/`didSave`/`didClose` itself; the LSP
 document version is the collab version. Each tab runs one
 `@codemirror/lsp-client` per server (`lib/nativeEditor/lsp.ts`) over `lsp`
@@ -493,9 +494,13 @@ summarizes `$/progress` in `lsp_status`. Renames and code actions go through
 buffers. Crashed servers restart up to 3 times a minute; idle ones stop after
 60 s. The backend also pulls diagnostics (`textDocument/diagnostic`) after
 changes settle, publishing them with pushed ones; watches the root for
-registered `didChangeWatchedFiles` globs (`lsp/watch.rs`); turns
+registered `didChangeWatchedFiles` globs (`lsp/watch.rs`: never home or above,
+minus what the root's `.gitignore` ignores; on Linux, where each directory
+takes an inotify watch, at most 4096 that Git doesn't ignore); turns
 `showMessageRequest` and `showDocument` into `lsp_prompt` and
-`lsp_show_document`, which only a focused tab acts on (first answer wins); and
+`lsp_show_document`, which only a focused tab acts on; a prompt waits in each
+tab for focus, the first answer (a dismissal answers too) wins, and
+`lsp_prompt_done` withdraws it from the others; and
 forwards `*/refresh` requests to tabs as `$/btmux/refresh`. Files under a
 sandboxed session's mount (`set_sandboxes`, from `broadcast_state`) get servers
 run by `multipass exec` and a login shell in the guest. The browser's other

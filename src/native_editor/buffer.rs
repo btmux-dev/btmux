@@ -209,13 +209,27 @@ pub fn save(
         }
     }
     let bytes = encode(text, line_ending, bom);
-    crate::fs_ops::write_atomic(path, &bytes)
+    write_in_place(path, &bytes)
         .map_err(|e| SaveError::Io(format!("Cannot write {}: {e}", path.display())))?;
     let stamp = std::fs::metadata(path).ok().map(|m| Stamp::of(&m));
     Ok(Disk {
         stamp,
         hash: Some(hash(&bytes)),
     })
+}
+
+/// Write the file itself rather than rename a new one over it, as editors
+/// do: its mode, owner, and hard links stay, a read-only file refuses, and
+/// it needs no write access to its directory.
+fn write_in_place(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
 }
 
 #[derive(Debug)]

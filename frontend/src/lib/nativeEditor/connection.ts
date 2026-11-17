@@ -48,7 +48,9 @@ class EditorConnection {
   private connectionListeners = new Set<(open: boolean) => void>();
   lspStatus: LspServerStatus[] = [];
   /** Server requests for the user: prompts and documents to show. */
-  serverUi: ((msg: Extract<EditorServerMessage, { type: 'lsp_prompt' | 'lsp_show_document' }>) => void) | null = null;
+  serverUi:
+    | ((msg: Extract<EditorServerMessage, { type: 'lsp_prompt' | 'lsp_prompt_done' | 'lsp_show_document' }>) => void)
+    | null = null;
 
   private url() {
     return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/editor`;
@@ -136,6 +138,7 @@ class EditorConnection {
         return;
       }
       case 'lsp_prompt':
+      case 'lsp_prompt_done':
       case 'lsp_show_document':
         this.serverUi?.(msg);
         return;

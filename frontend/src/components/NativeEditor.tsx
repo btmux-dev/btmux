@@ -137,7 +137,13 @@ export function NativeEditor({
   const status = active && editor ? editor.status(active) : null;
   const lsp = status ? servers.filter((s) => status.servers.includes(s.id)) : [];
   const close = (path: string) => {
-    if (editor?.status(path)?.dirty) setClosing(path);
+    // Another pane showing the file keeps its unsaved changes.
+    const elsewhere = useStore
+      .getState()
+      .allSessions.some((s) =>
+        s.windows.some((w) => w.panes.some((p) => p.id !== paneId && p.editor.files.includes(path))),
+      );
+    if (editor?.status(path)?.dirty && !elsewhere) setClosing(path);
     else op({ kind: 'close', path });
   };
 

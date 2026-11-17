@@ -119,49 +119,149 @@ impl FileWatcher {
     }
 }
 
+/// Directories watched under one root on Linux, where each takes one of the
+/// user's inotify watches.
+#[cfg(target_os = "linux")]
+const MAX_DIRS: usize = 4096;
+
 /// Watches a server's root while it has watchers; changes go to `on_change`.
 pub struct RootWatch {
-    _watcher: notify::RecommendedWatcher,
+    task: tokio::task::AbortHandle,
+}
+
+impl Drop for RootWatch {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+struct Watching {
+    root: PathBuf,
+    watcher: notify::RecommendedWatcher,
+    /// The root's `.gitignore`: build output changes constantly.
+    ignored: ignore::gitignore::Gitignore,
+    #[cfg(target_os = "linux")]
+    dirs: usize,
+}
+
+impl Watching {
+    /// Blocks: on Linux it walks the tree.
+    fn start(root: PathBuf, tx: mpsc::UnboundedSender<(PathBuf, u8)>) -> Option<Self> {
+        let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+            let Ok(event) = event else { return };
+            let change = match event.kind {
+                EventKind::Create(_) => CREATED,
+                EventKind::Remove(_) => DELETED,
+                EventKind::Modify(notify::event::ModifyKind::Metadata(_)) => return,
+                // A rename reports both names; which exists now decides.
+                EventKind::Modify(notify::event::ModifyKind::Name(_)) => 0,
+                EventKind::Modify(_) => CHANGED,
+                _ => return,
+            };
+            for path in event.paths {
+                // Git's internals churn on every command.
+                if path.components().any(|c| c.as_os_str() == ".git") {
+                    continue;
+                }
+                let change = match change {
+                    0 if path.exists() => CREATED,
+                    0 => DELETED,
+                    c => c,
+                };
+                let _ = tx.send((path, change));
+            }
+        })
+        .inspect_err(|e| tracing::warn!("cannot watch {}: {e}", root.display()))
+        .ok()?;
+        let (ignored, _) = ignore::gitignore::Gitignore::new(root.join(".gitignore"));
+        let mut watching = Self {
+            root,
+            watcher,
+            ignored,
+            #[cfg(target_os = "linux")]
+            dirs: 0,
+        };
+        #[cfg(target_os = "linux")]
+        watching.watch_tree(&watching.root.clone());
+        #[cfg(not(target_os = "linux"))]
+        if let Err(e) = watching
+            .watcher
+            .watch(&watching.root, RecursiveMode::Recursive)
+        {
+            tracing::warn!("cannot watch {}: {e}", watching.root.display());
+            return None;
+        }
+        Some(watching)
+    }
+
+    fn ignores(&self, path: &Path) -> bool {
+        path.starts_with(&self.root)
+            && self
+                .ignored
+                .matched_path_or_any_parents(path, false)
+                .is_ignore()
+    }
+
+    /// Watch `dir` and the directories under it that Git doesn't ignore:
+    /// inotify isn't recursive. Returns the files found.
+    #[cfg(target_os = "linux")]
+    fn watch_tree(&mut self, dir: &Path) -> Vec<PathBuf> {
+        let walk = ignore::WalkBuilder::new(dir)
+            .hidden(false)
+            .filter_entry(|e| e.file_name() != ".git")
+            .build();
+        let mut files = Vec::new();
+        for entry in walk.flatten() {
+            if !entry.file_type().is_some_and(|t| t.is_dir()) {
+                files.push(entry.into_path());
+                continue;
+            }
+            if self.dirs == MAX_DIRS {
+                tracing::warn!(
+                    "watching only {MAX_DIRS} directories under {}",
+                    self.root.display()
+                );
+                self.dirs += 1;
+            }
+            if self.dirs > MAX_DIRS {
+                break;
+            }
+            match self
+                .watcher
+                .watch(entry.path(), RecursiveMode::NonRecursive)
+            {
+                Ok(()) => self.dirs += 1,
+                Err(e) => tracing::warn!("cannot watch {}: {e}", entry.path().display()),
+            }
+        }
+        files
+    }
+}
+
+/// Home, or above it: no project, and far too much to watch.
+fn too_broad(root: &Path) -> bool {
+    root.parent().is_none() || dirs::home_dir().is_some_and(|home| home.starts_with(root))
 }
 
 impl RootWatch {
+    /// Starts watching in the background.
     pub fn start(
         root: &Path,
         on_change: impl Fn(Vec<(PathBuf, u8)>) + Send + 'static,
     ) -> Option<Self> {
-        let (tx, mut rx) = mpsc::unbounded_channel::<(PathBuf, u8)>();
-        let mut watcher =
-            notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-                let Ok(event) = event else { return };
-                let change = match event.kind {
-                    EventKind::Create(_) => CREATED,
-                    EventKind::Remove(_) => DELETED,
-                    EventKind::Modify(notify::event::ModifyKind::Metadata(_)) => return,
-                    // A rename reports both names; which exists now decides.
-                    EventKind::Modify(notify::event::ModifyKind::Name(_)) => 0,
-                    EventKind::Modify(_) => CHANGED,
-                    _ => return,
-                };
-                for path in event.paths {
-                    // Git's internals churn on every command.
-                    if path.components().any(|c| c.as_os_str() == ".git") {
-                        continue;
-                    }
-                    let change = match change {
-                        0 if path.exists() => CREATED,
-                        0 => DELETED,
-                        c => c,
-                    };
-                    let _ = tx.send((path, change));
-                }
-            })
-            .inspect_err(|e| tracing::warn!("cannot watch {}: {e}", root.display()))
-            .ok()?;
-        if let Err(e) = watcher.watch(root, RecursiveMode::Recursive) {
-            tracing::warn!("cannot watch {}: {e}", root.display());
+        if too_broad(root) {
+            tracing::info!("not watching {}", root.display());
             return None;
         }
-        tokio::spawn(async move {
+        let root = root.to_path_buf();
+        let task = tokio::spawn(async move {
+            let (tx, mut rx) = mpsc::unbounded_channel::<(PathBuf, u8)>();
+            let started = tokio::task::spawn_blocking(move || Watching::start(root, tx)).await;
+            #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+            let Ok(Some(mut watching)) = started
+            else {
+                return;
+            };
             while let Some(first) = rx.recv().await {
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 let mut changes = vec![first];
@@ -171,10 +271,30 @@ impl RootWatch {
                         None => changes.push(change),
                     }
                 }
-                on_change(changes);
+                changes.retain(|(path, _)| !watching.ignores(path));
+                // A new directory's contents may predate its watch.
+                #[cfg(target_os = "linux")]
+                {
+                    let mut found = Vec::new();
+                    for (path, change) in &changes {
+                        if *change == CREATED && path.is_dir() {
+                            found.extend(watching.watch_tree(path));
+                        }
+                    }
+                    for file in found {
+                        if !changes.iter().any(|(p, _)| *p == file) {
+                            changes.push((file, CREATED));
+                        }
+                    }
+                }
+                if !changes.is_empty() {
+                    on_change(changes);
+                }
             }
         });
-        Some(Self { _watcher: watcher })
+        Some(Self {
+            task: task.abort_handle(),
+        })
     }
 }
 

@@ -567,7 +567,7 @@ conflict: boolean, } | { "type": "lsp", server: number, message: unknown, } | { 
 /**
  * LSP `MessageType`: 1 error, 2 warning, 3 info, 4 log.
  */
-level: number, message: string, actions: Array<string>, } | { "type": "lsp_show_document", uri: string,
+level: number, message: string, actions: Array<string>, } | { "type": "lsp_prompt_done", server: number, token: number, } | { "type": "lsp_show_document", uri: string,
 /**
  * In the browser rather than the editor.
  */

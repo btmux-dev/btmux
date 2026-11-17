@@ -20,6 +20,8 @@ use buffer::{Buffer, DiskStatus, LineEnding, OnDisk, SaveError, Update};
 /// Messages a socket may queue before it is dropped as lagging; the tab
 /// reconnects and catches up.
 const SOCKET_QUEUE: usize = 1024;
+/// How long a buffer loaded for automation stays without a tab following it.
+const UNFOLLOWED: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// From a tab.
 #[derive(Deserialize, Debug)]
@@ -134,6 +136,13 @@ pub enum EditorServerMessage {
         message: String,
         actions: Vec<String>,
     },
+    /// The prompt was answered, or its server exited.
+    LspPromptDone {
+        #[cfg_attr(test, ts(type = "number"))]
+        server: u64,
+        #[cfg_attr(test, ts(type = "number"))]
+        token: u64,
+    },
     /// A server asks to show a document (`window/showDocument`).
     LspShowDocument {
         uri: String,
@@ -200,7 +209,15 @@ pub fn hub() -> &'static Hub {
 /// Load `path` and start its language servers, with no tab open (automation).
 pub async fn load(path: &str) -> Result<(), String> {
     let path = resolve(path)?;
-    hub().load_buffer(path).await.map(|_| ())
+    let id = hub().load_buffer(path).await?;
+    // Dropped again if no tab follows it by then.
+    tokio::spawn(async move {
+        tokio::time::sleep(UNFOLLOWED).await;
+        let mut inner = hub().inner.lock().unwrap();
+        inner.collect(id);
+        inner.send_summaries();
+    });
+    Ok(())
 }
 
 /// Open buffers, for automation.
@@ -526,93 +543,54 @@ impl Hub {
     ) -> Result<(), String> {
         // Each file's edits, and the version they were made against, if given.
         let mut files: Vec<(String, Vec<Value>, Option<u64>)> = Vec::new();
-        if let Some(changes) = edit["changes"].as_object() {
+        // `documentChanges` is preferred when a server sends both.
+        if let Some(changes) = edit["documentChanges"].as_array() {
+            for change in changes {
+                if change.get("kind").is_some() {
+                    return Err("Creating, renaming, or deleting files isn't supported".into());
+                }
+                let document = &change["textDocument"];
+                let uri = document["uri"].as_str().unwrap_or_default();
+                let version = match &document["version"] {
+                    Value::Null => None,
+                    v => Some(v.as_u64().ok_or("Invalid document version")?),
+                };
+                let edits = change["edits"].as_array().cloned().unwrap_or_default();
+                files.push((uri.to_owned(), edits, version));
+            }
+        } else if let Some(changes) = edit["changes"].as_object() {
             for (uri, edits) in changes {
                 let edits = edits.as_array().cloned().unwrap_or_default();
                 files.push((uri.clone(), edits, None));
             }
         }
-        for change in edit["documentChanges"].as_array().into_iter().flatten() {
-            if change.get("kind").is_some() {
-                return Err("Creating, renaming, or deleting files isn't supported".into());
-            }
-            let document = &change["textDocument"];
-            let uri = document["uri"].as_str().unwrap_or_default();
-            let version = match &document["version"] {
-                Value::Null => None,
-                v => Some(v.as_u64().ok_or("Invalid document version")?),
-            };
-            let edits = change["edits"].as_array().cloned().unwrap_or_default();
-            files.push((uri.to_owned(), edits, version));
-        }
         let mut targets = Vec::new();
+        let mut loaded = Ok(());
         for (uri, edits, version) in files {
-            let path = lsp::config::path(&uri).ok_or_else(|| format!("Cannot edit {uri}"))?;
-            let path = resolve(&path.to_string_lossy())?;
-            targets.push((self.load_buffer(path).await?, edits, version));
-        }
-        let mut inner = self.inner.lock().unwrap();
-        // Edits made against an older version would land in the wrong place.
-        let stale =
-            |id: &Uuid, version: u64| inner.buffers.get(id).map(|b| b.version) != Some(version);
-        if expect.is_some_and(|(id, version)| stale(&id, version))
-            || targets
-                .iter()
-                .any(|(id, _, version)| version.is_some_and(|v| stale(id, v)))
-        {
-            return Err("The file changed meanwhile".into());
-        }
-        // Check every file's edits before changing any.
-        let mut planned = Vec::new();
-        for (id, edits, _) in targets {
-            let b = inner.buffers.get(&id).ok_or("A file closed meanwhile")?;
-            let mut changes = Vec::with_capacity(edits.len());
-            for edit in &edits {
-                let range = &edit["range"];
-                let (Some(from), Some(to), Some(insert)) = (
-                    buffer::offset(&b.rope, &range["start"]),
-                    buffer::offset(&b.rope, &range["end"]),
-                    edit["newText"].as_str(),
-                ) else {
-                    return Err("Invalid edit".into());
-                };
-                let insert = insert.replace("\r\n", "\n").replace('\r', "\n");
-                changes.push(text::Change { from, to, insert });
-            }
-            // Stable, so inserts at one position keep their order.
-            changes.sort_by_key(|c| (c.from, c.to));
-            if changes
-                .windows(2)
-                .any(|w| w[0].to > w[1].from || w[0].from > w[0].to)
+            let id = match lsp::config::path(&uri)
+                .ok_or_else(|| format!("Cannot edit {uri}"))
+                .and_then(|path| resolve(&path.to_string_lossy()))
             {
-                return Err("Overlapping edits".into());
+                Ok(path) => self.load_buffer(path).await,
+                Err(e) => Err(e),
+            };
+            match id {
+                Ok(id) => targets.push((id, edits, version)),
+                Err(e) => {
+                    loaded = Err(e);
+                    break;
+                }
             }
-            planned.push((id, changes));
         }
-        for (id, changes) in &planned {
-            if changes.is_empty() {
-                continue;
-            }
-            let b = inner.buffers.get_mut(id).expect("checked");
-            let version = b.version;
-            let (update, applied) = b.edit(changes);
-            let state = state_message(b);
-            inner.send_to_followers(
-                *id,
-                &EditorServerMessage::Updates {
-                    buffer: *id,
-                    version,
-                    updates: vec![update],
-                },
-            );
-            inner.send_to_followers(*id, &state);
-            inner.lsp_changed(*id, &[applied]);
-        }
-        for (id, _) in planned {
+        let ids: Vec<Uuid> = targets.iter().map(|(id, ..)| *id).collect();
+        let mut inner = self.inner.lock().unwrap();
+        let result = loaded.and_then(|()| inner.apply_edits(targets, expect));
+        // Also buffers loaded for an edit that failed.
+        for id in ids {
             inner.collect(id);
         }
         inner.send_summaries();
-        Ok(())
+        result
     }
 
     fn push(&self, socket: SocketId, id: Uuid, version: u64, updates: Vec<Update>) {
@@ -760,6 +738,75 @@ fn state_message(b: &Buffer) -> EditorServerMessage {
 }
 
 impl Inner {
+    /// Apply each buffer's LSP `TextEdit`s, all or none.
+    fn apply_edits(
+        &mut self,
+        targets: Vec<(Uuid, Vec<Value>, Option<u64>)>,
+        expect: Option<(Uuid, u64)>,
+    ) -> Result<(), String> {
+        // Edits made against an older version would land in the wrong place.
+        let stale =
+            |id: &Uuid, version: u64| self.buffers.get(id).map(|b| b.version) != Some(version);
+        if expect.is_some_and(|(id, version)| stale(&id, version))
+            || targets
+                .iter()
+                .any(|(id, _, version)| version.is_some_and(|v| stale(id, v)))
+        {
+            return Err("The file changed meanwhile".into());
+        }
+        // Check every file's edits before changing any. A file named again
+        // is edited as the earlier edits left it.
+        let mut ropes: HashMap<Uuid, ropey::Rope> = HashMap::new();
+        let mut planned = Vec::new();
+        for (id, edits, _) in targets {
+            let b = self.buffers.get(&id).ok_or("A file closed meanwhile")?;
+            let rope = ropes.entry(id).or_insert_with(|| b.rope.clone());
+            let mut changes = Vec::with_capacity(edits.len());
+            for edit in &edits {
+                let range = &edit["range"];
+                let (Some(from), Some(to), Some(insert)) = (
+                    buffer::offset(rope, &range["start"]),
+                    buffer::offset(rope, &range["end"]),
+                    edit["newText"].as_str(),
+                ) else {
+                    return Err("Invalid edit".into());
+                };
+                if from > to {
+                    return Err("Invalid edit".into());
+                }
+                let insert = insert.replace("\r\n", "\n").replace('\r', "\n");
+                changes.push(text::Change { from, to, insert });
+            }
+            // Stable, so inserts at one position keep their order.
+            changes.sort_by_key(|c| (c.from, c.to));
+            if changes.windows(2).any(|w| w[0].to > w[1].from) {
+                return Err("Overlapping edits".into());
+            }
+            text::apply(rope, &changes);
+            planned.push((id, changes));
+        }
+        for (id, changes) in &planned {
+            if changes.is_empty() {
+                continue;
+            }
+            let b = self.buffers.get_mut(id).expect("checked");
+            let version = b.version;
+            let (update, applied) = b.edit(changes);
+            let state = state_message(b);
+            self.send_to_followers(
+                *id,
+                &EditorServerMessage::Updates {
+                    buffer: *id,
+                    version,
+                    updates: vec![update],
+                },
+            );
+            self.send_to_followers(*id, &state);
+            self.lsp_changed(*id, &[applied]);
+        }
+        Ok(())
+    }
+
     fn summaries(&self) -> Vec<BufferSummary> {
         let mut list: Vec<_> = self
             .buffers
@@ -1011,6 +1058,37 @@ mod tests {
         let mut inner = hub().inner.lock().unwrap();
         inner.buffers.remove(&id);
         inner.by_path.remove(&path);
+        drop(inner);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn edits_apply_in_order_or_not_at_all() {
+        let dir = std::env::temp_dir().join(format!("btmux-edit-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("f.txt");
+        std::fs::write(&path, "abc\n").unwrap();
+        let path = resolve(&path.to_string_lossy()).unwrap();
+        let uri = lsp::config::uri(&path);
+        let change = |from: u64, to: u64, text: &str| {
+            json!({
+                "textDocument": { "uri": uri, "version": null },
+                "edits": [{ "range": {
+                    "start": { "line": 0, "character": from },
+                    "end": { "line": 0, "character": to },
+                }, "newText": text }],
+            })
+        };
+        // A reversed range, and the clean buffer loaded for it is dropped.
+        let reversed = json!({ "documentChanges": [change(2, 1, "X")] });
+        assert!(hub().apply_edit(reversed, None).await.is_err());
+        assert!(!hub().inner.lock().unwrap().by_path.contains_key(&path));
+        // The second edit of a file sees the first.
+        let twice = json!({ "documentChanges": [change(0, 1, "AA"), change(0, 2, "B")] });
+        hub().apply_edit(twice, None).await.unwrap();
+        let mut inner = hub().inner.lock().unwrap();
+        let id = inner.by_path.remove(&path).unwrap();
+        assert_eq!(inner.buffers.remove(&id).unwrap().rope.to_string(), "Bbc\n");
         drop(inner);
         std::fs::remove_dir_all(dir).unwrap();
     }

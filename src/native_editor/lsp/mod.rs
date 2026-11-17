@@ -624,11 +624,35 @@ impl Inner {
 
     pub(super) fn lsp_disconnected(&mut self, socket: SocketId) {
         for server in self.lsp.servers.values_mut() {
-            server.sockets.remove(&socket);
+            let had = server.sockets.remove(&socket);
             server.waiting.retain(|(s, _)| *s != socket);
             server
                 .pending
                 .retain(|_, p| !matches!(p, Pending::Tab(s, _) if *s == socket));
+            // Nobody is left to answer.
+            if had && server.sockets.is_empty() {
+                let prompts: Vec<_> = server.prompts.drain().collect();
+                for (_, rid) in prompts {
+                    server.send(response(rid, Value::Null));
+                }
+            }
+        }
+    }
+
+    /// Tell tabs that prompts no longer need an answer.
+    fn prompts_done(&mut self, id: u64, tokens: &[u64]) {
+        let Some(server) = self.lsp.servers.get(&id) else {
+            return;
+        };
+        let sockets: Vec<_> = server.sockets.iter().copied().collect();
+        for token in tokens {
+            let msg = super::to_json(&EditorServerMessage::LspPromptDone {
+                server: id,
+                token: *token,
+            });
+            for socket in &sockets {
+                self.send_raw(*socket, msg.clone());
+            }
         }
     }
 
@@ -798,6 +822,7 @@ impl super::Hub {
         };
         let result = action.map_or(Value::Null, |title| json!({ "title": title }));
         server.send(response(rid, result));
+        inner.prompts_done(id, &[token]);
     }
 
     fn lsp_files_changed(&self, id: u64, generation: u32, changes: Vec<(PathBuf, u8)>) {
@@ -886,7 +911,8 @@ impl super::Hub {
         let Some(server) = inner.lsp.servers.get_mut(&id) else {
             return;
         };
-        if server.generation != generation {
+        // Stopped after a failed `initialize`: not a crash.
+        if server.generation != generation || server.handle.is_none() {
             return;
         }
         tracing::info!(server = server.name, "{}", exit.message);
@@ -896,7 +922,7 @@ impl super::Hub {
         // one registers again, under its own generation.
         server.watchers.clear();
         server.root_watch = None;
-        server.prompts.clear();
+        let prompts: Vec<u64> = server.prompts.drain().map(|(token, _)| token).collect();
         let now = Instant::now();
         server.crashes.push_back(now);
         while server
@@ -923,6 +949,7 @@ impl super::Hub {
         for (socket, rid) in waiting {
             inner.send_lsp(socket, id, error(rid, REQUEST_FAILED, &exit.message));
         }
+        inner.prompts_done(id, &prompts);
         if restart {
             let shell = config::current().shell.clone();
             inner.start_server(id, &shell);

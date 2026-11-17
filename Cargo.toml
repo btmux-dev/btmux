@@ -25,6 +25,7 @@ futures-util = "0.3"
 libc = "0.2"
 toml = "1.1"
 notify = "8"
+ignore = "0.4"
 open = "5"
 serde_yaml = "0.9"
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }

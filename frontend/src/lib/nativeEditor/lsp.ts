@@ -18,6 +18,8 @@ import { setDiagnostics, type Diagnostic } from '@codemirror/lint';
 import { languages } from '@codemirror/language-data';
 import DOMPurify from 'dompurify';
 import { useStore } from '../../state/store';
+import type { Overlay } from '../../state/types';
+import type { EditorServerMessage } from '../../generated/protocol';
 import { IS_MAC } from '../nvimKeys';
 import { editorConnection } from './connection';
 import { viewDocs, type Doc } from './doc';
@@ -371,29 +373,79 @@ editorConnection.onConnection((open) => {
   }
 });
 
-// Only the focused tab acts on what a server asks of the user.
-editorConnection.serverUi = (msg) => {
-  if (!document.hasFocus()) return;
-  const store = useStore.getState();
-  if (msg.type === 'lsp_prompt') {
-    const level = msg.level === 1 ? 'error' : msg.level === 2 ? 'attention' : 'info';
-    if (!msg.actions.length) {
-      store.showToast(msg.message, level);
-      editorConnection.answerPrompt(msg.server, msg.token, null);
-      return;
+type Prompt = Extract<EditorServerMessage, { type: 'lsp_prompt' }>;
+
+/** Prompts nobody answered yet, waiting for this tab's focus or the one shown. */
+let prompts: Prompt[] = [];
+let shown: { prompt: Prompt; close: () => void } | null = null;
+
+const samePrompt = (a: { server: number; token: number }, b: { server: number; token: number }) =>
+  a.server === b.server && a.token === b.token;
+
+function showPrompts() {
+  while (!shown && document.hasFocus()) {
+    const prompt = prompts.shift();
+    if (!prompt) return;
+    const store = useStore.getState();
+    if (!prompt.actions.length) {
+      const level = prompt.level === 1 ? 'error' : prompt.level === 2 ? 'attention' : 'info';
+      store.showToast(prompt.message, level);
+      editorConnection.answerPrompt(prompt.server, prompt.token, null);
+      continue;
     }
-    store.setOverlay({
+    let answered = false;
+    const overlay: Overlay = {
       mode: 'picker',
-      title: msg.message,
-      items: msg.actions.map((action) => ({ id: action, label: action })),
+      title: prompt.message,
+      items: prompt.actions.map((action) => ({ id: action, label: action })),
       onSelect: (action) => {
-        editorConnection.answerPrompt(msg.server, msg.token, action);
+        answered = true;
+        editorConnection.answerPrompt(prompt.server, prompt.token, action);
         // The picker stays open for previews; one answer is all a prompt takes.
         useStore.getState().setOverlay(null);
       },
+    };
+    // Dismissed (Esc) or replaced: the server still gets its answer.
+    const stop = useStore.subscribe((s) => {
+      if (s.overlay === overlay) return;
+      stop();
+      shown = null;
+      if (!answered) editorConnection.answerPrompt(prompt.server, prompt.token, null);
+      showPrompts();
     });
+    shown = {
+      prompt,
+      close: () => {
+        answered = true;
+        if (useStore.getState().overlay === overlay) useStore.getState().setOverlay(null);
+      },
+    };
+    store.setOverlay(overlay);
+  }
+}
+
+window.addEventListener('focus', showPrompts);
+
+// The server answered for tabs that went away.
+editorConnection.onConnection((open) => {
+  if (open) return;
+  prompts = [];
+  shown?.close();
+});
+
+// The first tab focused acts on what a server asks of the user.
+editorConnection.serverUi = (msg) => {
+  if (msg.type === 'lsp_prompt') {
+    prompts.push(msg);
+    showPrompts();
     return;
   }
+  if (msg.type === 'lsp_prompt_done') {
+    prompts = prompts.filter((p) => !samePrompt(p, msg));
+    if (shown && samePrompt(shown.prompt, msg)) shown.close();
+    return;
+  }
+  if (!document.hasFocus()) return;
   if (msg.external) {
     if (/^https?:/.test(msg.uri)) window.open(msg.uri, '_blank', 'noopener');
     return;

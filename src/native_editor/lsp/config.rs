@@ -286,20 +286,22 @@ pub fn target(config: &LspConfig, path: &Path) -> Option<Target> {
     })
 }
 
-/// The nearest directory with one of `markers`, looking no higher than the
-/// Git worktree; else the worktree, else `dir`.
+/// The outermost directory with one of `markers` (as in Helix, so a
+/// workspace's members share a server), looking no higher than the Git
+/// worktree; else the worktree, else `dir`.
 pub fn find_root(dir: &Path, markers: &[String]) -> PathBuf {
+    let mut marked = None;
     let mut worktree = None;
     for ancestor in dir.ancestors() {
         if markers.iter().any(|m| ancestor.join(m).exists()) {
-            return ancestor.to_path_buf();
+            marked = Some(ancestor);
         }
         if ancestor.join(".git").exists() {
-            worktree = Some(ancestor.to_path_buf());
+            worktree = Some(ancestor);
             break;
         }
     }
-    worktree.unwrap_or_else(|| dir.to_path_buf())
+    marked.or(worktree).unwrap_or(dir).to_path_buf()
 }
 
 const URI_SAFE: &[u8] = b"-._~/!$&'()*+,;=:@";
@@ -387,6 +389,9 @@ mod tests {
         assert_eq!(find_root(&src, &markers), dir.join("repo"));
         std::fs::write(dir.join("repo/crate/Cargo.toml"), "").unwrap();
         assert_eq!(find_root(&src, &markers), dir.join("repo/crate"));
+        // A workspace's members share its root.
+        std::fs::write(dir.join("repo/Cargo.toml"), "").unwrap();
+        assert_eq!(find_root(&src, &markers), dir.join("repo"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
