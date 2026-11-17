@@ -6,11 +6,11 @@ import { Text } from '@astryxdesign/core/Text';
 import { Spinner } from './Spinner';
 import type { Progress } from '../lib/progress';
 
-/** A progress toast: Neovim's progress-messages, native editor language server work. */
+/** A progress toast: Neovim's progress-messages, native editor language server work. Its container sets the room. */
 export function ProgressCard({ progress }: { progress: Progress }) {
   const title = progress.title || progress.source;
   return (
-    <Card padding={2} elevation="med" width="min(40ch, 50vw)" className="pointer-events-auto">
+    <Card padding={2} elevation="med" width="min(40ch, 100%)" className="pointer-events-auto">
       <VStack gap={1}>
         <HStack gap={2} vAlign="center">
           {progress.status === 'running' ? (

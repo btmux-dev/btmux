@@ -292,11 +292,11 @@ export function NativeEditor({
           <VStack
             gap={1}
             hAlign="end"
-            className="pointer-events-none absolute top-2 right-2 z-10"
+            className="pointer-events-none absolute inset-x-2 top-2 z-10"
             onMouseDown={(e) => e.preventDefault()}
           >
             {work.map((p) => (
-              <div key={p.id} data-lsp-progress={p.id}>
+              <div key={p.id} data-lsp-progress={p.id} className="flex w-full justify-end">
                 <ProgressCard progress={p} />
               </div>
             ))}

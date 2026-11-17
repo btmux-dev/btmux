@@ -204,6 +204,30 @@ try {
   await toast.getByText('1/2').waitFor();
   await toast.getByRole('progressbar').waitFor();
   assert.equal(await toast.getByText('fake').count(), 1);
+  // In a pane narrower than the card, it shrinks to fit.
+  const splits: string[] = [];
+  for (let i = 0; i < 2; i++)
+    splits.push((await api(`/api/panes/${paneId}/split`, 'POST', { direction: 'right', select: false })).pane_id);
+  // The card and its status indicator, the first labeled element.
+  const inside = () =>
+    page.evaluate((id) => {
+      const p = document.querySelector(`[data-editor-pane="${id}"]`)!.getBoundingClientRect();
+      const card = document.querySelector(`[data-editor-pane="${id}"] [data-lsp-progress] > *`);
+      const status = card?.querySelector('[aria-label]');
+      return (
+        p.width < 400 &&
+        !!card &&
+        !!status &&
+        [card, status].every((el) => {
+          const r = el.getBoundingClientRect();
+          return r.left >= p.left && r.right <= p.right;
+        })
+      );
+    }, paneId);
+  await until('the card inside a narrow pane', inside);
+  for (const id of splits) await api(`/api/panes/${id}`, 'DELETE');
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+  await page.keyboard.press('ControlOrMeta+End');
   for (let i = 0; i < 4; i++) await page.keyboard.press('Backspace');
   await toast.getByLabel('success').waitFor();
   await toast.waitFor({ state: 'detached' });

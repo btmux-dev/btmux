@@ -81,7 +81,7 @@ export function NvimWidgets({ state, grid, onSelect, onDismissPanel, onExpire, p
         <VStack
           gap={1}
           hAlign="end"
-          className="pointer-events-none absolute top-2 right-2 z-40"
+          className="pointer-events-none absolute inset-x-2 top-2 z-40"
           onMouseDown={(e) => e.preventDefault()}
         >
           {progress.map((p) => (
@@ -152,7 +152,7 @@ const DOT_VARIANTS: Record<MessageLevel, 'error' | 'warning' | 'accent'> = {
 /** A short Neovim message (echo, `vim.notify`, errors, search count, …). */
 function MessageCard({ message, grid }: { message: Message; grid: NvimGrid }) {
   return (
-    <Card padding={2} elevation="med" maxWidth="min(60ch, 50vw)" className="pointer-events-auto">
+    <Card padding={2} elevation="med" maxWidth="min(60ch, 100%)" className="pointer-events-auto">
       <HStack gap={2} align="start">
         {/* Center the dot on the first line. */}
         <HStack align="center" className="h-lh shrink-0">
