@@ -1,7 +1,7 @@
 ---
 title: "Files and Git"
 sidebar:
-  order: 3
+  order: 1
 ---
 
 The file browser and Git mode are two views of one dialog, opened at the

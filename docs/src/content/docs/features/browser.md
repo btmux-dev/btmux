@@ -1,7 +1,7 @@
 ---
 title: "Browser"
 sidebar:
-  order: 8
+  order: 6
 ---
 
 `<prefix> + b` opens a browser [over the active pane](editors.md#over-a-pane),

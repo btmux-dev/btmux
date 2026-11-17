@@ -1,7 +1,7 @@
 ---
 title: "Neovim GUI"
 sidebar:
-  order: 6
+  order: 4
 ---
 
 With `editor = "neovim"`, `<prefix> + e` opens your Neovim in a GUI that btmux

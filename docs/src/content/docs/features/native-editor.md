@@ -1,7 +1,7 @@
 ---
 title: "Native editor"
 sidebar:
-  order: 5
+  order: 3
 ---
 
 The native editor is btmux's own editor and the default for `<prefix> + e`. It

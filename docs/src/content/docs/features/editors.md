@@ -1,7 +1,7 @@
 ---
 title: "Editors"
 sidebar:
-  order: 4
+  order: 2
 ---
 
 `<prefix> + e` opens an editor over the active pane, and the

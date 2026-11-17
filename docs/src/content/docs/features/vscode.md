@@ -1,7 +1,7 @@
 ---
 title: "VS Code"
 sidebar:
-  order: 7
+  order: 5
 ---
 
 With `editor = "vscode"`, `<prefix> + e` opens VS Code
