@@ -100,7 +100,15 @@ try {
   await page.keyboard.press('D');
   await page.keyboard.press('y');
   await prompt.waitFor({ state: 'detached' });
-  for (let i = 0; read('a.txt') !== 'one\n' && i < 50; i++) await page.waitForTimeout(100);
+  // Git replaces each file, so one can be missing for a moment.
+  const restored = () => {
+    try {
+      return read('a.txt') === 'one\n' && read('b.txt') === 'staged\n';
+    } catch {
+      return false;
+    }
+  };
+  for (let i = 0; !restored() && i < 50; i++) await page.waitForTimeout(100);
   assert.equal(read('a.txt'), 'one\n');
   assert.equal(read('b.txt'), 'staged\n', 'staged changes are kept');
   assert.equal(git('status', '--porcelain'), 'M  b.txt\n?? new.txt\n');

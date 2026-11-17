@@ -35,7 +35,11 @@ followed by upgrade, Astryx interaction, theme, Git, and mobile (WebKit) checks
 run on demand, the shader wallpapers). `frontend/browser-test-stack.ts`
 gives each file a fresh stack (debug backend and Vite on free ports, a random token,
 `/bin/sh`, temporary XDG and Git config), so a running `just dev`, user config, and
-repo state don't affect it; failures keep the stack logs. Stacks put a fake
+repo state don't affect it; failures keep the stack logs (CI uploads them).
+Files run up to 4 at once by core count (`--jobs N`, 1 in CI, where the job is
+split into four `--shard I/N` jobs instead), with Vite's dependency cache built
+first (`vite optimize`) so concurrent stacks don't race to build it, and output
+printed per file as it ends. Stacks put a fake
 `multipass` (`frontend/test-bin`) first on the server's `PATH`, logging its calls
 to the stack's `multipass` dir (`sandbox-browser-test.ts`), so no test starts a VM. Async page predicates must
 use `waitForAsync` (`browser-test-utils.ts`): `page.waitForFunction` treats a
@@ -111,13 +115,15 @@ derived from each browser tab's URL, so session navigation is per-tab.
 
    `?mirror=1` creates a read-only attachment for window-grid and agent view thumbnails. Mirrors receive output and ordered size frames but never resize or write to the PTY. A `{type:"current_size",cols,rows}` frame precedes the replay, whose `size` frames walk the pane's resize history; the agent view lays out tiles from that frame and `size` frames after `ready`.
 
-3. **`/ws/files`** (`src/ws/files.rs`) — correlated JSON request/response messages for the file browser. It supports directory/file metadata, tree and content search, rich previews, Git status/diff/stage/unstage/discard, rename, copy, move, trash, and delete. Commit and file diffs (`git_commit_diff`, `git_diff`) cap the lines and bytes they send, commit diffs also the files, with exact totals; `DiffRows` draws row chunks as they near the viewport. Opening a binary file (NUL or invalid UTF-8 in its first 8 KiB) runs `open`/`xdg-open` on the server host (`open_if_binary`) instead of the editor. `prefix + f` opens file mode; `prefix + g` opens Git mode. Git mode's magit-style popups (`b` branch, `f` fetch, `F` pull, `P` push, `z` stash, `%` worktree) send `git_refs`/`git_run`; `file_git_ops.rs` maps a structured op to `git` CLI arguments (so credentials and hooks apply) and rejects option-like values. The worktree popup lists `git_refs`' worktrees and sends `git_worktree` (`worktree::Op`: add, open, remove, lock, unlock, prune), which reaches the `SessionManager` through `FilesState` to open windows and close panes as `prefix + W`/`X` do; visiting a worktree with panes navigates to one instead. Keep filesystem access behind the authenticated route and preserve path validation in `fs_ops.rs`. HTML previews load in an iframe from `/api/preview/<path>`, a path URL so relative assets resolve; `v` shows the source instead. They keep the app's origin so assets get the auth cookie, which is safe only because the iframe's `sandbox` and the route's CSP allow no scripts, forms, `<a ping>`, or requests to other origins. Preview keys are replayed to the file browser, as in `VscodeSurface`; WebKit runs no listeners on a sandboxed document, so there the frame gives up focus instead, as it does everywhere when a nested frame takes it. The UTF-8 charset header is decided from the file's first 1 MiB.
+3. **`/ws/files`** (`src/ws/files.rs`) — correlated JSON request/response messages for the file browser. It supports directory/file metadata, tree and content search, rich previews, Git status/diff/stage/unstage/discard, rename, copy, move, trash, and delete. Commit and file diffs (`git_commit_diff`, `git_diff`) cap the lines and bytes they send, commit diffs also the files, with exact totals; `DiffRows` draws row chunks as they near the viewport. `search_files` (`file_search.rs`) fuzzy-matches paths with nucleo over a `FileIndex`: `fd` (else `find`) lists for up to 4 roots, least recently searched dropped first, and roots not searched for 10 minutes. A search of a list older than 5 s, or four times as long as listing it took, serves it while the root is listed again in the background and says so (`refreshing`); clients repeat it with `fresh` (`searchFiles` in `file-messages.ts`), which waits for that listing. An empty query only starts a first listing. Replies name the root searched with symlinks resolved, which result paths start with; results carry nucleo's score plus any `boost` the request gives their path, and matched code point indices (nucleo's own haystack counts graphemes, or bytes). Opening a binary file (NUL or invalid UTF-8 in its first 8 KiB) runs `open`/`xdg-open` on the server host (`open_if_binary`) instead of the editor. `prefix + f` opens file mode; `prefix + g` opens Git mode. Git mode's magit-style popups (`b` branch, `f` fetch, `F` pull, `P` push, `z` stash, `%` worktree) send `git_refs`/`git_run`; `file_git_ops.rs` maps a structured op to `git` CLI arguments (so credentials and hooks apply) and rejects option-like values. The worktree popup lists `git_refs`' worktrees and sends `git_worktree` (`worktree::Op`: add, open, remove, lock, unlock, prune), which reaches the `SessionManager` through `FilesState` to open windows and close panes as `prefix + W`/`X` do; visiting a worktree with panes navigates to one instead. Keep filesystem access behind the authenticated route and preserve path validation in `fs_ops.rs`. HTML previews load in an iframe from `/api/preview/<path>`, a path URL so relative assets resolve; `v` shows the source instead. They keep the app's origin so assets get the auth cookie, which is safe only because the iframe's `sandbox` and the route's CSP allow no scripts, forms, `<a ping>`, or requests to other origins. Preview keys are replayed to the file browser, as in `VscodeSurface`, from when the frame takes focus, not just once it loads; WebKit runs no listeners on a sandboxed document, so there the frame gives up focus instead, as it does everywhere when a nested frame takes it or a link is followed (the new page would take keys until it loads). The UTF-8 charset header is decided from the file's first 1 MiB.
 
 4. **`/ws/sysstat`** (`src/ws/sysstat.rs`) — emits one JSON frame per second with per-core CPU, memory, and aggregate network rates for the StatusBar. The frontend reconnects this auxiliary socket independently.
 
 5. **`/ws/nvim`** (`src/ws/nvim.rs`) — a byte proxy between the browser and a new connection to the shared built-in Neovim's RPC socket. The browser speaks msgpack-RPC itself; see *Built-in Neovim* below.
 
-6. **`/ws/browser`** (`src/browser.rs`) — the shared server-side Chromium: JPEG frames as binary messages and page state as JSON, with input and navigation coming back as JSON. See *Browser surface* below.
+6. **`/ws/editor`** (`src/ws/editor.rs`) — the native editor's buffers (open, collab pushes and updates, save, revert) and its language servers' JSON-RPC. See *Native editor* below.
+
+7. **`/ws/browser`** (`src/browser.rs`) — the shared server-side Chromium: JPEG frames as binary messages and page state as JSON, with input and navigation coming back as JSON. See *Browser surface* below.
 
 REST handlers and MCP tools share the same `SessionManager`; structural mutations must call `broadcast_state` so browser tabs stay synchronized. REST lives under `/api` and includes session/window/pane/layout operations, pane input/output, notifications, and raw local-file serving. `GET /api/system` (`system_info.rs`) reports the server host fastfetch-style (`sysinfo`, plus `ioreg` for the Mac model name and the shell's `--version`) for the About dialog's System tab and the `system_info` MCP tool, which adds what the browser reports about its own machine (`lib/clientInfo.ts`). `GET /api/health` (`health.rs`) finds the optional programs btmux uses and runs each one's version command in its own process group (a job on Windows), killed whole on timeout or cancellation since wrappers wait on children, for the About dialog's Health tab, which adds what the browser supports. MCP is mounted at `/mcp`, with rmcp's own Host check off in favor of `auth.rs`; tools cover session/window/pane lifecycle, `send_keys` (text plus tmux-style key names), `read_pane_output` (the rendered screen or scrollback), `run_command`, `system_info`, and agents (`list_agents`, `wait_for_agent`, `send_prompt`). `automation.rs` implements the pane and agent operations that REST, MCP, and the `btmux agents`/`wait` commands share; waits recheck agent status on each state broadcast. `run_command` appends Enter, captures ANSI-stripped output until 400 ms of quiet by default, and has a 15 s default timeout; quiet output does not prove process exit.
 
@@ -198,9 +204,11 @@ and touch screens get a `MobileKeyBar` inside it, since the dialog is modal.
   advances the checkpoint. Resize events are journaled and broadcast in the same
   stream; resizing never clears history. The first interactive viewer owns PTY
   dimensions until it disconnects or another viewer claims them (the browser
-  claims on keydown, paste, or mousedown). Followers and mirrors keep the
-  ordered server sizes instead of fitting locally: a local resize reflows and
-  clears the prompt, which the shell never redraws.
+  claims on keydown, paste, or pointerdown, which covers swipes). Followers and
+  mirrors keep the ordered server sizes instead of fitting locally: a local
+  resize reflows and clears the prompt, which the shell never redraws. A
+  follower too small for the server's grid is clipped, so `TerminalPane` offers
+  "Fit to this screen", which claims.
   `portable-pty` only opens the PTY and spawns the shell: btmux keeps its own
   close-on-exec master fd, sizes it with `TIOCSWINSZ`, and reaps the shell with
   `waitpid`. Readers poll the master and a per-pane stop pipe.
@@ -317,7 +325,7 @@ server's arguments, which the exec passes on. It refuses
 while the built-in Neovim has unsaved changes. The server holds the state
 lock, quits Neovim (`:qall`) and stops VS Code, stops every PTY reader (unread
 output stays in the kernel), and writes session snapshots, replay
-journals, title/cwd, program-set colors, kitty keyboard flags, OSC 133 prompt state, agent telemetry, any partly read escape sequence, and
+journals, title/cwd, program-set colors, kitty keyboard flags, OSC 133 prompt state, agent telemetry, the native editor's unsaved buffers, any partly read escape sequence, and
 accepted input not yet written to the PTY (the writer stops too)
 to an unlinked file. PTY masters, the listener, the profile lock, and that
 file survive `execve`; shells stay its children. The new process takes them
@@ -394,6 +402,12 @@ instead, and it has a key to hide an editor covering the active pane, since
 VS Code ignores synthetic keys. Armed Ctrl, Alt, or prefix apply to the next single
 character typed, including text sent without key events or committed by a
 composition; longer text (a suggestion) passes through and disarms them.
+On iOS, text inserted without key events stays in wterm's textarea and
+changes reach the PTY as backspaces and text (`lib/dictation.ts`): dictation
+replaces its guesses only while they are before the caret, and stops when
+wterm empties the field. Other keys empty it. An edit deleting a grapheme of
+several code points is undone instead, since shells delete those differently
+(fish a grapheme per Backspace, bash a code point).
 `useVisualViewport` sizes `#root` to the visual
 viewport, since iOS doesn't resize the layout for the keyboard. Swipes in
 alternate-screen or mouse-tracking programs become wheel events. Below 768px,
@@ -471,6 +485,174 @@ plain-text URLs (`lib/urlDetect.ts`, across soft wraps) under the pointer, which
 Cmd-click (Ctrl elsewhere) opens without reaching the application. The desktop
 app opens `window.open` URLs in the default browser. Theme, font, and
 transparency are CSS variables and classes on the element.
+
+### Native editor
+
+`editor = "native"` (the default) is btmux's own editor: CodeMirror 6 views
+(`components/NativeEditor.tsx`, the CodeMirror code in `lib/nativeEditor/`,
+lazy-loaded) over any number of panes, editing buffers the server owns
+(`src/native_editor/`). Each pane's editor is shared state on the pane
+(`PaneEditor { shown, files, active }` in `PaneSnapshot`, persisted and handed
+off), changed by the `editor_view` control command (`native_editor::view`,
+also `btmux open-editor` and file browser opens); `open` with a line also
+broadcasts `editor_reveal`. Cursor and scroll stay per tab. `SessionPane`
+renders one per pane with files or shown; this tab's Neovim, VS Code, or
+browser over the pane hides it locally (`nativeEditorOver`).
+
+The `Hub` (one per server) keeps one `Buffer` per canonical path: a `ropey`
+rope, a version, and a bounded update log. Tabs sync through
+`@codemirror/collab` with the server as the authority: a push on the current
+version is applied and echoed to every follower (the sender's echo confirms
+it), a stale push is dropped and the tab rebases on the updates it gets. Changes
+are `ChangeSet.toJSON()` in UTF-16 code units (`text.rs`). A reconnecting tab
+resumes from its version when the log still reaches it, else reopens. Buffers
+hold `\n` only; the file's line ending and BOM are kept for saving. Files must
+be UTF-8 text under 16 MiB. Saving writes the file in place, as editors do (a
+rename would drop its mode, owner, and hard links), and refuses if the file
+changed on disk since it was loaded or saved, unless forced. A watcher on open files' directories reloads a clean buffer as one
+minimal update and marks a dirty one changed or deleted. Buffers nobody follows
+are dropped unless dirty (one loaded by MCP gets 60 s for a tab to follow it);
+dirty ones stay, listed by the `buffers` message. `btmux upgrade` hands
+them off with their id, text, versions, update log, line ending, BOM, and disk
+state, so tabs resume rather than reopen: a reopen can't tell an applied but
+unconfirmed update from an unsent one, and would apply it twice. Language server
+ids are handed off too (`HandedServers`), as resumed tabs keep theirs; `seal`
+takes them just before the exec, after which no ids are given out. `freeze`
+refuses changes until the exec, so tabs keep unsent edits, and first waits up to
+5 s for saves in progress (spawned, so they finish without their tab), so the
+buffers match the disk. Paths go as bytes, since JSON strings must be UTF-8, and
+the disk hash is SHA-256, stable across builds. The new process restores them
+(`restore`, from `main.rs` once sandboxes are known) before the listener
+serves, starts their language servers, and then checks them against the disk,
+as the watcher missed the upgrade.
+
+Language servers (`native_editor/lsp/`) have btmux as their only client.
+`[[language]]` and `[language-server.NAME]` (Helix-style) override built-in
+ones by name (`lsp/config.rs`); a buffer's servers start when it loads, one
+process per server and root (the outermost root marker, as in Helix, no higher
+than the Git worktree), found as plan limits find agent CLIs, in its own process group.
+The backend sends `didOpen`/`didChange`/`didSave`/`didClose` itself; the LSP
+document version is the collab version. Each tab runs one
+`@codemirror/lsp-client` per server (`lib/nativeEditor/lsp.ts`) over `lsp`
+frames: the router answers its `initialize` from the cached result, drops its
+sync notifications, rewrites request ids, and replies `ContentModified` when a
+request's stamped `version` (synced plus unconfirmed, since tabs push every
+unconfirmed update and the server skips ones it applied) isn't the buffer's.
+The backend answers the server's requests (`workspace/configuration` from
+`config`, `applyEdit`, …), caches diagnostics for tabs connecting later, and
+keeps `$/progress` work in `lsp_status`, which editors show as progress toasts
+(`ProgressCard`, shared with the Neovim surface). Renames (whose panel asks
+`prepareRename` for the range and name, if the server has it) and code actions go through
+`apply_edit`, which edits every file named, loading unopened ones as unsaved
+buffers, and runs file operations (`file_ops.rs`) in order between runs of
+text edits (each run all or none), after checking them all against a dry run;
+a sandboxed server's stay in its mounts, deletes go to the trash, a symlink
+is moved or deleted itself (not its target) and text edits resolve symlinks
+only when their turn comes, a create reloads a clean buffer of the file it
+replaces, a rename onto a path an open
+buffer has is refused (also from the file browser: one buffer per path), and
+open buffers and pane editors' files follow a rename (`repath`, `PaneEditor::moved`).
+Servers whose `fileOperations` filters match hear of those, and of the file
+browser's creates, copies, renames, moves, and deletes (`lsp/file_events.rs`):
+the file browser first applies `will…Files` edits (10 s at most), then sends
+`did…Files`, which also moves open buffers and pane editors' files.
+Changes whose annotation `needsConfirmation` (`lsp/annotations.rs`)
+are first confirmed in the tab (`applyWorkspaceEdit`), or, for a server's
+`workspace/applyEdit`, through an `lsp_prompt`; either can skip just those
+changes. Diagnostics tagged unnecessary fade and deprecated ones strike
+through (a hint only does), their codes link to `codeDescription`, and their
+related information links to its locations; pulls follow
+`interFileDependencies`, re-pulling the server's other files tabs follow
+after an edit. Inlay
+hints resolve (`inlayHint/resolve`) once the pointer enters them: hovering
+shows their tooltip instead of the server's hover (`hovers` in `features.ts`
+replaces lsp-client's), label parts run their command on click and jump to
+their location on Mod-click, and a double click applies their edits.
+Crashed servers restart up to 3 times a minute; idle ones stop after 60 s. The backend also pulls diagnostics (`textDocument/diagnostic`) after
+changes settle, publishing them with pushed ones; watches the root for
+registered `didChangeWatchedFiles` globs (`lsp/watch.rs`: never home or above,
+minus what the root's `.gitignore` ignores; on Linux, where each directory
+takes an inotify watch, at most 4096 that Git doesn't ignore); turns
+`showMessageRequest` and `showDocument` into `lsp_prompt` and
+`lsp_show_document`, which only a focused tab acts on; a prompt waits in each
+tab for focus, the first answer (a dismissal answers too) wins, and
+`lsp_prompt_done` withdraws it from the others; and
+forwards `*/refresh` requests to tabs as `$/btmux/refresh`. Files under a
+sandboxed session's mount (`set_sandboxes`, from `broadcast_state`) get servers
+run by `multipass exec` and a login shell in the guest. The browser's other
+features (`lib/nativeEditor/features.ts`: semantic tokens, inlay hints, code
+lenses, highlights, folding and selection ranges, code actions, symbols, call
+and type hierarchy, range and on-type formatting), inline completions
+(`inlineCompletion.ts`: ghost text asked for once typing pauses or with
+Alt-\\, kept while typing matches it; Tab accepts, Mod-Right accepts a word,
+Alt-] and Alt-[ cycle, Esc dismisses), and completions
+(`completion.ts`, after lsp-client's source, adding `completionItem/resolve`
+for docs and additional edits, also after snippets) request through the same
+client; pickers are a CodeMirror panel (`picker.ts`, which highlights matched
+characters, on Enter waits for the query typed and the results it replaces
+them with later, and drops pending results and picks once closed), and the palette's
+`editor-*` actions reach the shown editor over a pane through `registry.ts`
+once no modal dialog is open, since the palette is still open as it runs them
+and restores focus as it closes (`editor-quick-open` shows a hidden editor
+first, unless the pane has no folder). Quick open (`Mod-p`,
+`quickOpen.ts`) needs no language server: it searches `search_files` on its
+own `/ws/files` socket (requests time out, and a socket silent past one is
+dropped) under the pane's `workspaceFolder` (none for a remote cwd). An empty
+query lists the pane's other open files, then recent ones under that folder:
+files viewed in a focused editor, in `localStorage`, read on each use since
+tabs share it. Open and recent files get a small server-side boost. While the
+active file loads (which replaces the picker with the state), quick open waits
+up to 2 s for it. A trailing `:line` (`:line:column`, column
+ignored) opens on that line through `open`'s `line`; `:line` alone moves in the
+shown file. MCP has
+`open_in_editor`, `editor_buffers`, and `editor_diagnostics`.
+
+Git signs (`native_editor/git.rs`, `lib/nativeEditor/gitSigns.ts`), after
+gitsigns.nvim: the hub sends each buffer's index text (`git_base`, LF and no
+BOM like buffers; empty for untracked files, `null` outside Git or when
+ignored) on open and whenever its index text or `HEAD`'s commit changes (the
+watcher also watches each buffer's git dir; a commit writes the index there),
+with a `generation`, which line blame's cache checks. Tabs diff it against the
+buffer with `@codemirror/merge`'s `Chunk`, updated incrementally per change,
+for gutter signs, the status line counts, navigation, and inline previews.
+Resetting is a local edit. Staging sends the whole new index text
+(`git_stage`), written with git2 in the index blob's own line ending and BOM
+(a new file's is encoded as on disk and cleaned by `git hash-object --path`,
+as `git add` would) and with zeroed stat data and size, so git rereads the
+worktree file; it is refused if the generation or the index moved. The blob
+is written first; then, holding git's `index.lock`, the index is reread into
+a scratch copy, checked, changed, and renamed over it, so no other writer's
+change is lost. `git_blame` runs `git blame --porcelain
+--contents -` on the buffer encoded as on disk, only at the version the tab
+names (`stale` otherwise, and the tab retries). Line blame is per tab
+(`localStorage`). Vim gets gitsigns' suggested mappings with `\` as leader
+(codemirror-vim has no `<leader>`).
+
+`[native-editor] vim` (`ClientConfig.vim_mode`, a Settings toggle through
+`ConfigUpdate`) adds `@replit/codemirror-vim`, loaded once it is first turned
+on, through a compartment (`PaneEditor.setVim`), at `Prec.high` and ahead of
+every keymap, so its Ctrl chords win; the prefix is still taken first by
+`useKeybindings.ts`, Alt chords try the editor's keymaps first (on macOS
+vim takes them all in normal mode), and quick open's `Mod-p` runs before it
+in `PaneEditor.keydown`. `lib/nativeEditor/vim.ts` keeps vim's
+global definitions in one place: `:w`, `:wq`/`:x`, `:q`, `:bd` reach the editor
+through `setVimHost` (save goes through the server like `Mod-s`; `:q` hides;
+`:wq` hides only if `PaneEditor.save` wrote every local edit and the shown
+file and visibility didn't change meanwhile), `gd`, `K` (a hover tooltip of
+its own, since lsp-client's follows the pointer; keys other than modifiers
+and Cmd chords drop it, pending or shown), and `]d`/`[d`. `PaneEditor.save`
+resolves true only if the server echoed every update sent before it
+(`Doc.saveMark`): echoes precede the reply on the socket, and a push it
+dropped as stale gets none. The double-Esc hide in `PaneEditor.keydown` runs
+at `Prec.highest`, before vim: a quick run of Escs hides only if its first
+came in normal mode with nothing pending, no search highlight, and no macro
+recording (`vimIdle`), so leaving insert or visual mode never hides. Vim's
+state lives in a view plugin, so each new state (a file switch, a reopen in
+`Doc.opened`) starts in normal mode; one replacing a state in insert mode
+goes back into insert mode, so what's typed next isn't run as commands.
+Leaving insert mode, however it happens, closes completions. Registers are
+global to the tab. The mobile key bar's synthetic keydowns reach vim like
+real ones.
 
 ### Built-in Neovim
 
@@ -559,7 +741,7 @@ such glyphs render outside the grid too. These
 detects plugins and settings that duplicate or break this UI; the plugin
 toasts once after the first `UIEnter` if it finds any.
 
-The `editor` setting (default `neovim` if `nvim` 0.12+ is on `PATH`, else `pane`) makes file browser and Git mode opens send
+The `editor` setting (default `native`; see *Native editor*) with `neovim` makes file browser and Git mode opens send
 `nvim_open`, which opens the file via `--remote-expr` on the shared socket;
 `vscode` sends `vscode_open`; `pane` keeps the older `open_file` path (the
 pane's foreground Neovim, else `$EDITOR` in its shell), which `prefix + e`
@@ -569,7 +751,7 @@ and broadcasts `open_nvim` to show the surface; otherwise, or outside btmux, it
 execs `$EDITOR`.
 `ClientConfig.editors` lists the editors the server can run (`nvim::available`,
 `vscode::available`); the status bar shows a button for each, after the
-configured one, and the unbound `editor-neovim`/`editor-vscode` actions toggle
+configured one, and the unbound `editor-native`/`editor-neovim`/`editor-vscode` actions toggle
 one regardless of `editor`. A built-in editor's button opens a menu to show or
 hide it or shut its server down (`shut_down_editor`, also the unbound
 `shut-down-neovim`/`shut-down-vscode` actions; Neovim refuses with unsaved
@@ -824,6 +1006,10 @@ transparent background). Keys are **kebab-case in TOML but camelCase on the wire
 — `TerminalOptions` uses `rename_all(serialize = "camelCase", deserialize = "kebab-case")`
 so the same struct round-trips both ways. Unset fields serialize as `null`, and
 the frontend applies its `CONFIG_DEFAULTS` (`state/configDefaults.ts`).
+
+`[native-editor]` holds `format-on-save` and `vim` (both default off), sent
+flat as `ClientConfig.format_on_save` and `vim_mode`; only `vim` is in
+`ConfigUpdate`, so Settings can toggle it.
 
 There are dark and light schemes. `appearance` (`auto`, `dark`, `light`)
 picks the shown one; `auto` uses the system color mode browsers report

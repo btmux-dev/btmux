@@ -124,7 +124,7 @@ pub async fn list_dir(root: &Path, path: &str) -> Result<(Vec<FileEntry>, String
 }
 
 /// Git's heuristic: a NUL or invalid UTF-8 in the first 8 KiB.
-fn looks_binary(head: &[u8]) -> bool {
+pub(crate) fn looks_binary(head: &[u8]) -> bool {
     if head.contains(&0) {
         return true;
     }
@@ -133,6 +133,46 @@ fn looks_binary(head: &[u8]) -> bool {
         // A multi-byte character cut off at the end of the sample is fine.
         Err(e) => e.error_len().is_some(),
     }
+}
+
+/// Write beside `target` and rename over it, keeping its permissions, so
+/// readers never see half a file.
+pub fn write_atomic(target: &Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::{ErrorKind, Write};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    let dir = target.parent().unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir)?;
+    let name = target
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (tmp, mut file) = loop {
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let tmp = dir.join(format!(".{name}.{}.{n}.tmp", std::process::id()));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+        {
+            Ok(file) => break (tmp, file),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    };
+    let result = file
+        .write_all(data)
+        .and_then(|()| file.sync_all())
+        .and_then(|()| match std::fs::metadata(target) {
+            Ok(meta) => std::fs::set_permissions(&tmp, meta.permissions()),
+            Err(_) => Ok(()),
+        })
+        .and_then(|()| std::fs::rename(&tmp, target));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 /// Opens a binary file with the system opener (`open`, `xdg-open`, or the
@@ -384,15 +424,37 @@ pub async fn get_metadata(root: &Path, path: &str) -> Result<FileMetadata, Strin
     })
 }
 
+/// What would make renaming `from` to `to` fail, found before servers are
+/// asked to update references (`willRenameFiles`).
+pub fn check_rename(from: &Path, to: &Path) -> Result<(), String> {
+    std::fs::symlink_metadata(from).map_err(|e| format!("Cannot rename: {}", e))?;
+    match to.parent() {
+        Some(dir) if !dir.is_dir() => Err(format!(
+            "Cannot rename: {} is not a directory",
+            dir.display()
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// What would make creating `target` fail, found before servers are asked
+/// (`willCreateFiles`).
+/// `name` as `create_entry` was given it.
+pub fn check_create(target: &Path, name: &str) -> Result<(), String> {
+    match std::fs::symlink_metadata(target) {
+        Ok(_) => Err(format!("{} already exists", name.trim_end_matches('/'))),
+        Err(_) => Ok(()),
+    }
+}
+
 pub async fn rename_file(from: &str, to: &str) -> Result<(), String> {
     tokio::fs::rename(from, to)
         .await
         .map_err(|e| format!("Cannot rename: {}", e))
 }
 
-/// Creates a file, or a directory if `name` ends in '/', under `dir`. Missing
-/// parents are created; existing entries are never overwritten.
-pub async fn create_entry(dir: &Path, name: &str) -> Result<PathBuf, String> {
+/// What `create_entry` creates: the path, and whether it is a directory.
+pub fn entry_target(dir: &Path, name: &str) -> Result<(PathBuf, bool), String> {
     let is_dir = name.ends_with('/');
     let rel = Path::new(name.trim_end_matches('/'));
     if rel.as_os_str().is_empty()
@@ -403,7 +465,14 @@ pub async fn create_entry(dir: &Path, name: &str) -> Result<PathBuf, String> {
     {
         return Err("Invalid name".to_string());
     }
-    let target = dir.join(rel);
+    Ok((dir.join(rel), is_dir))
+}
+
+/// Creates a file, or a directory if `name` ends in '/', under `dir`. Missing
+/// parents are created; existing entries are never overwritten.
+pub async fn create_entry(dir: &Path, name: &str) -> Result<PathBuf, String> {
+    let (target, is_dir) = entry_target(dir, name)?;
+    let rel = Path::new(name.trim_end_matches('/'));
     if tokio::fs::symlink_metadata(&target).await.is_ok() {
         return Err(format!("{} already exists", rel.display()));
     }
@@ -449,9 +518,15 @@ async fn copy_entry(src: std::path::PathBuf, dst: std::path::PathBuf) -> Result<
     Ok(())
 }
 
-fn unique_dest(dest_dir: &Path, name: &str) -> std::path::PathBuf {
+/// A free name for `name` in `dest_dir`, not one of `taken`.
+fn unique_dest(
+    dest_dir: &Path,
+    name: &str,
+    taken: &std::collections::HashSet<PathBuf>,
+) -> std::path::PathBuf {
+    let free = |p: &PathBuf| !p.exists() && !taken.contains(p);
     let candidate = dest_dir.join(name);
-    if !candidate.exists() {
+    if free(&candidate) {
         return candidate;
     }
     let p = Path::new(name);
@@ -471,19 +546,25 @@ fn unique_dest(dest_dir: &Path, name: &str) -> std::path::PathBuf {
             format!("{}_copy_{}{}", stem, i, ext)
         };
         let candidate = dest_dir.join(&new_name);
-        if !candidate.exists() {
+        if free(&candidate) {
             return candidate;
         }
         i += 1;
     }
 }
 
-pub async fn copy_entries(src_paths: Vec<String>, dest_dir: &str) -> Result<Vec<String>, String> {
+/// Copies each of `src_paths` into `dest_dir` under a free name: the errors,
+/// and what was copied.
+pub async fn copy_entries(
+    src_paths: Vec<String>,
+    dest_dir: &str,
+) -> Result<(Vec<String>, Vec<PathBuf>), String> {
     let dest = PathBuf::from(dest_dir);
     if !dest.is_dir() {
         return Err(format!("Destination is not a directory: {}", dest_dir));
     }
     let mut errors = Vec::new();
+    let mut copied = Vec::new();
     for src_str in src_paths {
         let src = PathBuf::from(&src_str);
         let name = match src.file_name() {
@@ -493,48 +574,56 @@ pub async fn copy_entries(src_paths: Vec<String>, dest_dir: &str) -> Result<Vec<
                 continue;
             }
         };
-        let dst = unique_dest(&dest, &name);
-        if let Err(e) = copy_entry(src, dst).await {
-            errors.push(e);
+        let dst = unique_dest(&dest, &name, &Default::default());
+        match copy_entry(src, dst.clone()).await {
+            Ok(()) => copied.push(dst),
+            Err(e) => errors.push(e),
         }
     }
-    Ok(errors)
+    Ok((errors, copied))
 }
 
-pub async fn move_entries(src_paths: Vec<String>, dest_dir: &str) -> Result<Vec<String>, String> {
+/// A source and where it moves, or why it can't.
+pub type MoveTarget = Result<(PathBuf, PathBuf), String>;
+
+/// Where each of `src_paths` moves in `dest_dir`: a free name there.
+pub fn move_targets(src_paths: &[String], dest_dir: &str) -> Result<Vec<MoveTarget>, String> {
     let dest = PathBuf::from(dest_dir);
     if !dest.is_dir() {
         return Err(format!("Destination is not a directory: {}", dest_dir));
     }
-    let mut errors = Vec::new();
-    for src_str in src_paths {
-        let src = PathBuf::from(&src_str);
-        let name = match src.file_name() {
-            Some(n) => n.to_string_lossy().to_string(),
-            None => {
-                errors.push(format!("Cannot determine filename for {}", src_str));
-                continue;
-            }
-        };
-        let dst = unique_dest(&dest, &name);
-        // Try rename first (atomic, works within same filesystem)
-        if tokio::fs::rename(&src, &dst).await.is_ok() {
-            continue;
-        }
-        // Fall back to copy + delete for cross-device moves
-        if let Err(e) = copy_entry(src.clone(), dst).await {
-            errors.push(e);
-            continue;
-        }
-        if let Err(e) = delete_file_path(&src).await {
-            errors.push(format!(
-                "Copied but could not remove source {}: {}",
-                src.display(),
-                e
-            ));
-        }
+    let mut taken = std::collections::HashSet::new();
+    Ok(src_paths
+        .iter()
+        .map(|src_str| {
+            let src = PathBuf::from(src_str);
+            let name = src
+                .file_name()
+                .ok_or_else(|| format!("Cannot determine filename for {}", src_str))?
+                .to_string_lossy()
+                .to_string();
+            let dst = unique_dest(&dest, &name, &taken);
+            taken.insert(dst.clone());
+            Ok((src, dst))
+        })
+        .collect())
+}
+
+/// Moves `src` to `dst`, copying across filesystems.
+pub async fn move_entry(src: &Path, dst: &Path) -> Result<(), String> {
+    // Try rename first (atomic, works within same filesystem)
+    if tokio::fs::rename(src, dst).await.is_ok() {
+        return Ok(());
     }
-    Ok(errors)
+    // Fall back to copy + delete for cross-device moves
+    copy_entry(src.to_path_buf(), dst.to_path_buf()).await?;
+    delete_file_path(src).await.map_err(|e| {
+        format!(
+            "Copied but could not remove source {}: {}",
+            src.display(),
+            e
+        )
+    })
 }
 
 async fn delete_file_path(path: &Path) -> Result<(), String> {

@@ -27,7 +27,7 @@ writeFileSync(
 <script>document.getElementById('title').textContent = 'scripted'; window.parent.ran = true;</script>
 <img src="x" onerror="window.parent.ran = true">`,
 );
-writeFileSync(path.join(dir, 'b.html'), '<!doctype html><p id="second">Second</p>');
+writeFileSync(path.join(dir, 'b.html'), '<!doctype html><p id="second">Second</p><img src="pixel.png">');
 writeFileSync(path.join(dir, 'style.css'), '#title { color: rgb(1, 2, 3); }');
 writeFileSync(path.join(dir, 'pixel.png'), pixel);
 writeFileSync(path.join(dir, 'z.txt'), 'plain\n');
@@ -123,7 +123,14 @@ try {
       await page.keyboard.press('v');
       await page.locator('[data-html-preview]').waitFor();
 
-      // Links navigate the frame, which keeps its keys.
+      // Keys typed before a page loads (held by its image) still reach the file browser.
+      const slowImage = '**/pixel.png';
+      await page.route(slowImage, async (route) => {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await route.continue().catch(() => {});
+      });
+
+      // Links navigate the frame.
       await frame.locator('#link').click();
       await frame.locator('#second').waitFor();
       await page.keyboard.press('v');
@@ -136,6 +143,7 @@ try {
       for (let i = 0; i < 4; i++) await page.keyboard.press('j');
       await page.locator('[data-preview-viewport]').getByText('plain').first().waitFor();
       assert.equal(await page.locator('[data-html-preview]').count(), 0);
+      await page.unroute(slowImage);
 
       for (let i = 0; i < 2; i++) await page.keyboard.press('j');
       const child = frame.frameLocator('iframe');

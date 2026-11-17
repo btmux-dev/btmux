@@ -58,6 +58,8 @@ pub(crate) fn broadcast_state(mgr: &crate::session::manager::SessionManager) {
         agent_panes: mgr.running_agent_panes(),
     };
     let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
+    // Language servers for sandboxed files run in the guest.
+    crate::native_editor::lsp::config::set_sandboxes(mgr.sandbox_mounts());
     if mgr.statuses().receiver_count() > 0 {
         let _ = mgr.statuses().send(mgr.pane_statuses());
     }
@@ -323,6 +325,10 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         return Ok(());
     }
 
+    if let ClientMessage::EditorView { pane_id, op } = cmd {
+        return crate::native_editor::view(state, pane_id, op).await;
+    }
+
     if let ClientMessage::ShutDownEditor { editor } = cmd {
         let id = match editor {
             Editor::Neovim if crate::ws::nvim::running().await => {
@@ -334,7 +340,9 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
                 Some(id) => Some(id),
                 None => return Err("VS Code isn't running".into()),
             },
-            Editor::Pane => return Err("Only the built-in editors can be shut down".into()),
+            Editor::Pane | Editor::Native => {
+                return Err("Only Neovim and VS Code can be shut down".into())
+            }
         };
         let msg = ServerMessage::EditorShutDown {
             editor,
@@ -530,6 +538,7 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         | ClientMessage::NvimOpen { .. }
         | ClientMessage::VscodeOpen { .. }
         | ClientMessage::ShutDownEditor { .. }
+        | ClientMessage::EditorView { .. }
         | ClientMessage::FocusClient
         | ClientMessage::SystemColorMode { .. }
         | ClientMessage::WidgetShown { .. }
@@ -1110,6 +1119,11 @@ pub(crate) enum ClientMessage {
         #[serde(default)]
         folder: Option<String>,
     },
+    /// Change the native editor over a pane.
+    EditorView {
+        pane_id: Uuid,
+        op: crate::session::EditorViewOp,
+    },
     /// Quit the built-in Neovim (refused with unsaved changes) or stop VS Code.
     ShutDownEditor {
         editor: Editor,
@@ -1193,6 +1207,12 @@ pub enum ServerMessage {
     },
     FocusPane {
         pane_id: Uuid,
+    },
+    /// Put the cursor of the pane's native editor on `line` of `path`.
+    EditorReveal {
+        pane_id: Uuid,
+        path: String,
+        line: u32,
     },
     /// Show the built-in Neovim over the pane's session.
     OpenNvim {

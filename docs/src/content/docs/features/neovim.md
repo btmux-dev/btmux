@@ -4,11 +4,12 @@ sidebar:
   order: 5
 ---
 
-`<prefix> + e` opens your Neovim in a GUI that btmux draws
-[over the active pane](editors.md#over-a-pane). It runs your normal config.
-The command line, completion menu, messages, progress, and LSP signature help
-are native UI rather than terminal cells, and floating windows (LSP hover,
-diagnostics, plugin windows) appear as cards.
+With `editor = "neovim"`, `<prefix> + e` opens your Neovim in a GUI that btmux
+draws [over the active pane](editors.md#over-a-pane), and the file browser and
+Git mode open files there. It runs your normal config. The command line,
+completion menu, messages, progress, and LSP signature help are native UI
+rather than terminal cells, and floating windows (LSP hover, diagnostics,
+plugin windows) appear as cards.
 
 ![LSP completion in the Neovim GUI: a menu of members with their kinds, and the selected item's type beside it](../../../assets/screenshots/neovim-completion-dark.png)
 ![LSP completion in the Neovim GUI: a menu of members with their kinds, and the selected item's type beside it](../../../assets/screenshots/neovim-completion-light.png)
@@ -24,11 +25,12 @@ The command line and its completions are drawn the same way:
 ![Neovim's command line and its completion list as native UI](../../../assets/screenshots/neovim-cmdline-light.png)
 
 Requires Neovim 0.12 or newer as `nvim` on the server's `PATH`. `:q` closes
-Neovim and the view.
+Neovim and the view. Without `editor = "neovim"`, the status bar's Neovim
+button and the `editor-neovim` action still open it.
 
 `winblend` and `pumblend` make floating windows and the completion menu
-translucent, blurring what's behind them by `backdrop-blur` while their text
-stays sharp.
+translucent, as in the screenshots, blurring what's behind them by
+`backdrop-blur` while their text stays sharp.
 
 ## Your Neovim config
 

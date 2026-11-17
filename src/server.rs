@@ -69,6 +69,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/ws/processes", get(ws::processes::handle))
         .route("/ws/sysstat", get(ws::sysstat::handle))
         .route("/ws/nvim", get(ws::nvim::handle))
+        .route("/ws/editor", get(ws::editor::handle))
         .route("/ws/browser", get(crate::browser::handle))
         .route("/ws/files", get(ws::files::handle).with_state(files_state))
         .route(
@@ -765,8 +766,8 @@ struct OpenEditorRequest {
     editor: Option<crate::config::Editor>,
 }
 
-/// `btmux open-editor`: with `editor` (the request's, else the setting)
-/// `neovim` or `vscode`, open `path` (if any) in that editor and show it over the pane's session in every tab.
+/// `btmux open-editor`: open `path` (if any) in `editor` (the request's, else
+/// the setting) and show it over the pane in every tab.
 /// Replies `{"opened": false}` when the caller should run `$EDITOR` instead.
 async fn api_open_editor(
     State(state): State<AppState>,
@@ -787,6 +788,19 @@ async fn api_open_editor(
     let msg = match editor {
         crate::config::Editor::Pane => {
             return Json(serde_json::json!({ "opened": false })).into_response();
+        }
+        crate::config::Editor::Native => {
+            let op = match body.path {
+                Some(path) => crate::session::EditorViewOp::Open {
+                    path,
+                    line: body.line,
+                },
+                None => crate::session::EditorViewOp::Show,
+            };
+            if let Err(error) = crate::native_editor::view(&state, pane_id, op).await {
+                return (StatusCode::NOT_FOUND, error).into_response();
+            }
+            ws::control::ServerMessage::FocusPane { pane_id }
         }
         crate::config::Editor::Neovim => {
             if let Some(path) = &body.path {

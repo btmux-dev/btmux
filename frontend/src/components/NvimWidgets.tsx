@@ -19,9 +19,8 @@ import { List, ListItem } from '@astryxdesign/core/List';
 import { Text } from '@astryxdesign/core/Text';
 import { Token } from '@astryxdesign/core/Token';
 import { IconButton } from '@astryxdesign/core/IconButton';
-import { ProgressBar } from '@astryxdesign/core/ProgressBar';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
-import { Spinner } from './Spinner';
+import { ProgressCard } from './ProgressCard';
 import { floatFrameZ, type FloatFrame, type NvimGrid } from '../lib/nvimGrid';
 import { buildSyntaxStyle, syntaxLanguage } from '../lib/syntax';
 import { useStore } from '../state/store';
@@ -33,7 +32,6 @@ import type {
   MessageLevel,
   OutputPanel,
   Popupmenu,
-  Progress,
   SignatureHelp,
   WidgetState,
 } from '../lib/nvimWidgets';
@@ -83,7 +81,7 @@ export function NvimWidgets({ state, grid, onSelect, onDismissPanel, onExpire, p
         <VStack
           gap={1}
           hAlign="end"
-          className="pointer-events-none absolute top-2 right-2 z-40"
+          className="pointer-events-none absolute inset-x-2 top-2 z-40"
           onMouseDown={(e) => e.preventDefault()}
         >
           {progress.map((p) => (
@@ -154,7 +152,7 @@ const DOT_VARIANTS: Record<MessageLevel, 'error' | 'warning' | 'accent'> = {
 /** A short Neovim message (echo, `vim.notify`, errors, search count, …). */
 function MessageCard({ message, grid }: { message: Message; grid: NvimGrid }) {
   return (
-    <Card padding={2} elevation="med" maxWidth="min(60ch, 50vw)" className="pointer-events-auto">
+    <Card padding={2} elevation="med" maxWidth="min(60ch, 100%)" className="pointer-events-auto">
       <HStack gap={2} align="start">
         {/* Center the dot on the first line. */}
         <HStack align="center" className="h-lh shrink-0">
@@ -164,43 +162,6 @@ function MessageCard({ message, grid }: { message: Message; grid: NvimGrid }) {
           <Chunks chunks={message.content} grid={grid} />
         </Text>
       </HStack>
-    </Card>
-  );
-}
-
-/** A progress-message: LSP work, `:write`, `vim.pack`, … */
-function ProgressCard({ progress }: { progress: Progress }) {
-  const title = progress.title || progress.source;
-  return (
-    <Card padding={2} elevation="med" width="min(40ch, 50vw)" className="pointer-events-auto">
-      <VStack gap={1}>
-        <HStack gap={2} vAlign="center">
-          {progress.status === 'running' ? (
-            <Spinner size="sm" aria-label={title} />
-          ) : (
-            <StatusDot
-              label={progress.status}
-              variant={progress.status === 'success' ? 'success' : progress.status === 'failed' ? 'error' : 'neutral'}
-            />
-          )}
-          <Text weight="semibold" maxLines={1} className="min-w-0 flex-1">
-            {title}
-          </Text>
-          {progress.title && progress.source && (
-            <Text size="sm" color="secondary">
-              {progress.source}
-            </Text>
-          )}
-        </HStack>
-        {progress.text && (
-          <Text size="sm" color="secondary" maxLines={1}>
-            {progress.text}
-          </Text>
-        )}
-        {progress.percent !== null && progress.status === 'running' && (
-          <ProgressBar label={title} isLabelHidden value={progress.percent} />
-        )}
-      </VStack>
     </Card>
   );
 }

@@ -1,5 +1,5 @@
 import { useId, type SVGProps } from 'react';
-import { SquarePen } from 'lucide-react';
+import { FileCode, SquarePen } from 'lucide-react';
 import type { Editor } from '../generated/protocol';
 
 // Neovim mark from neovim.io, VS Code from Codicons; see third-party/*/NOTICE.
@@ -45,12 +45,13 @@ function VscodeGlyph(props: SVGProps<SVGSVGElement>) {
 /** Button label and icon for an editor. */
 export function editorButton(editor: Editor | undefined) {
   if (editor === 'vscode') return { label: 'VS Code', icon: <VscodeGlyph /> };
-  if (editor === 'pane') return { label: 'Editor', icon: <SquarePen /> };
+  if (editor === 'native') return { label: 'Editor', icon: <FileCode /> };
+  if (editor === 'pane') return { label: 'Terminal editor', icon: <SquarePen /> };
   return { label: 'Neovim', icon: <NeovimGlyph /> };
 }
 
 /** The toolbar's editors: the configured one, then the others the server can run. */
 export function toolbarEditors(editor: Editor | undefined, available: Editor[] | undefined): Editor[] {
-  const first = editor ?? 'neovim';
+  const first = editor ?? 'native';
   return [first, ...(available ?? []).filter((other) => other !== first)];
 }

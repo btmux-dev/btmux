@@ -66,25 +66,27 @@ try {
   await setSwitcherOpen(page, true);
   const dialog = page.getByRole('dialog', { name: 'Sessions', exact: true });
   await dialog.waitFor();
+  // The tree, not the preview, whose header repeats the previewed window's tokens.
+  const tree = dialog.getByRole('list');
 
   // main is ahead; the repo token shows it alone until feat has changes.
-  const repoToken = dialog.getByLabel('1 ahead', { exact: true });
+  const repoToken = tree.getByLabel('1 ahead', { exact: true });
   await repoToken.waitFor();
   console.log('PASS the repo token shows a worktree status');
 
   writeFileSync(path.join(feat, 'new'), 'x\n');
   writeFileSync(path.join(repo, 'README'), 'two\n');
   // The union, within a poll.
-  await dialog.getByLabel('1 ahead, 1 changed, 1 untracked', { exact: true }).waitFor({ timeout: 10_000 });
+  await tree.getByLabel('1 ahead, 1 changed, 1 untracked', { exact: true }).waitFor({ timeout: 10_000 });
   console.log('PASS the repo token shows the union, without reopening');
 
   await dialog.getByText(name, { exact: true }).click();
   await page.keyboard.press('ArrowRight');
-  await dialog.getByText('feat-win', { exact: true }).waitFor();
-  await dialog.getByLabel('1 ahead, 1 changed', { exact: true }).waitFor();
-  await dialog.getByLabel('1 untracked', { exact: true }).waitFor();
+  await tree.getByText('feat-win', { exact: true }).waitFor();
+  await tree.getByLabel('1 ahead, 1 changed', { exact: true }).waitFor();
+  await tree.getByLabel('1 untracked', { exact: true }).waitFor();
   // Symbols match their badge, whatever the repo color.
-  const symbols = dialog.getByLabel('1 ahead, 1 changed', { exact: true });
+  const symbols = tree.getByLabel('1 ahead, 1 changed', { exact: true });
   const [symbol, badge] = await symbols.evaluate((el) => [
     getComputedStyle(el.firstElementChild!).color,
     getComputedStyle(el.closest('.astryx-token')!).color,

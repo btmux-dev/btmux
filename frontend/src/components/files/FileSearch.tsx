@@ -8,7 +8,13 @@ import { Placeholder } from './Placeholder';
 import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
 import { clsx } from 'clsx';
 import { useFileStore } from '@/state/fileStore';
-import type { FileSearchResult, SearchResult, ServerFileMessage } from '@/protocol/file-messages';
+import {
+  searchFiles,
+  type FileSearchResponse,
+  type FileSearchResult,
+  type SearchResult,
+  type ServerFileMessage,
+} from '@/protocol/file-messages';
 
 interface FileSearchProps {
   fileSend: (type: string, payload: Record<string, unknown>) => Promise<ServerFileMessage>;
@@ -55,11 +61,16 @@ export function FileSearch({ fileSend, currentPath, focusedIndex, onPreview }: F
       setIsLoading(true);
       try {
         if (searchMode === 'files') {
-          const resp = await fileSend('search_files', { query: searchQuery, path: '.', root: currentPath });
-          const payload = resp.payload as { results: FileSearchResult[] };
-          if (generation === searchGenerationRef.current) {
-            store.getState().setSearchResults(payload.results ?? []);
-          }
+          const send = async (payload: Record<string, unknown>) =>
+            (await fileSend('search_files', payload)).payload as unknown as FileSearchResponse;
+          const current = () => generation === searchGenerationRef.current;
+          const payload = await searchFiles(send, { query: searchQuery, path: '.', root: currentPath }, (fresh) =>
+            fresh.then(
+              (response) => current() && store.getState().setSearchResults(response.results ?? []),
+              () => {},
+            ),
+          );
+          if (current()) store.getState().setSearchResults(payload.results ?? []);
         } else {
           const resp = await fileSend('search_content', { query: searchQuery, path: '.', root: currentPath });
           const payload = resp.payload as { results: SearchResult[] };
@@ -183,16 +194,18 @@ function FileResultRow({
   focused: boolean;
 }) {
   const displayPath = result.path.startsWith(root + '/') ? result.path.slice(root.length + 1) : result.path;
-  const offset = result.path.length - displayPath.length;
+  // Indices count code points.
+  const chars = Array.from(displayPath);
+  const offset = Array.from(result.path).length - chars.length;
   const highlighted = new Set(result.indices.map((i) => i - offset));
 
   const segments: { text: string; hi: boolean }[] = [];
   let i = 0;
-  while (i < displayPath.length) {
+  while (i < chars.length) {
     const h = highlighted.has(i);
     let j = i + 1;
-    while (j < displayPath.length && highlighted.has(j) === h) j++;
-    segments.push({ text: displayPath.slice(i, j), hi: h });
+    while (j < chars.length && highlighted.has(j) === h) j++;
+    segments.push({ text: chars.slice(i, j).join(''), hi: h });
     i = j;
   }
 

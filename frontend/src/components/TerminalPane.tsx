@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PaneTerminal, PaneTerminalOptions } from '../lib/paneTerminal';
 import { usePaneTerminal } from '../hooks/usePaneTerminal';
-import { useStore } from '../state/store';
+import { editorShown, useStore } from '../state/store';
 import { AgentStatus, LayoutRect, ClientConfig } from '../state/types';
 import { ClientMessage } from '../protocol/messages';
 import { STARTUP_THEME } from '../state/startupTheme';
@@ -15,6 +15,7 @@ import { PaneWidget } from './PaneWidget';
 import { PaneSearch } from './PaneSearch';
 import { CONNECTION_STATE_LABEL } from '../lib/connectionState';
 import { clsx } from 'clsx';
+import { Button } from '@astryxdesign/core/Button';
 import { desktopTransparency } from '../lib/desktopTransparency';
 import { hasShaderWallpaper } from '../lib/wallpaperCatalog';
 import {
@@ -132,25 +133,27 @@ export function TerminalPane({
   const settingsOpen = useStore((s) => s.settingsOpen);
   // A popup over this pane's window owns the keyboard.
   const popupShown = useStore((s) => s.popupShown !== null);
-  // Whether a Neovim, VS Code, or browser surface is pinned over this pane.
+  // Whether an editor or browser surface covers this pane.
   const nvimOpen = useStore(
     (s) =>
       (s.nvimOpen && s.nvimPaneId === paneId) ||
       (s.vscodeOpen && s.vscodePaneId === paneId) ||
-      (s.browserOpen && s.browserPaneId === paneId),
+      (s.browserOpen && s.browserPaneId === paneId) ||
+      editorShown(s, paneId),
   );
   const fileBrowserOpen = useStore((s) => s.fileBrowserOpen && s.fileBrowserPaneId === paneId);
   const termOptions = useTerminalOptions(config);
   // Set below; the socket handler calls it after each write to rescan for LaTeX.
   const latexPokeRef = useRef<() => void>(() => {});
-  const { term, termRef, fitRef, dims, connection, connectionError, initialReplayRendered } = usePaneTerminal({
-    containerRef,
-    paneId,
-    termOptions,
-    visibleRef,
-    registry,
-    onWriteRef: latexPokeRef,
-  });
+  const { term, termRef, fitRef, claimRef, clipped, dims, connection, connectionError, initialReplayRendered } =
+    usePaneTerminal({
+      containerRef,
+      paneId,
+      termOptions,
+      visibleRef,
+      registry,
+      onWriteRef: latexPokeRef,
+    });
 
   // LaTeX detection (lib/latexDetect.ts).
   // A pane under the built-in Neovim keeps its geometry but needn't render.
@@ -435,6 +438,18 @@ export function TerminalPane({
             visibility: initialReplayRendered ? 'visible' : 'hidden',
           }}
         />
+        {clipped && rendering && initialReplayRendered && (
+          // Another viewer sized the PTY larger than this pane, so it's clipped.
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2" style={{ zIndex: 25 }}>
+            <Button
+              label="Fit to this screen"
+              size="sm"
+              elevation="med"
+              tooltip="Another viewer set this pane's size"
+              onClick={() => claimRef.current?.()}
+            />
+          </div>
+        )}
         {widget && term && initialReplayRendered && (
           // Under a popup it can't be used, so callers fall back unless it's shown later.
           <PaneWidget

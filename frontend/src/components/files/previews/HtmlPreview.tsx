@@ -11,7 +11,8 @@ export function isHtmlFile(path: string | null): boolean {
 export function HtmlPreview() {
   const selectedFile = useFileStore((s) => s.selectedFile);
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const forwardingKeys = useRef(false);
+  // Documents whose keys reach the file browser.
+  const forwarded = useRef(new WeakSet<Document>());
 
   const returnFocus = () => {
     const frame = frameRef.current;
@@ -20,38 +21,25 @@ export function HtmlPreview() {
     frame?.closest<HTMLElement>('[tabindex="-1"]')?.focus();
   };
 
-  const onBlur = () =>
-    window.setTimeout(() => {
-      // Keys in a nested frame, which may be cross-origin, never reach the listener below.
-      const nested = frameRef.current?.contentDocument?.activeElement?.matches('iframe, frame');
-      if (!forwardingKeys.current || nested) returnFocus();
-    });
-
-  useLayoutEffect(() => {
-    window.addEventListener('blur', onBlur);
-    return () => {
-      window.removeEventListener('blur', onBlur);
-      // Removing a focused frame would drop focus to <body>, where the file browser ignores keys.
-      returnFocus();
-    };
-  }, []);
-
-  if (!selectedFile) return null;
-
   // Keys never leave a focused iframe, so hand them to the file browser. Where
   // that can't work, the frame gives up focus instead: WebKit runs no listeners
   // on a sandboxed document, and a link may have left this origin.
-  const forwardKeys = () => {
-    const win = frameRef.current?.contentDocument?.defaultView;
-    forwardingKeys.current = false;
-    win?.addEventListener('btmux-probe', () => (forwardingKeys.current = true));
-    win?.dispatchEvent(new Event('btmux-probe'));
-    if (!forwardingKeys.current) {
-      returnFocus();
-      return;
-    }
-    win?.addEventListener('blur', onBlur);
-    win?.addEventListener(
+  const forwardKeys = (): boolean => {
+    const doc = frameRef.current?.contentDocument;
+    const win = doc?.defaultView;
+    if (!doc || !win) return false;
+    if (forwarded.current.has(doc)) return true;
+    let probed = false;
+    win.addEventListener('btmux-probe', () => (probed = true), { once: true });
+    win.dispatchEvent(new Event('btmux-probe'));
+    if (!probed) return false;
+    forwarded.current.add(doc);
+    win.addEventListener('blur', onBlur);
+    // A link's document would take keys before its load forwards them.
+    doc.addEventListener('click', (e) => {
+      if ((e.target as Element).closest?.('a[href]')) returnFocus();
+    });
+    doc.addEventListener(
       'keydown',
       (e) => {
         const replay = new KeyboardEvent('keydown', {
@@ -70,7 +58,29 @@ export function HtmlPreview() {
       },
       true,
     );
+    return true;
   };
+
+  const onBlur = () => {
+    // Now rather than on load, which a click into the frame can precede.
+    const forwarding = forwardKeys();
+    window.setTimeout(() => {
+      // Keys in a nested frame, which may be cross-origin, never reach the listener above.
+      const nested = frameRef.current?.contentDocument?.activeElement?.matches('iframe, frame');
+      if (!forwarding || nested) returnFocus();
+    });
+  };
+
+  useLayoutEffect(() => {
+    window.addEventListener('blur', onBlur);
+    return () => {
+      window.removeEventListener('blur', onBlur);
+      // Removing a focused frame would drop focus to <body>, where the file browser ignores keys.
+      returnFocus();
+    };
+  }, []);
+
+  if (!selectedFile) return null;
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -80,7 +90,9 @@ export function HtmlPreview() {
         src={previewUrl(selectedFile)}
         sandbox="allow-same-origin"
         data-html-preview
-        onLoad={forwardKeys}
+        onLoad={() => {
+          if (!forwardKeys()) returnFocus();
+        }}
         className="flex-1 w-full border-0 bg-white"
         title={selectedFile.split('/').pop() ?? 'HTML'}
       />

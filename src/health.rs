@@ -316,6 +316,40 @@ fn present(
     }
 }
 
+/// The native editor's language servers, found as it finds them.
+async fn language_servers(shell: &str) -> Vec<HealthCheck> {
+    let config = crate::native_editor::lsp::config::current();
+    let mut checks = Vec::new();
+    for (name, server) in &config.servers {
+        let languages: Vec<&str> = config
+            .languages
+            .iter()
+            .filter(|l| l.language_servers.contains(name))
+            .map(|l| l.name.as_str())
+            .collect();
+        if languages.is_empty() || server.command.is_empty() {
+            continue;
+        }
+        let program = OsString::from(&server.command);
+        let [shell_path] = crate::agent_limits::programs_paths(
+            shell,
+            [program.clone()],
+            crate::agent_limits::AskShell::Retry,
+        )
+        .await;
+        let path = shell_path
+            .or_else(|| std::env::var_os("PATH"))
+            .and_then(|search| crate::agent_limits::find_in(&program, &search));
+        checks.push(present(
+            name,
+            &format!("The native editor's {}.", languages.join(", ")),
+            path,
+            None,
+        ));
+    }
+    checks
+}
+
 /// Absent is an error only for the configured editor.
 fn optional_editor(configured: bool, name: &str) -> (HealthStatus, Option<String>) {
     if configured {
@@ -469,6 +503,7 @@ async fn report(state: &AppState) -> HealthReport {
         gh,
         tailscale,
         multipass,
+        servers,
     ) = tokio::join!(
         shell_check(shell.clone()),
         version_of(locate("nvim")),
@@ -488,6 +523,8 @@ async fn report(state: &AppState) -> HealthReport {
             PROBE_TIMEOUT
         ),
         version_of(crate::multipass::program()),
+        // Not run: some start serving instead of printing a version.
+        language_servers(&shell),
     );
 
     let mut tools = vec![
@@ -602,6 +639,10 @@ async fn report(state: &AppState) -> HealthReport {
             HealthGroup {
                 title: "Tools".into(),
                 checks: tools,
+            },
+            HealthGroup {
+                title: "Language servers".into(),
+                checks: servers,
             },
         ],
         path: std::env::var_os("PATH")

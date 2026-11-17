@@ -82,6 +82,7 @@ type Draft = {
   sessionSort: ClientConfig['session_sort'];
   windowSort: ClientConfig['window_sort'];
   editor: ClientConfig['editor'];
+  vimMode: boolean;
   windowGridCount: number;
   binds: Record<string, string>;
   keyOverrides: Record<string, string>;
@@ -139,6 +140,7 @@ function initialDraft(config: ClientConfig): Draft {
     sessionSort: config.session_sort,
     windowSort: config.window_sort,
     editor: config.editor,
+    vimMode: config.vim_mode,
     windowGridCount: config.window_grid_count,
     binds: Object.fromEntries(config.binds.map((bind) => [bind.action, bind.key])),
     keyOverrides: config.keys,
@@ -195,6 +197,7 @@ const TOML_DEFAULTS = {
   sessionSort: 'mru',
   windowSort: 'alphabetical',
   editor: 'neovim',
+  vimMode: false,
   windowGridCount: 4,
   appearance: 'auto',
   wallpaperOpacity: 0.1,
@@ -307,6 +310,10 @@ function toToml(draft: Draft): string {
     strLine('file-level', draft.fileLevel, TOML_DEFAULTS.fileLevel),
   ].filter((line): line is string => line !== null);
 
+  const nativeEditorLines = [boolLine('vim', draft.vimMode, TOML_DEFAULTS.vimMode)].filter(
+    (line): line is string => line !== null,
+  );
+
   const notificationLines = [
     boolLine('os', draft.osNotifications, TOML_DEFAULTS.osNotifications),
     strLine('os-level', draft.osNotificationLevel, TOML_DEFAULTS.osNotificationLevel),
@@ -319,6 +326,7 @@ function toToml(draft: Draft): string {
     terminalLines.length ? ['[terminal]', ...terminalLines] : [],
     logLines.length ? ['[log]', ...logLines] : [],
     notificationLines.length ? ['[notifications]', ...notificationLines] : [],
+    nativeEditorLines.length ? ['[native-editor]', ...nativeEditorLines] : [],
   ].filter((section) => section.length > 0);
 
   return sections.map((section) => section.join('\n')).join('\n\n');
@@ -332,6 +340,7 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   if (dirty.has('sessionSort')) update.session_sort = draft.sessionSort;
   if (dirty.has('windowSort')) update.window_sort = draft.windowSort;
   if (dirty.has('editor')) update.editor = draft.editor;
+  if (dirty.has('vimMode')) update.vim_mode = draft.vimMode;
   if (dirty.has('windowGridCount')) update.window_grid_count = draft.windowGridCount;
   if (dirty.has('binds')) update.keys = draft.keyOverrides;
   if (dirty.has('appearance')) update.appearance = draft.appearance;
@@ -509,6 +518,7 @@ export function ConfigPage({ config, send, request }: Props) {
       theme: previewTheme(config, draft, dirty),
       animations: draft.animations,
       show_pane_titles: draft.showPaneTitles,
+      vim_mode: draft.vimMode,
       terminal: {
         ...config.terminal,
         cursorBlink: draft.cursorBlink,
@@ -876,6 +886,11 @@ export function ConfigPage({ config, send, request }: Props) {
                           'Editor',
                           [
                             {
+                              value: 'native',
+                              label: 'btmux',
+                              description: "btmux's own editor.",
+                            },
+                            {
                               value: 'neovim',
                               label: 'Neovim',
                               description:
@@ -894,6 +909,11 @@ export function ConfigPage({ config, send, request }: Props) {
                             },
                           ],
                           'Opens with prefix + e, or from the file browser and Git mode.',
+                        )}
+                        {toggle(
+                          'vimMode',
+                          'Vim mode',
+                          "Vim keybindings in btmux's editor. :w saves, :q hides it, and a double Esc hides it only from normal mode.",
                         )}
                         <NumberInput
                           label="Window grid count"

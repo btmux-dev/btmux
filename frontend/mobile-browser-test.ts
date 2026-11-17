@@ -110,10 +110,17 @@ try {
   const context = await browser.newContext({ ...devices['iPhone 15'] });
   const page = await context.newPage();
   const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
+  page.on('pageerror', (error) => errors.push(error.stack || error.message));
+  // A wider viewer owns the pane's size; the phone offers to fit it.
+  const owner = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  await connect(owner);
   await connect(page);
   const keys = (name: string) => page.getByRole('button', { name, exact: true });
   await keys('Esc').waitFor();
+  const fitHere = page.getByRole('button', { name: 'Fit to this screen' });
+  await fitHere.tap();
+  await fitHere.waitFor({ state: 'detached' });
+  await owner.close();
 
   // The app fits the visual viewport.
   const fit = await page.evaluate(() => ({
@@ -172,12 +179,72 @@ try {
   await write(page, '\x1b[<u');
   assert.equal(await takeInput(page), '\x1b[27u');
 
+  // Dictation replaces its guesses in place, so the textarea keeps them.
+  const field = await page.evaluate(() => {
+    const input = document.activeElement as HTMLTextAreaElement;
+    const dictate = (text: string) => {
+      input.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText' }));
+      input.value = '​' + text;
+      input.setSelectionRange(input.value.length, input.value.length);
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
+    };
+    dictate('He');
+    dictate('Hello world');
+    dictate('Hello, world.');
+    return input.value;
+  });
+  assert.equal(field, '​Hello, world.');
+  assert.equal(await takeInput(page), 'Hello world' + '\x7f'.repeat(6) + ', world.');
+  // Other keys end the dictated line.
+  await page.keyboard.press('Enter');
+  assert.equal(await takeInput(page), '\r');
+  const fieldValue = () => page.evaluate(() => (document.activeElement as HTMLTextAreaElement).value);
+  const select = (start: number, end: number) =>
+    page.evaluate(([start, end]) => (document.activeElement as HTMLTextAreaElement).setSelectionRange(start, end), [
+      start,
+      end,
+    ]);
+  assert.equal(await fieldValue(), '​');
+  // Backspace over a selection of retained text deletes all of it.
+  await page.keyboard.insertText('hello world');
+  assert.equal(await takeInput(page), 'hello world');
+  await select(7, 12);
+  await page.keyboard.press('Backspace');
+  assert.equal(await takeInput(page), '\x7f'.repeat(5));
+  assert.equal(await fieldValue(), '​hello ');
+  // So does a paste over one, without clipboard data.
+  await select(1, 7);
+  await page.evaluate(() => {
+    const input = document.activeElement as HTMLTextAreaElement;
+    input.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertFromPaste' }));
+    input.value = '​hey';
+    input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste' }));
+  });
+  assert.equal(await takeInput(page), '\x7f'.repeat(4) + 'y');
+  assert.equal(await fieldValue(), '​');
+  // Deleting a grapheme of several code points is left undone.
+  await page.keyboard.insertText('ok 👍🏽');
+  assert.equal(await takeInput(page), 'ok 👍🏽');
+  await page.keyboard.press('Backspace');
+  assert.equal(await takeInput(page), '');
+  assert.equal(await fieldValue(), '​ok 👍🏽');
+  // Accepted text disarms Escape → Tab leaving the terminal.
+  await page.keyboard.press('Escape');
+  await page.keyboard.insertText('hi');
+  await page.keyboard.press('Tab');
+  assert.equal(await takeInput(page), '\x1bhi\t');
+  assert(await focusedInput());
+  await page.keyboard.press('Enter');
+  await takeInput(page);
+
   // Swipes scroll full-screen applications like the wheel, even after a redraw
   // detaches the touched node, which then alone receives the touch's events.
-  await write(page, '\x1b[?1049h\x1b[31mred\x1b[m');
+  await write(page, '\x1b[?1049h\x1b[H\x1b[31mred\x1b[m');
   await page.locator('[data-pane-terminal] .term-row span', { hasText: 'red' }).waitFor();
-  const lines = await page.evaluate(() => {
-    const term = (window as unknown as { term: { measureCell(): { height: number } } }).term;
+  const lines = await page.evaluate(async () => {
+    const term = (
+      window as unknown as { term: { measureCell(): { height: number }; write(data: string): void } }
+    ).term;
     const element = document.querySelector('[data-pane-terminal]')!;
     const target = [...element.querySelectorAll('.term-row span')].find((span) => span.textContent === 'red')!;
     const rect = element.getBoundingClientRect();
@@ -191,7 +258,13 @@ try {
     send('touchstart', rect.top + 300);
     for (let y = rect.top + 290; y >= rect.top + 200; y -= 10) {
       send('touchmove', y);
-      if (y === rect.top + 280) target.remove();
+      // Recolored, wterm replaces the span on its next frame. Removing it here
+      // instead would desync wterm's row parts, and a later paint would throw.
+      if (y === rect.top + 280) {
+        term.write('\x1b[H\x1b[32mred\x1b[m');
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        if (target.isConnected) throw new Error('the redraw kept the touched node');
+      }
     }
     send('touchend', rect.top + 200);
     return Math.trunc(100 / term.measureCell().height);
@@ -259,9 +332,13 @@ try {
           return rect.width > 0 && rect.height > 0 && element.checkVisibility();
         }).length,
     );
+  // The new pane's emulator opens asynchronously; until then nothing is shown.
   await waitForAsync(page, async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
-    return useStore.getState().terminals.size >= 3;
+    const state = useStore.getState();
+    const session = state.allSessions[0];
+    const panes = session.windows[session.active_window].panes;
+    return panes.length === 2 && panes.every((pane: { id: string }) => state.terminals.has(pane.id));
   });
   assert.equal(await shown(), 1);
   const activePane = () =>

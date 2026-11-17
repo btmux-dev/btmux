@@ -25,7 +25,16 @@ impl Inherited {
         match *self {}
     }
 
-    pub async fn restore(self, _state: &AppState) -> std::net::TcpListener {
+    pub async fn restore(self, _state: &AppState) -> (std::net::TcpListener, Editor) {
+        match self {}
+    }
+}
+
+/// The native editor's state: none.
+pub enum Editor {}
+
+impl Editor {
+    pub async fn restore(self) {
         match self {}
     }
 }

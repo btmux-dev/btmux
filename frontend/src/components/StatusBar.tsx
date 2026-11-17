@@ -142,7 +142,7 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
           state().setFileBrowserOpen(false);
           runAction(action, session.id, send, (name) => navigate(`/s/${encodeURIComponent(name)}`));
         };
-        return editor === 'pane' ? (
+        return editor === 'pane' || editor === 'native' ? (
           <IconButton
             key={editor}
             label={button.label}

@@ -46,9 +46,10 @@ try {
     assert.fail(`never saw ${text} in:\n${last}`);
   };
   const popup = page.locator(POPUP);
+  // `innerText`, as the terminal is hidden until its replay is shown.
   const popupShows = (text: string) =>
     page.waitForFunction(
-      ([sel, text]) => document.querySelector(sel)?.textContent?.includes(text),
+      ([sel, text]) => document.querySelector<HTMLElement>(sel)?.innerText.includes(text),
       [POPUP, text] as const,
       { timeout: 15_000 },
     );

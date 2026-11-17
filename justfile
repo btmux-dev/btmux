@@ -298,9 +298,11 @@ test-frontend:
 protocol:
     BTMUX_UPDATE_PROTOCOL=1 cargo test -- protocol::generated_protocol_is_current handoff::tests::format_changes_bump_the_version
 
-# Browser regressions, each file against its own fresh, isolated stack.
-test-browser:
-    cd frontend && bunx playwright install chromium webkit && bun browser-test-stack.ts reliability-test.ts terminal-browser-test.ts connect-passkey-browser-test.ts upgrade-browser-test.ts astryx-browser-test.ts git-branch-browser-test.ts git-worktree-browser-test.ts git-discard-browser-test.ts git-log-browser-test.ts html-preview-browser-test.ts session-git-status-browser-test.ts github-status-browser-test.ts agent-grid-browser-test.ts agent-usage-browser-test.ts widget-browser-test.ts popup-browser-test.ts sandbox-browser-test.ts mobile-browser-test.ts
+# Browser regressions, each file against its own fresh, isolated stack
+# (`--jobs N` runs N at once, `--shard I/N` a part; see browser-test-stack.ts).
+# Longest first, ordered so that CI's four round-robin shards take about as long.
+test-browser *args:
+    cd frontend && bunx playwright install chromium webkit && bun browser-test-stack.ts {{args}} native-editor-browser-test.ts astryx-browser-test.ts github-status-browser-test.ts mobile-browser-test.ts widget-browser-test.ts html-preview-browser-test.ts sandbox-browser-test.ts agent-grid-browser-test.ts git-log-browser-test.ts upgrade-browser-test.ts popup-browser-test.ts reliability-test.ts connect-passkey-browser-test.ts git-worktree-browser-test.ts agent-usage-browser-test.ts session-git-status-browser-test.ts native-editor-lsp-browser-test.ts native-editor-git-browser-test.ts terminal-browser-test.ts git-branch-browser-test.ts git-discard-browser-test.ts
 
 # Shader wallpaper regressions (on demand; pixel checks need WebGPU).
 test-shader-browser:

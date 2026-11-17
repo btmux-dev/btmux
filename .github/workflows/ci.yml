@@ -79,8 +79,12 @@ jobs:
         run: just test-frontend
 
   browser:
-    name: Browser
+    name: Browser (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
 
@@ -105,4 +109,14 @@ jobs:
         run: bunx playwright install --with-deps chromium webkit
 
       - name: Test
-        run: just test-browser
+        run: |
+          mkdir -p "$RUNNER_TEMP/browser-tests"
+          TMPDIR="$RUNNER_TEMP/browser-tests" just test-browser --shard ${{ matrix.shard }}/4
+
+      - name: Upload failed stack logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-stack-logs-${{ matrix.shard }}
+          path: ${{ runner.temp }}/browser-tests/btmux-browser-test-*
+          retention-days: 7

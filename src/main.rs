@@ -29,6 +29,7 @@ mod handoff;
 mod health;
 mod mcp;
 mod multipass;
+mod native_editor;
 mod pane_git;
 mod paste_image;
 mod persistence;
@@ -419,8 +420,9 @@ async fn main() {
         vscode::set_data_dir(dir.join("vscode"));
         browser::set_data_dir(dir.join("browser"));
     }
-    let inherited_listener = if let Some(inherited) = inherited {
-        Some(inherited.restore(&state).await)
+    let (inherited_listener, inherited_editor) = if let Some(inherited) = inherited {
+        let (listener, editor) = inherited.restore(&state).await;
+        (Some(listener), Some(editor))
     } else {
         let mut mgr = state.write().await;
         let restored = state_file
@@ -433,8 +435,14 @@ async fn main() {
         } else if let Some(p) = &state_file {
             tracing::info!("restored {} session(s) from {}", restored, p.display());
         }
-        None
+        (None, None)
     };
+    // Before any editor socket opens a sandboxed file.
+    native_editor::lsp::config::set_sandboxes(state.read().await.sandbox_mounts());
+    native_editor::set_state(state.clone());
+    if let Some(editor) = inherited_editor {
+        editor.restore().await;
+    }
 
     spawn_pane_exit_handler(exit_rx, state.clone());
     spawn_agent_reaper(state.clone(), agent_manifest_dir());

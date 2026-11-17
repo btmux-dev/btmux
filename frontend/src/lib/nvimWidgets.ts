@@ -1,6 +1,8 @@
 // State for Neovim's externalized cmdline (`ext_cmdline`), popupmenu (`ext_popupmenu`)
 // and message area (`ext_messages`), plus btmux plugin notifications.
 
+import { PROGRESS_DONE_MS, type Progress } from './progress';
+
 export interface Chunk {
   attr: number;
   text: string;
@@ -60,16 +62,7 @@ export interface Message {
 }
 
 /** A progress-message, as forwarded by the btmux plugin (`btmux_progress`). */
-export interface Progress {
-  id: string;
-  text: string;
-  title: string;
-  source: string;
-  status: 'running' | 'success' | 'failed' | 'cancel';
-  percent: number | null;
-  /** Shortly after finishing, or once stale. */
-  expires: number;
-}
+export type { Progress };
 
 /** Multi-line output (`:ls`, `:!cmd`, `:messages`, prompts), shown until dismissed. */
 export interface OutputPanel {
@@ -112,7 +105,6 @@ const SKIPPED_KINDS = new Set(['progress', 'search_cmd', 'completion']);
 const PANEL_TITLES: Record<string, string> = { confirm: 'Confirm', history: 'Messages' };
 const MESSAGE_MS = { info: 4000, warning: 6000, error: 8000 };
 const SEARCH_COUNT_MS = 2000;
-const PROGRESS_DONE_MS = 1500;
 /** Running progress with no update for this long is dropped as stale. */
 const PROGRESS_STALE_MS = 60_000;
 const MAX_MESSAGES = 5;
