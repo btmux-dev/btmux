@@ -401,9 +401,28 @@ try {
   await files('copy_entries', { paths: [user], dest: join(dir, 'mod') });
   await until('the copy', () => /^workspace\/didCreateFiles .*mod\/user\.fake/m.test(log()));
   await files('move_entries', { paths: [join(dir, 'mod', 'user.fake'), join(dir, 'made.fake')], dest: dir });
-  await until('the move', () => /^workspace\/didRenameFiles .*"newUri":"[^"]*\/user_copy\.fake","oldUri":"[^"]*\/mod\/user\.fake"/m.test(log()));
+  await until('the move', () =>
+    /^workspace\/didRenameFiles .*"newUri":"[^"]*\/user_copy\.fake","oldUri":"[^"]*\/mod\/user\.fake"/m.test(log()),
+  );
   assert(existsSync(join(dir, 'user_copy.fake')) && existsSync(join(dir, 'made_copy.fake')));
   console.log('PASS file browser operations');
+
+  // Diagnostic tags fade unused code and strike deprecated code; codes link to their docs.
+  const tags = join(dir, 'tags.fake');
+  writeFileSync(tags, 'let unused = old;\n');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: tags, line: 1, editor: 'native' });
+  const unused = pane.locator('.cm-lsp-unnecessary', { hasText: 'unused' });
+  await unused.waitFor();
+  const faded = await unused.evaluate((el) => [getComputedStyle(el).opacity, getComputedStyle(el).backgroundImage]);
+  assert.deepEqual(faded, ['0.55', 'none']);
+  const old = pane.locator('.cm-lsp-deprecated', { hasText: 'old' });
+  assert.match(await old.evaluate((el) => getComputedStyle(el).textDecorationLine), /line-through/);
+  // Hints and lenses move text as they arrive; hover the mark itself.
+  await old.hover();
+  const code = page.locator('.cm-tooltip a.cm-lsp-diagnostic-code', { hasText: '(D1)' });
+  await code.waitFor();
+  assert.equal(await code.getAttribute('href'), 'https://example.com/D1');
+  console.log('PASS diagnostic tags and codes');
 
   // A restarted server's watches work too.
   const count = (re: RegExp) => (log().match(re) ?? []).length;

@@ -527,8 +527,9 @@ the file browser first applies `will…Files` edits (10 s at most), then sends
 Changes whose annotation `needsConfirmation` (`lsp/annotations.rs`)
 are first confirmed in the tab (`applyWorkspaceEdit`), or, for a server's
 `workspace/applyEdit`, through an `lsp_prompt`; either can skip just those
-changes. Crashed servers restart up to 3 times a minute; idle ones stop after
-60 s. The backend also pulls diagnostics (`textDocument/diagnostic`) after
+changes. Diagnostics tagged unnecessary fade and deprecated ones strike
+through (a hint only does), and their codes link to `codeDescription`.
+Crashed servers restart up to 3 times a minute; idle ones stop after 60 s. The backend also pulls diagnostics (`textDocument/diagnostic`) after
 changes settle, publishing them with pushed ones; watches the root for
 registered `didChangeWatchedFiles` globs (`lsp/watch.rs`: never home or above,
 minus what the root's `.gitignore` ignores; on Linux, where each directory

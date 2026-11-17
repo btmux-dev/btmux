@@ -1,6 +1,7 @@
 // A fake language server for browser tests, over stdio. It keeps the
 // documents it is sent and logs each method to $BTMUX_FAKE_LSP/log (if set):
-// - diagnostics: an error on every "bad"
+// - diagnostics: an error on every "bad"; a hint tagged unnecessary on every
+//   "unused", a warning tagged deprecated, with a code and its link, on every "old"
 // - completion: "fakeCompletion", with 100 paragraphs of docs, and
 //   "importedThing", whose resolve adds documentation and an import ("use lib;"
 //   on line 1)
@@ -87,7 +88,18 @@ function send(message: unknown) {
 
 function publish(uri: string) {
   const doc = docs.get(uri)!;
-  const diagnostics = occurrences(doc.text, 'bad').map((range) => ({ range, severity: 1, message: 'bad word' }));
+  const diagnostics = [
+    ...occurrences(doc.text, 'bad').map((range) => ({ range, severity: 1, message: 'bad word' })),
+    ...occurrences(doc.text, 'unused').map((range) => ({ range, severity: 4, message: 'never used', tags: [1] })),
+    ...occurrences(doc.text, 'old').map((range) => ({
+      range,
+      severity: 2,
+      message: 'old is deprecated',
+      tags: [2],
+      code: 'D1',
+      codeDescription: { href: 'https://example.com/D1' },
+    })),
+  ];
   send({
     jsonrpc: '2.0',
     method: 'textDocument/publishDiagnostics',

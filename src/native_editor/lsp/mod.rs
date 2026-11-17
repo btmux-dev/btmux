@@ -335,7 +335,13 @@ fn client_capabilities() -> Value {
             "implementation": {},
             "typeDefinition": {},
             "references": {},
-            "publishDiagnostics": { "relatedInformation": true, "versionSupport": true },
+            "publishDiagnostics": {
+                "relatedInformation": true,
+                "versionSupport": true,
+                "tagSupport": { "valueSet": [1, 2] },
+                "codeDescriptionSupport": true,
+                "dataSupport": true,
+            },
             "diagnostic": { "relatedDocumentSupport": false },
             "codeAction": {
                 "codeActionLiteralSupport": { "codeActionKind": { "valueSet": [

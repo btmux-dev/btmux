@@ -109,8 +109,38 @@ type PublishParams = {
     severity?: number;
     message: string;
     source?: string;
+    code?: string | number;
+    codeDescription?: { href: string };
+    /** 1 unnecessary (unused), 2 deprecated. */
+    tags?: number[];
   }[];
 };
+
+const TAG_CLASSES: Record<number, string> = { 1: 'cm-lsp-unnecessary', 2: 'cm-lsp-deprecated' };
+
+/** The message with the diagnostic's code, linked to its documentation if given. */
+function renderMessage(message: string, code: string | number, href: string | undefined) {
+  const dom = document.createElement('span');
+  dom.append(message, ' ');
+  const label = `(${code})`;
+  if (href && /^https?:/.test(href)) {
+    const link = document.createElement('a');
+    link.className = 'cm-lsp-diagnostic-code';
+    link.href = href;
+    link.textContent = label;
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      window.open(href, '_blank', 'noopener');
+    });
+    dom.append(link);
+  } else {
+    const plain = document.createElement('span');
+    plain.className = 'cm-lsp-diagnostic-code';
+    plain.textContent = label;
+    dom.append(plain);
+  }
+  return dom;
+}
 
 /** The latest diagnostics per client and URI. */
 const diagnostics = new Map<LSPClient, Map<string, PublishParams>>();
@@ -131,7 +161,21 @@ function showDiagnostics(client: LSPClient, view: EditorView, params: PublishPar
     const from = changes.mapPos(offset(synced, d.range.start), 1);
     const to = Math.max(from, changes.mapPos(offset(synced, d.range.end), -1));
     const severity = d.severity === 1 ? 'error' : d.severity === 2 ? 'warning' : d.severity === 3 ? 'info' : 'hint';
-    return { from, to, severity, message: d.message, source: d.source };
+    const markClass = (d.tags ?? [])
+      .map((t) => TAG_CLASSES[t] ?? '')
+      .join(' ')
+      .trim();
+    const code = d.code;
+    return {
+      from,
+      to,
+      severity,
+      message: d.message,
+      source: d.source,
+      markClass: markClass || undefined,
+      renderMessage:
+        code === undefined || code === '' ? undefined : () => renderMessage(d.message, code, d.codeDescription?.href),
+    };
   });
   view.dispatch(setDiagnostics(view.state, list));
 }
@@ -609,6 +653,11 @@ export function lspExtension(doc: Doc): Extension {
     EditorView.theme({
       '.cm-btmux-rename': { padding: '4px 8px' },
       '.cm-btmux-rename input': { marginLeft: '4px', font: 'inherit' },
+      // Diagnostic tags, as other editors show them: hints only fade or strike.
+      '.cm-lsp-unnecessary': { opacity: '0.55' },
+      '.cm-lsp-deprecated': { textDecoration: 'line-through' },
+      '.cm-lintRange-hint.cm-lsp-unnecessary, .cm-lintRange-hint.cm-lsp-deprecated': { backgroundImage: 'none' },
+      '.cm-lsp-diagnostic-code': { opacity: '0.7' },
     }),
   ];
 }
