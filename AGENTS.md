@@ -176,9 +176,11 @@ and touch screens get a `MobileKeyBar` inside it, since the dialog is modal.
   advances the checkpoint. Resize events are journaled and broadcast in the same
   stream; resizing never clears history. The first interactive viewer owns PTY
   dimensions until it disconnects or another viewer claims them (the browser
-  claims on keydown, paste, or mousedown). Followers and mirrors keep the
-  ordered server sizes instead of fitting locally: a local resize reflows and
-  clears the prompt, which the shell never redraws.
+  claims on keydown, paste, or pointerdown, which covers swipes). Followers and
+  mirrors keep the ordered server sizes instead of fitting locally: a local
+  resize reflows and clears the prompt, which the shell never redraws. A
+  follower too small for the server's grid is clipped, so `TerminalPane` offers
+  "Fit to this screen", which claims.
   `portable-pty` only opens the PTY and spawns the shell: btmux keeps its own
   close-on-exec master fd, sizes it with `TIOCSWINSZ`, and reaps the shell with
   `waitpid`. Readers poll the master and a per-pane stop pipe.

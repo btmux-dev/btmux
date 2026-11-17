@@ -31,6 +31,10 @@ export function usePaneTerminal({ containerRef, paneId, termOptions, visibleRef,
   // Mirrors termRef for render-time consumers (search, LaTeX scan).
   const [term, setTerm] = useState<PaneTerminal | null>(null);
   const fitRef = useRef<(() => void) | null>(null);
+  // Takes size ownership of the PTY from another viewer.
+  const claimRef = useRef<(() => void) | null>(null);
+  // A follower whose server grid doesn't fit its container, so it's clipped.
+  const [clipped, setClipped] = useState(false);
   // Live terminal dimensions, shown as "cols×rows" in the title bar. Updated from
   // the fit/resize path so the bar tracks the pane's real grid.
   const [dims, setDims] = useState<{ cols: number; rows: number } | null>(null);
@@ -95,14 +99,20 @@ export function usePaneTerminal({ containerRef, paneId, termOptions, visibleRef,
         reported = key;
         ws.send(JSON.stringify({ type: 'resize', cols, rows }));
       };
+      const updateClipped = () => {
+        const size = term.proposeDimensions();
+        setClipped(!owner && !!serverSize && !!size && (serverSize.cols > size.cols || serverSize.rows > size.rows));
+      };
       const adoptServerSize = () => {
         if (serverSize) term.resize(serverSize.cols, serverSize.rows);
+        updateClipped();
       };
       const fit = () => {
         const size = term.proposeDimensions();
         if (!size) return;
         if (!owner) adoptServerSize();
         else term.resize(size.cols, size.rows);
+        updateClipped();
         report(size.cols, size.rows);
       };
       fitRef.current = fit;
@@ -112,9 +122,11 @@ export function usePaneTerminal({ containerRef, paneId, termOptions, visibleRef,
         fit();
         ws.send(JSON.stringify({ type: 'claim' }));
       };
+      claimRef.current = claim;
+      // pointerdown also covers touch, where a swipe sends no mousedown.
       container.addEventListener('keydown', claim, true);
       container.addEventListener('paste', claim, true);
-      container.addEventListener('mousedown', claim, true);
+      container.addEventListener('pointerdown', claim, true);
       // wterm ignores pastes without text.
       const onPaste = (e: ClipboardEvent) => {
         const image = clipboardImage(e.clipboardData);
@@ -174,6 +186,7 @@ export function usePaneTerminal({ containerRef, paneId, termOptions, visibleRef,
                 // produced for. The owner's own echo is a no-op.
                 serverSize = { cols: msg.cols, rows: msg.rows };
                 term.resize(msg.cols, msg.rows);
+                updateClipped();
               }
               if (msg.type === 'owner') {
                 owner = msg.owner;
@@ -234,7 +247,7 @@ export function usePaneTerminal({ containerRef, paneId, termOptions, visibleRef,
         container.removeEventListener('keydown', claim, true);
         container.removeEventListener('paste', claim, true);
         container.removeEventListener('paste', onPaste, true);
-        container.removeEventListener('mousedown', claim, true);
+        container.removeEventListener('pointerdown', claim, true);
         cancelAnimationFrame(connectRaf);
         cancelAnimationFrame(revealRaf);
         observer.disconnect();
@@ -245,6 +258,8 @@ export function usePaneTerminal({ containerRef, paneId, termOptions, visibleRef,
         termRef.current = null;
         setTerm(null);
         fitRef.current = null;
+        claimRef.current = null;
+        setClipped(false);
       };
     };
 
@@ -258,5 +273,5 @@ export function usePaneTerminal({ containerRef, paneId, termOptions, visibleRef,
     // reload; the pane socket replays scrollback on reconnect so content is kept.
   }, [paneId, termOptions, registry]);
 
-  return { term, termRef, fitRef, dims, connection, connectionError, initialReplayRendered };
+  return { term, termRef, fitRef, claimRef, clipped, dims, connection, connectionError, initialReplayRendered };
 }

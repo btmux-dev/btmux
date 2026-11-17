@@ -111,9 +111,16 @@ try {
   const page = await context.newPage();
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.stack || error.message));
+  // A wider viewer owns the pane's size; the phone offers to fit it.
+  const owner = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  await connect(owner);
   await connect(page);
   const keys = (name: string) => page.getByRole('button', { name, exact: true });
   await keys('Esc').waitFor();
+  const fitHere = page.getByRole('button', { name: 'Fit to this screen' });
+  await fitHere.tap();
+  await fitHere.waitFor({ state: 'detached' });
+  await owner.close();
 
   // The app fits the visual viewport.
   const fit = await page.evaluate(() => ({
