@@ -5,6 +5,7 @@
 
 pub mod annotations;
 pub mod config;
+pub mod file_events;
 pub mod process;
 pub mod watch;
 
@@ -73,6 +74,8 @@ enum Pending {
     Tab(SocketId, Value),
     /// btmux's pull of a document's diagnostics.
     Pull(String),
+    /// btmux's own request, answered with the response.
+    Btmux(tokio::sync::oneshot::Sender<Value>),
 }
 
 /// What a tab's answer to a prompt goes to.
@@ -284,6 +287,15 @@ fn client_capabilities() -> Value {
             "workspaceFolders": true,
             "didChangeConfiguration": { "dynamicRegistration": false },
             "didChangeWatchedFiles": { "dynamicRegistration": true, "relativePatternSupport": true },
+            "fileOperations": {
+                "dynamicRegistration": false,
+                "willCreate": true,
+                "didCreate": true,
+                "willRename": true,
+                "didRename": true,
+                "willDelete": true,
+                "didDelete": true,
+            },
             "executeCommand": {},
             "symbol": { "resolveSupport": { "properties": ["location.range"] } },
             "semanticTokens": { "refreshSupport": true },
@@ -360,6 +372,23 @@ fn client_capabilities() -> Value {
             "workDoneProgress": true,
         },
     })
+}
+
+/// The params of `server`'s `will…Files` or `did…Files`, if it registered
+/// for any of `changes` under its root.
+fn interested(
+    server: &Server,
+    kind: file_events::Kind,
+    will: bool,
+    changes: &[file_events::FileChange],
+) -> Option<Value> {
+    let init = server.init.as_ref().filter(|_| server.ready())?;
+    let ours: Vec<_> = changes
+        .iter()
+        .filter(|c| c.old.starts_with(&server.root) || c.new.starts_with(&server.root))
+        .cloned()
+        .collect();
+    file_events::params(init, kind, will, &ours)
 }
 
 fn toml_json(value: &Option<toml::Value>) -> Value {
@@ -732,6 +761,46 @@ impl Inner {
         }
     }
 
+    /// Ask the ready servers whose root holds a changed file, and that
+    /// registered for them, about `changes` (`will…Files`): their answers.
+    pub(super) fn lsp_will_change(
+        &mut self,
+        kind: file_events::Kind,
+        changes: &[file_events::FileChange],
+    ) -> Vec<(u64, tokio::sync::oneshot::Receiver<Value>)> {
+        let mut answers = Vec::new();
+        for server in self.lsp.servers.values_mut() {
+            let Some(params) = interested(server, kind, true, changes) else {
+                continue;
+            };
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let sid = server.next_request;
+            server.next_request += 1;
+            server.pending.insert(sid, Pending::Btmux(tx));
+            server.send(json!({
+                "jsonrpc": "2.0",
+                "id": sid,
+                "method": kind.method(true),
+                "params": params,
+            }));
+            answers.push((server.id, rx));
+        }
+        answers
+    }
+
+    /// Tell those servers `changes` happened (`did…Files`).
+    pub(super) fn lsp_did_change(
+        &self,
+        kind: file_events::Kind,
+        changes: &[file_events::FileChange],
+    ) {
+        for server in self.lsp.servers.values() {
+            if let Some(params) = interested(server, kind, false, changes) {
+                server.send(notification(&kind.method(false), params));
+            }
+        }
+    }
+
     /// The Multipass instance server `id` runs in, if it is still running.
     pub(super) fn lsp_sandbox(&self, id: u64) -> Option<Option<String>> {
         self.lsp.servers.get(&id).map(|s| s.sandbox.clone())
@@ -1000,6 +1069,9 @@ impl super::Hub {
                             let items = items.as_array().cloned().unwrap_or_default();
                             inner.publish(id, &uri, true, items);
                         }
+                    }
+                    Some(Pending::Btmux(tx)) => {
+                        let _ = tx.send(message);
                     }
                     None => {}
                 }

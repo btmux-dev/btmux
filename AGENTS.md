@@ -520,6 +520,10 @@ buffers, and runs file operations (`file_ops.rs`) in order between runs of
 text edits (each run all or none), after checking them all against a dry run;
 a sandboxed server's stay in its mounts, deletes go to the trash, and open
 buffers and pane editors' files follow a rename (`repath`, `PaneEditor::moved`).
+Servers whose `fileOperations` filters match hear of those, and of the file
+browser's creates, copies, renames, moves, and deletes (`lsp/file_events.rs`):
+the file browser first applies `will…Files` edits (10 s at most), then sends
+`did…Files`, which also moves open buffers and pane editors' files.
 Changes whose annotation `needsConfirmation` (`lsp/annotations.rs`)
 are first confirmed in the tab (`applyWorkspaceEdit`), or, for a server's
 `workspace/applyEdit`, through an `lsp_prompt`; either can skip just those

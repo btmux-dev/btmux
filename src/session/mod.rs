@@ -122,14 +122,20 @@ pub enum EditorViewOp {
 
 impl PaneEditor {
     /// Files at or under `from` moved to `to`, or were deleted (closing
-    /// their tabs); true if any of this editor's were.
-    pub fn moved(&mut self, from: &std::path::Path, to: Option<&std::path::Path>) -> bool {
+    /// their tabs, except `keep`'s); true if any of this editor's were.
+    pub fn moved(
+        &mut self,
+        from: &std::path::Path,
+        to: Option<&std::path::Path>,
+        keep: &[String],
+    ) -> bool {
         let before = self.clone();
         let active = self.active.take();
         let mut closed_at = None;
         for file in std::mem::take(&mut self.files) {
             let renamed = match std::path::Path::new(&file).strip_prefix(from) {
                 Err(_) => Some(file.clone()),
+                Ok(_) if to.is_none() && keep.contains(&file) => Some(file.clone()),
                 Ok(rest) => to.map(|to| {
                     let path = if rest.as_os_str().is_empty() {
                         to.to_path_buf()
@@ -454,14 +460,15 @@ mod editor_tests {
         e.apply(EditorViewOp::Activate {
             path: "/d/sub/b".into(),
         });
-        assert!(e.moved(Path::new("/d"), Some(Path::new("/e"))));
+        assert!(e.moved(Path::new("/d"), Some(Path::new("/e")), &[]));
         assert_eq!(e.files, ["/e/a", "/e/sub/b", "/x"]);
         assert_eq!(e.active.as_deref(), Some("/e/sub/b"));
-        assert!(!e.moved(Path::new("/nope"), None));
-        assert!(e.moved(Path::new("/e/sub/b"), None));
+        assert!(!e.moved(Path::new("/nope"), None, &[]));
+        assert!(!e.moved(Path::new("/e/sub/b"), None, &["/e/sub/b".into()]));
+        assert!(e.moved(Path::new("/e/sub/b"), None, &[]));
         assert_eq!(e.files, ["/e/a", "/x"]);
         assert_eq!(e.active.as_deref(), Some("/x"));
-        assert!(e.moved(Path::new("/"), None));
+        assert!(e.moved(Path::new("/"), None, &[]));
         assert_eq!((e.active, e.shown), (None, false));
     }
 }

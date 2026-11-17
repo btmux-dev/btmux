@@ -10,6 +10,7 @@ use crate::file_git;
 use crate::file_git_ops;
 use crate::file_search::{self, FileIndex};
 use crate::fs_ops;
+use crate::native_editor::{file_change, hub, FileChange, FileKind};
 
 pub struct FilesState {
     pub file_index: Arc<FileIndex>,
@@ -585,12 +586,20 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .and_then(|p| p.as_str())
                 .unwrap_or("");
 
+            let (from_path, to_path) = (std::path::Path::new(from), std::path::Path::new(to));
+            let change = file_change(from_path, to_path, from_path.is_dir());
+            hub()
+                .will_change_files(FileKind::Rename, std::slice::from_ref(&change))
+                .await;
             match fs_ops::rename_file(from, to).await {
-                Ok(()) => ServerMessage {
-                    id,
-                    msg_type: "rename_file_result".to_string(),
-                    payload: serde_json::json!({}),
-                },
+                Ok(()) => {
+                    hub().did_change_files(FileKind::Rename, &[change]).await;
+                    ServerMessage {
+                        id,
+                        msg_type: "rename_file_result".to_string(),
+                        payload: serde_json::json!({}),
+                    }
+                }
                 Err(e) => error_response(id, &e),
             }
         }
@@ -605,12 +614,25 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 Err(e) => return error_response(id, &e),
             };
 
+            let change = fs_ops::entry_target(&dir, name)
+                .ok()
+                .map(|(target, is_dir)| file_change(&target, &target, is_dir));
+            if let Some(change) = &change {
+                hub()
+                    .will_change_files(FileKind::Create, std::slice::from_ref(change))
+                    .await;
+            }
             match fs_ops::create_entry(&dir, name).await {
-                Ok(path) => ServerMessage {
-                    id,
-                    msg_type: "create_entry_result".to_string(),
-                    payload: serde_json::json!({ "path": path }),
-                },
+                Ok(path) => {
+                    if let Some(change) = change {
+                        hub().did_change_files(FileKind::Create, &[change]).await;
+                    }
+                    ServerMessage {
+                        id,
+                        msg_type: "create_entry_result".to_string(),
+                        payload: serde_json::json!({ "path": path }),
+                    }
+                }
                 Err(e) => error_response(id, &e),
             }
         }
@@ -632,11 +654,18 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .unwrap_or(".");
 
             match fs_ops::copy_entries(paths, dest).await {
-                Ok(errors) => ServerMessage {
-                    id,
-                    msg_type: "copy_entries_result".to_string(),
-                    payload: serde_json::json!({ "errors": errors }),
-                },
+                Ok((errors, copied)) => {
+                    let created: Vec<FileChange> = copied
+                        .iter()
+                        .map(|p| file_change(p, p, p.is_dir()))
+                        .collect();
+                    hub().did_change_files(FileKind::Create, &created).await;
+                    ServerMessage {
+                        id,
+                        msg_type: "copy_entries_result".to_string(),
+                        payload: serde_json::json!({ "errors": errors }),
+                    }
+                }
                 Err(e) => error_response(id, &e),
             }
         }
@@ -657,13 +686,35 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .and_then(|p| p.as_str())
                 .unwrap_or(".");
 
-            match fs_ops::move_entries(paths, dest).await {
-                Ok(errors) => ServerMessage {
-                    id,
-                    msg_type: "move_entries_result".to_string(),
-                    payload: serde_json::json!({ "errors": errors }),
-                },
-                Err(e) => error_response(id, &e),
+            let targets = match fs_ops::move_targets(&paths, dest) {
+                Ok(targets) => targets,
+                Err(e) => return error_response(id, &e),
+            };
+            let mut errors = Vec::new();
+            let mut moves = Vec::new();
+            for target in targets {
+                match target {
+                    Ok((src, dst)) => {
+                        let change = file_change(&src, &dst, src.is_dir());
+                        moves.push((src, dst, change));
+                    }
+                    Err(e) => errors.push(e),
+                }
+            }
+            let changes: Vec<FileChange> = moves.iter().map(|(.., c)| c.clone()).collect();
+            hub().will_change_files(FileKind::Rename, &changes).await;
+            let mut moved = Vec::new();
+            for (src, dst, change) in moves {
+                match fs_ops::move_entry(&src, &dst).await {
+                    Ok(()) => moved.push(change),
+                    Err(e) => errors.push(e),
+                }
+            }
+            hub().did_change_files(FileKind::Rename, &moved).await;
+            ServerMessage {
+                id,
+                msg_type: "move_entries_result".to_string(),
+                payload: serde_json::json!({ "errors": errors }),
             }
         }
         "trash_file" => {
@@ -673,12 +724,25 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .and_then(|p| p.as_str())
                 .unwrap_or("");
 
+            let change = fs_ops::validate_path(&root, path)
+                .ok()
+                .map(|p| file_change(&p, &p, p.is_dir()));
+            if let Some(change) = &change {
+                hub()
+                    .will_change_files(FileKind::Delete, std::slice::from_ref(change))
+                    .await;
+            }
             match fs_ops::trash_file(&root, path).await {
-                Ok(()) => ServerMessage {
-                    id,
-                    msg_type: "trash_file_result".to_string(),
-                    payload: serde_json::json!({}),
-                },
+                Ok(()) => {
+                    if let Some(change) = change {
+                        hub().did_change_files(FileKind::Delete, &[change]).await;
+                    }
+                    ServerMessage {
+                        id,
+                        msg_type: "trash_file_result".to_string(),
+                        payload: serde_json::json!({}),
+                    }
+                }
                 Err(e) => error_response(id, &e),
             }
         }
@@ -689,12 +753,25 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .and_then(|p| p.as_str())
                 .unwrap_or("");
 
+            let change = fs_ops::validate_path(&root, path)
+                .ok()
+                .map(|p| file_change(&p, &p, p.is_dir()));
+            if let Some(change) = &change {
+                hub()
+                    .will_change_files(FileKind::Delete, std::slice::from_ref(change))
+                    .await;
+            }
             match fs_ops::delete_file(&root, path).await {
-                Ok(()) => ServerMessage {
-                    id,
-                    msg_type: "delete_file_result".to_string(),
-                    payload: serde_json::json!({}),
-                },
+                Ok(()) => {
+                    if let Some(change) = change {
+                        hub().did_change_files(FileKind::Delete, &[change]).await;
+                    }
+                    ServerMessage {
+                        id,
+                        msg_type: "delete_file_result".to_string(),
+                        payload: serde_json::json!({}),
+                    }
+                }
                 Err(e) => error_response(id, &e),
             }
         }

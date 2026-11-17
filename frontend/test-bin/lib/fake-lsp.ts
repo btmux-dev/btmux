@@ -23,11 +23,13 @@
 //   mod/extra.fake with a line, move the file to mod/moved.fake, and delete
 //   gone.fake if it exists
 // - folding: the first three lines; selection ranges: word, then line
+// - file operations on *.fake: renames replace the old name with the new in
+//   the directory's other .fake files (willRenameFiles); did*Files logged
 // - watched files: **/*.fake, logged; a new crash.fake makes it exit, once
 // - opened documents: logged with their language id
 // - progress: "Indexing" at 50% while any document contains "busy"
 import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 type Position = { line: number; character: number };
 type Range = { start: Position; end: Position };
@@ -122,6 +124,14 @@ function handle(msg: any): unknown {
           foldingRangeProvider: true,
           selectionRangeProvider: true,
           executeCommandProvider: { commands: ['fake.ask', 'fake.shout'] },
+          workspace: {
+            fileOperations: Object.fromEntries(
+              ['willRename', 'didRename', 'didCreate', 'didDelete'].map((op) => [
+                op,
+                { filters: [{ scheme: 'file', pattern: { glob: '**/*.fake' } }] },
+              ]),
+            ),
+          },
         },
         serverInfo: { name: 'fake-lsp' },
       };
@@ -177,6 +187,22 @@ function handle(msg: any): unknown {
       const other = uriOf(join(dirname(pathOf(p.textDocument.uri)), 'other.fake'));
       const range = occurrences(text(other), word)[0];
       return range ? { uri: other, range } : null;
+    }
+    case 'workspace/willRenameFiles': {
+      const changes: Record<string, unknown[]> = {};
+      for (const { oldUri, newUri } of p.files) {
+        const [from, to] = [basename(pathOf(oldUri)), basename(pathOf(newUri))];
+        const dir = dirname(pathOf(oldUri));
+        for (const name of readdirSync(dir).filter((n) => n.endsWith('.fake') && n !== from)) {
+          const uri = uriOf(join(dir, name));
+          const t = text(uri);
+          const edits = [];
+          for (let at = t.indexOf(from); at >= 0; at = t.indexOf(from, at + from.length))
+            edits.push({ range: { start: position(t, at), end: position(t, at + from.length) }, newText: to });
+          if (edits.length) changes[uri] = edits;
+        }
+      }
+      return { changes };
     }
     case 'textDocument/prepareRename': {
       const t = text(p.textDocument.uri);
@@ -404,6 +430,11 @@ function notify(msg: any) {
       progress();
       break;
     }
+    case 'workspace/didRenameFiles':
+    case 'workspace/didCreateFiles':
+    case 'workspace/didDeleteFiles':
+      log(`${msg.method} ${JSON.stringify(p.files)}`);
+      break;
     case 'textDocument/didClose':
       docs.delete(p.textDocument.uri);
       break;

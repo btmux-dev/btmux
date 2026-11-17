@@ -24,7 +24,11 @@ pub struct FileWatcher {
 
 /// A regex for an LSP glob: `*`, `**`, `?`, `{a,b}`, and `[…]`.
 pub fn glob_regex(glob: &str) -> Option<Regex> {
-    let mut re = String::from("^");
+    glob_regex_with(glob, false)
+}
+
+pub fn glob_regex_with(glob: &str, ignore_case: bool) -> Option<Regex> {
+    let mut re = String::from(if ignore_case { "(?i)^" } else { "^" });
     let mut chars = glob.chars().peekable();
     let mut braces = 0;
     while let Some(c) = chars.next() {

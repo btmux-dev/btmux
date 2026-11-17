@@ -19,12 +19,15 @@ use uuid::Uuid;
 
 use buffer::{Buffer, DiskStatus, LineEnding, OnDisk, SaveError, Update};
 use file_ops::Step;
+pub use lsp::file_events::{FileChange, Kind as FileKind};
 
 /// Messages a socket may queue before it is dropped as lagging; the tab
 /// reconnects and catches up.
 const SOCKET_QUEUE: usize = 1024;
 /// How long a buffer loaded for automation stays without a tab following it.
 const UNFOLLOWED: std::time::Duration = std::time::Duration::from_secs(60);
+/// How long servers get to answer `will…Files`.
+const WILL_CHANGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 /// Why changes are refused while an upgrade hands the buffers over.
 const UPGRADING: &str = "btmux is upgrading; try again in a moment";
 
@@ -263,6 +266,23 @@ pub struct Hub {
     saves_done: tokio::sync::Notify,
     /// For pane editors showing files that move.
     state: OnceLock<crate::AppState>,
+}
+
+/// A file browser's change of `old` (to `new`), with paths as buffers and
+/// language servers know them. Reads the filesystem.
+pub fn file_change(old: &Path, new: &Path, dir: bool) -> FileChange {
+    // The entry itself: a symlink's own path, not its target's.
+    let canonical = |p: &Path| match (p.parent(), p.file_name()) {
+        (Some(dir), Some(name)) => {
+            file_ops::resolve_new(dir).map_or_else(|_| p.to_path_buf(), |d| d.join(name))
+        }
+        _ => p.to_path_buf(),
+    };
+    FileChange {
+        old: canonical(old),
+        new: canonical(new),
+        dir,
+    }
 }
 
 /// Let file operations update pane editors.
@@ -983,69 +1003,149 @@ impl Hub {
         result
     }
 
-    /// Create, rename, or delete a file or directory. Open buffers move with
-    /// a rename, and so do pane editors' files; deleted files leave them.
+    /// Create, rename, or delete a file or directory for an edit.
     async fn file_op(&'static self, step: Step) -> Result<(), String> {
-        let moving: Vec<(Uuid, PathBuf)> = {
+        {
             let inner = self.inner.lock().unwrap();
             if inner.frozen {
                 return Err(UPGRADING.into());
             }
-            inner.check_file_op(&step)?
-        };
-        let config = lsp::config::current();
+            inner.check_file_op(&step)?;
+        }
         let op = step.clone();
-        let moved = tokio::task::spawn_blocking(move || -> Result<_, String> {
+        let change = tokio::task::spawn_blocking(move || -> Result<_, String> {
+            // Before it's gone.
+            let dir = match &op {
+                Step::Delete { path, .. } => path.is_dir(),
+                _ => false,
+            };
             if !file_ops::run(&op)? {
                 return Ok(None);
             }
-            let Step::Rename { from, to, .. } = &op else {
-                return Ok(Some(Vec::new()));
-            };
-            let moved = moving
-                .into_iter()
-                .filter_map(|(id, old)| {
-                    let new = file_ops::moved(&old, from, to)?;
-                    let target = lsp::config::target(&config, &new);
-                    let git = find_git(&new);
-                    Some((id, new, target, git))
-                })
-                .collect::<Vec<_>>();
-            Ok(Some(moved))
+            Ok(Some(match &op {
+                Step::Rename { from, to, .. } => FileChange {
+                    old: from.clone(),
+                    new: to.clone(),
+                    dir: to.is_dir(),
+                },
+                Step::Create { path, .. } | Step::Delete { path, .. } => {
+                    FileChange::new(path.clone(), dir)
+                }
+                Step::Text { .. } => unreachable!(),
+            }))
         })
         .await
         .map_err(|e| e.to_string())??;
-        let Some(moved) = moved else {
-            return Ok(());
+        if let Some(change) = change {
+            let kind = match step {
+                Step::Create { .. } => FileKind::Create,
+                Step::Rename { .. } => FileKind::Rename,
+                _ => FileKind::Delete,
+            };
+            self.did_change_files(kind, &[change]).await;
+        }
+        Ok(())
+    }
+
+    /// Before files are created, renamed, or deleted (from the file
+    /// browser): apply the edits servers ask for (`will…Files`), such as
+    /// updated imports, waiting a while for their answers.
+    pub async fn will_change_files(&'static self, kind: FileKind, changes: &[FileChange]) {
+        let asked = self.inner.lock().unwrap().lsp_will_change(kind, changes);
+        let answers =
+            futures_util::future::join_all(asked.into_iter().map(|(id, rx)| async move {
+                match tokio::time::timeout(WILL_CHANGE_TIMEOUT, rx).await {
+                    Ok(Ok(answer)) => Some((id, answer)),
+                    _ => None,
+                }
+            }))
+            .await;
+        for (id, answer) in answers.into_iter().flatten() {
+            let mut edit = answer["result"].clone();
+            if edit.is_null() {
+                continue;
+            }
+            // Nobody is asked to confirm a file browser's change.
+            if !lsp::annotations::confirmations(&edit).is_empty()
+                && !lsp::annotations::skip_confirmations(&mut edit)
+            {
+                continue;
+            }
+            if let Err(e) = self.apply_edit(edit, None, Some(id)).await {
+                tracing::warn!("{}: {e}", kind.method(true));
+            }
+        }
+    }
+
+    /// After files were created, renamed, or deleted: tell servers
+    /// (`did…Files`). Open buffers and pane editors' files follow a rename;
+    /// pane editors close deleted files, unless unsaved.
+    pub async fn did_change_files(&'static self, kind: FileKind, changes: &[FileChange]) {
+        self.inner.lock().unwrap().lsp_did_change(kind, changes);
+        for change in changes {
+            match kind {
+                FileKind::Create => {}
+                FileKind::Rename => self.follow(&change.old, Some(&change.new)).await,
+                FileKind::Delete => self.follow(&change.old, None).await,
+            }
+        }
+    }
+
+    /// Files under `from` moved to `to`, or were deleted.
+    async fn follow(&'static self, from: &Path, to: Option<&Path>) {
+        let (moving, dirty): (Vec<(Uuid, PathBuf)>, Vec<String>) = {
+            let inner = self.inner.lock().unwrap();
+            let under: Vec<_> = inner
+                .by_path
+                .iter()
+                .filter(|(p, _)| p.starts_with(from))
+                .map(|(p, id)| (*id, p.clone()))
+                .collect();
+            let dirty = under
+                .iter()
+                .filter(|(id, _)| inner.buffers.get(id).is_some_and(|b| b.dirty()))
+                .map(|(_, p)| crate::fs_ops::client_path(p))
+                .collect();
+            (under, dirty)
         };
-        {
+        if let (Some(to), false) = (to, moving.is_empty()) {
+            let config = lsp::config::current();
+            let (from, to) = (from.to_path_buf(), to.to_path_buf());
+            let moved = tokio::task::spawn_blocking(move || {
+                moving
+                    .into_iter()
+                    .filter_map(|(id, old)| {
+                        let new = file_ops::moved(&old, &from, &to)?;
+                        let target = lsp::config::target(&config, &new);
+                        let git = find_git(&new);
+                        Some((id, new, target, git))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .await
+            .unwrap_or_default();
             let mut inner = self.inner.lock().unwrap();
             for (id, path, target, git) in moved {
                 inner.repath(id, path, target, git);
             }
             inner.send_summaries();
         }
-        let (from, to) = match &step {
-            Step::Rename { from, to, .. } => (from, Some(to.as_path())),
-            Step::Delete { path, .. } => (path, None),
-            _ => return Ok(()),
+        let Some(state) = self.state.get() else {
+            return;
         };
-        if let Some(state) = self.state.get() {
-            let mut mgr = state.write().await;
-            let mut changed = false;
-            for pane in mgr
-                .sessions
-                .iter_mut()
-                .flat_map(|s| &mut s.windows)
-                .flat_map(|w| &mut w.panes)
-            {
-                changed |= pane.editor.moved(from, to);
-            }
-            if changed {
-                crate::ws::control::broadcast_state(&mgr);
-            }
+        let mut mgr = state.write().await;
+        let mut changed = false;
+        for pane in mgr
+            .sessions
+            .iter_mut()
+            .flat_map(|s| &mut s.windows)
+            .flat_map(|w| &mut w.panes)
+        {
+            changed |= pane.editor.moved(from, to, &dirty);
         }
-        Ok(())
+        if changed {
+            crate::ws::control::broadcast_state(&mgr);
+        }
     }
 
     fn push(&self, socket: SocketId, id: Uuid, version: u64, updates: Vec<Update>) {
@@ -1456,9 +1556,9 @@ impl Inner {
         }
     }
 
-    /// What a file operation would move, refusing what would lose or
-    /// confuse open buffers: overwriting one, or deleting unsaved changes.
-    fn check_file_op(&self, step: &Step) -> Result<Vec<(Uuid, PathBuf)>, String> {
+    /// Refuse a file operation that would lose or confuse open buffers:
+    /// overwriting one, or deleting unsaved changes.
+    fn check_file_op(&self, step: &Step) -> Result<(), String> {
         let under = |dir: &Path| {
             self.by_path
                 .iter()
@@ -1468,23 +1568,18 @@ impl Inner {
         };
         let open = |p: &Path| format!("{} is open in the editor", p.display());
         match step {
-            Step::Text { .. } => Ok(Vec::new()),
+            Step::Text { .. } => Ok(()),
             Step::Create {
                 path, overwrite, ..
             } => match *overwrite && self.by_path.contains_key(path) && path.exists() {
                 true => Err(open(path)),
-                false => Ok(Vec::new()),
+                false => Ok(()),
             },
-            Step::Rename {
-                from,
-                to,
-                overwrite,
-                ..
-            } => {
+            Step::Rename { to, overwrite, .. } => {
                 if let Some((_, p)) = under(to).first().filter(|_| *overwrite && to.exists()) {
                     return Err(open(p));
                 }
-                Ok(under(from))
+                Ok(())
             }
             Step::Delete { path, .. } => {
                 for (id, p) in under(path) {
@@ -1492,7 +1587,7 @@ impl Inner {
                         return Err(format!("{} has unsaved changes", p.display()));
                     }
                 }
-                Ok(Vec::new())
+                Ok(())
             }
         }
     }
@@ -1512,6 +1607,12 @@ impl Inner {
         let old = std::mem::replace(&mut b.path, path.clone());
         let servers = std::mem::take(&mut b.servers);
         b.language_id = None;
+        // The watcher may have seen it go before it moved here.
+        if b.disk_status == DiskStatus::Deleted {
+            b.disk_status = DiskStatus::Same;
+            let state = state_message(b);
+            self.send_to_followers(id, &state);
+        }
         self.by_path.remove(&old);
         self.by_path.insert(path.clone(), id);
         self.unwatch(&old);

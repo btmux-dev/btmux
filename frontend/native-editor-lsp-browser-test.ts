@@ -173,7 +173,7 @@ try {
   const use = await wordRect(page, paneId, 1, 'use');
   await page.mouse.click(use.x, use.y);
   await page.keyboard.press('F2');
-  await page.getByText('use is a keyword').waitFor();
+  await page.getByText('use is a keyword').first().waitFor();
   const renaming = await wordRect(page, paneId, 1, 'thing');
   await page.mouse.click(renaming.x, renaming.y);
   await page.keyboard.press('F2');
@@ -349,9 +349,61 @@ try {
   assert.equal(await pane.getByRole('tab', { name: 'move.fake' }).count(), 0);
   assert(!existsSync(moving) && existsSync(moved) && existsSync(extra));
   await until('the moved file in the server', () => log().includes(`open ${moved} fake`));
+  assert.match(log(), /^workspace\/didCreateFiles .*extra\.fake/m);
+  assert.match(log(), /^workspace\/didRenameFiles .*"oldUri":"[^"]*\/move\.fake"/m);
   await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: extra, line: 1, editor: 'native' });
   await until('the created file, unsaved', async () => (await lines(page, paneId)) === 'created\n');
   console.log('PASS file operations');
+
+  // The file browser's renames update references first, and open files follow.
+  const files = (type: string, payload: object) =>
+    page.evaluate(
+      async ({ type, payload }) => {
+        const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/files`);
+        await new Promise((resolve, reject) => {
+          ws.onopen = resolve;
+          ws.onerror = reject;
+        });
+        const reply = await new Promise<{ type: string }>((resolve) => {
+          ws.onmessage = (e) => {
+            const msg = JSON.parse(e.data);
+            if (msg.id === 'test') resolve(msg);
+          };
+          ws.send(JSON.stringify({ id: 'test', type, payload }));
+        });
+        ws.close();
+        return reply;
+      },
+      { type, payload },
+    );
+  const lib = join(dir, 'lib.fake');
+  const util = join(dir, 'util.fake');
+  const user = join(dir, 'user.fake');
+  writeFileSync(lib, 'helper\n');
+  writeFileSync(user, 'use lib.fake;\n');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: lib, line: 1, editor: 'native' });
+  await until('lib.fake', async () => (await lines(page, paneId)) === 'helper\n');
+  assert.equal((await files('rename_file', { from: lib, to: util })).type, 'rename_file_result');
+  await pane.getByRole('tab', { name: 'util.fake' }).waitFor();
+  assert.equal(await pane.getByRole('tab', { name: 'lib.fake' }).count(), 0);
+  await until('the moved file', async () => (await lines(page, paneId)) === 'helper\n');
+  await until('didRenameFiles', () => /^workspace\/didRenameFiles .*util\.fake/m.test(log()));
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: user, line: 1, editor: 'native' });
+  await until('the updated reference', async () => (await lines(page, paneId)) === 'use util.fake;\n');
+  assert.equal(readFileSync(user, 'utf8'), 'use lib.fake;\n');
+  // Deleting a file closes its tab.
+  assert.equal((await files('delete_file', { root: dir, path: util })).type, 'delete_file_result');
+  await until('the closed tab', async () => (await pane.getByRole('tab', { name: 'util.fake' }).count()) === 0);
+  await until('didDeleteFiles', () => /^workspace\/didDeleteFiles .*util\.fake/m.test(log()));
+  // Creating, copying, and moving too, under free names.
+  assert.equal((await files('create_entry', { root: dir, name: 'made.fake' })).type, 'create_entry_result');
+  await until('didCreateFiles', () => /^workspace\/didCreateFiles .*made\.fake/m.test(log()));
+  await files('copy_entries', { paths: [user], dest: join(dir, 'mod') });
+  await until('the copy', () => /^workspace\/didCreateFiles .*mod\/user\.fake/m.test(log()));
+  await files('move_entries', { paths: [join(dir, 'mod', 'user.fake'), join(dir, 'made.fake')], dest: dir });
+  await until('the move', () => /^workspace\/didRenameFiles .*"newUri":"[^"]*\/user_copy\.fake","oldUri":"[^"]*\/mod\/user\.fake"/m.test(log()));
+  assert(existsSync(join(dir, 'user_copy.fake')) && existsSync(join(dir, 'made_copy.fake')));
+  console.log('PASS file browser operations');
 
   // A restarted server's watches work too.
   const count = (re: RegExp) => (log().match(re) ?? []).length;
