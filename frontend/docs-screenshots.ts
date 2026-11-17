@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { chromium, type Page } from 'playwright';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import { waitForAsync } from './browser-test-utils';
@@ -23,8 +23,9 @@ mkdirSync(out, { recursive: true });
 const only = (process.env.DOCS_SHOTS ?? '').split(',').filter(Boolean);
 
 // A short path, since the UI shows it.
-const home = process.platform === 'win32' ? path.join(tmpdir(), 'btmux-demo') : '/tmp/btmux-demo';
-rmSync(home, { recursive: true, force: true });
+const temp = process.platform === 'win32' ? tmpdir() : '/tmp';
+const home = mkdtempSync(path.join(temp, 'btmux-demo-'));
+process.once('exit', () => rmSync(home, { recursive: true, force: true }));
 const repo = path.join(home, 'acme-api');
 mkdirSync(path.join(repo, 'src', 'routes'), { recursive: true });
 mkdirSync(path.join(repo, 'tests'), { recursive: true });
@@ -642,5 +643,4 @@ try {
   }
 } finally {
   await browser.close();
-  rmSync(home, { recursive: true, force: true });
 }
