@@ -1,11 +1,32 @@
-import { useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { useToast } from '@astryxdesign/core/Toast';
 import { Button } from '@astryxdesign/core/Button';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { Text } from '@astryxdesign/core/Text';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
+import { Link } from '@astryxdesign/core/Link';
 import { subscribeNotifications } from '../lib/notifications';
+import { findUrls } from '../lib/urlDetect';
 import { useStore } from '../state/store';
+
+/** Text with its HTTP(S) URLs as links. */
+function linkify(text: string): ReactNode {
+  const urls = findUrls(text);
+  if (urls.length === 0) return text;
+  const parts: ReactNode[] = [];
+  let at = 0;
+  for (const { url, start, end } of urls) {
+    parts.push(
+      text.slice(at, start),
+      <Link key={start} href={url} target="_blank" className="break-all">
+        {url}
+      </Link>,
+    );
+    at = end;
+  }
+  parts.push(text.slice(at));
+  return parts;
+}
 
 export function NotificationToasts() {
   const toast = useToast();
@@ -34,9 +55,9 @@ export function NotificationToasts() {
                     variant={level === 'attention' ? 'warning' : level === 'info' ? 'accent' : level}
                   />
                 </HStack>
-                <Text weight="semibold">{message}</Text>
+                <Text weight="semibold">{linkify(message)}</Text>
               </HStack>
-              {body && <Text>{body}</Text>}
+              {body && <Text>{linkify(body)}</Text>}
             </VStack>
           ),
           endContent: action ? (
