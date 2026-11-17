@@ -4,7 +4,7 @@
 // Alt-] and Alt-[ cycle through the server's items, and Esc dismisses it.
 import { snippet } from '@codemirror/autocomplete';
 import { LSPPlugin } from '@codemirror/lsp-client';
-import { Prec, StateEffect, StateField, type EditorState, type Extension, type Text } from '@codemirror/state';
+import { Prec, StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state';
 import {
   Decoration,
   EditorView,
@@ -14,11 +14,10 @@ import {
   type DecorationSet,
   type ViewUpdate,
 } from '@codemirror/view';
+import { IS_MAC } from '../nvimKeys';
 import { execute } from './features';
+import { lspToSnippet, offset, type Command, type Range } from './lspText';
 
-type Position = { line: number; character: number };
-type Range = { start: Position; end: Position };
-type Command = { title: string; command: string; arguments?: unknown[] };
 type Item = {
   insertText: string | { kind: 'snippet'; value: string };
   filterText?: string;
@@ -39,14 +38,6 @@ const snippetText = (s: string) =>
     .replace(/\$\{\d+:([^}]*)\}/g, '$1')
     .replace(/\$\{\d+\}|\$\d+/g, '')
     .replace(/\\([$}\\])/g, '$1');
-
-const lspToSnippet = (text: string) => text.replace(/\\([$}\\])|\$(\d+)/g, (_m, esc, field) => esc || `\${${field}}`);
-
-function offset(doc: Text, pos: Position) {
-  if (pos.line >= doc.lines) return doc.length;
-  const line = doc.line(pos.line + 1);
-  return Math.min(line.from + pos.character, line.to);
-}
 
 /** What `s` would still insert at the cursor, or null if it no longer applies. */
 function remaining(state: EditorState, s: Suggestion): string | null {
@@ -213,7 +204,8 @@ function acceptWord(view: EditorView) {
 function cycle(step: number) {
   return (view: EditorView) => {
     const ghost = view.state.field(ghostField, false);
-    if (!ghost || ghost.suggestions.length < 2) return !!ghost;
+    if (!ghost) return false;
+    if (ghost.suggestions.length < 2) return true;
     const n = ghost.suggestions.length;
     for (let i = 1; i < n; i++) {
       const index = (ghost.index + step * i + n * n) % n;
@@ -226,23 +218,46 @@ function cycle(step: number) {
   };
 }
 
+const hasProvider = (view: EditorView) =>
+  !!(LSPPlugin.get(view)?.client.serverCapabilities as Record<string, unknown> | null)?.inlineCompletionProvider;
+
 const trigger = (view: EditorView) => {
+  if (!hasProvider(view)) return false;
   view.plugin(requester)?.ask(true);
   return true;
 };
+
+/**
+ * Alt chords by physical key, with the key's own character: on macOS, Option
+ * types `‘`, `“`, `«` there, which CodeMirror's keymaps don't map back. Not
+ * where Option types other ASCII (a layout's `[` or `\`).
+ */
+const ALT_KEYS: Record<string, [string, (view: EditorView) => boolean]> = {
+  BracketRight: [']', cycle(1)],
+  BracketLeft: ['[', cycle(-1)],
+  Backslash: ['\\', trigger],
+};
+const altKeys = EditorView.domEventHandlers({
+  keydown(e, view) {
+    if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return false;
+    const [own, run] = ALT_KEYS[e.code] ?? [];
+    if (!run || (IS_MAC && /^[!-~]$/.test(e.key) && e.key !== own)) return false;
+    if (!run(view)) return false;
+    e.preventDefault();
+    return true;
+  },
+});
 
 /** Inline completions from the view's language server. */
 export const inlineCompletions: Extension = [
   ghostField,
   requester,
   // Ahead of indentation, snippet fields, and vim.
+  Prec.highest(altKeys),
   Prec.highest(
     keymap.of([
       { key: 'Tab', run: accept },
       { key: 'Mod-ArrowRight', run: acceptWord },
-      { key: 'Alt-]', run: cycle(1) },
-      { key: 'Alt-[', run: cycle(-1) },
-      { key: 'Alt-\\', run: trigger },
       {
         key: 'Escape',
         // Dismissed, and Esc still does what it does.

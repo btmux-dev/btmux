@@ -271,13 +271,7 @@ pub struct Hub {
 /// A file browser's change of `old` (to `new`), with paths as buffers and
 /// language servers know them. Reads the filesystem.
 pub fn file_change(old: &Path, new: &Path, dir: bool) -> FileChange {
-    // The entry itself: a symlink's own path, not its target's.
-    let canonical = |p: &Path| match (p.parent(), p.file_name()) {
-        (Some(dir), Some(name)) => {
-            file_ops::resolve_new(dir).map_or_else(|_| p.to_path_buf(), |d| d.join(name))
-        }
-        _ => p.to_path_buf(),
-    };
+    let canonical = |p: &Path| file_ops::resolve_entry(p).unwrap_or_else(|_| p.to_path_buf());
     FileChange {
         old: canonical(old),
         new: canonical(new),
@@ -459,25 +453,7 @@ fn resolve(path: &str) -> Result<PathBuf, String> {
         Some(rest) => dirs::home_dir().ok_or("No home directory")?.join(rest),
         None => PathBuf::from(path),
     };
-    if !path.is_absolute() {
-        return Err(format!("{} is not an absolute path", path.display()));
-    }
-    #[cfg(windows)]
-    let canonical = |p: &Path| dunce::canonicalize(p);
-    #[cfg(not(windows))]
-    let canonical = |p: &Path| p.canonicalize();
-    match canonical(&path) {
-        Ok(path) => Ok(path),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
-                return Err(format!("Cannot open {}", path.display()));
-            };
-            let parent =
-                canonical(parent).map_err(|e| format!("Cannot open {}: {e}", path.display()))?;
-            Ok(parent.join(name))
-        }
-        Err(e) => Err(format!("Cannot open {}: {e}", path.display())),
-    }
+    file_ops::resolve_new(&path)
 }
 
 fn to_json(msg: &EditorServerMessage) -> String {
@@ -1088,47 +1064,51 @@ impl Hub {
     }
 
     /// After files were created, renamed, or deleted: tell servers
-    /// (`did…Files`). Open buffers and pane editors' files follow a rename;
+    /// (`did…Files`). Open buffers and pane editors' files follow renames;
     /// pane editors close deleted files, unless unsaved.
     pub async fn did_change_files(&'static self, kind: FileKind, changes: &[FileChange]) {
         self.inner.lock().unwrap().lsp_did_change(kind, changes);
-        for change in changes {
-            match kind {
-                FileKind::Create => {}
-                FileKind::Rename => self.follow(&change.old, Some(&change.new)).await,
-                FileKind::Delete => self.follow(&change.old, None).await,
-            }
+        let to = |c: &FileChange| match kind {
+            FileKind::Rename => Some(c.new.clone()),
+            _ => None,
+        };
+        if kind != FileKind::Create {
+            let moves: Vec<_> = changes.iter().map(|c| (c.old.clone(), to(c))).collect();
+            self.follow(moves).await;
         }
     }
 
-    /// Files under `from` moved to `to`, or were deleted.
-    async fn follow(&'static self, from: &Path, to: Option<&Path>) {
+    /// Files under each `from` moved to its `to`, or were deleted: move
+    /// their buffers, then pane editors' files, broadcasting once.
+    async fn follow(&'static self, moves: Vec<(PathBuf, Option<PathBuf>)>) {
         let (moving, dirty): (Vec<(Uuid, PathBuf)>, Vec<String>) = {
             let inner = self.inner.lock().unwrap();
-            let under: Vec<_> = inner
-                .by_path
-                .iter()
-                .filter(|(p, _)| p.starts_with(from))
-                .map(|(p, id)| (*id, p.clone()))
-                .collect();
-            let dirty = under
-                .iter()
-                .filter(|(id, _)| inner.buffers.get(id).is_some_and(|b| b.dirty()))
-                .map(|(_, p)| crate::fs_ops::client_path(p))
-                .collect();
-            (under, dirty)
+            let mut moving = Vec::new();
+            let mut dirty = Vec::new();
+            for (from, to) in &moves {
+                for (path, id) in inner.by_path.iter().filter(|(p, _)| p.starts_with(from)) {
+                    match to {
+                        Some(to) => {
+                            moving.extend(file_ops::moved(path, from, to).map(|new| (*id, new)))
+                        }
+                        None if inner.buffers.get(id).is_some_and(|b| b.dirty()) => {
+                            dirty.push(crate::fs_ops::client_path(path))
+                        }
+                        None => {}
+                    }
+                }
+            }
+            (moving, dirty)
         };
-        if let (Some(to), false) = (to, moving.is_empty()) {
+        if !moving.is_empty() {
             let config = lsp::config::current();
-            let (from, to) = (from.to_path_buf(), to.to_path_buf());
             let moved = tokio::task::spawn_blocking(move || {
                 moving
                     .into_iter()
-                    .filter_map(|(id, old)| {
-                        let new = file_ops::moved(&old, &from, &to)?;
+                    .map(|(id, new)| {
                         let target = lsp::config::target(&config, &new);
                         let git = find_git(&new);
-                        Some((id, new, target, git))
+                        (id, new, target, git)
                     })
                     .collect::<Vec<_>>()
             })
@@ -1151,7 +1131,9 @@ impl Hub {
             .flat_map(|s| &mut s.windows)
             .flat_map(|w| &mut w.panes)
         {
-            changed |= pane.editor.moved(from, to, &dirty);
+            for (from, to) in &moves {
+                changed |= pane.editor.moved(from, to.as_deref(), &dirty);
+            }
         }
         if changed {
             crate::ws::control::broadcast_state(&mgr);

@@ -10,7 +10,7 @@ import {
   type Transport,
   type WorkspaceFile,
 } from '@codemirror/lsp-client';
-import { EditorState, Facet, Prec, StateEffect, StateField, type Extension, type Text } from '@codemirror/state';
+import { EditorState, Facet, Prec, StateEffect, StateField, type Extension } from '@codemirror/state';
 import { EditorView, keymap, showPanel, type Panel, type Tooltip } from '@codemirror/view';
 import { getIndentUnit, indentUnit, LanguageDescription } from '@codemirror/language';
 import { setDiagnostics, type Diagnostic } from '@codemirror/lint';
@@ -21,6 +21,7 @@ import type { Overlay } from '../../state/types';
 import type { EditorServerMessage } from '../../generated/protocol';
 import { IS_MAC } from '../nvimKeys';
 import { serverCompletions } from './completion';
+import { offset, type Position, type Range, type TextEdit } from './lspText';
 import { inlineCompletions } from './inlineCompletion';
 import { editorConnection } from './connection';
 import { viewDocs, type Doc } from './doc';
@@ -177,12 +178,6 @@ function reveal(uri: string, at: Position | null) {
 
 /** The latest diagnostics per client and URI. */
 const diagnostics = new Map<LSPClient, Map<string, PublishParams>>();
-
-function offset(doc: Text, pos: { line: number; character: number }) {
-  if (pos.line >= doc.lines) return doc.length;
-  const line = doc.line(pos.line + 1);
-  return Math.min(line.from + pos.character, line.to);
-}
 
 function showDiagnostics(client: LSPClient, view: EditorView, params: PublishParams) {
   const plugin = LSPPlugin.get(view);
@@ -373,8 +368,6 @@ async function rename(view: EditorView, pos: number, newName: string) {
     toast('Rename failed', error);
   }
 }
-
-type TextEdit = { range: PublishParams['diagnostics'][number]['range']; newText: string };
 
 /** Format with the language server, if it can; resolves once applied. */
 export async function format(view: EditorView) {
@@ -589,9 +582,6 @@ editorConnection.serverUi = (msg) => {
   }
   reveal(msg.uri, (msg.selection as { start: Position } | null)?.start ?? null);
 };
-
-type Position = { line: number; character: number };
-type Range = { start: Position; end: Position };
 
 setRawDiagnostics((p) => diagnostics.get(p.client)?.get(p.uri)?.diagnostics ?? []);
 

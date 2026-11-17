@@ -31,10 +31,11 @@ const METHOD_NOT_FOUND: i64 = -32601;
 const SERVER_NOT_INITIALIZED: i64 = -32002;
 const CONTENT_MODIFIED: i64 = -32801;
 const REQUEST_FAILED: i64 = -32803;
-const REQUEST_CANCELLED: i64 = -32800;
+const REQUEST_CANCELED: i64 = -32800;
 /// Answers to an edit that needs confirmation.
 const APPLY_ALL: &str = "Apply all changes";
 const SKIP_CONFIRMATIONS: &str = "Skip these changes";
+const CANCEL: &str = "Cancel";
 
 #[derive(Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -727,9 +728,17 @@ impl Inner {
             .map(|b| b.servers.clone())
             .unwrap_or_default();
         for id in servers {
-            // Other files' diagnostics may depend on this one.
+            // Other files' diagnostics may depend on this one: those tabs
+            // follow, not every buffer renames or automation loaded.
             let others: Vec<Uuid> = match self.lsp.servers.get(&id) {
-                Some(s) if s.inter_file => s.buffers.iter().copied().collect(),
+                Some(s) if s.inter_file => s
+                    .buffers
+                    .iter()
+                    .filter(|b| {
+                        **b == buffer || self.subs.get(b).is_some_and(|tabs| !tabs.is_empty())
+                    })
+                    .copied()
+                    .collect(),
                 _ => vec![buffer],
             };
             for other in others {
@@ -1276,11 +1285,13 @@ impl Inner {
                 if server.sockets.is_empty() {
                     not_applied(rid, NO_TAB)
                 } else {
+                    // The safe choice first, so Enter doesn't apply what needs confirming.
                     let mut rest = edit.clone();
-                    let mut actions = vec![APPLY_ALL.to_owned()];
-                    if annotations::skip_confirmations(&mut rest) {
-                        actions.push(SKIP_CONFIRMATIONS.to_owned());
-                    }
+                    let first = match annotations::skip_confirmations(&mut rest) {
+                        true => SKIP_CONFIRMATIONS,
+                        false => CANCEL,
+                    };
+                    let actions = vec![first.to_owned(), APPLY_ALL.to_owned()];
                     let what = match params["label"].as_str() {
                         Some(label) => format!("{}: {label} includes", server.name),
                         None => format!("{} wants to make", server.name),
@@ -1445,14 +1456,14 @@ impl Inner {
             }
             // The server withdrew a prompt.
             "$/cancelRequest" => {
-                let cancelled = &message["params"]["id"];
+                let canceled = &message["params"]["id"];
                 let token = server.prompts.iter().find_map(|(token, prompt)| {
                     let (Prompt::Message(rid) | Prompt::Edit(rid, _)) = prompt;
-                    (rid == cancelled).then_some(*token)
+                    (rid == canceled).then_some(*token)
                 });
                 if let Some(token) = token {
                     server.prompts.remove(&token);
-                    server.send(error(cancelled.clone(), REQUEST_CANCELLED, "Cancelled"));
+                    server.send(error(canceled.clone(), REQUEST_CANCELED, "Canceled"));
                     self.prompts_done(id, &[token]);
                 }
                 return;

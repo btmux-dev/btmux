@@ -158,12 +158,21 @@ try {
   await page.keyboard.press('ControlOrMeta+.');
   await pane.getByRole('option', { name: /^Shout/ }).click();
   await page.getByText('Shout includes changes that need confirmation: Uppercase end').waitFor();
-  await page.getByText('Skip these changes', { exact: true }).click();
+  // Enter takes the safe choice, listed first.
+  await page.keyboard.press('Enter');
   await until('the change not needing confirmation', async () => (await last()) === 'end!');
-  await page.keyboard.press('ControlOrMeta+.');
-  await pane.getByRole('option', { name: /Shout later/ }).click();
-  await page.getByText('fake: Shout includes changes that need confirmation: Uppercase end').waitFor();
+  const shoutLater = async () => {
+    await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+    await page.keyboard.press('ControlOrMeta+.');
+    await pane.getByRole('option', { name: /Shout later/ }).click();
+    await page.getByText('fake: Shout includes changes that need confirmation: Uppercase end').waitFor();
+  };
+  await shoutLater();
   assert.equal(await page.getByText('Skip these changes', { exact: true }).count(), 0);
+  await page.keyboard.press('Enter');
+  await until('the declined edit', () => log().includes('answer workspace/applyEdit {"applied":false'));
+  assert.equal(await last(), 'end!');
+  await shoutLater();
   await page.getByText('Apply all changes', { exact: true }).click();
   await until('the server edit', async () => (await last()) === 'END!');
   await until('its answer', () => log().includes('answer workspace/applyEdit {"applied":true}'));
@@ -325,11 +334,16 @@ try {
   await page.keyboard.press('ControlOrMeta+End');
   await page.keyboard.type('imp');
   const completions = page.locator('.cm-tooltip-autocomplete');
+  // Enter right after the list opens is ignored (autocomplete's interaction delay).
+  const acceptCompletion = async () => {
+    await page.waitForTimeout(150);
+    await page.keyboard.press('Enter');
+  };
   await completions.locator('.cm-completionLabel', { hasText: 'importedThing' }).waitFor();
   await completions.getByText('lib', { exact: true }).waitFor();
   await page.locator('.cm-completionInfo').getByText('importedThing', { exact: true }).waitFor();
   await page.locator('.cm-completionInfo').getByText('fn importedThing()').waitFor();
-  await page.keyboard.press('Enter');
+  await acceptCompletion();
   await until('the import', async () => (await lines(page, paneId)) === 'use lib;\nstart\nimportedThing');
   assert.match(log(), /^resolve importedThing \{"from":"defaults"\}$/m);
   console.log('PASS completion resolve');
@@ -339,7 +353,7 @@ try {
   await page.keyboard.press('Enter');
   await page.keyboard.type('slowI');
   await completions.locator('.cm-completionLabel', { hasText: 'slowImport' }).waitFor();
-  await page.keyboard.press('Enter');
+  await acceptCompletion();
   await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: join(dir, 'other.fake'), line: 1, editor: 'native' });
   await until('other.fake', async () => (await lines(page, paneId))?.startsWith('thing defined here') ?? false);
   await until('the late resolve', () => log().includes('resolve slowImport'));
@@ -376,6 +390,15 @@ try {
   }
   assert.equal(await activeMappings(), '0');
   console.log('PASS completion mappings are released');
+
+  // An additional edit right beside the completion (a postfix one's receiver) applies.
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('foo.i');
+  await completions.locator('.cm-completionLabel', { hasText: /^if$/ }).waitFor();
+  await acceptCompletion();
+  await until('the postfix completion', async () => (await lines(page, paneId))?.endsWith('\nif foo {}') ?? false);
+  console.log('PASS postfix completions');
 
   // File operations: a file created and edited, the shown one moved with its tab.
   const moving = join(dir, 'move.fake');
@@ -438,9 +461,14 @@ try {
   assert.equal((await files('delete_file', { root: dir, path: util })).type, 'delete_file_result');
   await until('the closed tab', async () => (await pane.getByRole('tab', { name: 'util.fake' }).count()) === 0);
   await until('didDeleteFiles', () => /^workspace\/didDeleteFiles .*util\.fake/m.test(log()));
-  // Creating, copying, and moving too, under free names.
+  // Creating, copying, and moving too, under free names. A create that
+  // would fail doesn't ask servers for edits first.
+  const willCreates = () => (log().match(/^workspace\/willCreateFiles$/gm) ?? []).length;
+  assert.equal((await files('create_entry', { root: dir, name: 'user.fake' })).type, 'error');
+  assert.equal(willCreates(), 0);
   assert.equal((await files('create_entry', { root: dir, name: 'made.fake' })).type, 'create_entry_result');
   await until('didCreateFiles', () => /^workspace\/didCreateFiles .*made\.fake/m.test(log()));
+  assert.equal(willCreates(), 1);
   await files('copy_entries', { paths: [user], dest: join(dir, 'mod') });
   await until('the copy', () => /^workspace\/didCreateFiles .*mod\/user\.fake/m.test(log()));
   await files('move_entries', { paths: [join(dir, 'mod', 'user.fake'), join(dir, 'made.fake')], dest: dir });
@@ -558,7 +586,16 @@ try {
   await page.keyboard.type('fn ');
   await until('the ghost text', async () => (await ghostText()) === 'main() {}');
   assert.match(log(), /^inline 2$/m);
-  await page.keyboard.press('Alt+]');
+  // As macOS sends Option chords: the text Option types, and the physical key.
+  const optionKey = (code: string, key: string) =>
+    page.evaluate(
+      ({ code, key }) =>
+        document.activeElement?.dispatchEvent(
+          new KeyboardEvent('keydown', { key, code, altKey: true, bubbles: true, cancelable: true }),
+        ),
+      { code, key },
+    );
+  await optionKey('BracketRight', '‘');
   await until('the next suggestion', async () => (await ghostText()) === 'other() {}');
   await page.keyboard.press('Alt+[');
   await until('the first again', async () => (await ghostText()) === 'main() {}');
@@ -574,7 +611,7 @@ try {
   await until('the ghost text again', async () => (await ghostText()) === 'main() {}');
   await page.keyboard.press('Escape');
   await until('dismissed', async () => (await ghostText()) === null);
-  await page.keyboard.press('Alt+\\');
+  await optionKey('Backslash', '«');
   await until('asked for', async () => (await ghostText()) === 'main() {}');
   assert.match(log(), /^inline 1$/m);
   console.log('PASS inline completions');

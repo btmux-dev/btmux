@@ -424,6 +424,29 @@ pub async fn get_metadata(root: &Path, path: &str) -> Result<FileMetadata, Strin
     })
 }
 
+/// What would make renaming `from` to `to` fail, found before servers are
+/// asked to update references (`willRenameFiles`).
+pub fn check_rename(from: &Path, to: &Path) -> Result<(), String> {
+    std::fs::symlink_metadata(from).map_err(|e| format!("Cannot rename: {}", e))?;
+    match to.parent() {
+        Some(dir) if !dir.is_dir() => Err(format!(
+            "Cannot rename: {} is not a directory",
+            dir.display()
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// What would make creating `target` fail, found before servers are asked
+/// (`willCreateFiles`).
+/// `name` as `create_entry` was given it.
+pub fn check_create(target: &Path, name: &str) -> Result<(), String> {
+    match std::fs::symlink_metadata(target) {
+        Ok(_) => Err(format!("{} already exists", name.trim_end_matches('/'))),
+        Err(_) => Ok(()),
+    }
+}
+
 pub async fn rename_file(from: &str, to: &str) -> Result<(), String> {
     tokio::fs::rename(from, to)
         .await

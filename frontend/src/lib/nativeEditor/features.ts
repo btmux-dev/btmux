@@ -27,12 +27,8 @@ import { IS_MAC } from '../nvimKeys';
 import type { Overlay } from '../../state/types';
 import { editorConnection } from './connection';
 import { viewDocs, type Doc } from './doc';
+import { offset, type Command, type Location, type Position, type Range, type TextEdit } from './lspText';
 import { openPicker, type PickItem } from './picker';
-
-type Position = { line: number; character: number };
-type Range = { start: Position; end: Position };
-type Location = { uri: string; range: Range };
-type Command = { title: string; command: string; arguments?: unknown[] };
 
 /** A server-sent `$/btmux/refresh` (semantic tokens, inlay hints, code lenses). */
 export const refreshEffect = StateEffect.define<string>();
@@ -42,12 +38,6 @@ export const REFRESH_ALL = 'initialized';
 const plugin = (view: EditorView) => LSPPlugin.get(view);
 export const has = (p: LSPPlugin, capability: string) =>
   !!(p.client.serverCapabilities as Record<string, unknown> | null)?.[capability];
-
-function offset(doc: Text, pos: Position) {
-  if (pos.line >= doc.lines) return doc.length;
-  const line = doc.line(pos.line + 1);
-  return Math.min(line.from + pos.character, line.to);
-}
 
 const toast = (message: string, error?: unknown) =>
   useStore.getState().showToast(message, 'error', {
@@ -559,7 +549,6 @@ async function expandSelection(view: EditorView) {
 }
 
 // Range and on-type formatting.
-type TextEdit = { range: Range; newText: string };
 const formatOptions = (view: EditorView) => ({
   tabSize: getIndentUnit(view.state),
   insertSpaces: !view.state.facet(indentUnit).includes('\t'),
@@ -630,6 +619,7 @@ type WorkspaceEdit = {
 // As in `lsp/mod.rs`, whose prompts tabs answer with these titles.
 const APPLY_ALL = 'Apply all changes';
 const SKIP_CONFIRMATIONS = 'Skip these changes';
+const CANCEL = 'Cancel';
 
 /** The labels of changes in `edit` that need confirmation, and `edit` without them (null if nothing is left). */
 function confirmations(edit: WorkspaceEdit) {
@@ -692,7 +682,8 @@ export async function applyWorkspaceEdit(
 ): Promise<boolean> {
   const { labels, rest } = confirmations(edit);
   if (labels.length) {
-    const actions = rest ? [APPLY_ALL, SKIP_CONFIRMATIONS] : [APPLY_ALL];
+    // The safe choice first, so Enter doesn't apply what needs confirming.
+    const actions = rest ? [SKIP_CONFIRMATIONS, APPLY_ALL] : [CANCEL, APPLY_ALL];
     const chosen = await choose(`${title} includes changes that need confirmation: ${labels.join(', ')}`, actions);
     if (chosen === SKIP_CONFIRMATIONS && rest) edit = rest;
     else if (chosen !== APPLY_ALL) return false;

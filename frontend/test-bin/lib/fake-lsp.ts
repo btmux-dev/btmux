@@ -11,6 +11,8 @@
 // - completion: "fakeCompletion", with 100 paragraphs of docs, and
 //   "importedThing", whose resolve adds documentation and an import ("use lib;"
 //   on line 1); "slowImport" resolves 700 ms late, importing "use slow;"
+// - postfix completion after "NAME.": "if NAME {}", deleting "NAME." as an
+//   additional edit
 // - signature help: in "sig(", the parameter after as many commas
 // - hover: "Fake hover for WORD", 700 ms late for "slow", 200 paragraphs for "use"
 // - definition: WORD's first line in other.fake beside the document
@@ -33,7 +35,8 @@
 //   gone.fake if it exists
 // - folding: the first three lines; selection ranges: word, then line
 // - file operations on *.fake: renames replace the old name with the new in
-//   the directory's other .fake files (willRenameFiles); did*Files logged
+//   the directory's other .fake files (willRenameFiles), creates change
+//   nothing (willCreateFiles); did*Files logged
 // - watched files: **/*.fake, logged; a new crash.fake makes it exit, once
 // - opened documents: logged with their language id
 // - progress: "Indexing" at 50% while any document contains "busy"
@@ -157,7 +160,7 @@ function handle(msg: any): unknown {
           executeCommandProvider: { commands: ['fake.ask', 'fake.shout', 'fake.hint', 'fake.withdraw'] },
           workspace: {
             fileOperations: Object.fromEntries(
-              ['willRename', 'didRename', 'didCreate', 'didDelete'].map((op) => [
+              ['willRename', 'didRename', 'willCreate', 'didCreate', 'didDelete'].map((op) => [
                 op,
                 { filters: [{ scheme: 'file', pattern: { glob: '**/*.fake' } }] },
               ]),
@@ -168,7 +171,25 @@ function handle(msg: any): unknown {
       };
     case 'shutdown':
       return null;
-    case 'textDocument/completion':
+    case 'textDocument/completion': {
+      // Postfix: after "NAME.", an "if" that deletes "NAME." as an additional edit.
+      const line = text(p.textDocument.uri).split('\n')[p.position.line] ?? '';
+      const postfix = /(\w+)\.(\w*)$/.exec(line.slice(0, p.position.character));
+      if (postfix) {
+        const at = (character: number) => ({ line: p.position.line, character });
+        const dot = postfix.index + postfix[1].length;
+        return {
+          isIncomplete: false,
+          items: [
+            {
+              label: 'if',
+              kind: 15,
+              textEdit: { range: { start: at(dot + 1), end: p.position }, newText: `if ${postfix[1]} {}` },
+              additionalTextEdits: [{ range: { start: at(postfix.index), end: at(dot + 1) }, newText: '' }],
+            },
+          ],
+        };
+      }
       return {
         isIncomplete: false,
         itemDefaults: { data: { from: 'defaults' } },
@@ -185,6 +206,7 @@ function handle(msg: any): unknown {
           { label: 'slowImport', kind: 6 },
         ],
       };
+    }
     case 'textDocument/signatureHelp': {
       const line = text(p.textDocument.uri).split('\n')[p.position.line] ?? '';
       const call = /\bsig\(([^)]*)$/.exec(line.slice(0, p.position.character));
@@ -246,6 +268,8 @@ function handle(msg: any): unknown {
       const range = occurrences(text(other), word)[0];
       return range ? { uri: other, range } : null;
     }
+    case 'workspace/willCreateFiles':
+      return null;
     case 'workspace/willRenameFiles': {
       const changes: Record<string, unknown[]> = {};
       for (const { oldUri, newUri } of p.files) {

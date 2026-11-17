@@ -12,21 +12,11 @@ import {
   type CompletionSource,
 } from '@codemirror/autocomplete';
 import { LSPPlugin, type WorkspaceMapping } from '@codemirror/lsp-client';
-import {
-  ChangeSet,
-  EditorState,
-  MapMode,
-  StateEffect,
-  StateField,
-  type ChangeDesc,
-  type Text,
-} from '@codemirror/state';
+import { ChangeSet, EditorState, StateEffect, StateField, type ChangeDesc } from '@codemirror/state';
 import { ViewPlugin, type EditorView } from '@codemirror/view';
 import { viewDocs, type Doc } from './doc';
+import { lspToSnippet, offsetChecked, type Range, type TextEdit } from './lspText';
 
-type Position = { line: number; character: number };
-type Range = { start: Position; end: Position };
-type TextEdit = { range: Range; newText: string };
 type Markup = string | { kind: 'markdown' | 'plaintext'; value: string };
 
 type Item = {
@@ -81,8 +71,6 @@ const KIND_TYPES: Record<number, string> = {
 
 const textOf = (item: Item) => item.textEdit?.newText || item.textEditText || item.insertText || item.label;
 
-const lspToSnippet = (text: string) => text.replace(/\\([$}\\])|\$(\d+)/g, (_m, esc, field) => esc || `\${${field}}`);
-
 function triggerReason(plugin: LSPPlugin, context: CompletionContext) {
   if (context.explicit) return { triggerKind: 1 };
   const ch = context.state.sliceDoc(context.pos - 1, context.pos);
@@ -119,10 +107,13 @@ function resultRange(context: CompletionContext, list: List) {
   return { from: line.from + range.start.character, to: line.from + range.end.character };
 }
 
-function offset(doc: Text, pos: Position) {
-  if (pos.line < 0 || pos.line >= doc.lines) return null;
-  const line = doc.line(pos.line + 1);
-  return pos.character < 0 || pos.character > line.length ? null : line.from + pos.character;
+/** Whether `changes` replaced text in `from`..`to` or inserted strictly inside it. */
+function overlaps(changes: ChangeDesc, from: number, to: number) {
+  let hit = false;
+  changes.iterChangedRanges((fromA, toA) => {
+    if (fromA === toA ? fromA > from && fromA < to : fromA < to && toA > from) hit = true;
+  });
+  return hit;
 }
 
 /**
@@ -224,13 +215,12 @@ const source: CompletionSource = async (context) => {
       const changed = before.composeDesc(since);
       const changes = [];
       for (const edit of edits ?? []) {
-        let from = offset(start, edit.range.start);
-        let to = offset(start, edit.range.end);
-        if (from === null || to === null || changed.touchesRange(from, to)) continue;
-        from = changed.mapPos(from, 1, MapMode.TrackDel);
-        to = changed.mapPos(to, -1, MapMode.TrackDel);
-        if (from === null || to === null) continue;
-        changes.push({ from, to, insert: edit.newText });
+        const from = offsetChecked(start, edit.range.start);
+        const to = offsetChecked(start, edit.range.end);
+        // Edits beside the completion (a postfix one's receiver) still apply.
+        if (from === null || to === null || overlaps(changed, from, to)) continue;
+        const at = changed.mapPos(from, 1);
+        changes.push({ from: at, to: at + (to - from), insert: edit.newText });
       }
       doc.update({ changes, effects: stop, userEvent: 'input.complete' });
     };

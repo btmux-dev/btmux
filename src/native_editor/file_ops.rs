@@ -40,10 +40,12 @@ impl Step {
     }
 }
 
-/// An absolute path with symlinks resolved, as far as it exists.
+/// An absolute path with symlinks resolved as far as it exists: the file
+/// need not, nor its parents. `..` must be in the part that exists.
 pub fn resolve_new(path: &Path) -> Result<PathBuf, String> {
-    if !path.is_absolute() || path.components().any(|c| c == Component::ParentDir) {
-        return Err(format!("Cannot edit {}", path.display()));
+    let fail = || format!("Cannot open {}", path.display());
+    if !path.is_absolute() {
+        return Err(format!("{} is not an absolute path", path.display()));
     }
     #[cfg(windows)]
     let canonical = |p: &Path| dunce::canonicalize(p);
@@ -54,11 +56,22 @@ pub fn resolve_new(path: &Path) -> Result<PathBuf, String> {
         if let Ok(found) = canonical(ancestor) {
             return Ok(rest.iter().rev().fold(found, |p, name| p.join(name)));
         }
-        if let Some(name) = ancestor.file_name() {
-            rest.push(name.to_owned());
+        match ancestor.components().next_back() {
+            Some(Component::Normal(name)) => rest.push(name.to_owned()),
+            Some(Component::CurDir) => {}
+            _ => return Err(fail()),
         }
     }
-    Err(format!("Cannot edit {}", path.display()))
+    Err(fail())
+}
+
+/// An entry's path with its parent resolved, but not itself: a symlink's
+/// own path, so it is renamed or deleted rather than its target.
+pub fn resolve_entry(path: &Path) -> Result<PathBuf, String> {
+    match (path.parent(), path.file_name()) {
+        (Some(dir), Some(name)) => Ok(resolve_new(dir)?.join(name)),
+        _ => Err(format!("Cannot open {}", path.display())),
+    }
 }
 
 /// The file a text edit's URI names, symlinks resolved, as buffers know it.
@@ -69,15 +82,12 @@ fn path_of(uri: &Value) -> Result<PathBuf, String> {
         .and_then(|p| resolve_new(&p))
 }
 
-/// The entry a file operation's URI names: its parent resolved, but not
-/// itself, so a symlink is renamed or deleted rather than its target.
+/// The entry a file operation's URI names (`resolve_entry`).
 fn entry_of(uri: &Value) -> Result<PathBuf, String> {
     let uri = uri.as_str().unwrap_or_default();
-    let path = lsp::config::path(uri).ok_or_else(|| format!("Cannot edit {uri}"))?;
-    match (path.parent(), path.file_name()) {
-        (Some(dir), Some(name)) => Ok(resolve_new(dir)?.join(name)),
-        _ => Err(format!("Cannot edit {uri}")),
-    }
+    lsp::config::path(uri)
+        .ok_or_else(|| format!("Cannot edit {uri}"))
+        .and_then(|p| resolve_entry(&p))
 }
 
 /// Whether the entry at `path` exists, a broken symlink too.
@@ -437,7 +447,16 @@ mod tests {
         };
         assert!(check(&[delete(home.clone())], None).is_err());
         assert!(check(&[delete(PathBuf::from("/"))], None).is_err());
-        assert!(resolve_new(Path::new("/tmp/../etc")).is_err());
+        // `..` where the path exists, not past it.
+        let d = dir();
+        let resolved = resolve_new(&d.join("missing/../x")).unwrap_err();
+        assert!(resolved.contains("Cannot open"), "{resolved}");
+        assert_eq!(
+            resolve_new(&d.join("../x")).unwrap(),
+            d.parent().unwrap().join("x")
+        );
+        assert_eq!(resolve_new(&d.join("a/b")).unwrap(), d.join("a/b"));
+        std::fs::remove_dir_all(d).unwrap();
         assert_eq!(
             moved(Path::new("/a/b/c"), Path::new("/a/b"), Path::new("/x")),
             Some(PathBuf::from("/x/c"))

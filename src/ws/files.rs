@@ -588,7 +588,10 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
 
             let (from_path, to_path) = (std::path::Path::new(from), std::path::Path::new(to));
             let change = file_change(from_path, to_path, from_path.is_dir());
-            if let Err(e) = hub().check_renames(std::slice::from_ref(&change)) {
+            // Failures found first leave servers' edits unmade.
+            if let Err(e) = fs_ops::check_rename(from_path, to_path)
+                .and_then(|()| hub().check_renames(std::slice::from_ref(&change)))
+            {
                 return error_response(id, &e);
             }
             hub()
@@ -617,9 +620,13 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 Err(e) => return error_response(id, &e),
             };
 
-            let change = fs_ops::entry_target(&dir, name)
-                .ok()
-                .map(|(target, is_dir)| file_change(&target, &target, is_dir));
+            let change = match fs_ops::entry_target(&dir, name) {
+                Ok((target, is_dir)) => match fs_ops::check_create(&target, name) {
+                    Ok(()) => Some(file_change(&target, &target, is_dir)),
+                    Err(e) => return error_response(id, &e),
+                },
+                Err(_) => None,
+            };
             if let Some(change) = &change {
                 hub()
                     .will_change_files(FileKind::Create, std::slice::from_ref(change))
@@ -699,7 +706,9 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 match target {
                     Ok((src, dst)) => {
                         let change = file_change(&src, &dst, src.is_dir());
-                        match hub().check_renames(std::slice::from_ref(&change)) {
+                        match fs_ops::check_rename(&src, &dst)
+                            .and_then(|()| hub().check_renames(std::slice::from_ref(&change)))
+                        {
                             Ok(()) => moves.push((src, dst, change)),
                             Err(e) => errors.push(e),
                         }
