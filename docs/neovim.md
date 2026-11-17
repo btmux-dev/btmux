@@ -1,6 +1,6 @@
 # Neovim GUI
 
-`<prefix> + e` opens a Neovim GUI over the active pane; the other panes stay
+With `editor = "neovim"`, `<prefix> + e` opens a Neovim GUI over the active pane; the other panes stay
 visible, and zooming the pane (`<prefix> + z`) makes Neovim fill the window. btmux draws the
 editor itself and renders the command line, completion menu, messages, progress,
 and LSP signature help as native UI. Floating windows (LSP hover, diagnostics,
@@ -15,19 +15,20 @@ Requires Neovim 0.12 or newer as `nvim` on the server's `PATH`.
 
 ## Opening files
 
-The file browser and Git mode open files in the Neovim GUI, or in the pane
-when the server can't find Neovim 0.12+ at startup. To use the pane instead
-(its running Neovim, or `$EDITOR` in its shell), also for `<prefix> + e`, set:
+The native editor is the default; to open files and `<prefix> + e` in the Neovim
+GUI instead, set:
 
 ```toml
-editor = "pane"
+editor = "neovim"
 ```
 
-`btmux open-editor [FILE] [LINE]` follows the same setting from a btmux pane:
-it opens the Neovim GUI (at FILE, if given) over the pane, or
-runs `$EDITOR` in the terminal when `editor = "pane"` or outside btmux.
-`--kind neovim|vscode|pane` (`nvim` also works) overrides the setting, so
-`btmux open-editor --kind vscode` opens VS Code with Neovim as the default.
+The file browser and Git mode then open files in it. `btmux open-editor [FILE]
+[LINE]` follows the same setting from a btmux pane: it opens the Neovim GUI (at
+FILE, if given) over the pane, or runs `$EDITOR` in the terminal when `editor =
+"pane"` or outside btmux. `--kind native|neovim|vscode|pane` (`nvim` also works)
+overrides the setting, so `btmux open-editor --kind vscode` opens VS Code with
+Neovim as the default. Without `editor = "neovim"`, the unbound `editor-neovim`
+action and the status bar's Neovim button still open it.
 
 ## Your Neovim config
 

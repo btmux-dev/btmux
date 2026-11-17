@@ -876,6 +876,11 @@ export function ConfigPage({ config, send, request }: Props) {
                           'Editor',
                           [
                             {
+                              value: 'native',
+                              label: 'btmux',
+                              description: "btmux's own editor.",
+                            },
+                            {
                               value: 'neovim',
                               label: 'Neovim',
                               description:

@@ -165,6 +165,7 @@ mod agent_status_tests {
                         branch: Some("main".to_string()),
                         main_worktree: true,
                     }),
+                    editor: Default::default(),
                 }],
                 active_pane: 0,
                 layout: Layout::Leaf { pane_id },

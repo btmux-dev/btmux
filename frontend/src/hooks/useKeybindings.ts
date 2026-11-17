@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { useStore } from '../state/store';
+import { editorShown, nativeEditorInput, nativeEditorOver, useStore } from '../state/store';
+import { dispatchKey } from '../lib/paneTerminal';
+import { runEditorCommand } from '../lib/nativeEditor/registry';
 import { ClientMessage } from '../protocol/messages';
 import type { Appearance } from '../state/types';
 import { Overlay, PickerItem } from '../state/types';
@@ -47,8 +49,14 @@ function sendPrefix(sessionId: string, p: ParsedKey, send: (msg: ClientMessage) 
   }
   const keys = prefixNvimKeys(p);
   if (keys && useStore.getState().nvimOpen && sendToNvim(keys)) return;
-  const { getActivePaneId, browserOpen, browserPaneId, vscodeOpen, vscodePaneId } = useStore.getState();
+  const state = useStore.getState();
+  const { getActivePaneId, browserOpen, browserPaneId, vscodeOpen, vscodePaneId } = state;
   const paneId = getActivePaneId(sessionId);
+  if (nativeEditorOver(state, paneId)) {
+    const input = nativeEditorInput(paneId!);
+    if (input) dispatchKey(input, p.key, { ctrlKey: p.ctrl, altKey: p.alt });
+    return;
+  }
   // The browser or VS Code covers this pane's terminal, which mustn't get its keys.
   if (browserOpen && paneId === browserPaneId) return sendPrefixToBrowser(p);
   if (vscodeOpen && paneId === vscodePaneId) return sendPrefixToVscode(p);
@@ -146,7 +154,8 @@ export function useKeybindings(
       const isFKey = e.key.startsWith('F') && e.key.length >= 2 && e.key.length <= 3 && !isNaN(Number(e.key.slice(1)));
       // The built-in Neovim and the browser decide themselves which of these to keep.
       const dataset = (e.target as HTMLElement | null)?.dataset;
-      const fromSurface = dataset?.nvimInput !== undefined || dataset?.browserInput !== undefined;
+      const fromSurface =
+        dataset?.nvimInput !== undefined || dataset?.browserInput !== undefined || dataset?.nativeEditor !== undefined;
       if ((e.metaKey || isFKey) && !fromSurface) {
         // PaneTerminal translates Cmd editing chords; other surfaces never see them.
         if (macosEditKeysRef.current && macEditKey(e) !== null && inPaneTerminal(e.target)) return;
@@ -569,22 +578,44 @@ export function runAction(
       break;
     }
     case 'editor':
+    case 'editor-native':
     case 'editor-neovim':
     case 'editor-vscode': {
       // Toggle the editor over the active pane, or move it there.
       const win = session?.windows[session.active_window];
       const paneId = win?.zoomed_pane ?? win?.panes[win.active_pane]?.id ?? null;
       if (!paneId) break;
-      const editor =
-        action === 'editor-neovim' ? 'neovim' : action === 'editor-vscode' ? 'vscode' : store.config?.editor;
-      if (editor === 'pane') {
+      const editor = action === 'editor' ? store.config?.editor : action.slice('editor-'.length);
+      if (editor === 'native') {
+        if (nativeEditorOver(store, paneId)) {
+          send({ type: 'editor_view', pane_id: paneId, op: { kind: 'hide' } });
+        } else {
+          // Shown already but under this tab's Neovim, VS Code, or browser: uncover it.
+          if (!editorShown(store, paneId)) send({ type: 'editor_view', pane_id: paneId, op: { kind: 'show' } });
+          store.hideEditorSurfaces(paneId);
+        }
+      } else if (editor === 'pane') {
         store.hideEditorSurfaces(paneId);
         send({ type: 'open_file', pane_id: paneId, path: null, line: null });
       } else if (editor === 'vscode') {
         store.setVscodeOpen(!(store.vscodeOpen && store.vscodePaneId === paneId), paneId);
-      } else {
+      } else if (editor === 'neovim') {
         store.setNvimOpen(!(store.nvimOpen && store.nvimPaneId === paneId), paneId);
       }
+      break;
+    }
+    case 'editor-code-actions':
+    case 'editor-document-symbols':
+    case 'editor-workspace-symbols':
+    case 'editor-incoming-calls':
+    case 'editor-outgoing-calls':
+    case 'editor-supertypes':
+    case 'editor-subtypes':
+    case 'editor-expand-selection': {
+      const win = session?.windows[session.active_window];
+      const paneId = win?.zoomed_pane ?? win?.panes[win.active_pane]?.id ?? null;
+      if (!paneId || !nativeEditorOver(store, paneId) || !runEditorCommand(paneId, action))
+        store.showToast('Needs a file with a language server open in the editor', 'info');
       break;
     }
     case 'shut-down-neovim':

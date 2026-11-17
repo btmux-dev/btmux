@@ -150,8 +150,66 @@ struct RunCommandParams {
     timeout_ms: Option<u64>,
 }
 
+#[derive(Deserialize, JsonSchema)]
+struct EditorDiagnosticsParams {
+    /// Only files under this absolute path (a file or directory).
+    path: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct OpenInEditorParams {
+    pane_id: String,
+    /// Absolute path of the file.
+    path: String,
+    /// 1-based line to put the cursor on.
+    line: Option<u32>,
+}
+
 #[tool_router(vis = "pub(crate)")]
 impl BtmuxMcpServer {
+    #[tool(
+        description = "List the files open in btmux's native editor (in any pane or browser tab), with whether each has unsaved changes or changed on disk, its language, and its language servers' state."
+    )]
+    async fn editor_buffers(&self) -> Result<CallToolResult, ErrorData> {
+        ok_json(crate::native_editor::buffers())
+    }
+
+    #[tool(
+        description = "Diagnostics (errors, warnings) the native editor's language servers report for its open files, optionally only under `path`. Lines and columns are 1-based. Only open files are checked; open one with open_in_editor first."
+    )]
+    async fn editor_diagnostics(
+        &self,
+        Parameters(EditorDiagnosticsParams { path }): Parameters<EditorDiagnosticsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let under = path.map(std::path::PathBuf::from);
+        ok_json(crate::native_editor::hub().diagnostics(under.as_deref()))
+    }
+
+    #[tool(
+        description = "Open a file in the native editor over a pane (every browser tab shows it), with the cursor on `line`, and start its language servers."
+    )]
+    async fn open_in_editor(
+        &self,
+        Parameters(OpenInEditorParams {
+            pane_id,
+            path,
+            line,
+        }): Parameters<OpenInEditorParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let pane_id = parse_uuid(&pane_id, "pane_id")?;
+        if !std::path::Path::new(&path).is_absolute() {
+            return Err(ErrorData::invalid_params("path must be absolute", None));
+        }
+        if let Err(error) = crate::native_editor::load(&path).await {
+            return tool_error(error);
+        }
+        let op = crate::session::EditorViewOp::Open { path, line };
+        match crate::native_editor::view(&self.state, pane_id, op).await {
+            Ok(()) => ok_json(serde_json::json!({ "opened": true })),
+            Err(error) => tool_error(error),
+        }
+    }
+
     #[tool(description = "List all sessions (id and name).")]
     async fn list_sessions(&self) -> Result<CallToolResult, ErrorData> {
         let mgr = self.state.read().await;

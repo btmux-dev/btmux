@@ -124,7 +124,7 @@ pub async fn list_dir(root: &Path, path: &str) -> Result<(Vec<FileEntry>, String
 }
 
 /// Git's heuristic: a NUL or invalid UTF-8 in the first 8 KiB.
-fn looks_binary(head: &[u8]) -> bool {
+pub(crate) fn looks_binary(head: &[u8]) -> bool {
     if head.contains(&0) {
         return true;
     }
@@ -133,6 +133,46 @@ fn looks_binary(head: &[u8]) -> bool {
         // A multi-byte character cut off at the end of the sample is fine.
         Err(e) => e.error_len().is_some(),
     }
+}
+
+/// Write beside `target` and rename over it, keeping its permissions, so
+/// readers never see half a file.
+pub fn write_atomic(target: &Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::{ErrorKind, Write};
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    let dir = target.parent().unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir)?;
+    let name = target
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let (tmp, mut file) = loop {
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let tmp = dir.join(format!(".{name}.{}.{n}.tmp", std::process::id()));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+        {
+            Ok(file) => break (tmp, file),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    };
+    let result = file
+        .write_all(data)
+        .and_then(|()| file.sync_all())
+        .and_then(|()| match std::fs::metadata(target) {
+            Ok(meta) => std::fs::set_permissions(&tmp, meta.permissions()),
+            Err(_) => Ok(()),
+        })
+        .and_then(|()| std::fs::rename(&tmp, target));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 /// Opens a binary file with the system opener (`open`, `xdg-open`, or the

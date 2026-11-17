@@ -118,6 +118,7 @@ impl SessionManager {
         };
         pty_env.palette.set(Palette::from_theme(&config.theme));
         crate::vscode::configure(&config);
+        crate::native_editor::lsp::config::configure(&file_config, &shell);
         Self {
             sessions: Vec::new(),
             telemetry: crate::telemetry::TelemetryStore::default(),
@@ -616,6 +617,7 @@ impl SessionManager {
         if self.cli_shell.is_none() {
             self.shell = crate::config::resolve_shell(self.config.shell.as_deref());
         }
+        crate::native_editor::lsp::config::configure(&self.file_config, &self.shell);
         self.sync_palette();
         &self.config
     }
@@ -1698,6 +1700,24 @@ impl SessionManager {
         }
     }
 
+    /// Sandboxed sessions' mounts, with the instance they are mounted in.
+    pub fn sandbox_mounts(&self) -> Vec<(std::path::PathBuf, String)> {
+        let instance = crate::multipass::instance_name(&self.config.multipass_config);
+        let mut mounts: Vec<_> = self
+            .sessions
+            .iter()
+            .filter_map(|s| match &s.runtime {
+                Runtime::Multipass { mounts, .. } => Some(mounts),
+                Runtime::Local => None,
+            })
+            .flatten()
+            .map(|m| (std::path::PathBuf::from(m), instance.clone()))
+            .collect();
+        mounts.sort();
+        mounts.dedup();
+        mounts
+    }
+
     pub fn session_summaries(&self) -> Vec<SessionSummary> {
         self.sessions
             .iter()
@@ -1803,7 +1823,9 @@ impl SessionManager {
                     self.scrollback_lines(),
                 )
                 .with_guest(self.guest(runtime));
-                Pane::new(p.id, pty)
+                let mut pane = Pane::new(p.id, pty);
+                pane.editor = p.editor;
+                pane
             })
             .collect();
         if panes.is_empty() {
@@ -2026,6 +2048,7 @@ impl SessionManager {
                             agent_id: self.agent_id(p.id),
                             unread: p.unread.clone(),
                             git: p.pty.local_cwd().and_then(|cwd| self.git.lookup(&cwd)),
+                            editor: p.editor.clone(),
                         })
                         .collect(),
                     active_pane: w.active_pane,

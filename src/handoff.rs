@@ -29,7 +29,7 @@ use crate::ws::control::ServerMessage;
 use crate::AppState;
 
 /// Bump on any change to the handoff file.
-pub const VERSION: u32 = 17;
+pub const VERSION: u32 = 18;
 const ENV: &str = "BTMUX_HANDOFF";
 
 struct Context {
@@ -312,6 +312,7 @@ async fn check(exe: &Path) -> Result<(&'static Context, String), Refusal> {
     crate::ws::nvim::check_saved()
         .await
         .map_err(Refusal::Busy)?;
+    crate::native_editor::check_saved().map_err(Refusal::Busy)?;
     Ok((context, target))
 }
 
@@ -326,6 +327,9 @@ async fn execute(state: AppState, context: &Context, exe: &Path) -> String {
     // Held until exec, so nothing changes or spawns meanwhile.
     let mut manager = state.write().await;
     // Before anything stops: Neovim refuses to quit with unsaved changes.
+    if let Err(error) = crate::native_editor::check_saved() {
+        return error;
+    }
     if let Err(error) = crate::ws::nvim::quit().await {
         return error;
     }
@@ -598,6 +602,7 @@ mod tests {
             SessionSnapshot::decl(&config),
             WindowSnapshot::decl(&config),
             PaneSnapshot::decl(&config),
+            crate::session::PaneEditor::decl(&config),
             crate::pane_git::PaneGit::decl(&config),
             PaneAlert::decl(&config),
             AgentStatus::decl(&config),

@@ -357,9 +357,9 @@ pub enum SubCommand {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 0..)]
         args: Vec<std::ffi::OsString>,
     },
-    /// Open FILE (or just the editor), jumping to LINE. In a btmux pane with
-    /// `editor = "neovim"` or `"vscode"`, this opens that editor over the
-    /// pane; otherwise `$EDITOR` (falling back to `vi`).
+    /// Open FILE (or just the editor), jumping to LINE. In a btmux pane, this
+    /// opens the `editor` setting's editor over the pane; with `editor =
+    /// "pane"`, or outside btmux, `$EDITOR` (falling back to `vi`).
     OpenEditor {
         file: Option<String>,
         line: Option<u32>,
@@ -575,11 +575,13 @@ impl Appearance {
 }
 
 /// The editor `prefix + e`, the file browser, Git mode, and `btmux open-editor`
-/// open. Unset, it is the built-in Neovim when a usable `nvim` is on `PATH`.
+/// open. Unset, it is the native editor.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub enum Editor {
+    /// btmux's own editor.
+    Native,
     /// The pane's foreground Neovim, or `$EDITOR` in its shell.
     Pane,
     /// The built-in Neovim.
@@ -655,6 +657,41 @@ impl Default for MultipassConfig {
     }
 }
 
+/// `[native-editor]`.
+#[derive(Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+pub struct NativeEditorConfig {
+    /// Format with the language server before saving.
+    pub format_on_save: bool,
+}
+
+/// `[language-server.NAME]`: a language server the native editor can run.
+#[derive(Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+pub struct LanguageServerConfig {
+    /// The program, found on `PATH` (else the shell's).
+    pub command: String,
+    pub args: Vec<String>,
+    pub environment: BTreeMap<String, String>,
+    /// Settings, answered to `workspace/configuration` by section.
+    pub config: Option<toml::Value>,
+    pub initialization_options: Option<toml::Value>,
+}
+
+/// `[[language]]`: which files a language covers and its servers.
+#[derive(Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+pub struct LanguageConfig {
+    pub name: String,
+    /// The LSP language id; `name` if unset.
+    pub language_id: Option<String>,
+    /// File extensions (`rs`) or whole file names (`Makefile`).
+    pub file_types: Vec<String>,
+    /// Files or directories marking a project root, such as `Cargo.toml`.
+    pub roots: Vec<String>,
+    pub language_servers: Vec<String>,
+}
+
 /// `[github]`: pull request and CI status on panes in GitHub repos.
 #[derive(Deserialize, Clone, Debug, PartialEq)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
@@ -708,17 +745,6 @@ fn search_url<'de, D: serde::Deserializer<'de>>(
         ));
     }
     Ok(Some(url))
-}
-
-impl Editor {
-    /// The default: Neovim if the built-in one can start, else the pane.
-    fn detect() -> Self {
-        if crate::ws::nvim::available() {
-            Self::Neovim
-        } else {
-            Self::Pane
-        }
-    }
 }
 
 /// Log level configuration. Both fields accept standard tracing directives
@@ -870,6 +896,17 @@ pub struct FileConfig {
     pub multipass: MultipassConfig,
     /// Pull request and CI status on panes.
     pub github: GithubConfig,
+    /// The native editor.
+    #[serde(rename = "native-editor")]
+    pub native_editor: NativeEditorConfig,
+    /// Language servers for the native editor, by name; these replace
+    /// built-in definitions of the same name.
+    #[serde(rename = "language-server")]
+    pub language_servers: BTreeMap<String, LanguageServerConfig>,
+    /// Languages for the native editor; these replace built-in languages of
+    /// the same name and are matched first.
+    #[serde(rename = "language")]
+    pub languages: Vec<LanguageConfig>,
     /// How many of the most-recently-viewed windows the window-grid
     /// (`prefix + w`) shows as live thumbnails. Defaults to 4.
     #[serde(rename = "window-grid-count")]
@@ -940,6 +977,9 @@ impl Default for FileConfig {
             browser: BrowserConfig::default(),
             multipass: MultipassConfig::default(),
             github: GithubConfig::default(),
+            native_editor: NativeEditorConfig::default(),
+            language_servers: BTreeMap::new(),
+            languages: Vec::new(),
             window_grid_count: Some(DEFAULT_WINDOW_GRID_COUNT),
             keys: BTreeMap::new(),
             popup: Vec::new(),
@@ -1388,6 +1428,8 @@ pub struct ClientConfig {
     pub editor: Editor,
     /// The built-in editors the server can run, for the toolbar and palette.
     pub editors: Vec<Editor>,
+    /// `[native-editor] format-on-save`.
+    pub format_on_save: bool,
     /// Whether the server found Chrome or Chromium for the browser surface.
     pub browser: bool,
     /// Whether this tab reaches the server through a btmux connect relay;
@@ -1431,7 +1473,9 @@ pub struct ClientConfig {
 /// Canonical tmux-style default binds: (key, action). Actions map 1:1 to a
 /// frontend handler. Note `0-9` window-select is special-cased in the frontend
 /// and intentionally absent here, as are `kill-session`, `last-window`,
-/// `editor-neovim`, `editor-vscode`, `shut-down-neovim`, and `shut-down-vscode`
+/// `editor-native`, `editor-neovim`, `editor-vscode`, `shut-down-neovim`,
+/// `shut-down-vscode`, and the native editor's `editor-*` language server
+/// commands
 /// (unbound by default).
 const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("%", "split-vertical"),
@@ -1888,10 +1932,11 @@ pub fn generate_config_toml() -> String {
 # window-sort = "alphabetical"
 
 # The editor prefix + e, the file browser, and Git mode open.
-# "neovim" = your Neovim in btmux's GUI (default if Neovim 0.12+ is on PATH),
+# "native" = btmux's own editor (default),
+# "neovim" = your Neovim in btmux's GUI (needs Neovim 0.12+),
 # "vscode" = VS Code in the browser,
 # "pane" = the terminal: the pane's running Neovim, else $EDITOR in its shell.
-# editor = "neovim"
+# editor = "native"
 
 # How many recently-viewed windows the window-grid (prefix + w) shows as live
 # thumbnails, laid out on a square-ish grid.
@@ -1980,6 +2025,27 @@ pub fn generate_config_toml() -> String {
 # [github]
 # enabled = true
 # hosts = ["github.example.com"]   # GitHub Enterprise hosts to ask too; others never are
+
+# Language servers for the native editor. Built in: rust-analyzer,
+# typescript-language-server, pyright, gopls, clangd, lua-language-server, nil,
+# bash-language-server, taplo, yaml-language-server, and the
+# vscode-langservers-extracted servers (JSON, CSS, HTML), each used when found
+# on PATH. A table of the same name replaces a built-in one.
+# [native-editor]
+# format-on-save = false
+# [language-server.rust-analyzer]
+# command = "rust-analyzer"
+# args = []
+# environment = {{}}
+# config = {{ rust-analyzer = {{ check = {{ command = "clippy" }} }} }}   # answers workspace/configuration
+# [[language]]
+# name = "python"
+# file-types = ["py", "pyi"]
+# roots = ["pyproject.toml", "setup.py"]
+# language-servers = ["basedpyright"]
+# [language-server.basedpyright]
+# command = "basedpyright-langserver"
+# args = ["--stdio"]
 
 # OS notifications for agent and pane events while btmux is hidden or
 # unfocused. In-app toasts are unaffected.
@@ -2266,8 +2332,10 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         pane_switch_border_speed,
         session_sort: file.session_sort.clone(),
         window_sort: file.window_sort.clone(),
-        editor: file.editor.unwrap_or_else(Editor::detect),
+        editor: file.editor.unwrap_or(Editor::Native),
+        format_on_save: file.native_editor.format_on_save,
         editors: [
+            (Editor::Native, true),
             (Editor::Neovim, crate::ws::nvim::available()),
             (Editor::Vscode, crate::vscode::available(file.vscode.server)),
         ]
@@ -2898,7 +2966,7 @@ palette:
         assert_eq!(resolved.window_grid_count, 4);
         assert_eq!(resolved.window_sort, WindowSort::Alphabetical);
         assert_eq!(resolved.session_sort, SessionSort::Mru);
-        assert_eq!(resolved.editor, Editor::detect());
+        assert_eq!(resolved.editor, Editor::Native);
         assert_eq!(resolved.pane_switch_border.as_deref(), Some("wipe"));
         assert_eq!(resolved.pane_switch_border_speed, 0.15);
         assert_eq!(resolved.terminal.scrollback, Some(100_000));

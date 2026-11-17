@@ -29,6 +29,7 @@ mod handoff;
 mod health;
 mod mcp;
 mod multipass;
+mod native_editor;
 mod pane_git;
 mod paste_image;
 mod persistence;
@@ -435,6 +436,8 @@ async fn main() {
         }
         None
     };
+    // Before any editor socket opens a sandboxed file.
+    native_editor::lsp::config::set_sandboxes(state.read().await.sandbox_mounts());
 
     spawn_pane_exit_handler(exit_rx, state.clone());
     spawn_agent_reaper(state.clone(), agent_manifest_dir());

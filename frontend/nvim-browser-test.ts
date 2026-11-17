@@ -52,6 +52,13 @@ try {
     (window as any).nvimStore = useStore;
   });
   await page.waitForFunction(() => (window as any).nvimStore.getState().controlConnectionState === 'connected');
+  // prefix + e opens Neovim here, not the default native editor.
+  await page.evaluate(() =>
+    (window as any).nvimSockets
+      .findLast((s: WebSocket) => new URL(s.url).pathname === '/ws/control')
+      .send(JSON.stringify({ type: 'update_config', update: { editor: 'neovim' } })),
+  );
+  await page.waitForFunction(() => (window as any).nvimStore.getState().config?.editor === 'neovim');
 
   await page.evaluate(async () => {
     const { NvimGrid } = await import('/src/lib/nvimGrid.ts' as string);
@@ -998,7 +1005,7 @@ try {
   assert.deepEqual(errors, [], 'session switches and resize must not throw');
   console.log('PASS closing Neovim returns focus to the terminal');
 
-  // With a pane default, the Editor button hides a built-in editor over the pane.
+  // With a pane default, the Terminal editor button hides a built-in editor over the pane.
   // VS Code stops at its license prompt; open_file is recorded, not sent.
   await page.route('**/api/vscode', (route) => route.fulfill({ json: { state: 'license' } }));
   await page.evaluate(() => {
@@ -1022,7 +1029,7 @@ try {
     await page.getByRole('menuitem', { name: `Show ${label}` }).click();
     const open = label === 'Neovim' ? 'nvimOpen' : 'vscodeOpen';
     await page.waitForFunction((open) => (window as any).nvimStore.getState()[open], open);
-    await page.getByRole('button', { name: 'Editor', exact: true }).click();
+    await page.getByRole('button', { name: 'Terminal editor', exact: true }).click();
     await page.waitForFunction((open) => !(window as any).nvimStore.getState()[open], open);
   }
   assert.deepEqual(

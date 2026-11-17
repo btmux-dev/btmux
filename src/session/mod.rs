@@ -81,6 +81,89 @@ pub struct Pane {
     /// The most severe notification since the pane was last viewed.
     pub unread: Option<PaneAlert>,
     pub prompt: Arc<PromptLock>,
+    pub editor: PaneEditor,
+}
+
+/// The native editor over a pane, the same in every tab.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct PaneEditor {
+    pub shown: bool,
+    /// Open files (absolute paths), in tab order.
+    pub files: Vec<String>,
+    pub active: Option<String>,
+}
+
+/// A change to a pane's editor.
+#[derive(Deserialize, Debug, Clone)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum EditorViewOp {
+    Show,
+    Hide,
+    Toggle,
+    /// Add `path` if it isn't open, make it active, and show the editor.
+    Open {
+        path: String,
+        line: Option<u32>,
+    },
+    Close {
+        path: String,
+    },
+    Activate {
+        path: String,
+    },
+    /// Move an open file to `index` in the tab order.
+    Move {
+        path: String,
+        index: usize,
+    },
+}
+
+impl PaneEditor {
+    pub fn apply(&mut self, op: EditorViewOp) {
+        match op {
+            EditorViewOp::Show => self.shown = true,
+            EditorViewOp::Hide => self.shown = false,
+            EditorViewOp::Toggle => self.shown = !self.shown,
+            EditorViewOp::Open { path, .. } => {
+                if !self.files.contains(&path) {
+                    // After the active file, like a browser tab.
+                    let at = self
+                        .active
+                        .as_ref()
+                        .and_then(|a| self.files.iter().position(|f| f == a))
+                        .map_or(self.files.len(), |i| i + 1);
+                    self.files.insert(at, path.clone());
+                }
+                self.active = Some(path);
+                self.shown = true;
+            }
+            EditorViewOp::Close { path } => {
+                let Some(i) = self.files.iter().position(|f| *f == path) else {
+                    return;
+                };
+                self.files.remove(i);
+                if self.active.as_ref() == Some(&path) {
+                    self.active = self.files.get(i).or_else(|| self.files.last()).cloned();
+                }
+                if self.files.is_empty() {
+                    self.shown = false;
+                }
+            }
+            EditorViewOp::Activate { path } => {
+                if self.files.contains(&path) {
+                    self.active = Some(path);
+                }
+            }
+            EditorViewOp::Move { path, index } => {
+                if let Some(i) = self.files.iter().position(|f| *f == path) {
+                    let file = self.files.remove(i);
+                    self.files.insert(index.min(self.files.len()), file);
+                }
+            }
+        }
+    }
 }
 
 /// Orders automation prompts to a pane.
@@ -100,6 +183,7 @@ impl Pane {
             pty,
             unread: None,
             prompt: Arc::default(),
+            editor: PaneEditor::default(),
         }
     }
 
@@ -203,6 +287,8 @@ pub struct PaneSnapshot {
     pub unread: Option<PaneAlert>,
     #[serde(default)]
     pub git: Option<crate::pane_git::PaneGit>,
+    #[serde(default)]
+    pub editor: PaneEditor,
 }
 
 /// A pane running an agent, as listed to automation.
@@ -283,4 +369,37 @@ pub struct PaneInfo {
     pub pane_active: bool,
     pub pane_current_path: Option<String>,
     pub pane_title: Option<String>,
+}
+
+#[cfg(test)]
+mod editor_tests {
+    use super::*;
+
+    fn open(e: &mut PaneEditor, path: &str) {
+        e.apply(EditorViewOp::Open {
+            path: path.into(),
+            line: None,
+        });
+    }
+
+    #[test]
+    fn opens_after_the_active_file_and_closes_to_a_neighbor() {
+        let mut e = PaneEditor::default();
+        open(&mut e, "/a");
+        open(&mut e, "/b");
+        e.apply(EditorViewOp::Activate { path: "/a".into() });
+        open(&mut e, "/c");
+        assert_eq!(e.files, ["/a", "/c", "/b"]);
+        assert!(e.shown);
+        e.apply(EditorViewOp::Close { path: "/c".into() });
+        assert_eq!(e.active.as_deref(), Some("/b"));
+        e.apply(EditorViewOp::Move {
+            path: "/b".into(),
+            index: 0,
+        });
+        assert_eq!(e.files, ["/b", "/a"]);
+        e.apply(EditorViewOp::Close { path: "/b".into() });
+        e.apply(EditorViewOp::Close { path: "/a".into() });
+        assert_eq!((e.active, e.shown), (None, false));
+    }
 }

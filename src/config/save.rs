@@ -44,7 +44,8 @@ pub fn render(path: &Path, update: &ConfigUpdate) -> Result<Saved, String> {
 
 impl Saved {
     pub fn write(&self) -> Result<(), String> {
-        write(&self.target, &self.text).map_err(|e| io_error(&self.path, &self.target, &e))
+        crate::fs_ops::write_atomic(&self.target, self.text.as_bytes())
+            .map_err(|e| io_error(&self.path, &self.target, &e))
     }
 }
 
@@ -70,41 +71,6 @@ fn is_symlink(path: &Path) -> bool {
 
 fn is_nix(target: &Path) -> bool {
     target.starts_with("/nix/store")
-}
-
-/// Write beside the target and rename over it, so a reload never reads half a file.
-fn write(target: &Path, text: &str) -> std::io::Result<()> {
-    use std::io::Write;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-
-    let dir = target.parent().unwrap_or(Path::new("."));
-    std::fs::create_dir_all(dir)?;
-    let (tmp, mut file) = loop {
-        let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        let tmp = dir.join(format!(".config.toml.{}.{n}.tmp", std::process::id()));
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp)
-        {
-            Ok(file) => break (tmp, file),
-            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(e),
-        }
-    };
-    let result = file
-        .write_all(text.as_bytes())
-        .and_then(|()| file.sync_all())
-        .and_then(|()| match std::fs::metadata(target) {
-            Ok(meta) => std::fs::set_permissions(&tmp, meta.permissions()),
-            Err(_) => Ok(()),
-        })
-        .and_then(|()| std::fs::rename(&tmp, target));
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    result
 }
 
 fn read_only(path: &Path, target: &Path) -> String {

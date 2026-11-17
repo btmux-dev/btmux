@@ -4,6 +4,7 @@ import { ClientMessage, NotificationLevel, ServerMessage } from '../protocol/mes
 import { windowAttended } from '../lib/windowAttention';
 import { needsPasskey } from '../components/AuthGate';
 import { openInEditor } from '../lib/openInEditor';
+import { revealInEditor } from '../lib/nativeEditor/reveal';
 import { vscodeRequestEditor } from '../lib/vscodeFallback';
 import { atLeast } from '../lib/notifications';
 import { SYSTEM_LIGHT_QUERY, systemColorMode } from '../state/startupTheme';
@@ -173,6 +174,8 @@ export function useControlSocket() {
         } else if (msg.type === 'open_file_browser') {
           useStore.getState().navigateToPane(msg.pane_id);
           useStore.getState().setFileBrowserOpen(true, msg.path, msg.pane_id, msg.mode, msg.focus_file);
+        } else if (msg.type === 'editor_reveal') {
+          revealInEditor(msg.pane_id, msg.path, msg.line);
         } else if (msg.type === 'open_nvim') {
           useStore.getState().navigateToPane(msg.pane_id);
           useStore.getState().setNvimOpen(true, msg.pane_id);
