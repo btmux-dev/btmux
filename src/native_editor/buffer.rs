@@ -323,15 +323,18 @@ pub struct Buffer {
     pub servers: Vec<u64>,
 }
 
-/// An unsaved buffer as `btmux upgrade` hands it over, without its update
-/// log or language servers.
+/// An unsaved buffer as `btmux upgrade` hands it over, without its
+/// language servers.
 #[cfg(unix)]
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct HandedBuffer {
+    id: Uuid,
     path: PathBuf,
     text: String,
     version: u64,
+    /// Updates that led to `version`, so tabs resume and confirm their own.
+    log: Vec<Update>,
     saved_version: u64,
     line_ending: LineEnding,
     bom: bool,
@@ -368,9 +371,11 @@ impl Buffer {
     #[cfg(unix)]
     pub fn handoff(&self) -> HandedBuffer {
         HandedBuffer {
+            id: self.id,
             path: self.path.clone(),
             text: self.rope.to_string(),
             version: self.version,
+            log: self.log.iter().cloned().collect(),
             saved_version: self.saved_version,
             line_ending: self.line_ending,
             bom: self.bom,
@@ -380,15 +385,15 @@ impl Buffer {
         }
     }
 
-    /// A handed over buffer. Its log is empty, so tabs reopen it.
+    /// A handed over buffer, which tabs resume.
     #[cfg(unix)]
     pub fn restored(handoff: HandedBuffer) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            id: handoff.id,
             path: handoff.path,
             rope: Rope::from_str(&handoff.text),
             version: handoff.version,
-            log: VecDeque::new(),
+            log: handoff.log.into(),
             saved_version: handoff.saved_version,
             line_ending: handoff.line_ending,
             bom: handoff.bom,

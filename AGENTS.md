@@ -473,12 +473,15 @@ changed on disk since it was loaded or saved, unless forced. A watcher on open f
 minimal update and marks a dirty one changed or deleted. Buffers nobody follows
 are dropped unless dirty (one loaded by MCP gets 60 s for a tab to follow it);
 dirty ones stay, listed by the `buffers` message. `btmux upgrade` hands
-them off (`freeze`, which refuses changes until the exec, so tabs keep
-unsent edits) with their text, versions, line ending, BOM, and disk state, not
-their update log, so tabs reopen them, merging edits typed meanwhile; the new
-process restores them (`restore`) before tabs connect, starts their language
-servers, and checks them against the disk once, as the watcher missed the
-upgrade.
+them off with their id, text, versions, update log, line ending, BOM, and disk
+state, so tabs resume rather than reopen: a reopen can't tell an applied but
+unconfirmed update from an unsent one, and would apply it twice. Language server
+ids are handed off too (`HandedServers`), as resumed tabs keep theirs. `freeze`
+refuses changes until the exec, so tabs keep unsent edits, and first waits up to
+5 s for saves in progress (spawned, so they finish without their tab), so the
+buffers match the disk. The new process restores them (`restore`) before tabs
+connect, starts their language servers, and checks them against the disk once,
+as the watcher missed the upgrade.
 
 Language servers (`native_editor/lsp/`) have btmux as their only client.
 `[[language]]` and `[language-server.NAME]` (Helix-style) override built-in

@@ -17,7 +17,7 @@ use axum::body::Bytes;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::native_editor::buffer::HandedBuffer;
+use crate::native_editor::EditorHandoff;
 use crate::popup::PopupsHandoff;
 use crate::pty::kitty_keyboard::KittyKeyboard;
 use crate::pty::program_status::Record;
@@ -62,8 +62,7 @@ struct Header {
     popups: PopupsHandoff,
     panes: Vec<PaneHeader>,
     telemetry: TelemetryStore,
-    /// The native editor's unsaved buffers.
-    editor: Vec<HandedBuffer>,
+    editor: EditorHandoff,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -108,7 +107,7 @@ pub struct Inherited {
     pub popups: PopupsHandoff,
     pub panes: Vec<(Uuid, OwnedFd, Handoff)>,
     pub telemetry: TelemetryStore,
-    pub editor: Vec<HandedBuffer>,
+    pub editor: EditorHandoff,
 }
 
 impl Inherited {
@@ -334,6 +333,22 @@ async fn execute(state: AppState, context: &Context, exe: &Path) -> String {
     tracing::info!("upgrading in place to {}", exe.display());
     // Held until exec, so nothing changes or spawns meanwhile.
     let mut manager = state.write().await;
+    // Before anything stops, as it may wait for a save.
+    let editor = match crate::native_editor::freeze().await {
+        Ok(editor) => editor,
+        Err(error) => return error,
+    };
+    let error = execute_frozen(&mut manager, context, exe, editor).await;
+    crate::native_editor::thaw();
+    error
+}
+
+async fn execute_frozen(
+    manager: &mut crate::session::manager::SessionManager,
+    context: &Context,
+    exe: &Path,
+    editor: EditorHandoff,
+) -> String {
     // Before anything stops: Neovim refuses to quit with unsaved changes.
     if let Err(error) = crate::ws::nvim::quit().await {
         return error;
@@ -352,7 +367,6 @@ async fn execute(state: AppState, context: &Context, exe: &Path) -> String {
             tracing::warn!("failed to persist state to {}: {}", path.display(), error);
         }
     }
-    let editor = crate::native_editor::freeze();
     let error = exec(
         context,
         exe,
@@ -362,7 +376,6 @@ async fn execute(state: AppState, context: &Context, exe: &Path) -> String {
         manager.telemetry.clone(),
         editor,
     );
-    crate::native_editor::thaw();
     let kept = [context.listener]
         .into_iter()
         .chain(context.lock)
@@ -383,7 +396,7 @@ fn exec(
     popups: PopupsHandoff,
     panes: &[(Uuid, RawFd, Handoff)],
     telemetry: TelemetryStore,
-    editor: Vec<HandedBuffer>,
+    editor: EditorHandoff,
 ) -> String {
     let dir = context
         .state_file
@@ -419,7 +432,7 @@ fn write(
     popups: PopupsHandoff,
     panes: &[(Uuid, RawFd, Handoff)],
     telemetry: TelemetryStore,
-    editor: Vec<HandedBuffer>,
+    editor: EditorHandoff,
 ) -> std::io::Result<File> {
     use std::os::unix::fs::OpenOptionsExt;
     let path = dir.join(format!(".handoff-{}", Uuid::new_v4()));
@@ -624,7 +637,10 @@ mod tests {
             crate::telemetry::PaneTelemetry::decl(&config),
             crate::telemetry::ModelSeries::decl(&config),
             crate::telemetry::AgentUsage::decl(&config),
-            HandedBuffer::decl(&config),
+            EditorHandoff::decl(&config),
+            crate::native_editor::buffer::HandedBuffer::decl(&config),
+            crate::native_editor::buffer::Update::decl(&config),
+            crate::native_editor::lsp::HandedServers::decl(&config),
             crate::native_editor::buffer::Disk::decl(&config),
             crate::native_editor::buffer::Stamp::decl(&config),
             crate::native_editor::buffer::LineEnding::decl(&config),

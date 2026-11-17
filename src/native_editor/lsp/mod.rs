@@ -125,6 +125,41 @@ pub(super) struct Lsp {
     servers: HashMap<u64, Server>,
     by_key: HashMap<ServerKey, u64>,
     next_id: u64,
+    /// Ids the server before an upgrade gave, for servers not started again yet.
+    handed: HashMap<ServerKey, u64>,
+}
+
+/// Server ids as `btmux upgrade` hands them over: a server started again
+/// keeps its id, which resumed tabs' clients use, and no id is reused.
+#[cfg(unix)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct HandedServers {
+    next_id: u64,
+    /// Name, root, Multipass instance, and id.
+    ids: Vec<(String, PathBuf, Option<String>, u64)>,
+}
+
+#[cfg(unix)]
+impl Lsp {
+    pub(super) fn handoff(&self) -> HandedServers {
+        let ids = self.by_key.iter().chain(&self.handed);
+        HandedServers {
+            next_id: self.next_id,
+            ids: ids
+                .map(|((name, root, sandbox), id)| {
+                    (name.clone(), root.clone(), sandbox.clone(), *id)
+                })
+                .collect(),
+        }
+    }
+
+    pub(super) fn restore(&mut self, handed: HandedServers) {
+        self.next_id = self.next_id.max(handed.next_id);
+        for (name, root, sandbox, id) in handed.ids {
+            self.handed.insert((name, root, sandbox), id);
+        }
+    }
 }
 
 /// Semantic token types and modifiers btmux colors.
@@ -372,8 +407,10 @@ impl Inner {
             let id = match self.lsp.by_key.get(&key) {
                 Some(id) => *id,
                 None => {
-                    let id = self.lsp.next_id;
-                    self.lsp.next_id += 1;
+                    let id = self.lsp.handed.remove(&key).unwrap_or_else(|| {
+                        self.lsp.next_id += 1;
+                        self.lsp.next_id - 1
+                    });
                     self.lsp.by_key.insert(key, id);
                     self.lsp.servers.insert(
                         id,

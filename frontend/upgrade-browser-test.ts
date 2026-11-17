@@ -26,16 +26,29 @@ try {
   const context = await browser.newContext({ viewport: { width: 1200, height: 800 } });
   await context.addInitScript(() => {
     const Original = window.WebSocket;
-    (window as any).testMessages = [];
+    const w = window as any;
+    w.testMessages = [];
+    // `holdEditorUpdates` keeps the editor's `updates` from its tab; `blockEditor`
+    // keeps it disconnected.
+    w.editorSockets = [];
     window.WebSocket = class extends Original {
       constructor(url: string | URL, protocols?: string | string[]) {
         super(url, protocols);
+        const editor = String(url).includes('/ws/editor');
+        if (editor) {
+          if (w.blockEditor) this.close();
+          w.editorSockets.push(this);
+        }
         this.addEventListener('message', (event) => {
-          if (typeof event.data === 'string') {
-            try {
-              (window as any).testMessages.push(JSON.parse(event.data));
-            } catch {}
+          if (typeof event.data !== 'string') return;
+          let msg;
+          try {
+            msg = JSON.parse(event.data);
+          } catch {
+            return;
           }
+          w.testMessages.push(msg);
+          if (editor && w.holdEditorUpdates && msg.type === 'updates') event.stopImmediatePropagation();
         });
       }
     };
@@ -202,7 +215,8 @@ try {
   await until(async () => (await api('/api/info')).instance !== endedInfo.instance, 'server did not come back');
   assert.deepEqual(await api(endedPath), { status: 7 }, 'an ended popup keeps its status');
 
-  // Unsaved native editor changes survive an upgrade, still unsaved.
+  // Unsaved native editor changes survive an upgrade, still unsaved: one
+  // the server applied but the tab never saw confirmed, and one never sent.
   const editorDir = realpathSync(mkdtempSync(join(tmpdir(), 'btmux-upgrade-editor-')));
   const editorFile = join(editorDir, 'crlf.txt');
   writeFileSync(editorFile, '\ufeffone\r\ntwo\r\n');
@@ -218,35 +232,51 @@ try {
       pane,
     );
   await until(async () => (await editorText()) === 'one\ntwo\n', 'the editor did not open');
-  await editor.click();
-  await page.keyboard.press('ControlOrMeta+End');
-  await page.keyboard.type('KEPT');
-  const opened = () =>
-    page.evaluate(
-      (path) => (window as any).testMessages.filter((m: any) => m.type === 'opened' && m.buffer.path === path).length,
-      editorFile,
-    );
   const dirtyOnServer = () =>
     page.evaluate(
       (path) =>
-        (window as any).testMessages.filter((m: any) => m.type === 'buffers').slice(-1)[0]?.buffers.some(
-          (b: any) => b.path === path && b.dirty,
-        ) ?? false,
+        (window as any).testMessages
+          .filter((m: any) => m.type === 'buffers')
+          .slice(-1)[0]
+          ?.buffers.some((b: any) => b.path === path && b.dirty) ?? false,
       editorFile,
     );
+  await page.evaluate(() => ((window as any).holdEditorUpdates = true));
+  await editor.click();
+  await page.keyboard.press('ControlOrMeta+Home');
+  await page.keyboard.type('A');
   await until(dirtyOnServer, 'the edit did not reach the server');
-  const openedBefore = await opened();
+  await page.evaluate(() => {
+    const w = window as any;
+    w.blockEditor = true;
+    for (const ws of w.editorSockets) ws.close();
+  });
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.type('B');
+  assert.equal(await editorText(), 'Aone\ntwo\nB');
   const editorInfo = await api('/api/info');
   await api('/api/server/upgrade', { executable: editorInfo.executable });
   await until(async () => (await api('/api/info')).instance !== editorInfo.instance, 'server did not come back');
-  await until(async () => (await opened()) > openedBefore, 'the editor did not reopen its buffer');
-  assert.equal(await editorText(), 'one\ntwo\nKEPT', 'an upgrade keeps unsaved edits');
+  // Resumed (or, wrongly, reopened).
+  const reattached = () =>
+    page.evaluate(
+      () => (window as any).testMessages.filter((m: any) => m.type === 'resumed' || m.type === 'opened').length,
+    );
+  const reattachedBefore = await reattached();
+  await page.evaluate(() => {
+    const w = window as any;
+    w.holdEditorUpdates = false;
+    w.blockEditor = false;
+  });
+  await until(async () => (await reattached()) > reattachedBefore, 'the editor did not reattach');
+  await page.waitForTimeout(500);
+  assert.equal(await editorText(), 'Aone\ntwo\nB', 'an upgrade keeps unsaved edits, applied once');
   await page.locator('[aria-label="Unsaved"]').first().waitFor();
   assert.equal(readFileSync(editorFile, 'utf8'), '\ufeffone\r\ntwo\r\n');
   await editor.click();
   await page.keyboard.press('ControlOrMeta+s');
   await page.locator('[aria-label="Unsaved"]').first().waitFor({ state: 'detached' });
-  assert.equal(readFileSync(editorFile, 'utf8'), '\ufeffone\r\ntwo\r\nKEPT', 'saving keeps the BOM and CRLF');
+  assert.equal(readFileSync(editorFile, 'utf8'), '\ufeffAone\r\ntwo\r\nB', 'saving keeps the BOM and CRLF');
   rmSync(editorDir, { recursive: true });
 
   // The control socket reconnects and follows structural changes again.

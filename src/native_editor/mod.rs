@@ -200,6 +200,8 @@ struct Inner {
     frozen: bool,
     /// Sockets whose pushes were dropped meanwhile.
     stalled: HashSet<SocketId>,
+    /// Saves writing their file.
+    saving: usize,
 }
 
 pub struct Hub {
@@ -255,37 +257,39 @@ pub fn buffers() -> Vec<serde_json::Value> {
     list
 }
 
-/// The unsaved buffers, for an upgrade to hand over. Changes are refused
+/// The native editor's state as `btmux upgrade` hands it over.
+#[cfg(unix)]
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct EditorHandoff {
+    /// The unsaved buffers.
+    buffers: Vec<buffer::HandedBuffer>,
+    servers: lsp::HandedServers,
+}
+
+/// How long an upgrade waits for saves in progress.
+#[cfg(unix)]
+const SAVE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The editor's state, for an upgrade to hand over. Changes are refused
 /// until `thaw`, so none are lost after this; tabs keep unsent edits.
 #[cfg(unix)]
-pub fn freeze() -> Vec<buffer::HandedBuffer> {
-    let mut inner = hub().inner.lock().unwrap();
-    inner.frozen = true;
-    inner
-        .buffers
-        .values()
-        .filter(|b| b.dirty())
-        .map(Buffer::handoff)
-        .collect()
+pub async fn freeze() -> Result<EditorHandoff, String> {
+    hub().freeze().await
 }
 
 /// The upgrade failed: accept changes again.
 #[cfg(unix)]
 pub fn thaw() {
-    let mut inner = hub().inner.lock().unwrap();
-    inner.frozen = false;
-    // Their tabs reconnect and resume, sending the dropped edits again.
-    for socket in std::mem::take(&mut inner.stalled) {
-        inner.drop_socket(socket);
-    }
-    inner.send_summaries();
+    hub().thaw();
 }
 
-/// Take over the buffers an upgraded server handed over, before tabs connect.
+/// Take over the editor state an upgraded server handed over, before tabs connect.
 #[cfg(unix)]
-pub async fn restore(handed: Vec<buffer::HandedBuffer>) {
+pub async fn restore(handed: EditorHandoff) {
     let config = lsp::config::current();
-    for handoff in handed {
+    hub().inner.lock().unwrap().lsp.restore(handed.servers);
+    for handoff in handed.buffers {
         let buffer = Buffer::restored(handoff);
         let (id, path) = (buffer.id, buffer.path.clone());
         {
@@ -387,6 +391,43 @@ impl Hub {
         Self {
             inner: Mutex::new(Inner::default()),
         }
+    }
+
+    #[cfg(unix)]
+    async fn freeze(&self) -> Result<EditorHandoff, String> {
+        self.inner.lock().unwrap().frozen = true;
+        // Saves in progress finish first, so the buffers match the disk.
+        let deadline = tokio::time::Instant::now() + SAVE_WAIT;
+        loop {
+            {
+                let inner = self.inner.lock().unwrap();
+                if inner.saving == 0 {
+                    return Ok(EditorHandoff {
+                        buffers: (inner.buffers.values())
+                            .filter(|b| b.dirty())
+                            .map(Buffer::handoff)
+                            .collect(),
+                        servers: inner.lsp.handoff(),
+                    });
+                }
+            }
+            if tokio::time::Instant::now() >= deadline {
+                self.thaw();
+                return Err("the editor is still saving a file".into());
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    #[cfg(unix)]
+    fn thaw(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.frozen = false;
+        // Their tabs reconnect and resume, sending the dropped edits again.
+        for socket in std::mem::take(&mut inner.stalled) {
+            inner.drop_socket(socket);
+        }
+        inner.send_summaries();
     }
 
     /// Register a socket; its messages arrive on the receiver.
@@ -683,9 +724,9 @@ impl Hub {
         }
     }
 
-    async fn save(&self, id: Uuid, force: bool) -> Result<(), SaveError> {
+    async fn save(&'static self, id: Uuid, force: bool) -> Result<(), SaveError> {
         let (path, text, version, line_ending, bom, disk) = {
-            let inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap();
             if inner.frozen {
                 return Err(SaveError::Io(UPGRADING.into()));
             }
@@ -693,35 +734,53 @@ impl Hub {
                 .buffers
                 .get(&id)
                 .ok_or_else(|| SaveError::Io("The buffer is closed".into()))?;
-            (
+            let taken = (
                 b.path.clone(),
                 b.rope.to_string(),
                 b.version,
                 b.line_ending,
                 b.bom,
                 b.disk,
-            )
+            );
+            inner.saving += 1;
+            taken
         };
-        let disk = tokio::task::spawn_blocking(move || {
-            buffer::save(&path, &text, line_ending, bom, disk, force)
+        // Spawned, so it finishes and is counted even if the tab goes away.
+        tokio::spawn(async move {
+            let saved = tokio::task::spawn_blocking(move || {
+                buffer::save(&path, &text, line_ending, bom, disk, force)
+            })
+            .await
+            .map_err(|e| SaveError::Io(e.to_string()))
+            .and_then(|saved| saved);
+            let mut inner = self.inner.lock().unwrap();
+            inner.saving -= 1;
+            inner.saved(id, version, saved?);
+            Ok(())
         })
         .await
-        .map_err(|e| SaveError::Io(e.to_string()))??;
-        let mut inner = self.inner.lock().unwrap();
-        let Some(b) = inner.buffers.get_mut(&id) else {
-            return Ok(());
+        .map_err(|e| SaveError::Io(e.to_string()))?
+    }
+}
+
+impl Inner {
+    /// Record a save of `id` at `version`.
+    fn saved(&mut self, id: Uuid, version: u64, disk: buffer::Disk) {
+        let Some(b) = self.buffers.get_mut(&id) else {
+            return;
         };
         b.saved_version = version;
         b.disk = disk;
         b.disk_status = DiskStatus::Same;
         let state = state_message(b);
-        inner.send_to_followers(id, &state);
-        inner.lsp_saved(id);
-        inner.collect(id);
-        inner.send_summaries();
-        Ok(())
+        self.send_to_followers(id, &state);
+        self.lsp_saved(id);
+        self.collect(id);
+        self.send_summaries();
     }
+}
 
+impl Hub {
     async fn revert(&self, id: Uuid) -> Result<(), String> {
         let path = {
             let inner = self.inner.lock().unwrap();
@@ -1158,7 +1217,8 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// An unsaved buffer survives an upgrade's handoff, still unsaved.
+    /// An unsaved buffer survives an upgrade's handoff, still unsaved, and
+    /// a tab whose update was applied but not confirmed resumes it.
     #[cfg(unix)]
     #[tokio::test]
     async fn hands_over_unsaved_buffers() {
@@ -1170,44 +1230,46 @@ mod tests {
         std::fs::write(&other, "a\n").unwrap();
         let path = resolve(&path.to_string_lossy()).unwrap();
         let other = resolve(&other.to_string_lossy()).unwrap();
+        let tab = |changes: Value| Update {
+            client_id: "tab".into(),
+            changes,
+        };
+        // Applied, but the tab hasn't seen it confirmed.
+        let accepted = tab(json!([3, [0, "!"], 5]));
         // What the old process hands over, and drops.
-        let mut handed = Vec::new();
-        for (p, at) in [(&path, 3), (&other, 1)] {
+        let mut buffers = Vec::new();
+        let mut ids = Vec::new();
+        for (p, update) in [(&path, &accepted), (&other, &tab(json!([1, [0, "!"], 1])))] {
             let id = hub().load_buffer(p.clone()).await.unwrap();
             let mut inner = hub().inner.lock().unwrap();
             let b = inner.buffers.get_mut(&id).unwrap();
-            b.edit(&[text::Change {
-                from: at,
-                to: at,
-                insert: "!".into(),
-            }]);
-            let json = serde_json::to_string(&b.handoff()).unwrap();
-            handed.push(serde_json::from_str(&json).unwrap());
+            b.push(0, std::slice::from_ref(update)).unwrap().unwrap();
+            buffers.push(b.handoff());
+            ids.push(id);
             inner.buffers.remove(&id);
             inner.by_path.remove(p);
             inner.unwatch(p);
         }
+        let servers = hub().inner.lock().unwrap().lsp.handoff();
+        let json = serde_json::to_string(&EditorHandoff { buffers, servers }).unwrap();
         // Changed on disk meanwhile.
         std::fs::write(&other, "b\n").unwrap();
-        restore(handed).await;
+        restore(serde_json::from_str(&json).unwrap()).await;
         let find = |p: &Path| {
             let inner = hub().inner.lock().unwrap();
             let b = &inner.buffers[&inner.by_path[p]];
-            (
-                b.id,
-                b.rope.to_string(),
-                b.version,
-                b.dirty(),
-                b.disk_status,
-            )
+            (b.id, b.since(0), b.dirty(), b.disk_status)
         };
-        let (id, text, version, dirty, disk) = find(&path);
-        assert_eq!(
-            (text.as_str(), version, dirty, disk),
-            ("one!\ntwo\n", 1, true, DiskStatus::Same)
-        );
-        let (other_id, _, _, dirty, disk) = find(&other);
+        let (id, missed, dirty, disk) = find(&path);
+        assert_eq!((id, dirty, disk), (ids[0], true, DiskStatus::Same));
+        assert_eq!(missed.unwrap()[0].changes, accepted.changes);
+        let (other_id, _, dirty, disk) = find(&other);
         assert_eq!((dirty, disk), (true, DiskStatus::Changed));
+        // The tab resends it with a newer one: only the newer one applies.
+        let unsent = tab(json!([9, [0, "?"]]));
+        hub().push(SocketId::MAX, id, 0, vec![accepted, unsent]);
+        let text = hub().inner.lock().unwrap().buffers[&id].rope.to_string();
+        assert_eq!(text, "one!\ntwo\n?");
         assert!(matches!(
             hub().save(other_id, false).await,
             Err(SaveError::Conflict)
@@ -1216,7 +1278,7 @@ mod tests {
         hub().save(id, false).await.unwrap();
         assert_eq!(
             std::fs::read(&path).unwrap(),
-            "\u{feff}one!\r\ntwo\r\n".as_bytes()
+            "\u{feff}one!\r\ntwo\r\n?".as_bytes()
         );
         let mut inner = hub().inner.lock().unwrap();
         assert!(!inner.by_path.contains_key(&path));
@@ -1224,6 +1286,47 @@ mod tests {
         inner.by_path.remove(&other);
         inner.unwatch(&other);
         drop(inner);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// An upgrade hands over what a save in progress leaves, not what it found.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn upgrades_wait_for_saves() {
+        // Its own hub: a frozen one refuses other tests' edits.
+        let hub: &'static Hub = Box::leak(Box::new(Hub::new()));
+        let dir = std::env::temp_dir().join(format!("btmux-freeze-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("f.txt");
+        std::fs::write(&path, "abc\n").unwrap();
+        let path = resolve(&path.to_string_lossy()).unwrap();
+        let id = hub.load_buffer(path).await.unwrap();
+        let version = {
+            let mut inner = hub.inner.lock().unwrap();
+            let b = inner.buffers.get_mut(&id).unwrap();
+            b.edit(&[text::Change {
+                from: 3,
+                to: 3,
+                insert: "!".into(),
+            }]);
+            // Writing the file.
+            inner.saving += 1;
+            inner.buffers[&id].version
+        };
+        let freezing = tokio::spawn(hub.freeze());
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(!freezing.is_finished());
+        // Saves starting now wait for the upgrade.
+        assert!(matches!(hub.save(id, false).await, Err(SaveError::Io(_))));
+        {
+            let mut inner = hub.inner.lock().unwrap();
+            inner.saving -= 1;
+            let disk = inner.buffers[&id].disk;
+            inner.saved(id, version, disk);
+        }
+        let handed = freezing.await.unwrap().unwrap();
+        assert!(handed.buffers.is_empty());
+        hub.thaw();
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
