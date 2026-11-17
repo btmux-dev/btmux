@@ -3,9 +3,9 @@ name: Docs
 on:
   push:
     branches: [main]
-    paths: [docs/**, README.md, desktop/README.md, .github/workflows/docs.yml]
+    paths: [docs/**, README.md, desktop/README.md, CHANGELOG.md, Cargo.toml, .github/workflows/docs.yml]
   pull_request:
-    paths: [docs/**, README.md, desktop/README.md, .github/workflows/docs.yml]
+    paths: [docs/**, README.md, desktop/README.md, CHANGELOG.md, Cargo.toml, .github/workflows/docs.yml]
   workflow_dispatch:
 
 permissions:
