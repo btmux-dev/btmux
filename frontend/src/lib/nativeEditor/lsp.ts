@@ -1,18 +1,16 @@
 import {
   findReferencesKeymap,
-  hoverTooltips,
   jumpToDefinition,
   jumpToDefinitionKeymap,
   LSPClient,
   LSPPlugin,
-  serverCompletion,
   showSignatureHelp,
   signatureHelp,
   Workspace,
   type Transport,
   type WorkspaceFile,
 } from '@codemirror/lsp-client';
-import { EditorState, Facet, Prec, StateEffect, StateField, type Extension, type Text } from '@codemirror/state';
+import { EditorState, Facet, Prec, StateEffect, StateField, type Extension } from '@codemirror/state';
 import { EditorView, keymap, showPanel, type Panel, type Tooltip } from '@codemirror/view';
 import { getIndentUnit, indentUnit, LanguageDescription } from '@codemirror/language';
 import { setDiagnostics, type Diagnostic } from '@codemirror/lint';
@@ -22,9 +20,12 @@ import { useStore } from '../../state/store';
 import type { Overlay } from '../../state/types';
 import type { EditorServerMessage } from '../../generated/protocol';
 import { IS_MAC } from '../nvimKeys';
+import { serverCompletions } from './completion';
+import { offset, type Position, type Range, type TextEdit } from './lspText';
+import { inlineCompletions } from './inlineCompletion';
 import { editorConnection } from './connection';
 import { viewDocs, type Doc } from './doc';
-import { REFRESH_ALL, lspFeatures, refreshEffect, setRawDiagnostics } from './features';
+import { REFRESH_ALL, applyWorkspaceEdit, lspFeatures, refreshEffect, setRawDiagnostics } from './features';
 
 /** btmux's language server clients speak to the server through `/ws/editor`; it syncs documents itself. */
 
@@ -109,17 +110,74 @@ type PublishParams = {
     severity?: number;
     message: string;
     source?: string;
+    code?: string | number;
+    codeDescription?: { href: string };
+    /** 1 unnecessary (unused), 2 deprecated. */
+    tags?: number[];
+    relatedInformation?: { location: { uri: string; range: Range }; message: string }[];
   }[];
 };
 
+const TAG_CLASSES: Record<number, string> = { 1: 'cm-lsp-unnecessary', 2: 'cm-lsp-deprecated' };
+
+type ServerDiagnostic = PublishParams['diagnostics'][number];
+
+/**
+ * The message with the diagnostic's code, linked to its documentation if
+ * given, and its related information, each linked to its location.
+ */
+function renderMessage(d: ServerDiagnostic) {
+  const dom = document.createElement('span');
+  dom.append(d.message);
+  if (d.code !== undefined && d.code !== '') {
+    const href = d.codeDescription?.href;
+    const label = document.createElement(href && /^https?:/.test(href) ? 'a' : 'span');
+    label.className = 'cm-lsp-diagnostic-code';
+    label.textContent = `(${d.code})`;
+    if (label instanceof HTMLAnchorElement) {
+      label.href = href!;
+      label.addEventListener('click', (e) => {
+        e.preventDefault();
+        window.open(href, '_blank', 'noopener');
+      });
+    }
+    dom.append(' ', label);
+  }
+  if (d.relatedInformation?.length) {
+    const list = document.createElement('ul');
+    list.className = 'cm-lsp-related';
+    for (const related of d.relatedInformation) {
+      const item = document.createElement('li');
+      const link = document.createElement('a');
+      const name = pathOf(related.location.uri)?.split('/').pop() ?? related.location.uri;
+      link.textContent = `${name}:${related.location.range.start.line + 1}`;
+      link.href = '#';
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        reveal(related.location.uri, related.location.range.start);
+      });
+      item.append(link, ` ${related.message}`);
+      list.append(item);
+    }
+    dom.append(list);
+  }
+  return dom;
+}
+
+/** Show `uri` in the focused pane editor, at `at`. */
+function reveal(uri: string, at: Position | null) {
+  const path = pathOf(uri);
+  if (!path || !display) return;
+  void display(path).then((view) => {
+    if (!view || !at) return;
+    const pos = offset(view.state.doc, at);
+    view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
+    view.focus();
+  });
+}
+
 /** The latest diagnostics per client and URI. */
 const diagnostics = new Map<LSPClient, Map<string, PublishParams>>();
-
-function offset(doc: Text, pos: { line: number; character: number }) {
-  if (pos.line >= doc.lines) return doc.length;
-  const line = doc.line(pos.line + 1);
-  return Math.min(line.from + pos.character, line.to);
-}
 
 function showDiagnostics(client: LSPClient, view: EditorView, params: PublishParams) {
   const plugin = LSPPlugin.get(view);
@@ -131,7 +189,21 @@ function showDiagnostics(client: LSPClient, view: EditorView, params: PublishPar
     const from = changes.mapPos(offset(synced, d.range.start), 1);
     const to = Math.max(from, changes.mapPos(offset(synced, d.range.end), -1));
     const severity = d.severity === 1 ? 'error' : d.severity === 2 ? 'warning' : d.severity === 3 ? 'info' : 'hint';
-    return { from, to, severity, message: d.message, source: d.source };
+    const markClass = (d.tags ?? [])
+      .map((t) => TAG_CLASSES[t] ?? '')
+      .join(' ')
+      .trim();
+    const code = d.code;
+    return {
+      from,
+      to,
+      severity,
+      message: d.message,
+      source: d.source,
+      markClass: markClass || undefined,
+      renderMessage:
+        (code === undefined || code === '') && !d.relatedInformation?.length ? undefined : () => renderMessage(d),
+    };
   });
   view.dispatch(setDiagnostics(view.state, list));
 }
@@ -166,35 +238,41 @@ function transport(server: number, workspace: () => BtmuxWorkspace): Transport {
   };
 }
 
-const setRename = StateEffect.define<boolean>();
+/** What the rename panel renames: the symbol at `pos`, now named `name`. */
+type RenameTarget = { pos: number; name: string };
 
-const renameField = StateField.define<boolean>({
-  create: () => false,
-  update: (open, tr) => tr.effects.reduce((v, e) => (e.is(setRename) ? e.value : v), open),
-  provide: (f) => showPanel.from(f, (open) => (open ? renamePanel : null)),
+const setRename = StateEffect.define<RenameTarget | null>();
+
+const renameField = StateField.define<RenameTarget | null>({
+  create: () => null,
+  update: (target, tr) => {
+    for (const e of tr.effects) if (e.is(setRename)) return e.value;
+    return target && tr.docChanged ? { ...target, pos: tr.changes.mapPos(target.pos) } : target;
+  },
+  provide: (f) => showPanel.from(f, (target) => (target ? renamePanel : null)),
 });
 
 function renamePanel(view: EditorView): Panel {
-  const word = view.state.wordAt(view.state.selection.main.head);
   const form = document.createElement('form');
   form.className = 'cm-btmux-rename';
   const label = document.createElement('label');
   label.textContent = 'Rename to ';
   const input = document.createElement('input');
   input.name = 'name';
-  input.value = word ? view.state.sliceDoc(word.from, word.to) : '';
+  input.value = view.state.field(renameField)?.name ?? '';
   input.setAttribute('aria-label', 'New name');
   label.append(input);
   form.append(label);
   const close = () => {
-    view.dispatch({ effects: setRename.of(false) });
+    view.dispatch({ effects: setRename.of(null) });
     view.focus();
   };
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     const name = input.value.trim();
+    const target = view.state.field(renameField);
     close();
-    if (name) void rename(view, name);
+    if (name && target) void rename(view, target.pos, name);
   });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
@@ -212,41 +290,84 @@ function renamePanel(view: EditorView): Panel {
   };
 }
 
+type PrepareRename = Range | { range: Range; placeholder: string } | { defaultBehavior: boolean } | null;
+
+/** The word at `pos`, which servers without `prepareRename` (or deferring to the client) rename. */
+function wordTarget(view: EditorView, pos: number): RenameTarget | null {
+  const word = view.state.wordAt(pos);
+  return word && { pos: word.from, name: view.state.sliceDoc(word.from, word.to) };
+}
+
 const startRename = (view: EditorView) => {
   const plugin = LSPPlugin.get(view);
-  if (!plugin || !view.state.wordAt(view.state.selection.main.head)) return false;
-  view.dispatch({ effects: setRename.of(true) });
+  if (!plugin) return false;
+  const head = view.state.selection.main.head;
+  const provider = plugin.client.serverCapabilities?.renameProvider;
+  if (typeof provider === 'object' && provider.prepareProvider) {
+    void prepareRename(view, plugin, head);
+    return true;
+  }
+  const target = wordTarget(view, head);
+  if (!target) return false;
+  view.dispatch({ effects: setRename.of(target) });
   return true;
 };
+
+/** Ask the server what's renamed at `head` and under which name, then open the panel. */
+async function prepareRename(view: EditorView, plugin: LSPPlugin, head: number) {
+  plugin.client.sync();
+  const start = view.state.doc;
+  let result: PrepareRename;
+  try {
+    result = await plugin.client.request<object, PrepareRename>('textDocument/prepareRename', {
+      textDocument: { uri: plugin.uri },
+      position: plugin.toPosition(head),
+    });
+  } catch (error) {
+    // Servers explain why in the error (a keyword, a library symbol).
+    toast('Cannot rename this', error);
+    return;
+  }
+  // Typed meanwhile, or showing another file.
+  if (LSPPlugin.get(view) !== plugin || view.state.doc !== start) return;
+  let target: RenameTarget | null;
+  if (!result) target = null;
+  else if ('defaultBehavior' in result) target = wordTarget(view, head);
+  else {
+    const range = 'range' in result ? result.range : result;
+    const from = offset(start, range.start);
+    const to = offset(start, range.end);
+    target = { pos: from, name: 'placeholder' in result ? result.placeholder : start.sliceString(from, to) };
+  }
+  if (!target) {
+    useStore.getState().showToast('Nothing to rename here', 'info');
+    return;
+  }
+  view.dispatch({ effects: setRename.of(target) });
+}
 
 const toast = (message: string, error: unknown) =>
   useStore.getState().showToast(message, 'error', {
     body: error instanceof Error ? error.message : String((error as any)?.message ?? error),
   });
 
-/** Rename across files: the server applies the edit to every buffer, open or not. */
-async function rename(view: EditorView, newName: string) {
+/** Rename the symbol at `pos` across files: the server applies the edit to every buffer, open or not. */
+async function rename(view: EditorView, pos: number, newName: string) {
   const plugin = LSPPlugin.get(view);
   const doc = viewDocs.get(view);
-  const word = view.state.wordAt(view.state.selection.main.head);
-  if (!plugin || !doc || !word) return;
+  if (!plugin || !doc) return;
   plugin.client.sync();
   const version = doc.version();
   try {
-    const edit = await plugin.client.request('textDocument/rename', {
-      textDocument: { uri: plugin.uri },
-      position: plugin.toPosition(word.from),
-      newName,
-    });
-    if (!edit) return;
-    const result = await editorConnection.applyEdit(edit, doc.buffer, version);
-    if (result.error) toast('Rename failed', result.error);
+    const edit = await plugin.client.request<object, Parameters<typeof applyWorkspaceEdit>[1] | null>(
+      'textDocument/rename',
+      { textDocument: { uri: plugin.uri }, position: plugin.toPosition(pos), newName },
+    );
+    if (edit) await applyWorkspaceEdit('Rename', edit, doc, version);
   } catch (error) {
     toast('Rename failed', error);
   }
 }
-
-type TextEdit = { range: PublishParams['diagnostics'][number]['range']; newText: string };
 
 /** Format with the language server, if it can; resolves once applied. */
 export async function format(view: EditorView) {
@@ -330,6 +451,8 @@ function client(server: number): LSPClient {
         return true;
       },
       'window/showMessage': (_, params: { type: number; message: string }) => {
+        // Log and debug messages aren't for the user.
+        if (params.type >= 4) return true;
         const level = params.type === 1 ? 'error' : params.type === 2 ? 'attention' : 'info';
         useStore.getState().showToast(params.message, level);
         return true;
@@ -343,8 +466,7 @@ function client(server: number): LSPClient {
       },
     },
     extensions: [
-      serverCompletion(),
-      hoverTooltips(),
+      serverCompletions,
       signatureHelp(),
       keymap.of([
         { key: 'Shift-Alt-f', run: formatCommand, preventDefault: true },
@@ -458,17 +580,8 @@ editorConnection.serverUi = (msg) => {
     if (/^https?:/.test(msg.uri)) window.open(msg.uri, '_blank', 'noopener');
     return;
   }
-  const path = pathOf(msg.uri);
-  if (!path || !display) return;
-  const selection = msg.selection as { start: Position } | null;
-  void display(path).then((view) => {
-    if (!view || !selection) return;
-    const at = offset(view.state.doc, selection.start);
-    view.dispatch({ selection: { anchor: at }, effects: EditorView.scrollIntoView(at, { y: 'center' }) });
-  });
+  reveal(msg.uri, (msg.selection as { start: Position } | null)?.start ?? null);
 };
-
-type Position = { line: number; character: number };
 
 setRawDiagnostics((p) => diagnostics.get(p.client)?.get(p.uri)?.diagnostics ?? []);
 
@@ -540,6 +653,7 @@ export function lspExtension(doc: Doc): Extension {
   return [
     client(server).plugin(doc.uri, doc.languageId),
     lspFeatures,
+    inlineCompletions,
     signatureDismissal,
     signatureTriggers.of(() => client(server).serverCapabilities?.signatureHelpProvider?.triggerCharacters ?? []),
     // Cmd-click (Ctrl elsewhere) jumps to the definition.
@@ -557,6 +671,13 @@ export function lspExtension(doc: Doc): Extension {
     EditorView.theme({
       '.cm-btmux-rename': { padding: '4px 8px' },
       '.cm-btmux-rename input': { marginLeft: '4px', font: 'inherit' },
+      // Diagnostic tags, as other editors show them: hints only fade or strike.
+      '.cm-lsp-unnecessary': { opacity: '0.55' },
+      '.cm-lsp-deprecated': { textDecoration: 'line-through' },
+      '.cm-lintRange-hint.cm-lsp-unnecessary, .cm-lintRange-hint.cm-lsp-deprecated': { backgroundImage: 'none' },
+      '.cm-lsp-diagnostic-code': { opacity: '0.7' },
+      '.cm-lsp-related': { margin: '2px 0 0', paddingLeft: '1.2em' },
+      '.cm-lsp-related a': { color: 'inherit', textDecoration: 'underline' },
     }),
   ];
 }

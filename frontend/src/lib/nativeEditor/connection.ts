@@ -265,8 +265,8 @@ class EditorConnection {
     this.send({ type: 'lsp_prompt_answer', server, token, action });
   }
 
-  applyEdit(edit: unknown, buffer: string | null, version: number | null) {
-    return this.request((req) => ({ type: 'apply_edit', req, edit, buffer, version }));
+  applyEdit(edit: unknown, server: number | null, buffer: string | null, version: number | null) {
+    return this.request((req) => ({ type: 'apply_edit', req, edit, server, buffer, version }));
   }
 
   save(buffer: string, force: boolean) {

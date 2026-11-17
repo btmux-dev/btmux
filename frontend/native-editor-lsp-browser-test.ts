@@ -1,6 +1,6 @@
 /** Language server features of the native editor, with test-bin/fake-lsp. Run through browser-test-stack.ts. */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, type Page } from 'playwright';
@@ -137,9 +137,7 @@ try {
 
   // Mod-i grows the selection to the word.
   await page.keyboard.press('ControlOrMeta+i');
-  await until('the word selected', () =>
-    page.evaluate(() => getSelection()?.toString() === 'thing'),
-  );
+  await until('the word selected', () => page.evaluate(() => getSelection()?.toString() === 'thing'));
   console.log('PASS selection ranges');
 
   // Code actions apply through the server's edit.
@@ -154,6 +152,54 @@ try {
   await until('the fix', async () => (await lines(page, paneId))?.startsWith('let thing = good;') ?? false);
   await pane.getByText('1 error, 0 warnings').waitFor();
   console.log('PASS code actions');
+
+  // Changes that need confirmation ask first, here and from the server.
+  const last = async () => (await lines(page, paneId))?.split('\n').at(-2);
+  await page.keyboard.press('ControlOrMeta+.');
+  await pane.getByRole('option', { name: /^Shout/ }).click();
+  await page.getByText('Shout includes changes that need confirmation: Uppercase end').waitFor();
+  // Enter takes the safe choice, listed first.
+  await page.keyboard.press('Enter');
+  await until('the change not needing confirmation', async () => (await last()) === 'end!');
+  const shoutLater = async () => {
+    await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+    await page.keyboard.press('ControlOrMeta+.');
+    await pane.getByRole('option', { name: /Shout later/ }).click();
+    await page.getByText('fake: Shout includes changes that need confirmation: Uppercase end').waitFor();
+  };
+  await shoutLater();
+  assert.equal(await page.getByText('Skip these changes', { exact: true }).count(), 0);
+  await page.keyboard.press('Enter');
+  await until('the declined edit', () => log().includes('answer workspace/applyEdit {"applied":false'));
+  assert.equal(await last(), 'end!');
+  await shoutLater();
+  await page.getByText('Apply all changes', { exact: true }).click();
+  await until('the server edit', async () => (await last()) === 'END!');
+  await until('its answer', () => log().includes('answer workspace/applyEdit {"applied":true}'));
+  console.log('PASS change annotations needing confirmation');
+
+  // The server says what renames, under which name, or why not.
+  const use = await wordRect(page, paneId, 1, 'use');
+  await page.mouse.click(use.x, use.y);
+  await page.keyboard.press('F2');
+  await page.getByText('use is a keyword').first().waitFor();
+  const renaming = await wordRect(page, paneId, 1, 'thing');
+  await page.mouse.click(renaming.x, renaming.y);
+  await page.keyboard.press('F2');
+  await until(
+    'the name',
+    async () =>
+      (await page
+        .getByLabel('New name')
+        .inputValue()
+        .catch(() => '')) === 'thing',
+  );
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.press('F2');
+  await page.getByText('Nothing to rename here').first().waitFor();
+  assert.equal(await page.getByLabel('New name').count(), 0);
+  console.log('PASS prepare rename');
 
   // Document symbols jump within the file.
   await page.keyboard.press('ControlOrMeta+Shift+o');
@@ -273,8 +319,315 @@ try {
     JSON.stringify(found),
   );
   const buffers = await call('editor_buffers', {});
-  assert(buffers.some((b: any) => b.path === main && b.language === 'fake'), JSON.stringify(buffers));
+  assert(
+    buffers.some((b: any) => b.path === main && b.language === 'fake'),
+    JSON.stringify(buffers),
+  );
   console.log('PASS MCP editor tools');
+
+  // Completions resolve: documentation for the selected one, an import once applied.
+  const complete = join(dir, 'complete.fake');
+  writeFileSync(complete, 'start\n');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: complete, line: 2, editor: 'native' });
+  await until('complete.fake', async () => (await lines(page, paneId)) === 'start\n');
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.type('imp');
+  const completions = page.locator('.cm-tooltip-autocomplete');
+  // Enter right after the list opens is ignored (autocomplete's interaction delay).
+  const acceptCompletion = async () => {
+    await page.waitForTimeout(150);
+    await page.keyboard.press('Enter');
+  };
+  await completions.locator('.cm-completionLabel', { hasText: 'importedThing' }).waitFor();
+  await completions.getByText('lib', { exact: true }).waitFor();
+  await page.locator('.cm-completionInfo').getByText('importedThing', { exact: true }).waitFor();
+  await page.locator('.cm-completionInfo').getByText('fn importedThing()').waitFor();
+  await acceptCompletion();
+  await until('the import', async () => (await lines(page, paneId)) === 'use lib;\nstart\nimportedThing');
+  assert.match(log(), /^resolve importedThing \{"from":"defaults"\}$/m);
+  console.log('PASS completion resolve');
+
+  // An import resolved after switching files still lands in the file completed in.
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('slowI');
+  await completions.locator('.cm-completionLabel', { hasText: 'slowImport' }).waitFor();
+  await acceptCompletion();
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: join(dir, 'other.fake'), line: 1, editor: 'native' });
+  await until('other.fake', async () => (await lines(page, paneId))?.startsWith('thing defined here') ?? false);
+  await until('the late resolve', () => log().includes('resolve slowImport'));
+  await page.waitForTimeout(1000);
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: complete, line: 1, editor: 'native' });
+  await until(
+    'the late import',
+    async () => (await lines(page, paneId)) === 'use slow;\nuse lib;\nstart\nimportedThing\nslowImport',
+  );
+  console.log('PASS completion resolve after switching files');
+
+  // Completions don't leave workspace mappings behind once they end.
+  const activeMappings = () =>
+    waitForAsync(
+      page,
+      async (id) => {
+        // The app's own module instances, by the URLs Vite rewrote its imports to.
+        const source = await (await fetch('/src/lib/nativeEditor/completion.ts')).text();
+        const url = (name: string) => source.match(new RegExp(`from "([^"]*${name}[^"]*)"`))![1];
+        const { EditorView } = await import(url('@codemirror_view'));
+        const { LSPPlugin } = await import(url('@codemirror_lsp-client'));
+        const content = document.querySelector(`[data-native-editor][data-pane-id="${id}"]`)!;
+        const view = EditorView.findFromDOM(content.closest('.cm-editor') as HTMLElement);
+        return String(LSPPlugin.get(view)?.client.activeMappings.length ?? 'none');
+      },
+      paneId,
+    );
+  for (let i = 0; i < 3; i++) {
+    await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+    await page.keyboard.press('ControlOrMeta+End');
+    await page.keyboard.type(' fa');
+    await completions.locator('.cm-completionLabel', { hasText: 'fakeCompletion' }).waitFor();
+    await page.keyboard.press('Escape');
+  }
+  assert.equal(await activeMappings(), '0');
+  console.log('PASS completion mappings are released');
+
+  // An additional edit right beside the completion (a postfix one's receiver) applies.
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('foo.i');
+  await completions.locator('.cm-completionLabel', { hasText: /^if$/ }).waitFor();
+  await acceptCompletion();
+  await until('the postfix completion', async () => (await lines(page, paneId))?.endsWith('\nif foo {}') ?? false);
+  console.log('PASS postfix completions');
+
+  // File operations: a file created and edited, the shown one moved with its tab.
+  const moving = join(dir, 'move.fake');
+  const moved = join(dir, 'mod', 'moved.fake');
+  const extra = join(dir, 'mod', 'extra.fake');
+  writeFileSync(moving, 'move me\n');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: moving, line: 1, editor: 'native' });
+  await until('move.fake', async () => (await lines(page, paneId)) === 'move me\n');
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+  await page.keyboard.press('ControlOrMeta+.');
+  await pane.getByRole('option', { name: /Move into a module/ }).click();
+  await pane.getByRole('tab', { name: 'moved.fake' }).waitFor();
+  await until('the moved file', async () => (await lines(page, paneId)) === 'move me\n');
+  assert.equal(await pane.getByRole('tab', { name: 'move.fake' }).count(), 0);
+  assert(!existsSync(moving) && existsSync(moved) && existsSync(extra));
+  await until('the moved file in the server', () => log().includes(`open ${moved} fake`));
+  assert.match(log(), /^workspace\/didCreateFiles .*extra\.fake/m);
+  assert.match(log(), /^workspace\/didRenameFiles .*"oldUri":"[^"]*\/move\.fake"/m);
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: extra, line: 1, editor: 'native' });
+  await until('the created file, unsaved', async () => (await lines(page, paneId)) === 'created\n');
+  console.log('PASS file operations');
+
+  // The file browser's renames update references first, and open files follow.
+  const files = (type: string, payload: object) =>
+    page.evaluate(
+      async ({ type, payload }) => {
+        const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/files`);
+        await new Promise((resolve, reject) => {
+          ws.onopen = resolve;
+          ws.onerror = reject;
+        });
+        const reply = await new Promise<{ type: string }>((resolve) => {
+          ws.onmessage = (e) => {
+            const msg = JSON.parse(e.data);
+            if (msg.id === 'test') resolve(msg);
+          };
+          ws.send(JSON.stringify({ id: 'test', type, payload }));
+        });
+        ws.close();
+        return reply;
+      },
+      { type, payload },
+    );
+  const lib = join(dir, 'lib.fake');
+  const util = join(dir, 'util.fake');
+  const user = join(dir, 'user.fake');
+  writeFileSync(lib, 'helper\n');
+  writeFileSync(user, 'use lib.fake;\n');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: lib, line: 1, editor: 'native' });
+  await until('lib.fake', async () => (await lines(page, paneId)) === 'helper\n');
+  assert.equal((await files('rename_file', { from: lib, to: util })).type, 'rename_file_result');
+  await pane.getByRole('tab', { name: 'util.fake' }).waitFor();
+  assert.equal(await pane.getByRole('tab', { name: 'lib.fake' }).count(), 0);
+  await until('the moved file', async () => (await lines(page, paneId)) === 'helper\n');
+  await until('didRenameFiles', () => /^workspace\/didRenameFiles .*util\.fake/m.test(log()));
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: user, line: 1, editor: 'native' });
+  await until('the updated reference', async () => (await lines(page, paneId)) === 'use util.fake;\n');
+  assert.equal(readFileSync(user, 'utf8'), 'use lib.fake;\n');
+  // Deleting a file closes its tab.
+  assert.equal((await files('delete_file', { root: dir, path: util })).type, 'delete_file_result');
+  await until('the closed tab', async () => (await pane.getByRole('tab', { name: 'util.fake' }).count()) === 0);
+  await until('didDeleteFiles', () => /^workspace\/didDeleteFiles .*util\.fake/m.test(log()));
+  // Creating, copying, and moving too, under free names. A create that
+  // would fail doesn't ask servers for edits first.
+  const willCreates = () => (log().match(/^workspace\/willCreateFiles$/gm) ?? []).length;
+  assert.equal((await files('create_entry', { root: dir, name: 'user.fake' })).type, 'error');
+  assert.equal(willCreates(), 0);
+  assert.equal((await files('create_entry', { root: dir, name: 'made.fake' })).type, 'create_entry_result');
+  await until('didCreateFiles', () => /^workspace\/didCreateFiles .*made\.fake/m.test(log()));
+  assert.equal(willCreates(), 1);
+  await files('copy_entries', { paths: [user], dest: join(dir, 'mod') });
+  await until('the copy', () => /^workspace\/didCreateFiles .*mod\/user\.fake/m.test(log()));
+  await files('move_entries', { paths: [join(dir, 'mod', 'user.fake'), join(dir, 'made.fake')], dest: dir });
+  await until('the move', () =>
+    /^workspace\/didRenameFiles .*"newUri":"[^"]*\/user_copy\.fake","oldUri":"[^"]*\/mod\/user\.fake"/m.test(log()),
+  );
+  assert(existsSync(join(dir, 'user_copy.fake')) && existsSync(join(dir, 'made_copy.fake')));
+  console.log('PASS file browser operations');
+
+  // Diagnostic tags fade unused code and strike deprecated code; codes link to their docs.
+  const tags = join(dir, 'tags.fake');
+  writeFileSync(tags, 'let unused = old;\n');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: tags, line: 1, editor: 'native' });
+  const unused = pane.locator('.cm-lsp-unnecessary', { hasText: 'unused' });
+  await unused.waitFor();
+  const faded = await unused.evaluate((el) => [getComputedStyle(el).opacity, getComputedStyle(el).backgroundImage]);
+  assert.deepEqual(faded, ['0.55', 'none']);
+  const old = pane.locator('.cm-lsp-deprecated', { hasText: 'old' });
+  assert.match(await old.evaluate((el) => getComputedStyle(el).textDecorationLine), /line-through/);
+  // Hints and lenses move text as they arrive; hover the mark itself.
+  await old.hover();
+  const code = page.locator('.cm-tooltip a.cm-lsp-diagnostic-code', { hasText: '(D1)' });
+  await code.waitFor();
+  assert.equal(await code.getAttribute('href'), 'https://example.com/D1');
+  console.log('PASS diagnostic tags and codes');
+
+  // Related information links to its location.
+  await page.locator('.cm-tooltip .cm-lsp-related a', { hasText: 'other.fake:1' }).click();
+  await until('the related location', async () => (await lines(page, paneId)) === 'thing defined here\n');
+  console.log('PASS related information');
+
+  // Implementations, with Mod-F12, and the palette's declaration and type definition commands.
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: tags, line: 1, editor: 'native' });
+  await until('tags.fake', async () => (await lines(page, paneId)) === 'let unused = old;\n');
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+  await page.keyboard.press('ControlOrMeta+F12');
+  await until('the implementation', async () => (await lines(page, paneId)) === 'thing defined here\n');
+  console.log('PASS go to implementation');
+
+  // Edits re-pull other files' diagnostics when they depend on each other.
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: tags, line: 1, editor: 'native' });
+  await until('tags.fake', async () => (await lines(page, paneId)) === 'let unused = old;\n');
+  const pulls = () =>
+    log()
+      .split('\n')
+      .filter((l) => l === `pull ${main}`).length;
+  const before = pulls();
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.type('withdraw');
+  await until('main.fake pulled again', () => pulls() > before);
+  console.log('PASS dependent diagnostics');
+
+  // A question the server withdraws goes away.
+  await page.keyboard.press('ControlOrMeta+.');
+  await pane.getByRole('option', { name: /Ask, then withdraw/ }).click();
+  await page.getByText('Withdrawn soon?').first().waitFor();
+  await until('the withdrawn question', async () => (await page.getByText('Withdrawn soon?').count()) === 0);
+  await until('its cancellation', () => log().includes('answer window/showMessageRequest undefined'));
+  console.log('PASS withdrawn prompts');
+
+  // Declining a code action's edit skips its command too.
+  const runs = () =>
+    log()
+      .split('\n')
+      .filter((l) => l === 'execute fake.hint ["after"]').length;
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+  await page.keyboard.press('ControlOrMeta+.');
+  await pane.getByRole('option', { name: /Confirm, then run/ }).click();
+  await page.getByText('Confirm, then run includes changes that need confirmation: Comment out').waitFor();
+  await page.keyboard.press('Escape');
+  await until('the dismissed confirmation', async () => (await page.getByText('Apply all changes').count()) === 0);
+  await page.waitForTimeout(500);
+  assert.equal(runs(), 0);
+  await page.keyboard.press('ControlOrMeta+.');
+  await pane.getByRole('option', { name: /Confirm, then run/ }).click();
+  await page.getByText('Apply all changes', { exact: true }).click();
+  await until('the command after the edit', () => runs() === 1);
+  assert((await lines(page, paneId))?.startsWith('// let unused'));
+  console.log('PASS declined code actions skip their command');
+
+  // Inlay hints resolve: a tooltip on hover, a command and a location in their
+  // label, and edits on a double click.
+  const hinted = join(dir, 'hints.fake');
+  writeFileSync(hinted, 'let x = 1;\n');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: hinted, line: 1, editor: 'native' });
+  const hint = pane.locator('.cm-lsp-inlay-hint', { hasText: ': hint' });
+  await hint.waitFor();
+  await pane.locator('.cm-lsp-code-lens').first().waitFor();
+  const [colon, type] = [
+    hint.locator('.cm-lsp-inlay-hint-part').nth(0),
+    hint.locator('.cm-lsp-inlay-hint-part').nth(1),
+  ];
+  await type.hover();
+  await page.locator('.cm-tooltip').getByText('Type of').waitFor();
+  assert.equal(await page.getByText('Fake hover for').count(), 0);
+  await until('the resolved command', async () => (await colon.getAttribute('class'))?.includes('command') ?? false);
+  await colon.click();
+  await until('the command', () => log().includes('execute fake.hint ["x"]'));
+  await hint.dblclick();
+  await until('the inserted hint', async () => (await lines(page, paneId)) === 'let x: hint = 1;\n');
+  await type.click({ modifiers: ['ControlOrMeta'] });
+  await until('the location', async () => (await lines(page, paneId)) === 'thing defined here\n');
+  console.log('PASS inlay hint resolve');
+
+  // Inline completions: ghost text to type through, cycle, accept, or dismiss.
+  const inline = join(dir, 'inline.fake');
+  writeFileSync(inline, 'x\n');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: inline, line: 1, editor: 'native' });
+  await until('inline.fake', async () => (await lines(page, paneId)) === 'x\n');
+  const ghost = pane.locator('.cm-inline-completion');
+  const ghostText = async () => ((await ghost.count()) ? await ghost.textContent() : null);
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.type('fn ');
+  await until('the ghost text', async () => (await ghostText()) === 'main() {}');
+  assert.match(log(), /^inline 2$/m);
+  // As macOS sends Option chords: the text Option types, and the physical key.
+  const optionKey = (code: string, key: string) =>
+    page.evaluate(
+      ({ code, key }) =>
+        document.activeElement?.dispatchEvent(
+          new KeyboardEvent('keydown', { key, code, altKey: true, bubbles: true, cancelable: true }),
+        ),
+      { code, key },
+    );
+  await optionKey('BracketRight', '‘');
+  await until('the next suggestion', async () => (await ghostText()) === 'other() {}');
+  await page.keyboard.press('Alt+[');
+  await until('the first again', async () => (await ghostText()) === 'main() {}');
+  await page.keyboard.type('m');
+  await until('typed through', async () => (await ghostText()) === 'ain() {}');
+  await page.keyboard.press('ControlOrMeta+ArrowRight');
+  await until('a word accepted', async () => (await ghostText()) === '() {}');
+  await page.keyboard.press('Tab');
+  await until('accepted', async () => (await lines(page, paneId)) === 'x\nfn main() {}');
+  await until('its command', () => log().includes('execute fake.hint ["inline"]'));
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('fn ');
+  await until('the ghost text again', async () => (await ghostText()) === 'main() {}');
+  await page.keyboard.press('Escape');
+  await until('dismissed', async () => (await ghostText()) === null);
+  await optionKey('Backslash', '«');
+  await until('asked for', async () => (await ghostText()) === 'main() {}');
+  assert.match(log(), /^inline 1$/m);
+  console.log('PASS inline completions');
+
+  // Esc drops a suggestion still on its way, too.
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('lazy ');
+  await optionKey('Backslash', '«');
+  await page.waitForTimeout(200);
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(1500);
+  assert.equal(await ghostText(), null);
+  assert.match(log(), /^\$\/cancelRequest$/m);
+  console.log('PASS dismissed inline completions stay dismissed');
 
   // A restarted server's watches work too.
   const count = (re: RegExp) => (log().match(re) ?? []).length;

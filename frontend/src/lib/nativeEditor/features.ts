@@ -1,7 +1,7 @@
 // Language server features beyond @codemirror/lsp-client's: highlights,
 // inlay hints, semantic tokens, code lenses, folding, selection ranges,
 // range and on-type formatting, code actions, symbols, and hierarchies.
-import { LSPPlugin } from '@codemirror/lsp-client';
+import { LSPPlugin, jumpToDeclaration, jumpToImplementation, jumpToTypeDefinition } from '@codemirror/lsp-client';
 import {
   EditorSelection,
   Prec,
@@ -16,20 +16,19 @@ import {
   EditorView,
   ViewPlugin,
   WidgetType,
+  hoverTooltip,
   keymap,
   type DecorationSet,
   type ViewUpdate,
 } from '@codemirror/view';
 import { foldService, getIndentUnit, indentUnit } from '@codemirror/language';
 import { useStore } from '../../state/store';
+import { IS_MAC } from '../nvimKeys';
+import type { Overlay } from '../../state/types';
 import { editorConnection } from './connection';
-import { viewDocs } from './doc';
+import { viewDocs, type Doc } from './doc';
+import { offset, type Command, type Location, type Position, type Range, type TextEdit } from './lspText';
 import { openPicker, type PickItem } from './picker';
-
-type Position = { line: number; character: number };
-type Range = { start: Position; end: Position };
-type Location = { uri: string; range: Range };
-type Command = { title: string; command: string; arguments?: unknown[] };
 
 /** A server-sent `$/btmux/refresh` (semantic tokens, inlay hints, code lenses). */
 export const refreshEffect = StateEffect.define<string>();
@@ -39,12 +38,6 @@ export const REFRESH_ALL = 'initialized';
 const plugin = (view: EditorView) => LSPPlugin.get(view);
 export const has = (p: LSPPlugin, capability: string) =>
   !!(p.client.serverCapabilities as Record<string, unknown> | null)?.[capability];
-
-function offset(doc: Text, pos: Position) {
-  if (pos.line >= doc.lines) return doc.length;
-  const line = doc.line(pos.line + 1);
-  return Math.min(line.from + pos.character, line.to);
-}
 
 const toast = (message: string, error?: unknown) =>
   useStore.getState().showToast(message, 'error', {
@@ -147,25 +140,199 @@ const highlightPlugin = ViewPlugin.fromClass(
   },
 );
 
-// Inlay hints for the visible lines.
+// Inlay hints for the visible lines. Their tooltips show on hover, label
+// parts jump to their location (Mod-click) or run their command (click), and
+// a double click applies their text edits, resolving them as needed.
+type Markup = string | { kind: 'markdown' | 'plaintext'; value: string };
+type HintPart = { value: string; tooltip?: Markup; location?: Location; command?: Command };
+type InlayHint = {
+  position: Position;
+  label: string | HintPart[];
+  tooltip?: Markup;
+  textEdits?: TextEdit[];
+  paddingLeft?: boolean;
+  paddingRight?: boolean;
+  data?: unknown;
+};
+
+/** The hint each widget's DOM shows, kept current when the DOM is reused. */
+const hintOf = new WeakMap<HTMLElement, { hint: InlayHint; doc: Text }>();
+const resolvedHints = new WeakMap<InlayHint, Promise<InlayHint>>();
+/** Resolved hints, for clicks that can't wait. */
+const settledHints = new WeakMap<InlayHint, InlayHint>();
+
+/** `hint` with what the server left out, if it resolves hints. */
+function resolveHint(p: LSPPlugin, hint: InlayHint): Promise<InlayHint> {
+  const provider = (p.client.serverCapabilities as any)?.inlayHintProvider;
+  if (!provider?.resolveProvider) return Promise.resolve(hint);
+  let resolved = resolvedHints.get(hint);
+  if (!resolved) {
+    resolved = p.client
+      .request<InlayHint, InlayHint>('inlayHint/resolve', hint)
+      .then(
+        (r) => ({ ...hint, ...r }),
+        () => hint,
+      )
+      .then((r) => (settledHints.set(hint, r), r));
+    resolvedHints.set(hint, resolved);
+  }
+  return resolved;
+}
+
+const hintParts = (hint: InlayHint): HintPart[] =>
+  typeof hint.label === 'string' ? [{ value: hint.label }] : hint.label;
+
 class HintWidget extends WidgetType {
+  readonly key: string;
   constructor(
-    readonly text: string,
-    readonly left: boolean,
-    readonly right: boolean,
+    readonly hint: InlayHint,
+    readonly doc: Text,
   ) {
     super();
+    this.key = JSON.stringify([hintParts(hint).map((part) => part.value), hint.paddingLeft, hint.paddingRight]);
   }
   eq(other: HintWidget) {
-    return other.text === this.text && other.left === this.left && other.right === this.right;
+    return other.hint === this.hint;
   }
   toDOM() {
     const span = document.createElement('span');
     span.className = 'cm-lsp-inlay-hint';
-    span.textContent = `${this.left ? ' ' : ''}${this.text}${this.right ? ' ' : ''}`;
+    span.dataset.key = this.key;
+    if (this.hint.paddingLeft) span.append(' ');
+    for (const part of hintParts(this.hint)) {
+      const el = document.createElement('span');
+      el.className = part.command ? 'cm-lsp-inlay-hint-part cm-lsp-inlay-hint-command' : 'cm-lsp-inlay-hint-part';
+      el.textContent = part.value;
+      span.append(el);
+    }
+    if (this.hint.paddingRight) span.append(' ');
+    hintOf.set(span, { hint: this.hint, doc: this.doc });
     return span;
   }
+  // Same label: keep the DOM, now showing this hint.
+  updateDOM(dom: HTMLElement) {
+    if (dom.dataset.key !== this.key) return false;
+    hintOf.set(dom, { hint: this.hint, doc: this.doc });
+    return true;
+  }
+  ignoreEvent() {
+    return false;
+  }
 }
+
+/** The hint under the pointer, its DOM, and the label part's index there. */
+function hoveredHint(view: EditorView, target?: EventTarget | null) {
+  const el =
+    target instanceof Element
+      ? target.closest<HTMLElement>('.cm-lsp-inlay-hint')
+      : view.contentDOM.querySelector<HTMLElement>('.cm-lsp-inlay-hint:hover');
+  const found = el && hintOf.get(el);
+  if (!el || !found || !view.contentDOM.contains(el)) return null;
+  const part =
+    target instanceof Element
+      ? target.closest('.cm-lsp-inlay-hint-part')
+      : el.querySelector('.cm-lsp-inlay-hint-part:hover');
+  const index = part ? [...el.querySelectorAll('.cm-lsp-inlay-hint-part')].indexOf(part) : -1;
+  return { el, ...found, index };
+}
+
+const hintClicks = Prec.high(
+  EditorView.domEventHandlers({
+    mousedown(e, view) {
+      const found = e.button === 0 ? hoveredHint(view, e.target) : null;
+      const p = plugin(view);
+      if (!found || !p) return false;
+      // Not a word selection: a double click applies the hint's edits.
+      if (e.detail > 1) {
+        e.preventDefault();
+        return true;
+      }
+      if (found.index < 0) return false;
+      // Resolved on the way in, usually.
+      const part = hintParts(settledHints.get(found.hint) ?? found.hint)[found.index];
+      const mod = IS_MAC ? e.metaKey : e.ctrlKey;
+      if (!part || (!mod && !part.command)) return false;
+      e.preventDefault();
+      void resolveHint(p, found.hint).then((hint) => {
+        const resolved = hintParts(hint)[found.index] ?? part;
+        if (mod && resolved.location) void jump(view, resolved.location);
+        else if (!mod && resolved.command) void execute(view, resolved.command);
+      });
+      return true;
+    },
+    mouseover(e, view) {
+      const found = hoveredHint(view, e.target);
+      const p = plugin(view);
+      if (!found || !p) return false;
+      void resolveHint(p, found.hint).then((hint) => {
+        // Commands the server only gave now.
+        if (hintOf.get(found.el)?.hint !== found.hint) return;
+        const parts = found.el.querySelectorAll('.cm-lsp-inlay-hint-part');
+        hintParts(hint).forEach((part, i) => parts[i]?.classList.toggle('cm-lsp-inlay-hint-command', !!part.command));
+      });
+      return false;
+    },
+    dblclick(e, view) {
+      const found = hoveredHint(view, e.target);
+      const p = plugin(view);
+      if (!found || !p) return false;
+      e.preventDefault();
+      void resolveHint(p, found.hint).then((hint) => {
+        // Edits are for the document the hint was made in.
+        if (view.state.doc === found.doc) applyEdits(view, hint.textEdits ?? null, 'input');
+      });
+      return true;
+    },
+  }),
+);
+
+/** Hover tooltips: the inlay hint's under the pointer, else the server's hover. */
+const hovers = hoverTooltip(
+  async (view, pos) => {
+    const p = plugin(view);
+    if (!p) return null;
+    const found = hoveredHint(view);
+    if (found) {
+      const hint = await resolveHint(p, found.hint);
+      const tooltip = (found.index >= 0 ? hintParts(hint)[found.index]?.tooltip : undefined) ?? hint.tooltip;
+      if (!tooltip || !found.el.isConnected) return null;
+      const at = view.posAtDOM(found.el);
+      return { pos: at, end: at, above: true, create: () => tooltipDOM(p, tooltip, 'plaintext') };
+    }
+    if (!has(p, 'hoverProvider')) return null;
+    const result = await ask<{ contents: HoverContents; range?: Range } | null>(view, 'textDocument/hover', (p) => ({
+      position: p.toPosition(pos),
+    }));
+    if (!result) return null;
+    const doc = view.state.doc;
+    return {
+      pos: result.range ? offset(doc, result.range.start) : pos,
+      end: result.range ? offset(doc, result.range.end) : pos,
+      above: true,
+      create: () => tooltipDOM(p, hoverMarkdown(result.contents), 'markdown'),
+    };
+  },
+  { hideOn: (tr) => tr.docChanged },
+);
+
+type MarkedString = string | { language: string; value: string };
+type HoverContents = MarkedString | MarkedString[] | { kind: 'markdown' | 'plaintext'; value: string };
+
+/** Hover contents as one markup value; marked strings are markdown, code fenced. */
+function hoverMarkdown(contents: HoverContents): Markup {
+  const one = (m: MarkedString) => (typeof m === 'string' ? m : '```' + m.language + '\n' + m.value + '\n```');
+  if (Array.isArray(contents)) return { kind: 'markdown', value: contents.map(one).join('\n\n') };
+  if (typeof contents === 'string' || 'language' in contents) return { kind: 'markdown', value: one(contents) };
+  return contents;
+}
+
+function tooltipDOM(p: LSPPlugin, value: Markup, kind: 'markdown' | 'plaintext') {
+  const dom = document.createElement('div');
+  dom.className = 'cm-lsp-hover-tooltip cm-lsp-documentation';
+  dom.innerHTML = p.docToHTML(value, kind);
+  return { dom };
+}
+
 const hints = decorationField();
 const hintRequester = requester(
   300,
@@ -173,19 +340,16 @@ const hintRequester = requester(
     const p = plugin(view);
     if (!p || !has(p, 'inlayHintProvider')) return;
     const { from, to } = view.viewport;
-    const result = await ask<
-      { position: Position; label: string | { value: string }[]; paddingLeft?: boolean; paddingRight?: boolean }[]
-    >(view, 'textDocument/inlayHint', (p) => ({ range: { start: p.toPosition(from), end: p.toPosition(to) } }));
+    const result = await ask<InlayHint[]>(view, 'textDocument/inlayHint', (p) => ({
+      range: { start: p.toPosition(from), end: p.toPosition(to) },
+    }));
     if (!result) return;
     const doc = view.state.doc;
     const widgets = result
-      .map((h) => {
-        const text = typeof h.label === 'string' ? h.label : h.label.map((part) => part.value).join('');
-        return {
-          at: offset(doc, h.position),
-          deco: Decoration.widget({ widget: new HintWidget(text, !!h.paddingLeft, !!h.paddingRight), side: 1 }),
-        };
-      })
+      .map((h) => ({
+        at: offset(doc, h.position),
+        deco: Decoration.widget({ widget: new HintWidget(h, doc), side: 1 }),
+      }))
       .sort((a, b) => a.at - b.at);
     const builder = new RangeSetBuilder<Decoration>();
     for (const w of widgets) builder.add(w.at, w.at, w.deco);
@@ -239,7 +403,7 @@ const semanticRequester = requester(
 );
 
 // Code lenses, as lines above the code.
-async function execute(view: EditorView, command: Command) {
+export async function execute(view: EditorView, command: Command) {
   const p = plugin(view);
   if (!p) return;
   try {
@@ -333,27 +497,31 @@ const foldsField = StateField.define<{ from: number; to: number }[]>({
     return value.map(({ from, to }) => ({ from: tr.changes.mapPos(from), to: tr.changes.mapPos(to) }));
   },
 });
-const foldRequester = requester(800, async (view) => {
-  const p = plugin(view);
-  if (!p || !has(p, 'foldingRangeProvider')) return;
-  const result = await ask<{ startLine: number; endLine: number; startCharacter?: number }[]>(
-    view,
-    'textDocument/foldingRange',
-    () => ({}),
-  );
-  if (!result) return;
-  const doc = view.state.doc;
-  const folds = result
-    .filter((r) => r.endLine > r.startLine && r.endLine < doc.lines)
-    .map((r) => {
-      const start = doc.line(r.startLine + 1);
-      return {
-        from: r.startCharacter !== undefined ? Math.min(start.from + r.startCharacter, start.to) : start.to,
-        to: doc.line(r.endLine + 1).to,
-      };
-    });
-  view.dispatch({ effects: setFolds.of(folds) });
-});
+const foldRequester = requester(
+  800,
+  async (view) => {
+    const p = plugin(view);
+    if (!p || !has(p, 'foldingRangeProvider')) return;
+    const result = await ask<{ startLine: number; endLine: number; startCharacter?: number }[]>(
+      view,
+      'textDocument/foldingRange',
+      () => ({}),
+    );
+    if (!result) return;
+    const doc = view.state.doc;
+    const folds = result
+      .filter((r) => r.endLine > r.startLine && r.endLine < doc.lines)
+      .map((r) => {
+        const start = doc.line(r.startLine + 1);
+        return {
+          from: r.startCharacter !== undefined ? Math.min(start.from + r.startCharacter, start.to) : start.to,
+          to: doc.line(r.endLine + 1).to,
+        };
+      });
+    view.dispatch({ effects: setFolds.of(folds) });
+  },
+  { refresh: 'workspace/foldingRange/refresh' },
+);
 const serverFolds = foldService.of((state, lineStart, lineEnd) => {
   const fold = state.field(foldsField, false)?.find((f) => f.from >= lineStart && f.from <= lineEnd && f.to > lineEnd);
   return fold ?? null;
@@ -381,7 +549,6 @@ async function expandSelection(view: EditorView) {
 }
 
 // Range and on-type formatting.
-type TextEdit = { range: Range; newText: string };
 const formatOptions = (view: EditorView) => ({
   tabSize: getIndentUnit(view.state),
   insertSpaces: !view.state.facet(indentUnit).includes('\t'),
@@ -442,10 +609,88 @@ type CodeAction = {
   data?: unknown;
 };
 
-async function applyWorkspaceEdit(view: EditorView, edit: unknown, version: number | null) {
-  const doc = viewDocs.get(view);
-  const result = await editorConnection.applyEdit(edit, doc?.buffer ?? null, version);
-  if (result.error) toast('Could not apply the change', result.error);
+type Annotated = { annotationId?: string };
+type WorkspaceEdit = {
+  changes?: Record<string, Annotated[]>;
+  documentChanges?: (Annotated & { kind?: string; edits?: Annotated[] })[];
+  changeAnnotations?: Record<string, { label: string; needsConfirmation?: boolean }>;
+};
+
+// As in `lsp/mod.rs`, whose prompts tabs answer with these titles.
+const APPLY_ALL = 'Apply all changes';
+const SKIP_CONFIRMATIONS = 'Skip these changes';
+const CANCEL = 'Cancel';
+
+/** The labels of changes in `edit` that need confirmation, and `edit` without them (null if nothing is left). */
+function confirmations(edit: WorkspaceEdit) {
+  const labels = new Set<string>();
+  const keep = (change: Annotated) => {
+    const annotation = change.annotationId ? edit.changeAnnotations?.[change.annotationId] : undefined;
+    if (!annotation?.needsConfirmation) return true;
+    labels.add(annotation.label);
+    return false;
+  };
+  let rest: WorkspaceEdit | null;
+  if (edit.documentChanges) {
+    const documentChanges = edit.documentChanges.flatMap((c) => {
+      if (!c.edits) return keep(c) ? [c] : [];
+      const edits = c.edits.filter(keep);
+      return edits.length ? [{ ...c, edits }] : [];
+    });
+    rest = documentChanges.length ? { ...edit, documentChanges } : null;
+  } else {
+    const files = Object.entries(edit.changes ?? {})
+      .map(([uri, edits]) => [uri, edits.filter(keep)] as const)
+      .filter(([, edits]) => edits.length);
+    rest = files.length ? { ...edit, changes: Object.fromEntries(files) } : null;
+  }
+  return { labels: [...labels], rest };
+}
+
+/** The action chosen, null if dismissed. */
+function choose(title: string, actions: string[]): Promise<string | null> {
+  return new Promise((resolve) => {
+    let chosen: string | null = null;
+    const overlay: Overlay = {
+      mode: 'picker',
+      title,
+      items: actions.map((a) => ({ id: a, label: a })),
+      onSelect: (action) => {
+        chosen = action;
+        useStore.getState().setOverlay(null);
+      },
+    };
+    const stop = useStore.subscribe((s) => {
+      if (s.overlay === overlay) return;
+      stop();
+      resolve(chosen);
+    });
+    useStore.getState().setOverlay(overlay);
+  });
+}
+
+/**
+ * Apply workspace edit `title` from `doc`'s language server, its positions in
+ * `doc` at `version`, first asking about changes that need confirmation.
+ * False if it was declined or failed.
+ */
+export async function applyWorkspaceEdit(
+  title: string,
+  edit: WorkspaceEdit,
+  doc: Doc | undefined,
+  version: number | null,
+): Promise<boolean> {
+  const { labels, rest } = confirmations(edit);
+  if (labels.length) {
+    // The safe choice first, so Enter doesn't apply what needs confirming.
+    const actions = rest ? [SKIP_CONFIRMATIONS, APPLY_ALL] : [CANCEL, APPLY_ALL];
+    const chosen = await choose(`${title} includes changes that need confirmation: ${labels.join(', ')}`, actions);
+    if (chosen === SKIP_CONFIRMATIONS && rest) edit = rest;
+    else if (chosen !== APPLY_ALL) return false;
+  }
+  const result = await editorConnection.applyEdit(edit, doc?.servers[0] ?? null, doc?.buffer ?? null, version);
+  if (result.error) toast(`${title} failed`, result.error);
+  return !result.error;
 }
 
 function codeActions(view: EditorView) {
@@ -477,7 +722,8 @@ function codeActions(view: EditorView) {
             if (typeof (action as Command).command === 'string') return void execute(view, action as Command);
             let a = action as CodeAction;
             if (!a.edit && !a.command && resolve) a = await p.client.request('codeAction/resolve', a);
-            if (a.edit) await applyWorkspaceEdit(view, a.edit, version);
+            // The command follows the edit, if it was made.
+            if (a.edit && !(await applyWorkspaceEdit(a.title, a.edit as WorkspaceEdit, doc, version))) return;
             if (a.command) await execute(view, a.command);
           } catch (error) {
             toast(`${action.title} failed`, error);
@@ -647,6 +893,9 @@ export const editorCommands: Record<string, (view: EditorView) => boolean | Prom
   'editor-code-actions': codeActions,
   'editor-document-symbols': documentSymbols,
   'editor-workspace-symbols': workspaceSymbols,
+  'editor-go-to-declaration': jumpToDeclaration,
+  'editor-go-to-implementation': jumpToImplementation,
+  'editor-go-to-type-definition': jumpToTypeDefinition,
   'editor-incoming-calls': hierarchy('incoming'),
   'editor-outgoing-calls': hierarchy('outgoing'),
   'editor-supertypes': hierarchy('supertypes'),
@@ -659,6 +908,8 @@ export const lspFeatures: Extension = [
   highlightPlugin,
   hints.field,
   hintRequester,
+  hintClicks,
+  hovers,
   semantic.field,
   semanticRequester,
   lenses.field,
@@ -671,6 +922,7 @@ export const lspFeatures: Extension = [
   Prec.high(
     keymap.of([
       { key: 'Mod-.', run: codeActions, preventDefault: true },
+      { key: 'Mod-F12', run: jumpToImplementation, preventDefault: true },
       { key: 'Mod-Shift-o', run: documentSymbols, preventDefault: true },
       { key: 'Mod-Alt-o', run: workspaceSymbols, preventDefault: true },
       { key: 'Shift-Alt-h', run: hierarchy('incoming'), preventDefault: true },
@@ -694,6 +946,8 @@ export const lspFeatures: Extension = [
       borderRadius: '3px',
       backgroundColor: 'color-mix(in srgb, var(--btm-editor-fg) 8%, transparent)',
     },
+    '.cm-lsp-inlay-hint-command': { cursor: 'pointer' },
+    '.cm-lsp-inlay-hint-command:hover': { textDecoration: 'underline' },
     '.cm-lsp-code-lens': { opacity: 0.65, fontSize: '85%', whiteSpace: 'pre' },
     '.cm-lsp-code-lens button': {
       font: 'inherit',

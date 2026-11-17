@@ -513,10 +513,34 @@ unconfirmed update and the server skips ones it applied) isn't the buffer's.
 The backend answers the server's requests (`workspace/configuration` from
 `config`, `applyEdit`, …), caches diagnostics for tabs connecting later, and
 keeps `$/progress` work in `lsp_status`, which editors show as progress toasts
-(`ProgressCard`, shared with the Neovim surface). Renames and code actions go through
+(`ProgressCard`, shared with the Neovim surface). Renames (whose panel asks
+`prepareRename` for the range and name, if the server has it) and code actions go through
 `apply_edit`, which edits every file named, loading unopened ones as unsaved
-buffers. Crashed servers restart up to 3 times a minute; idle ones stop after
-60 s. The backend also pulls diagnostics (`textDocument/diagnostic`) after
+buffers, and runs file operations (`file_ops.rs`) in order between runs of
+text edits (each run all or none), after checking them all against a dry run;
+a sandboxed server's stay in its mounts, deletes go to the trash, a symlink
+is moved or deleted itself (not its target) and text edits resolve symlinks
+only when their turn comes, a create reloads a clean buffer of the file it
+replaces, a rename onto a path an open
+buffer has is refused (also from the file browser: one buffer per path), and
+open buffers and pane editors' files follow a rename (`repath`, `PaneEditor::moved`).
+Servers whose `fileOperations` filters match hear of those, and of the file
+browser's creates, copies, renames, moves, and deletes (`lsp/file_events.rs`):
+the file browser first applies `will…Files` edits (10 s at most), then sends
+`did…Files`, which also moves open buffers and pane editors' files.
+Changes whose annotation `needsConfirmation` (`lsp/annotations.rs`)
+are first confirmed in the tab (`applyWorkspaceEdit`), or, for a server's
+`workspace/applyEdit`, through an `lsp_prompt`; either can skip just those
+changes. Diagnostics tagged unnecessary fade and deprecated ones strike
+through (a hint only does), their codes link to `codeDescription`, and their
+related information links to its locations; pulls follow
+`interFileDependencies`, re-pulling the server's other files tabs follow
+after an edit. Inlay
+hints resolve (`inlayHint/resolve`) once the pointer enters them: hovering
+shows their tooltip instead of the server's hover (`hovers` in `features.ts`
+replaces lsp-client's), label parts run their command on click and jump to
+their location on Mod-click, and a double click applies their edits.
+Crashed servers restart up to 3 times a minute; idle ones stop after 60 s. The backend also pulls diagnostics (`textDocument/diagnostic`) after
 changes settle, publishing them with pushed ones; watches the root for
 registered `didChangeWatchedFiles` globs (`lsp/watch.rs`: never home or above,
 minus what the root's `.gitignore` ignores; on Linux, where each directory
@@ -530,7 +554,12 @@ sandboxed session's mount (`set_sandboxes`, from `broadcast_state`) get servers
 run by `multipass exec` and a login shell in the guest. The browser's other
 features (`lib/nativeEditor/features.ts`: semantic tokens, inlay hints, code
 lenses, highlights, folding and selection ranges, code actions, symbols, call
-and type hierarchy, range and on-type formatting) request through the same
+and type hierarchy, range and on-type formatting), inline completions
+(`inlineCompletion.ts`: ghost text asked for once typing pauses or with
+Alt-\\, kept while typing matches it; Tab accepts, Mod-Right accepts a word,
+Alt-] and Alt-[ cycle, Esc dismisses), and completions
+(`completion.ts`, after lsp-client's source, adding `completionItem/resolve`
+for docs and additional edits, also after snippets) request through the same
 client; pickers are a CodeMirror panel (`picker.ts`, which highlights matched
 characters, on Enter waits for the query typed and the results it replaces
 them with later, and drops pending results and picks once closed), and the palette's

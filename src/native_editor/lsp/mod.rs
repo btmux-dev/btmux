@@ -3,7 +3,9 @@
 //! `@codemirror/lsp-client`, which takes btmux for the server) with ids of
 //! its own, answering what the server asks of its client.
 
+pub mod annotations;
 pub mod config;
+pub mod file_events;
 pub mod process;
 pub mod watch;
 
@@ -29,6 +31,11 @@ const METHOD_NOT_FOUND: i64 = -32601;
 const SERVER_NOT_INITIALIZED: i64 = -32002;
 const CONTENT_MODIFIED: i64 = -32801;
 const REQUEST_FAILED: i64 = -32803;
+const REQUEST_CANCELED: i64 = -32800;
+/// Answers to an edit that needs confirmation.
+const APPLY_ALL: &str = "Apply all changes";
+const SKIP_CONFIRMATIONS: &str = "Skip these changes";
+const CANCEL: &str = "Cancel";
 
 #[derive(Serialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -69,6 +76,17 @@ enum Pending {
     Tab(SocketId, Value),
     /// btmux's pull of a document's diagnostics.
     Pull(String),
+    /// btmux's own request, answered with the response.
+    Btmux(tokio::sync::oneshot::Sender<Value>),
+}
+
+/// What a tab's answer to a prompt goes to.
+enum Prompt {
+    /// `window/showMessageRequest`, by its request id.
+    Message(Value),
+    /// `workspace/applyEdit` with changes that need confirmation: its
+    /// request id and edit.
+    Edit(Value, Value),
 }
 
 /// After a change, wait this long for more before pulling diagnostics.
@@ -104,14 +122,16 @@ pub(super) struct Server {
     sandbox: Option<String>,
     /// It wants diagnostics pulled (`textDocument/diagnostic`).
     pull: bool,
+    /// A file's pulled diagnostics depend on other files.
+    inter_file: bool,
     /// The latest scheduled pull per buffer; older ones are skipped.
     pulls: HashMap<Uuid, u64>,
     next_pull: u64,
     /// `workspace/didChangeWatchedFiles` registrations, by id.
     watchers: Vec<(String, Vec<watch::FileWatcher>)>,
     root_watch: Option<watch::RootWatch>,
-    /// `window/showMessageRequest`s waiting for a tab, by token.
-    prompts: HashMap<u64, Value>,
+    /// Prompts waiting for a tab, by token.
+    prompts: HashMap<u64, Prompt>,
     next_prompt: u64,
 }
 
@@ -244,28 +264,50 @@ fn response(id: Value, result: Value) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "result": result })
 }
 
+fn not_applied(id: Value, reason: &str) -> Value {
+    response(id, json!({ "applied": false, "failureReason": reason }))
+}
+
+const NO_TAB: &str = "No editor is open to confirm the changes";
+
 fn error(id: Value, code: i64, message: &str) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
 }
 
-/// What btmux supports as a client: `@codemirror/lsp-client`'s features,
-/// plus what btmux answers itself.
+/// What btmux supports as a client: `@codemirror/lsp-client`'s features and
+/// btmux's own (`features.ts`, `completion.ts`), plus what btmux answers itself.
 fn client_capabilities() -> Value {
     json!({
         "general": { "positionEncodings": ["utf-16"], "markdown": { "parser": "marked" } },
         "workspace": {
             "applyEdit": true,
-            "workspaceEdit": { "documentChanges": true },
+            "workspaceEdit": {
+                "documentChanges": true,
+                "resourceOperations": ["create", "rename", "delete"],
+                "failureHandling": "textOnlyTransactional",
+                "normalizesLineEndings": true,
+                "changeAnnotationSupport": { "groupsOnLabel": false },
+            },
             "configuration": true,
             "workspaceFolders": true,
             "didChangeConfiguration": { "dynamicRegistration": false },
             "didChangeWatchedFiles": { "dynamicRegistration": true, "relativePatternSupport": true },
+            "fileOperations": {
+                "dynamicRegistration": false,
+                "willCreate": true,
+                "didCreate": true,
+                "willRename": true,
+                "didRename": true,
+                "willDelete": true,
+                "didDelete": true,
+            },
             "executeCommand": {},
             "symbol": { "resolveSupport": { "properties": ["location.range"] } },
             "semanticTokens": { "refreshSupport": true },
             "inlayHint": { "refreshSupport": true },
             "codeLens": { "refreshSupport": true },
             "diagnostics": { "refreshSupport": true },
+            "foldingRange": { "refreshSupport": true },
         },
         "textDocument": {
             "synchronization": { "didSave": true, "dynamicRegistration": false },
@@ -274,14 +316,23 @@ fn client_capabilities() -> Value {
                     "snippetSupport": true,
                     "documentationFormat": ["markdown", "plaintext"],
                     "insertReplaceSupport": false,
+                    "labelDetailsSupport": true,
+                    "resolveSupport": { "properties": ["documentation", "detail", "additionalTextEdits"] },
                 },
-                "completionList": { "itemDefaults": ["commitCharacters", "editRange", "insertTextFormat"] },
-                "completionItemKind": { "valueSet": [] },
+                "completionList": {
+                    "itemDefaults": ["commitCharacters", "editRange", "insertTextFormat", "data"],
+                },
+                // The kinds `completion.ts` shows.
+                "completionItemKind": { "valueSet": (1..=25).collect::<Vec<u8>>() },
                 "contextSupport": true,
             },
             "hover": { "contentFormat": ["markdown", "plaintext"] },
             "formatting": {},
-            "rename": {},
+            "rename": {
+                "prepareSupport": true,
+                "prepareSupportDefaultBehavior": 1,
+                "honorsChangeAnnotations": true,
+            },
             "signatureHelp": {
                 "contextSupport": true,
                 "signatureInformation": {
@@ -295,8 +346,20 @@ fn client_capabilities() -> Value {
             "implementation": {},
             "typeDefinition": {},
             "references": {},
-            "publishDiagnostics": { "relatedInformation": true, "versionSupport": true },
-            "diagnostic": { "relatedDocumentSupport": false },
+            "publishDiagnostics": {
+                "relatedInformation": true,
+                "versionSupport": true,
+                "tagSupport": { "valueSet": [1, 2] },
+                "codeDescriptionSupport": true,
+                "dataSupport": true,
+            },
+            "diagnostic": {
+                "relatedDocumentSupport": false,
+                "relatedInformation": true,
+                "tagSupport": { "valueSet": [1, 2] },
+                "codeDescriptionSupport": true,
+                "dataSupport": true,
+            },
             "codeAction": {
                 "codeActionLiteralSupport": { "codeActionKind": { "valueSet": [
                     "", "quickfix", "refactor", "refactor.extract", "refactor.inline",
@@ -306,6 +369,7 @@ fn client_capabilities() -> Value {
                 "disabledSupport": true,
                 "dataSupport": true,
                 "resolveSupport": { "properties": ["edit"] },
+                "honorsChangeAnnotations": true,
             },
             "codeLens": {},
             "documentHighlight": {},
@@ -314,7 +378,12 @@ fn client_capabilities() -> Value {
             "selectionRange": {},
             "rangeFormatting": {},
             "onTypeFormatting": {},
-            "inlayHint": { "resolveSupport": { "properties": [] } },
+            "inlayHint": {
+                "resolveSupport": {
+                    "properties": ["tooltip", "textEdits", "label.tooltip", "label.location", "label.command"],
+                },
+            },
+            "inlineCompletion": {},
             "callHierarchy": {},
             "typeHierarchy": {},
             "semanticTokens": {
@@ -332,6 +401,23 @@ fn client_capabilities() -> Value {
             "workDoneProgress": true,
         },
     })
+}
+
+/// The params of `server`'s `will…Files` or `did…Files`, if it registered
+/// for any of `changes` under its root.
+fn interested(
+    server: &Server,
+    kind: file_events::Kind,
+    will: bool,
+    changes: &[file_events::FileChange],
+) -> Option<Value> {
+    let init = server.init.as_ref().filter(|_| server.ready())?;
+    let ours: Vec<_> = changes
+        .iter()
+        .filter(|c| c.old.starts_with(&server.root) || c.new.starts_with(&server.root))
+        .cloned()
+        .collect();
+    file_events::params(init, kind, will, &ours)
 }
 
 fn toml_json(value: &Option<toml::Value>) -> Value {
@@ -461,6 +547,7 @@ impl Inner {
                             config: server_config,
                             sandbox: target.sandbox.clone(),
                             pull: false,
+                            inter_file: false,
                             pulls: HashMap::new(),
                             next_pull: 0,
                             watchers: Vec::new(),
@@ -641,7 +728,22 @@ impl Inner {
             .map(|b| b.servers.clone())
             .unwrap_or_default();
         for id in servers {
-            self.schedule_pull(id, buffer);
+            // Other files' diagnostics may depend on this one: those tabs
+            // follow, not every buffer renames or automation loaded.
+            let others: Vec<Uuid> = match self.lsp.servers.get(&id) {
+                Some(s) if s.inter_file => s
+                    .buffers
+                    .iter()
+                    .filter(|b| {
+                        **b == buffer || self.subs.get(b).is_some_and(|tabs| !tabs.is_empty())
+                    })
+                    .copied()
+                    .collect(),
+                _ => vec![buffer],
+            };
+            for other in others {
+                self.schedule_pull(id, other);
+            }
         }
     }
 
@@ -694,11 +796,59 @@ impl Inner {
             // Nobody is left to answer.
             if had && server.sockets.is_empty() {
                 let prompts: Vec<_> = server.prompts.drain().collect();
-                for (_, rid) in prompts {
-                    server.send(response(rid, Value::Null));
+                for (_, prompt) in prompts {
+                    server.send(match prompt {
+                        Prompt::Message(rid) => response(rid, Value::Null),
+                        Prompt::Edit(rid, _) => not_applied(rid, NO_TAB),
+                    });
                 }
             }
         }
+    }
+
+    /// Ask the ready servers whose root holds a changed file, and that
+    /// registered for them, about `changes` (`will…Files`): their answers.
+    pub(super) fn lsp_will_change(
+        &mut self,
+        kind: file_events::Kind,
+        changes: &[file_events::FileChange],
+    ) -> Vec<(u64, tokio::sync::oneshot::Receiver<Value>)> {
+        let mut answers = Vec::new();
+        for server in self.lsp.servers.values_mut() {
+            let Some(params) = interested(server, kind, true, changes) else {
+                continue;
+            };
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let sid = server.next_request;
+            server.next_request += 1;
+            server.pending.insert(sid, Pending::Btmux(tx));
+            server.send(json!({
+                "jsonrpc": "2.0",
+                "id": sid,
+                "method": kind.method(true),
+                "params": params,
+            }));
+            answers.push((server.id, rx));
+        }
+        answers
+    }
+
+    /// Tell those servers `changes` happened (`did…Files`).
+    pub(super) fn lsp_did_change(
+        &self,
+        kind: file_events::Kind,
+        changes: &[file_events::FileChange],
+    ) {
+        for server in self.lsp.servers.values() {
+            if let Some(params) = interested(server, kind, false, changes) {
+                server.send(notification(&kind.method(false), params));
+            }
+        }
+    }
+
+    /// The Multipass instance server `id` runs in, if it is still running.
+    pub(super) fn lsp_sandbox(&self, id: u64) -> Option<Option<String>> {
+        self.lsp.servers.get(&id).map(|s| s.sandbox.clone())
     }
 
     /// Tell tabs that prompts no longer need an answer.
@@ -873,18 +1023,52 @@ impl super::Hub {
         inner.pull_now(id, buffer);
     }
 
-    /// A tab answered `window/showMessageRequest`; the first answer wins.
-    pub(super) fn lsp_prompt_answer(&self, id: u64, token: u64, action: Option<String>) {
+    /// A tab answered a prompt; the first answer wins.
+    pub(super) fn lsp_prompt_answer(&'static self, id: u64, token: u64, action: Option<String>) {
         let mut inner = self.inner.lock().unwrap();
         let Some(server) = inner.lsp.servers.get_mut(&id) else {
             return;
         };
-        let Some(rid) = server.prompts.remove(&token) else {
+        let Some(prompt) = server.prompts.remove(&token) else {
             return;
         };
-        let result = action.map_or(Value::Null, |title| json!({ "title": title }));
-        server.send(response(rid, result));
+        let apply = match prompt {
+            Prompt::Message(rid) => {
+                let result = action.map_or(Value::Null, |title| json!({ "title": title }));
+                server.send(response(rid, result));
+                None
+            }
+            Prompt::Edit(rid, mut edit) => match action.as_deref() {
+                Some(APPLY_ALL) => Some((rid, edit)),
+                Some(SKIP_CONFIRMATIONS) => {
+                    annotations::skip_confirmations(&mut edit);
+                    Some((rid, edit))
+                }
+                _ => {
+                    server.send(not_applied(rid, "Declined"));
+                    None
+                }
+            },
+        };
         inner.prompts_done(id, &[token]);
+        drop(inner);
+        if let Some((rid, edit)) = apply {
+            self.lsp_apply_edit(id, rid, edit);
+        }
+    }
+
+    /// Apply a server's `workspace/applyEdit`, loading files first.
+    fn lsp_apply_edit(&'static self, id: u64, rid: Value, edit: Value) {
+        tokio::spawn(async move {
+            let reply = match self.apply_edit(edit, None, Some(id)).await {
+                Ok(()) => response(rid, json!({ "applied": true })),
+                Err(e) => not_applied(rid, &e),
+            };
+            let inner = self.inner.lock().unwrap();
+            if let Some(server) = inner.lsp.servers.get(&id) {
+                server.send(reply);
+            }
+        });
     }
 
     fn lsp_files_changed(&self, id: u64, generation: u32, changes: Vec<(PathBuf, u8)>) {
@@ -931,6 +1115,9 @@ impl super::Hub {
                             inner.publish(id, &uri, true, items);
                         }
                     }
+                    Some(Pending::Btmux(tx)) => {
+                        let _ = tx.send(message);
+                    }
                     None => {}
                 }
             }
@@ -943,23 +1130,9 @@ impl super::Hub {
                         }
                     }
                     Answer::Later => {}
-                    // Loads files first.
                     Answer::ApplyEdit => {
-                        let edit = message["params"]["edit"].clone();
                         drop(inner);
-                        tokio::spawn(async move {
-                            let result = self.apply_edit(edit, None).await;
-                            let reply = match result {
-                                Ok(()) => response(rid, json!({ "applied": true })),
-                                Err(e) => {
-                                    response(rid, json!({ "applied": false, "failureReason": e }))
-                                }
-                            };
-                            let inner = self.inner.lock().unwrap();
-                            if let Some(server) = inner.lsp.servers.get(&id) {
-                                server.send(reply);
-                            }
-                        });
+                        self.lsp_apply_edit(id, rid, message["params"]["edit"].clone());
                     }
                 }
             }
@@ -1071,7 +1244,9 @@ impl Inner {
             .unwrap_or(1);
         server.full_sync = kind == 1;
         server.save_text = sync["save"]["includeText"].as_bool().unwrap_or(false);
-        server.pull = !result["capabilities"]["diagnosticProvider"].is_null();
+        let provider = &result["capabilities"]["diagnosticProvider"];
+        server.pull = !provider.is_null();
+        server.inter_file = provider["interFileDependencies"] == true;
         server.state = ServerState::Ready;
         server.message = None;
         server.init = Some(result.clone());
@@ -1101,7 +1276,34 @@ impl Inner {
             return Answer::Later;
         };
         Answer::Reply(match method {
-            "workspace/applyEdit" => return Answer::ApplyEdit,
+            "workspace/applyEdit" => {
+                let edit = &params["edit"];
+                let labels = annotations::confirmations(edit);
+                if labels.is_empty() {
+                    return Answer::ApplyEdit;
+                }
+                if server.sockets.is_empty() {
+                    not_applied(rid, NO_TAB)
+                } else {
+                    // The safe choice first, so Enter doesn't apply what needs confirming.
+                    let mut rest = edit.clone();
+                    let first = match annotations::skip_confirmations(&mut rest) {
+                        true => SKIP_CONFIRMATIONS,
+                        false => CANCEL,
+                    };
+                    let actions = vec![first.to_owned(), APPLY_ALL.to_owned()];
+                    let what = match params["label"].as_str() {
+                        Some(label) => format!("{}: {label} includes", server.name),
+                        None => format!("{} wants to make", server.name),
+                    };
+                    let message = format!(
+                        "{what} changes that need confirmation: {}",
+                        labels.join(", ")
+                    );
+                    self.prompt(id, Prompt::Edit(rid, edit.clone()), 2, message, actions);
+                    return Answer::Later;
+                }
+            }
             "workspace/configuration" => {
                 let settings = toml_json(&server.config.config);
                 let items = params["items"].as_array().cloned().unwrap_or_default();
@@ -1159,25 +1361,15 @@ impl Inner {
                 if server.sockets.is_empty() {
                     response(rid, Value::Null)
                 } else {
-                    let token = server.next_prompt;
-                    server.next_prompt += 1;
-                    server.prompts.insert(token, rid);
-                    let msg = super::to_json(&EditorServerMessage::LspPrompt {
-                        server: id,
-                        token,
-                        level: params["type"].as_u64().unwrap_or(3) as u8,
-                        message: params["message"].as_str().unwrap_or_default().to_owned(),
-                        actions: params["actions"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .filter_map(|a| a["title"].as_str().map(str::to_owned))
-                            .collect(),
-                    });
-                    let sockets: Vec<_> = server.sockets.iter().copied().collect();
-                    for socket in sockets {
-                        self.send_raw(socket, msg.clone());
-                    }
+                    let level = params["type"].as_u64().unwrap_or(3) as u8;
+                    let message = params["message"].as_str().unwrap_or_default().to_owned();
+                    let actions = params["actions"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|a| a["title"].as_str().map(str::to_owned))
+                        .collect();
+                    self.prompt(id, Prompt::Message(rid), level, message, actions);
                     return Answer::Later;
                 }
             }
@@ -1203,7 +1395,8 @@ impl Inner {
             }
             "workspace/semanticTokens/refresh"
             | "workspace/inlayHint/refresh"
-            | "workspace/codeLens/refresh" => {
+            | "workspace/codeLens/refresh"
+            | "workspace/foldingRange/refresh" => {
                 // Tabs ask again.
                 let refresh = notification("$/btmux/refresh", json!({ "method": method }));
                 let sockets: Vec<_> = server.sockets.iter().copied().collect();
@@ -1215,6 +1408,34 @@ impl Inner {
             "window/workDoneProgress/create" => response(rid, Value::Null),
             _ => error(rid, METHOD_NOT_FOUND, "Not supported by btmux"),
         })
+    }
+
+    /// Ask every tab of server `id`; the first focused one shows it.
+    fn prompt(
+        &mut self,
+        id: u64,
+        prompt: Prompt,
+        level: u8,
+        message: String,
+        actions: Vec<String>,
+    ) {
+        let Some(server) = self.lsp.servers.get_mut(&id) else {
+            return;
+        };
+        let token = server.next_prompt;
+        server.next_prompt += 1;
+        server.prompts.insert(token, prompt);
+        let msg = super::to_json(&EditorServerMessage::LspPrompt {
+            server: id,
+            token,
+            level,
+            message,
+            actions,
+        });
+        let sockets: Vec<_> = server.sockets.iter().copied().collect();
+        for socket in sockets {
+            self.send_raw(socket, msg.clone());
+        }
     }
 
     fn server_notification(&mut self, id: u64, method: &str, message: Value) {
@@ -1230,6 +1451,20 @@ impl Inner {
                         .cloned()
                         .unwrap_or_default();
                     self.publish(id, uri, false, items);
+                }
+                return;
+            }
+            // The server withdrew a prompt.
+            "$/cancelRequest" => {
+                let canceled = &message["params"]["id"];
+                let token = server.prompts.iter().find_map(|(token, prompt)| {
+                    let (Prompt::Message(rid) | Prompt::Edit(rid, _)) = prompt;
+                    (rid == canceled).then_some(*token)
+                });
+                if let Some(token) = token {
+                    server.prompts.remove(&token);
+                    server.send(error(canceled.clone(), REQUEST_CANCELED, "Canceled"));
+                    self.prompts_done(id, &[token]);
                 }
                 return;
             }
