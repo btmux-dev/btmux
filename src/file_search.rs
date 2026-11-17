@@ -621,6 +621,15 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// Whether files can be listed: Windows has no `find` fallback for fd.
+    fn can_list() -> bool {
+        cfg!(unix)
+            || std::process::Command::new("fd")
+                .arg("--version")
+                .output()
+                .is_ok()
+    }
+
     fn temp_root(name: &str) -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!("btmux-{}-{}", name, uuid::Uuid::new_v4()));
         fs::create_dir_all(&root).unwrap();
@@ -629,6 +638,9 @@ mod tests {
 
     #[tokio::test]
     async fn file_search_finds_new_files_after_a_refresh() {
+        if !can_list() {
+            return;
+        }
         let root = temp_root("file-refresh");
         fs::write(root.join("old.txt"), "").unwrap();
         let index = FileIndex::with_timing(Timing {
@@ -668,6 +680,9 @@ mod tests {
 
     #[tokio::test]
     async fn file_search_keeps_each_roots_index() {
+        if !can_list() {
+            return;
+        }
         let a = temp_root("file-root-a");
         let b = temp_root("file-root-b");
         fs::write(a.join("one.txt"), "").unwrap();
@@ -747,6 +762,9 @@ mod tests {
 
     #[tokio::test]
     async fn file_search_boosts_by_result_path() {
+        if !can_list() {
+            return;
+        }
         let root = temp_root("file-boost");
         fs::create_dir_all(root.join("a")).unwrap();
         fs::create_dir_all(root.join("b")).unwrap();
@@ -765,6 +783,9 @@ mod tests {
 
     #[tokio::test]
     async fn file_search_waits_longer_after_slow_listings() {
+        if !can_list() {
+            return;
+        }
         let root = temp_root("file-slow");
         let index = FileIndex::with_timing(Timing {
             refresh_after: Duration::ZERO,
