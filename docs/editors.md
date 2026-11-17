@@ -61,7 +61,7 @@ server and project root (the nearest directory with one of the language's root
 markers, such as `Cargo.toml`, within the Git worktree). Servers are found on
 the server's `PATH`, else your shell's. Built in: rust-analyzer,
 typescript-language-server (TypeScript and JavaScript), pyright, gopls, clangd,
-lua-language-server, nil (Nix), bash-language-server, taplo (TOML),
+lua-language-server, nil (Nix, formatting with nixfmt), bash-language-server, taplo (TOML),
 yaml-language-server, and vscode-langservers-extracted (JSON, CSS, HTML).
 Every browser tab shares the servers. The status line shows each server's state
 and progress. Add or replace languages and servers in `config.toml`:

@@ -188,6 +188,10 @@ impl LspConfig {
                 )
             })
             .collect();
+        // nil has no formatter of its own.
+        if let Some(nil) = servers.get_mut("nil") {
+            nil.config = toml::from_str("nil.formatting.command = [\"nixfmt\"]").ok();
+        }
         servers.extend(file.language_servers.clone());
         let mut languages = file.languages.clone();
         for (name, id, types, roots, names) in LANGUAGES {
@@ -376,6 +380,11 @@ mod tests {
         );
         assert!(config.language(Path::new("/x/notes.txt")).is_none());
         assert_eq!(config.servers["pyright"].command, "pyright-langserver");
+        let nil = config.servers["nil"].config.as_ref().unwrap();
+        assert_eq!(
+            nil["nil"]["formatting"]["command"][0].as_str(),
+            Some("nixfmt")
+        );
     }
 
     #[test]
