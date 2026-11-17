@@ -7,6 +7,8 @@
 // - signature help: in "sig(", the parameter after as many commas
 // - hover: "Fake hover for WORD", 700 ms late for "slow", 200 paragraphs for "use"
 // - definition: WORD's first line in other.fake beside the document
+// - prepare rename: WORD's range and name; an error for "use" and "let",
+//   null where there's no word
 // - rename: every WORD in the .fake files of the document's directory,
 //   open or not (as edits to the open text or the file on disk)
 // - formatting: trailing spaces removed, 700 ms late for text with "slow"
@@ -51,12 +53,17 @@ function position(text: string, at: number): Position {
   return { line: before.length - 1, character: before[before.length - 1].length };
 }
 
-function wordAt(text: string, pos: Position) {
+function wordRange(text: string, pos: Position) {
   const at = offset(text, pos);
   let from = at;
   let to = at;
   while (from > 0 && /\w/.test(text[from - 1])) from--;
   while (to < text.length && /\w/.test(text[to])) to++;
+  return { from, to };
+}
+
+function wordAt(text: string, pos: Position) {
+  const { from, to } = wordRange(text, pos);
   return text.slice(from, to);
 }
 
@@ -101,7 +108,7 @@ function handle(msg: any): unknown {
           signatureHelpProvider: { triggerCharacters: ['(', ','] },
           hoverProvider: true,
           definitionProvider: true,
-          renameProvider: true,
+          renameProvider: { prepareProvider: true },
           documentFormattingProvider: true,
           diagnosticProvider: { interFileDependencies: false, workspaceDiagnostics: false },
           semanticTokensProvider: { legend: { tokenTypes: ['function'], tokenModifiers: [] }, full: true },
@@ -170,6 +177,14 @@ function handle(msg: any): unknown {
       const other = uriOf(join(dirname(pathOf(p.textDocument.uri)), 'other.fake'));
       const range = occurrences(text(other), word)[0];
       return range ? { uri: other, range } : null;
+    }
+    case 'textDocument/prepareRename': {
+      const t = text(p.textDocument.uri);
+      const { from, to } = wordRange(t, p.position);
+      const word = t.slice(from, to);
+      if (!word) return null;
+      if (word === 'use' || word === 'let') throw new Error(`${word} is a keyword`);
+      return { range: { start: position(t, from), end: position(t, to) }, placeholder: word };
     }
     case 'textDocument/rename': {
       const word = wordAt(text(p.textDocument.uri), p.position);
@@ -440,12 +455,20 @@ process.stdin.on('data', (chunk: Buffer) => {
         ],
       });
     if (msg.id !== undefined && msg.method) {
-      const result = handle(msg);
+      let result: unknown;
+      let failed: string | null = null;
+      try {
+        result = handle(msg);
+      } catch (error) {
+        failed = (error as Error).message;
+      }
       const reply = () =>
         send(
-          result === undefined
-            ? { jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: msg.method } }
-            : { jsonrpc: '2.0', id: msg.id, result },
+          failed !== null
+            ? { jsonrpc: '2.0', id: msg.id, error: { code: -32803, message: failed } }
+            : result === undefined
+              ? { jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: msg.method } }
+              : { jsonrpc: '2.0', id: msg.id, result },
         );
       // Late capabilities: features must ask once they arrive.
       if (msg.method === 'initialize') setTimeout(reply, 300);

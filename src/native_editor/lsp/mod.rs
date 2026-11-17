@@ -309,7 +309,7 @@ fn client_capabilities() -> Value {
             },
             "hover": { "contentFormat": ["markdown", "plaintext"] },
             "formatting": {},
-            "rename": {},
+            "rename": { "prepareSupport": true, "prepareSupportDefaultBehavior": 1 },
             "signatureHelp": {
                 "contextSupport": true,
                 "signatureInformation": {

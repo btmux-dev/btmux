@@ -166,35 +166,41 @@ function transport(server: number, workspace: () => BtmuxWorkspace): Transport {
   };
 }
 
-const setRename = StateEffect.define<boolean>();
+/** What the rename panel renames: the symbol at `pos`, now named `name`. */
+type RenameTarget = { pos: number; name: string };
 
-const renameField = StateField.define<boolean>({
-  create: () => false,
-  update: (open, tr) => tr.effects.reduce((v, e) => (e.is(setRename) ? e.value : v), open),
-  provide: (f) => showPanel.from(f, (open) => (open ? renamePanel : null)),
+const setRename = StateEffect.define<RenameTarget | null>();
+
+const renameField = StateField.define<RenameTarget | null>({
+  create: () => null,
+  update: (target, tr) => {
+    for (const e of tr.effects) if (e.is(setRename)) return e.value;
+    return target && tr.docChanged ? { ...target, pos: tr.changes.mapPos(target.pos) } : target;
+  },
+  provide: (f) => showPanel.from(f, (target) => (target ? renamePanel : null)),
 });
 
 function renamePanel(view: EditorView): Panel {
-  const word = view.state.wordAt(view.state.selection.main.head);
   const form = document.createElement('form');
   form.className = 'cm-btmux-rename';
   const label = document.createElement('label');
   label.textContent = 'Rename to ';
   const input = document.createElement('input');
   input.name = 'name';
-  input.value = word ? view.state.sliceDoc(word.from, word.to) : '';
+  input.value = view.state.field(renameField)?.name ?? '';
   input.setAttribute('aria-label', 'New name');
   label.append(input);
   form.append(label);
   const close = () => {
-    view.dispatch({ effects: setRename.of(false) });
+    view.dispatch({ effects: setRename.of(null) });
     view.focus();
   };
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     const name = input.value.trim();
+    const target = view.state.field(renameField);
     close();
-    if (name) void rename(view, name);
+    if (name && target) void rename(view, target.pos, name);
   });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
@@ -212,30 +218,78 @@ function renamePanel(view: EditorView): Panel {
   };
 }
 
+type PrepareRename = Range | { range: Range; placeholder: string } | { defaultBehavior: boolean } | null;
+
+/** The word at `pos`, which servers without `prepareRename` (or deferring to the client) rename. */
+function wordTarget(view: EditorView, pos: number): RenameTarget | null {
+  const word = view.state.wordAt(pos);
+  return word && { pos: word.from, name: view.state.sliceDoc(word.from, word.to) };
+}
+
 const startRename = (view: EditorView) => {
   const plugin = LSPPlugin.get(view);
-  if (!plugin || !view.state.wordAt(view.state.selection.main.head)) return false;
-  view.dispatch({ effects: setRename.of(true) });
+  if (!plugin) return false;
+  const head = view.state.selection.main.head;
+  const provider = plugin.client.serverCapabilities?.renameProvider;
+  if (typeof provider === 'object' && provider.prepareProvider) {
+    void prepareRename(view, plugin, head);
+    return true;
+  }
+  const target = wordTarget(view, head);
+  if (!target) return false;
+  view.dispatch({ effects: setRename.of(target) });
   return true;
 };
+
+/** Ask the server what's renamed at `head` and under which name, then open the panel. */
+async function prepareRename(view: EditorView, plugin: LSPPlugin, head: number) {
+  plugin.client.sync();
+  const start = view.state.doc;
+  let result: PrepareRename;
+  try {
+    result = await plugin.client.request<object, PrepareRename>('textDocument/prepareRename', {
+      textDocument: { uri: plugin.uri },
+      position: plugin.toPosition(head),
+    });
+  } catch (error) {
+    // Servers explain why in the error (a keyword, a library symbol).
+    toast('Cannot rename this', error);
+    return;
+  }
+  // Typed meanwhile, or showing another file.
+  if (LSPPlugin.get(view) !== plugin || view.state.doc !== start) return;
+  let target: RenameTarget | null;
+  if (!result) target = null;
+  else if ('defaultBehavior' in result) target = wordTarget(view, head);
+  else {
+    const range = 'range' in result ? result.range : result;
+    const from = offset(start, range.start);
+    const to = offset(start, range.end);
+    target = { pos: from, name: 'placeholder' in result ? result.placeholder : start.sliceString(from, to) };
+  }
+  if (!target) {
+    useStore.getState().showToast('Nothing to rename here', 'info');
+    return;
+  }
+  view.dispatch({ effects: setRename.of(target) });
+}
 
 const toast = (message: string, error: unknown) =>
   useStore.getState().showToast(message, 'error', {
     body: error instanceof Error ? error.message : String((error as any)?.message ?? error),
   });
 
-/** Rename across files: the server applies the edit to every buffer, open or not. */
-async function rename(view: EditorView, newName: string) {
+/** Rename the symbol at `pos` across files: the server applies the edit to every buffer, open or not. */
+async function rename(view: EditorView, pos: number, newName: string) {
   const plugin = LSPPlugin.get(view);
   const doc = viewDocs.get(view);
-  const word = view.state.wordAt(view.state.selection.main.head);
-  if (!plugin || !doc || !word) return;
+  if (!plugin || !doc) return;
   plugin.client.sync();
   const version = doc.version();
   try {
     const edit = await plugin.client.request<object, Parameters<typeof applyWorkspaceEdit>[1] | null>(
       'textDocument/rename',
-      { textDocument: { uri: plugin.uri }, position: plugin.toPosition(word.from), newName },
+      { textDocument: { uri: plugin.uri }, position: plugin.toPosition(pos), newName },
     );
     if (edit) await applyWorkspaceEdit('Rename', edit, doc, version);
   } catch (error) {
@@ -466,6 +520,7 @@ editorConnection.serverUi = (msg) => {
 };
 
 type Position = { line: number; character: number };
+type Range = { start: Position; end: Position };
 
 setRawDiagnostics((p) => diagnostics.get(p.client)?.get(p.uri)?.diagnostics ?? []);
 

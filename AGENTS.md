@@ -513,7 +513,8 @@ unconfirmed update and the server skips ones it applied) isn't the buffer's.
 The backend answers the server's requests (`workspace/configuration` from
 `config`, `applyEdit`, …), caches diagnostics for tabs connecting later, and
 keeps `$/progress` work in `lsp_status`, which editors show as progress toasts
-(`ProgressCard`, shared with the Neovim surface). Renames and code actions go through
+(`ProgressCard`, shared with the Neovim surface). Renames (whose panel asks
+`prepareRename` for the range and name, if the server has it) and code actions go through
 `apply_edit`, which edits every file named, loading unopened ones as unsaved
 buffers, and runs file operations (`file_ops.rs`) in order between runs of
 text edits (each run all or none), after checking them all against a dry run;

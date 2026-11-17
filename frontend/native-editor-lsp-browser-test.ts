@@ -169,6 +169,29 @@ try {
   await until('its answer', () => log().includes('answer workspace/applyEdit {"applied":true}'));
   console.log('PASS change annotations needing confirmation');
 
+  // The server says what renames, under which name, or why not.
+  const use = await wordRect(page, paneId, 1, 'use');
+  await page.mouse.click(use.x, use.y);
+  await page.keyboard.press('F2');
+  await page.getByText('use is a keyword').waitFor();
+  const renaming = await wordRect(page, paneId, 1, 'thing');
+  await page.mouse.click(renaming.x, renaming.y);
+  await page.keyboard.press('F2');
+  await until(
+    'the name',
+    async () =>
+      (await page
+        .getByLabel('New name')
+        .inputValue()
+        .catch(() => '')) === 'thing',
+  );
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.press('F2');
+  await page.getByText('Nothing to rename here').first().waitFor();
+  assert.equal(await page.getByLabel('New name').count(), 0);
+  console.log('PASS prepare rename');
+
   // Document symbols jump within the file.
   await page.keyboard.press('ControlOrMeta+Shift+o');
   await pane.getByRole('option').nth(1).waitFor();
