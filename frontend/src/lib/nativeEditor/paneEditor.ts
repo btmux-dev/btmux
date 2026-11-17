@@ -35,8 +35,8 @@ type Vim = typeof import('./vim');
 // Loaded once vim is turned on.
 let vimLoader: Promise<Vim> | null = null;
 
-/** The keymap scope of quick open's chord, run ahead of vim (`keydown`). */
-const QUICK_OPEN_SCOPE = 'btmux-quick-open';
+/** The keymap scope of chords run ahead of vim (`keydown`). */
+const EARLY_SCOPE = 'btmux-early';
 
 /** Longest wait for formatting before a save goes ahead without it. */
 const FORMAT_TIMEOUT_MS = 3000;
@@ -49,12 +49,12 @@ const DOUBLE_ESC_MS = 300;
 
 /**
  * Alt-W closes the shown file (Mod-W closes the browser tab). CodeMirror's
- * keymaps skip Option chords on macOS, so it is matched here, unless Option
- * types ASCII text there on this layout.
+ * keymaps skip Option chords on macOS, so there it is matched here, unless
+ * Option types ASCII text on this layout; elsewhere it is a keymap binding,
+ * which also matches other layouts and Caps Lock.
  */
-function isCloseKey(e: KeyboardEvent): boolean {
-  if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return false;
-  if (!IS_MAC) return e.key === 'w';
+function isMacCloseKey(e: KeyboardEvent): boolean {
+  if (!IS_MAC || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return false;
   return macOptionText(e) === null && physicalKey(e) === 'w';
 }
 
@@ -164,7 +164,10 @@ export class PaneEditor {
           if (this.active) noteOpened(this.active);
         },
       }),
-      keymap.of([{ key: 'Mod-p', run: () => this.quickOpen(), preventDefault: true, scope: QUICK_OPEN_SCOPE }]),
+      keymap.of([
+        { key: 'Mod-p', run: () => this.quickOpen(), preventDefault: true, scope: EARLY_SCOPE },
+        ...(IS_MAC ? [] : [{ key: 'Alt-w', run: () => this.close(false), preventDefault: true, scope: EARLY_SCOPE }]),
+      ]),
     ];
   }
 
@@ -265,11 +268,11 @@ export class PaneEditor {
       return true;
     }
     this.esc = { last: -Infinity, armed: false };
-    if (isCloseKey(e) && this.close(false)) {
+    if (isMacCloseKey(e) && this.close(false)) {
       e.preventDefault();
       return true;
     }
-    return runScopeHandlers(view, e, QUICK_OPEN_SCOPE);
+    return runScopeHandlers(view, e, EARLY_SCOPE);
   }
 
   private countProblems() {

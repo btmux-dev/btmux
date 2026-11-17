@@ -938,6 +938,17 @@ try {
     await page.getByRole('tab', { name: 'vim.txt' }).waitFor({ state: 'detached' });
     assert.equal(readFileSync(vimFile, 'utf8'), 'top\nhello alpha\nbeta\n');
     console.log('PASS Alt-W closes the file');
+
+    // It goes by the physical key with Caps Lock or another layout.
+    for (const key of ['W', 'ц']) {
+      await openBd();
+      await content.evaluate((el, key) => {
+        const init = { key, code: 'KeyW', keyCode: 87, altKey: true, bubbles: true, cancelable: true };
+        el.dispatchEvent(new KeyboardEvent('keydown', init));
+      }, key);
+      await bdTab.waitFor({ state: 'detached' });
+    }
+    console.log('PASS Alt-W closes the file with Caps Lock or another layout');
   }
 } finally {
   await browser.close();
