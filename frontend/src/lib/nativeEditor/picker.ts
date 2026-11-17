@@ -16,8 +16,11 @@ export interface PickerSpec {
   title: string;
   /** Fixed items, filtered by what is typed… */
   items?: PickItem[];
-  /** …or items asked for as the query changes (workspace symbols). */
-  query?: (text: string) => Promise<PickItem[]>;
+  /**
+   * …or items asked for as the query changes (workspace symbols, files).
+   * `refresh` replaces them with newer ones for the same text later.
+   */
+  query?: (text: string, refresh: (items: PickItem[]) => void) => Promise<PickItem[]>;
 }
 
 const setPicker = StateEffect.define<PickerSpec | null>();
@@ -83,7 +86,11 @@ function pickerPanel(view: EditorView, spec: PickerSpec): Panel {
   let shown: PickItem[] = [];
   let selected = 0;
   let generation = 0;
+  // Closed or replaced: pending results and picks are dropped.
+  let closed = false;
   const close = () => {
+    if (closed) return;
+    closed = true;
     view.dispatch({ effects: setPicker.of(null) });
     view.focus();
   };
@@ -117,16 +124,25 @@ function pickerPanel(view: EditorView, spec: PickerSpec): Panel {
     (settled = (async () => {
       const text = input.value;
       const g = ++generation;
-      const items = spec.query ? await spec.query(text).catch(() => []) : (spec.items ?? []);
-      if (g !== generation) return;
+      const refresh = (items: PickItem[]) => {
+        if (g !== generation || closed) return;
+        // Keep the selected item if it is still there.
+        const current = shown[selected];
+        shown = items;
+        selected = Math.max(
+          0,
+          items.findIndex((item) => item.label === current?.label && item.detail === current?.detail),
+        );
+        render();
+      };
+      const items = spec.query ? await spec.query(text, refresh).catch(() => []) : (spec.items ?? []);
+      if (g !== generation || closed) return;
       shown = spec.query ? items : items.filter((item) => fuzzyMatch(item.label, text));
       selected = 0;
       render();
     })());
-  let picked = false;
   const pick = (i: number) => {
-    if (picked) return;
-    picked = true;
+    if (closed) return;
     const item = shown[i];
     close();
     item?.run();
@@ -170,7 +186,10 @@ function pickerPanel(view: EditorView, spec: PickerSpec): Panel {
     dom,
     top: true,
     mount: () => input.focus(),
-    destroy: () => clearTimeout(timer),
+    destroy: () => {
+      closed = true;
+      clearTimeout(timer);
+    },
   };
 }
 

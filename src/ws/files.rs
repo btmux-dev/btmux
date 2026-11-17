@@ -196,14 +196,20 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 .get("path")
                 .and_then(|p| p.as_str())
                 .unwrap_or(".");
+            let fresh = request
+                .payload
+                .get("fresh")
+                .and_then(|f| f.as_bool())
+                .unwrap_or(false);
             let search_root = fs_ops::validate_path(&root, path).unwrap_or_else(|_| root.clone());
 
-            match state.file_index.search(query, &search_root).await {
-                Ok(results) => ServerMessage {
+            match state.file_index.search(query, &search_root, fresh).await {
+                Ok(search) => ServerMessage {
                     id,
                     msg_type: "search_files_result".to_string(),
                     payload: serde_json::json!({
-                        "results": results,
+                        "results": search.results,
+                        "refreshing": search.refreshing,
                         "done": true,
                     }),
                 },

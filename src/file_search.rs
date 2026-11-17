@@ -25,6 +25,13 @@ pub struct FileSearchResult {
     pub score: u32,
 }
 
+#[derive(Debug, Default, Serialize)]
+pub struct FileSearch {
+    pub results: Vec<FileSearchResult>,
+    /// The root is being listed again; a `fresh` search waits for it.
+    pub refreshing: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SearchResult {
     pub path: String,
@@ -63,21 +70,33 @@ impl FileIndex {
         }
     }
 
-    pub async fn search(&self, query: &str, root: &Path) -> Result<Vec<FileSearchResult>, String> {
+    /// Matches of `query` under `root`. A stale list is searched while it is
+    /// listed again (`refreshing`); `fresh` waits for that listing instead.
+    pub async fn search(
+        &self,
+        query: &str,
+        root: &Path,
+        fresh: bool,
+    ) -> Result<FileSearch, String> {
         if query.trim().is_empty() {
-            return Ok(Vec::new());
+            return Ok(FileSearch::default());
         }
-        let files = self.files(root).await?;
+        let (files, refreshing) = self.files(root, fresh).await?;
         let query = query.to_string();
         let root = crate::fs_ops::client_path(root);
-        tokio::task::spawn_blocking(move || match_files(&files, &query, &root))
+        let results = tokio::task::spawn_blocking(move || match_files(&files, &query, &root))
             .await
-            .map_err(|error| format!("File search failed: {}", error))
+            .map_err(|error| format!("File search failed: {}", error))?;
+        Ok(FileSearch {
+            results,
+            refreshing,
+        })
     }
 
-    /// `root`'s files, listed now if it has none.
-    async fn files(&self, root: &Path) -> Result<Files, String> {
-        let mut listing = {
+    /// `root`'s files, listed now if it has none, and whether they are being
+    /// listed again. `fresh` waits for a listing in flight.
+    async fn files(&self, root: &Path, fresh: bool) -> Result<(Files, bool), String> {
+        let (mut listing, stale) = {
             let mut roots = self.roots.lock().unwrap();
             let entry = match roots.iter().position(|r| r.path == root) {
                 Some(at) => roots.remove(at),
@@ -92,20 +111,33 @@ impl FileIndex {
                 roots.remove(0);
             }
             let entry = roots.last_mut().unwrap();
-            if let Some((files, listed)) = &entry.files {
-                let files = files.clone();
-                if listed.elapsed() >= self.refresh_after && entry.listing.is_none() {
-                    entry.listing = Some(self.list(root));
+            match &entry.files {
+                Some((files, listed)) => {
+                    let files = files.clone();
+                    if listed.elapsed() >= self.refresh_after && entry.listing.is_none() {
+                        entry.listing = Some(self.list(root));
+                    }
+                    match &entry.listing {
+                        Some(listing) if fresh => (listing.clone(), Some(files)),
+                        listing => return Ok((files, listing.is_some())),
+                    }
                 }
-                return Ok(files);
+                None => (
+                    entry.listing.get_or_insert_with(|| self.list(root)).clone(),
+                    None,
+                ),
             }
-            entry.listing.get_or_insert_with(|| self.list(root)).clone()
         };
-        let result = listing
-            .wait_for(Option::is_some)
-            .await
-            .map_err(|_| "File listing stopped".to_string())?;
-        result.clone().unwrap()
+        let result = match listing.wait_for(Option::is_some).await {
+            Ok(result) => result.clone().unwrap(),
+            Err(_) => Err("File listing stopped".to_string()),
+        };
+        match (result, stale) {
+            (Ok(files), _) => Ok((files, false)),
+            // A failed relisting keeps the last list.
+            (Err(_), Some(files)) => Ok((files, false)),
+            (Err(error), None) => Err(error),
+        }
     }
 
     /// Lists `root` in a task of its own, which stores the result if `root`
@@ -464,7 +496,11 @@ mod tests {
         fs::write(root.join("build/needle.txt"), "").unwrap();
         fs::write(root.join(".needle.txt"), "").unwrap();
 
-        let results = FileIndex::new().search("needle", &root).await.unwrap();
+        let results = FileIndex::new()
+            .search("needle", &root, false)
+            .await
+            .unwrap()
+            .results;
 
         let paths: Vec<_> = results.iter().map(|r| r.path.as_str()).collect();
         assert_eq!(
@@ -485,24 +521,27 @@ mod tests {
         let root = temp_root("file-refresh");
         fs::write(root.join("old.txt"), "").unwrap();
         let index = FileIndex::with_refresh(Duration::ZERO);
-        let paths = |results: Vec<super::FileSearchResult>| {
-            results.into_iter().map(|r| r.path).collect::<Vec<_>>()
+        let paths = |search: &super::FileSearch| {
+            search
+                .results
+                .iter()
+                .map(|r| r.path.clone())
+                .collect::<Vec<_>>()
         };
         let new = crate::fs_ops::client_path(&root.join("new.txt"));
 
-        assert!(paths(index.search("txt", &root).await.unwrap()).len() == 1);
+        let first = index.search("txt", &root, false).await.unwrap();
+        assert_eq!(paths(&first).len(), 1);
+        assert!(!first.refreshing);
         fs::write(root.join("new.txt"), "").unwrap();
-        // The stale list is served while the root is listed again.
-        assert!(!paths(index.search("new", &root).await.unwrap()).contains(&new));
-        let mut found = false;
-        for _ in 0..100 {
-            if paths(index.search("new", &root).await.unwrap()).contains(&new) {
-                found = true;
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        assert!(found, "new file found after the refresh");
+        // The stale list is served while the root is listed again…
+        let stale = index.search("new", &root, false).await.unwrap();
+        assert!(!paths(&stale).contains(&new));
+        assert!(stale.refreshing);
+        // …and a fresh search waits for that listing.
+        let fresh = index.search("new", &root, true).await.unwrap();
+        assert_eq!(paths(&fresh), [new]);
+        assert!(!fresh.refreshing);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -514,13 +553,19 @@ mod tests {
         fs::write(b.join("two.txt"), "").unwrap();
         let index = FileIndex::new();
 
-        let first_a = index.files(&a).await.unwrap();
-        let first_b = index.files(&b).await.unwrap();
+        let first_a = index.files(&a, false).await.unwrap().0;
+        let first_b = index.files(&b, false).await.unwrap().0;
         for _ in 0..3 {
-            assert!(Arc::ptr_eq(&first_a, &index.files(&a).await.unwrap()));
-            assert!(Arc::ptr_eq(&first_b, &index.files(&b).await.unwrap()));
+            assert!(Arc::ptr_eq(
+                &first_a,
+                &index.files(&a, false).await.unwrap().0
+            ));
+            assert!(Arc::ptr_eq(
+                &first_b,
+                &index.files(&b, false).await.unwrap().0
+            ));
         }
-        let results = index.search("two", &b).await.unwrap();
+        let results = index.search("two", &b, false).await.unwrap().results;
         assert_eq!(
             results.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(),
             [crate::fs_ops::client_path(&b.join("two.txt"))]
@@ -529,9 +574,12 @@ mod tests {
         // Past `MAX_ROOTS`, the least recently searched root is dropped.
         let others: Vec<_> = (0..MAX_ROOTS).map(|_| temp_root("file-root")).collect();
         for root in &others {
-            index.files(root).await.unwrap();
+            index.files(root, false).await.unwrap();
         }
-        assert!(!Arc::ptr_eq(&first_a, &index.files(&a).await.unwrap()));
+        assert!(!Arc::ptr_eq(
+            &first_a,
+            &index.files(&a, false).await.unwrap().0
+        ));
         for root in others.iter().chain([&a, &b]) {
             fs::remove_dir_all(root).unwrap();
         }

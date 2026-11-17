@@ -628,8 +628,10 @@ export function runAction(
     case 'editor-expand-selection': {
       const win = session?.windows[session.active_window];
       const paneId = win?.zoomed_pane ?? win?.panes[win.active_pane]?.id ?? null;
-      if (!paneId || !nativeEditorOver(store, paneId) || !runEditorCommand(paneId, action))
-        store.showToast('Needs a file with a language server open in the editor', 'info');
+      const failed = () =>
+        useStore.getState().showToast('Needs a file with a language server open in the editor', 'info');
+      if (!paneId || !nativeEditorOver(store, paneId)) failed();
+      else runEditorCommand(paneId, action, failed);
       break;
     }
     case 'shut-down-neovim':

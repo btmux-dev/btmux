@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { chromium, type Page } from 'playwright';
+import { chromium, type BrowserContext, type Page } from 'playwright';
 import { waitForAsync } from './browser-test-utils';
 
 const url = process.env.BTMUX_TEST_URL ?? 'http://localhost:5173';
@@ -29,8 +29,9 @@ const session: { id: string; name: string } = await api('/api/sessions', 'POST',
 });
 const browser = await chromium.launch({ headless: true, channel: process.env.BTMUX_TEST_BROWSER });
 
-async function openPage(): Promise<Page> {
+async function openPage(setup?: (context: BrowserContext) => Promise<void>): Promise<Page> {
   const context = await browser.newContext({ viewport: { width: 1200, height: 800 } });
+  await setup?.(context);
   const page = await context.newPage();
   page.on('pageerror', (error) => console.error('page error:', error.message));
   await page.goto(url);
@@ -233,16 +234,16 @@ try {
   await editorPane.locator('.cm-activeLine', { hasText: /^line two$/ }).waitFor();
   console.log('PASS quick open goes to file:line and :line');
 
-  // A file created after the first search shows up once the index refreshes.
+  // A file created after the first search shows up for the query typed once
+  // the stale index (over 5 s old) is listed again.
   const late = join(dir, 'late-arrival.txt');
   writeFileSync(late, 'late\n');
+  await page.waitForTimeout(5500);
   await page.keyboard.press('ControlOrMeta+p');
   await goToFile.waitFor();
+  await page.keyboard.type('latearr');
   const lateOption = editorPane.getByRole('option', { name: /late-arrival\.txt/ });
-  for (let i = 0; i < 40 && !(await lateOption.count()); i++) {
-    await goToFile.fill(i % 2 ? 'latearr' : 'latearri');
-    await page.waitForTimeout(500);
-  }
+  await lateOption.waitFor();
   await lateOption.click();
   await activeFile(late);
   await waitForText(page, paneId, 'late\n');
@@ -264,7 +265,40 @@ try {
   await page.keyboard.press('Enter');
   await activeFile(fileB);
   await waitForText(page, paneId, 'const x = 1;\n');
+  // And with the editor already shown, typing still goes to quick open.
+  await page.keyboard.press('Control+a');
+  await page.keyboard.press(':');
+  await page.keyboard.type('editor quick open');
+  await page.keyboard.press('Enter');
+  await goToFile.waitFor();
+  await waitForAsync(page, () => document.activeElement?.getAttribute('aria-label') === 'Go to file');
+  await page.keyboard.type('qotgt');
+  assert.equal(await goToFile.inputValue(), 'qotgt');
+  await targetOption.waitFor();
+  await page.keyboard.press('Enter');
+  await activeFile(target);
+  assert.equal(readFileSync(fileB, 'utf8'), 'const x = 1;\n');
   console.log('PASS the command palette runs quick open');
+
+  // Esc after Enter, before the results arrive, cancels the pick.
+  const slow = await openPage(async (context) => {
+    await context.routeWebSocket(/\/ws\/files/, (ws) => {
+      const server = ws.connectToServer();
+      server.onMessage((message) => setTimeout(() => ws.send(message), 1500));
+    });
+  });
+  const slowInput = slow.locator(`[data-native-editor][data-pane-id="${paneId}"]`);
+  await waitForText(slow, paneId, 'found me\nline two\nline three\n');
+  await slowInput.click();
+  await slow.keyboard.press('ControlOrMeta+p');
+  await slow.locator(`[data-editor-pane="${paneId}"]`).getByRole('combobox', { name: 'Go to file' }).waitFor();
+  await slow.keyboard.type('b.ts');
+  await slow.keyboard.press('Enter');
+  await slow.keyboard.press('Escape');
+  await slow.waitForTimeout(2500);
+  await activeFile(target);
+  await slow.context().close();
+  console.log('PASS Esc cancels a pick waiting for results');
 
   // Language servers, with a fake one (test-bin/fake-lsp).
   const lspDir = process.env.BTMUX_TEST_LSP;

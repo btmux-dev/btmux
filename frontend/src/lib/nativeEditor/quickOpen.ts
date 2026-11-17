@@ -119,7 +119,7 @@ export function quickOpen(view: EditorView, pane: QuickOpenPane, open: (path: st
   const prefix = pane.root.endsWith('/') ? pane.root : `${pane.root}/`;
   openPicker(view, {
     title: 'Go to file',
-    query: async (typed) => {
+    query: async (typed, refresh) => {
       const { query: text, line } = parseQuery(typed);
       const item = (path: string, matches?: number[]): PickItem => {
         const described = describe(path, prefix, matches);
@@ -140,25 +140,36 @@ export function quickOpen(view: EditorView, pane: QuickOpenPane, open: (path: st
         const others = recent.filter((p) => p !== pane.active && !pane.files.includes(p) && p.startsWith(prefix));
         return [...opened, ...others].map((path) => item(path));
       }
-      let results: FileSearchResult[];
-      try {
-        ({ results } = await files.request<{ results: FileSearchResult[] }>('search_files', {
+      const search = (fresh: boolean) =>
+        files.request<{ results: FileSearchResult[]; refreshing: boolean }>('search_files', {
           root: pane.root,
           path: '.',
           query: text,
-        }));
+          fresh,
+        });
+      const boost = (path: string) =>
+        pane.files.includes(path) ? OPEN_BOOST : recent.includes(path) ? RECENT_BOOST : 0;
+      const items = (results: FileSearchResult[]) =>
+        results
+          .map((result, order) => ({ result, order, score: result.score + boost(result.path) }))
+          .sort((a, b) => b.score - a.score || a.order - b.order)
+          .map(({ result }) => item(result.path, result.indices));
+      let response;
+      try {
+        response = await search(false);
       } catch (error) {
         useStore.getState().showToast('File search failed', 'error', {
           body: error instanceof Error ? error.message : String(error),
         });
         return [];
       }
-      const boost = (path: string) =>
-        pane.files.includes(path) ? OPEN_BOOST : recent.includes(path) ? RECENT_BOOST : 0;
-      return results
-        .map((result, order) => ({ result, order, score: result.score + boost(result.path) }))
-        .sort((a, b) => b.score - a.score || a.order - b.order)
-        .map(({ result }) => item(result.path, result.indices));
+      // A stale list was searched: search again once the folder is listed.
+      if (response.refreshing)
+        search(true).then(
+          ({ results }) => refresh(items(results)),
+          () => {},
+        );
+      return items(response.results);
     },
   });
 }

@@ -55,10 +55,21 @@ export function FileSearch({ fileSend, currentPath, focusedIndex, onPreview }: F
       setIsLoading(true);
       try {
         if (searchMode === 'files') {
-          const resp = await fileSend('search_files', { query: searchQuery, path: '.', root: currentPath });
-          const payload = resp.payload as { results: FileSearchResult[] };
+          const request = { query: searchQuery, path: '.', root: currentPath };
+          const resp = await fileSend('search_files', request);
+          const payload = resp.payload as { results: FileSearchResult[]; refreshing?: boolean };
           if (generation === searchGenerationRef.current) {
             store.getState().setSearchResults(payload.results ?? []);
+          }
+          // A stale list was searched: search again once the folder is listed.
+          if (payload.refreshing) {
+            fileSend('search_files', { ...request, fresh: true }).then(
+              (fresh) => {
+                if (generation === searchGenerationRef.current)
+                  store.getState().setSearchResults((fresh.payload as { results: FileSearchResult[] }).results ?? []);
+              },
+              () => {},
+            );
           }
         } else {
           const resp = await fileSend('search_content', { query: searchQuery, path: '.', root: currentPath });
