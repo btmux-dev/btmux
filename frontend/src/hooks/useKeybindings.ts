@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { editorShown, nativeEditorInput, nativeEditorOver, useStore } from '../state/store';
 import { dispatchKey } from '../lib/paneTerminal';
-import { runEditorCommand } from '../lib/nativeEditor/registry';
+import { runEditorCommand, runEditorCommandWhenShown } from '../lib/nativeEditor/registry';
 import { ClientMessage } from '../protocol/messages';
 import type { Appearance } from '../state/types';
 import { Overlay, PickerItem } from '../state/types';
@@ -602,6 +602,20 @@ export function runAction(
       } else if (editor === 'neovim') {
         store.setNvimOpen(!(store.nvimOpen && store.nvimPaneId === paneId), paneId);
       }
+      break;
+    }
+    case 'editor-quick-open': {
+      const win = session?.windows[session.active_window];
+      const paneId = win?.zoomed_pane ?? win?.panes[win.active_pane]?.id ?? null;
+      if (!paneId) break;
+      // Show the editor first if it isn't.
+      if (!nativeEditorOver(store, paneId)) {
+        if (!editorShown(store, paneId)) send({ type: 'editor_view', pane_id: paneId, op: { kind: 'show' } });
+        store.hideEditorSurfaces(paneId);
+      }
+      runEditorCommandWhenShown(paneId, action, () =>
+        useStore.getState().showToast('The editor did not open', 'error'),
+      );
       break;
     }
     case 'editor-code-actions':

@@ -1,20 +1,28 @@
-use nucleo::pattern::{CaseMatching, Normalization};
-use nucleo::{Config, Matcher, Nucleo, Utf32Str};
+use nucleo::pattern::{CaseMatching, Normalization, Pattern};
+use nucleo::{Config, Matcher, Utf32Str};
 use serde::{Deserialize, Serialize};
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::Mutex;
+use tokio::sync::watch;
 
 const MAX_CONTENT_RESULTS: usize = 100;
+const MAX_FILE_RESULTS: usize = 100;
+/// Roots kept indexed, least recently searched dropped first.
+const MAX_ROOTS: usize = 4;
+/// A search of an older index relists its root in the background.
+const REFRESH_AFTER: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileSearchResult {
     pub path: String,
+    /// Matched characters (not bytes) of `path`.
     pub indices: Vec<u32>,
+    pub score: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -24,19 +32,34 @@ pub struct SearchResult {
     pub text: Option<String>,
 }
 
+type Files = Arc<Vec<String>>;
+type Listing = watch::Receiver<Option<Result<Files, String>>>;
+
+/// Fuzzy path search over cached file lists of a few roots. A stale list is
+/// served while its root is listed again, as `GitTracker` does.
 pub struct FileIndex {
-    inner: Mutex<Option<IndexState>>,
+    /// Least recently searched first.
+    roots: Arc<Mutex<Vec<Root>>>,
+    refresh_after: Duration,
 }
 
-struct IndexState {
-    root: std::path::PathBuf,
-    nucleo: Nucleo<String>,
+struct Root {
+    path: PathBuf,
+    /// Paths relative to `path`, and when their listing started.
+    files: Option<(Files, Instant)>,
+    /// A listing in flight.
+    listing: Option<Listing>,
 }
 
 impl FileIndex {
     pub fn new() -> Self {
+        Self::with_refresh(REFRESH_AFTER)
+    }
+
+    fn with_refresh(refresh_after: Duration) -> Self {
         Self {
-            inner: Mutex::new(None),
+            roots: Arc::default(),
+            refresh_after,
         }
     }
 
@@ -44,80 +67,143 @@ impl FileIndex {
         if query.trim().is_empty() {
             return Ok(Vec::new());
         }
+        let files = self.files(root).await?;
+        let query = query.to_string();
+        let root = crate::fs_ops::client_path(root);
+        tokio::task::spawn_blocking(move || match_files(&files, &query, &root))
+            .await
+            .map_err(|error| format!("File search failed: {}", error))
+    }
 
-        let mut guard = self.inner.lock().await;
-        let needs_reindex = match &*guard {
-            Some(state) => state.root != root,
-            None => true,
+    /// `root`'s files, listed now if it has none.
+    async fn files(&self, root: &Path) -> Result<Files, String> {
+        let mut listing = {
+            let mut roots = self.roots.lock().unwrap();
+            let entry = match roots.iter().position(|r| r.path == root) {
+                Some(at) => roots.remove(at),
+                None => Root {
+                    path: root.to_path_buf(),
+                    files: None,
+                    listing: None,
+                },
+            };
+            roots.push(entry);
+            if roots.len() > MAX_ROOTS {
+                roots.remove(0);
+            }
+            let entry = roots.last_mut().unwrap();
+            if let Some((files, listed)) = &entry.files {
+                let files = files.clone();
+                if listed.elapsed() >= self.refresh_after && entry.listing.is_none() {
+                    entry.listing = Some(self.list(root));
+                }
+                return Ok(files);
+            }
+            entry.listing.get_or_insert_with(|| self.list(root)).clone()
         };
+        let result = listing
+            .wait_for(Option::is_some)
+            .await
+            .map_err(|_| "File listing stopped".to_string())?;
+        result.clone().unwrap()
+    }
 
-        if needs_reindex {
-            let nucleo = Nucleo::new(Config::DEFAULT, Arc::new(|| {}), None, 1);
-            let injector = nucleo.injector();
-
-            let mut child = spawn_file_lister(root)?;
-
-            let stdout = child.stdout.take().unwrap();
-            let reader = BufReader::new(stdout);
-            let mut lines = reader.lines();
-            let mut lines_read = 0;
-            while let Ok(Some(line)) = lines.next_line().await {
-                let path = line.trim_start_matches("./").to_string();
-                injector.push(path, |s, cols| {
-                    cols[0] = s.as_str().into();
-                });
-                lines_read += 1;
-                if lines_read % 256 == 0 {
-                    tokio::task::yield_now().await;
+    /// Lists `root` in a task of its own, which stores the result if `root`
+    /// is still indexed. The caller stores the returned receiver.
+    fn list(&self, root: &Path) -> Listing {
+        let (tx, rx) = watch::channel(None);
+        let roots = self.roots.clone();
+        let root = root.to_path_buf();
+        let ours = rx.clone();
+        tokio::spawn(async move {
+            let started = Instant::now();
+            let result = list_files(&root).await.map(Arc::new);
+            {
+                let mut roots = roots.lock().unwrap();
+                if let Some(entry) = roots.iter_mut().find(|r| {
+                    r.path == root && r.listing.as_ref().is_some_and(|l| l.same_channel(&ours))
+                }) {
+                    entry.listing = None;
+                    match &result {
+                        Ok(files) => entry.files = Some((files.clone(), started)),
+                        // Keep the last list, and don't retry on every search.
+                        Err(_) => {
+                            if let Some((_, listed)) = &mut entry.files {
+                                *listed = Instant::now();
+                            }
+                        }
+                    }
                 }
             }
-            let _ = child.wait().await;
-
-            *guard = Some(IndexState {
-                root: root.to_path_buf(),
-                nucleo,
-            });
-        }
-
-        let state = guard.as_mut().unwrap();
-        let root_str = crate::fs_ops::client_path(&state.root);
-
-        state
-            .nucleo
-            .pattern
-            .reparse(0, query, CaseMatching::Ignore, Normalization::Smart, false);
-
-        loop {
-            let status = state.nucleo.tick(10);
-            if !status.running {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-
-        let snapshot = state.nucleo.snapshot();
-        let pattern = state.nucleo.pattern.column_pattern(0);
-        let mut matcher = Matcher::new(Config::DEFAULT);
-        let mut buf = Vec::new();
-        let mut indices_buf = Vec::new();
-
-        let results: Vec<FileSearchResult> = snapshot
-            .matched_items(..snapshot.matched_item_count().min(100))
-            .map(|item| {
-                let path = format!("{}/{}", root_str, item.data);
-                indices_buf.clear();
-                let prefix_len = (root_str.len() + 1) as u32;
-                let haystack = Utf32Str::new(item.data.as_str(), &mut buf);
-                pattern.indices(haystack, &mut matcher, &mut indices_buf);
-                indices_buf.sort_unstable();
-                indices_buf.dedup();
-                let indices = indices_buf.iter().map(|&i| i + prefix_len).collect();
-                FileSearchResult { path, indices }
-            })
-            .collect();
-
-        Ok(results)
+            let _ = tx.send(Some(result));
+        });
+        rx
     }
+}
+
+async fn list_files(root: &Path) -> Result<Vec<String>, String> {
+    if !tokio::fs::metadata(root)
+        .await
+        .is_ok_and(|metadata| metadata.is_dir())
+    {
+        return Err(format!("Not a directory: {}", root.display()));
+    }
+    let mut child = spawn_file_lister(root)?;
+    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut files = Vec::new();
+    while let Ok(Some(line)) = lines.next_line().await {
+        let path = line.strip_prefix("./").unwrap_or(&line);
+        files.push(path.to_string());
+    }
+    let _ = child.wait().await;
+    Ok(files)
+}
+
+/// The best matches of `query` among `files`, as client paths under `root`.
+fn match_files(files: &[String], query: &str, root: &str) -> Vec<FileSearchResult> {
+    let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+    let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
+    let mut buf = Vec::new();
+    let mut matches: Vec<(u32, &String)> = files
+        .iter()
+        .filter_map(|file| {
+            let score = pattern.score(Utf32Str::new(file, &mut buf), &mut matcher)?;
+            Some((score, file))
+        })
+        .collect();
+    // Best first; ties go to shorter paths.
+    let order = |a: &(u32, &String), b: &(u32, &String)| {
+        b.0.cmp(&a.0)
+            .then_with(|| a.1.len().cmp(&b.1.len()))
+            .then_with(|| a.1.cmp(b.1))
+    };
+    if matches.len() > MAX_FILE_RESULTS {
+        matches.select_nth_unstable_by(MAX_FILE_RESULTS, order);
+        matches.truncate(MAX_FILE_RESULTS);
+    }
+    matches.sort_unstable_by(order);
+
+    let prefix = if root.ends_with('/') {
+        root.to_string()
+    } else {
+        format!("{}/", root)
+    };
+    let offset = prefix.chars().count() as u32;
+    let mut indices = Vec::new();
+    matches
+        .into_iter()
+        .map(|(score, file)| {
+            indices.clear();
+            pattern.indices(Utf32Str::new(file, &mut buf), &mut matcher, &mut indices);
+            indices.sort_unstable();
+            indices.dedup();
+            FileSearchResult {
+                path: format!("{}{}", prefix, file),
+                indices: indices.iter().map(|&i| i + offset).collect(),
+                score,
+            }
+        })
+        .collect()
 }
 
 /// Lists files with `fd` (respecting ignore files), else `find`.
@@ -357,8 +443,10 @@ fn parse_grep_result(line: &str, root: &Path) -> Option<SearchResult> {
 
 #[cfg(test)]
 mod tests {
-    use super::{content_search, FileIndex};
+    use super::{content_search, match_files, FileIndex, MAX_ROOTS};
     use std::fs;
+    use std::sync::Arc;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn file_search_respects_gitignore_with_fd() {
@@ -384,6 +472,84 @@ mod tests {
             [crate::fs_ops::client_path(&root.join(".needle.txt"))]
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    fn temp_root(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!("btmux-{}-{}", name, uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        root.canonicalize().unwrap()
+    }
+
+    #[tokio::test]
+    async fn file_search_finds_new_files_after_a_refresh() {
+        let root = temp_root("file-refresh");
+        fs::write(root.join("old.txt"), "").unwrap();
+        let index = FileIndex::with_refresh(Duration::ZERO);
+        let paths = |results: Vec<super::FileSearchResult>| {
+            results.into_iter().map(|r| r.path).collect::<Vec<_>>()
+        };
+        let new = crate::fs_ops::client_path(&root.join("new.txt"));
+
+        assert!(paths(index.search("txt", &root).await.unwrap()).len() == 1);
+        fs::write(root.join("new.txt"), "").unwrap();
+        // The stale list is served while the root is listed again.
+        assert!(!paths(index.search("new", &root).await.unwrap()).contains(&new));
+        let mut found = false;
+        for _ in 0..100 {
+            if paths(index.search("new", &root).await.unwrap()).contains(&new) {
+                found = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(found, "new file found after the refresh");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn file_search_keeps_each_roots_index() {
+        let a = temp_root("file-root-a");
+        let b = temp_root("file-root-b");
+        fs::write(a.join("one.txt"), "").unwrap();
+        fs::write(b.join("two.txt"), "").unwrap();
+        let index = FileIndex::new();
+
+        let first_a = index.files(&a).await.unwrap();
+        let first_b = index.files(&b).await.unwrap();
+        for _ in 0..3 {
+            assert!(Arc::ptr_eq(&first_a, &index.files(&a).await.unwrap()));
+            assert!(Arc::ptr_eq(&first_b, &index.files(&b).await.unwrap()));
+        }
+        let results = index.search("two", &b).await.unwrap();
+        assert_eq!(
+            results.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(),
+            [crate::fs_ops::client_path(&b.join("two.txt"))]
+        );
+
+        // Past `MAX_ROOTS`, the least recently searched root is dropped.
+        let others: Vec<_> = (0..MAX_ROOTS).map(|_| temp_root("file-root")).collect();
+        for root in &others {
+            index.files(root).await.unwrap();
+        }
+        assert!(!Arc::ptr_eq(&first_a, &index.files(&a).await.unwrap()));
+        for root in others.iter().chain([&a, &b]) {
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn file_search_indices_count_characters() {
+        let files = vec!["src/main.rs".to_string(), "README.md".to_string()];
+        let results = match_files(&files, "main", "/tmp/ü");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].path, "/tmp/ü/src/main.rs");
+        let chars: Vec<char> = results[0].path.chars().collect();
+        let matched: String = results[0]
+            .indices
+            .iter()
+            .map(|&i| chars[i as usize])
+            .collect();
+        assert_eq!(matched, "main");
     }
 
     #[tokio::test]

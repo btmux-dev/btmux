@@ -22,6 +22,9 @@ import { editorTheme, type EditorAppearance } from './theme';
 import { detectIndent, languageFor } from './languages';
 import { format, lspExtension, serverFailed, setDisplay } from './lsp';
 import { editorCommands, serverFoldsChanged } from './features';
+import { noteOpened, quickOpen } from './quickOpen';
+import { findPaneState, useStore } from '../../state/store';
+import { workspaceFolder } from '../vscodeFolder';
 
 /** Longest wait for formatting before a save goes ahead without it. */
 const FORMAT_TIMEOUT_MS = 3000;
@@ -107,6 +110,7 @@ export class PaneEditor {
         // Jumps to other files open where the user is.
         focus: () => setDisplay((path) => this.display(path)),
       }),
+      keymap.of([{ key: 'Mod-p', run: () => this.quickOpen(), preventDefault: true }]),
     ];
   }
 
@@ -115,6 +119,11 @@ export class PaneEditor {
     const doc = this.docs.get(path);
     if (path === this.active && doc?.view && doc.status.ready) return Promise.resolve(this.view);
     this.events.open(path);
+    return this.whenShown(path);
+  }
+
+  /** Resolves with the view once `path` is shown and loaded, or null after 10 s. */
+  private whenShown(path: string): Promise<EditorView | null> {
     return new Promise((resolve) => {
       const waiter = { path, resolve };
       this.waiting.push(waiter);
@@ -243,6 +252,7 @@ export class PaneEditor {
       const focused = this.view.hasFocus;
       if (this.active) this.docs.get(this.active)?.attach(null);
       this.active = active && this.docs.has(active) ? active : null;
+      if (this.active) noteOpened(this.active);
       const doc = this.active ? this.docs.get(this.active) : undefined;
       // Not loaded yet: shown once it is (docChanged).
       if (!doc || !doc.attach(this.view)) this.view.setState(this.placeholder());
@@ -322,11 +332,31 @@ export class PaneEditor {
   }
 
   focus() {
-    this.view.focus();
+    // Not out of a panel (quick open, search).
+    if (!this.view.dom.contains(document.activeElement)) this.view.focus();
   }
 
-  /** Run a palette command (`editorCommands`) on the shown file. */
+  /** Show quick open, once the active file is loaded. */
+  quickOpen(): boolean {
+    const pane = findPaneState(useStore.getState(), this.paneId);
+    const root = workspaceFolder(pane);
+    if (!pane || !root) {
+      useStore.getState().showToast('Quick open needs a folder on this machine', 'info');
+      return true;
+    }
+    const show = () => {
+      this.view.focus();
+      quickOpen(this.view, { root, files: pane.editor.files, active: this.active }, (path) => this.events.open(path));
+    };
+    const doc = this.active ? this.docs.get(this.active) : undefined;
+    if (doc && !doc.view && !doc.status.error) void this.whenShown(doc.path).then((view) => view && show());
+    else show();
+    return true;
+  }
+
+  /** Run a palette command (`editorCommands`, quick open) on the shown file. */
   command(action: string): boolean {
+    if (action === 'editor-quick-open') return this.quickOpen();
     const run = editorCommands[action];
     const doc = this.active ? this.docs.get(this.active) : undefined;
     if (!run || !doc?.view) return false;

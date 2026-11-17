@@ -1474,9 +1474,8 @@ pub struct ClientConfig {
 /// frontend handler. Note `0-9` window-select is special-cased in the frontend
 /// and intentionally absent here, as are `kill-session`, `last-window`,
 /// `editor-native`, `editor-neovim`, `editor-vscode`, `shut-down-neovim`,
-/// `shut-down-vscode`, and the native editor's `editor-*` language server
-/// commands
-/// (unbound by default).
+/// `shut-down-vscode`, and the native editor's `editor-*` commands (quick
+/// open and language server commands; unbound by default).
 const DEFAULT_BINDS: &[(&str, &str)] = &[
     ("%", "split-vertical"),
     ("\"", "split-horizontal"),

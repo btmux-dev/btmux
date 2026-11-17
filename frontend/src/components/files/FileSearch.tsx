@@ -183,16 +183,18 @@ function FileResultRow({
   focused: boolean;
 }) {
   const displayPath = result.path.startsWith(root + '/') ? result.path.slice(root.length + 1) : result.path;
-  const offset = result.path.length - displayPath.length;
+  // Indices count code points.
+  const chars = Array.from(displayPath);
+  const offset = Array.from(result.path).length - chars.length;
   const highlighted = new Set(result.indices.map((i) => i - offset));
 
   const segments: { text: string; hi: boolean }[] = [];
   let i = 0;
-  while (i < displayPath.length) {
+  while (i < chars.length) {
     const h = highlighted.has(i);
     let j = i + 1;
-    while (j < displayPath.length && highlighted.has(j) === h) j++;
-    segments.push({ text: displayPath.slice(i, j), hi: h });
+    while (j < chars.length && highlighted.has(j) === h) j++;
+    segments.push({ text: chars.slice(i, j).join(''), hi: h });
     i = j;
   }
 

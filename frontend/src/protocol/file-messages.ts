@@ -35,7 +35,9 @@ export interface TreeNode {
 
 export interface FileSearchResult {
   path: string;
+  /** Matched characters (code points) of `path`. */
   indices: number[];
+  score: number;
 }
 
 export interface SearchResult {

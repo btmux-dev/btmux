@@ -25,6 +25,7 @@ writeFileSync(fileB, 'const x = 1;\n');
 
 const session: { id: string; name: string } = await api('/api/sessions', 'POST', {
   name: `native-editor-${Date.now()}`,
+  cwd: dir,
 });
 const browser = await chromium.launch({ headless: true, channel: process.env.BTMUX_TEST_BROWSER });
 
@@ -190,6 +191,68 @@ try {
   await page.locator('[aria-label="Unsaved"]').first().waitFor({ state: 'detached' });
   assert.equal(readFileSync(fileA, 'utf8'), 'outside\ntheirs\nUNSENT');
   console.log('PASS edits made while disconnected survive a reopen');
+
+  // Quick open searches the pane's folder and opens the choice in its editor.
+  const editorPane = page.locator(`[data-editor-pane="${paneId}"]`);
+  const goToFile = editorPane.getByRole('combobox', { name: 'Go to file' });
+  const activeFile = (path: string) =>
+    waitForAsync(
+      page,
+      async ({ id, path }) => {
+        const { findPaneState, useStore } = await import('/src/state/store.tsx' as string);
+        return findPaneState(useStore.getState(), id)?.editor.active === path;
+      },
+      { id: paneId, path },
+    );
+  mkdirSync(join(dir, 'deep', 'nested'), { recursive: true });
+  const target = join(dir, 'deep', 'nested', 'quickopen-target.md');
+  writeFileSync(target, 'found me\n');
+  await input.click();
+  await page.keyboard.press('ControlOrMeta+p');
+  await goToFile.waitFor();
+  // Without a query: the pane's other files, then recent ones (b.ts, shown in the other pane).
+  await editorPane.getByRole('option', { name: /^b\.ts/ }).waitFor();
+  await page.keyboard.type('qotgt');
+  const targetOption = editorPane.getByRole('option', { name: /quickopen-target\.md/ });
+  await targetOption.waitFor();
+  assert.equal(await targetOption.locator('.cm-btmux-picker-match').allTextContents().then((m) => m.join('')), 'qotgt');
+  await page.keyboard.press('Enter');
+  await activeFile(target);
+  await waitForText(page, paneId, 'found me\n');
+  console.log('PASS quick open finds a file by fuzzy query and opens it in the pane');
+
+  // A file created after the first search shows up once the index refreshes.
+  const late = join(dir, 'late-arrival.txt');
+  writeFileSync(late, 'late\n');
+  await page.keyboard.press('ControlOrMeta+p');
+  await goToFile.waitFor();
+  const lateOption = editorPane.getByRole('option', { name: /late-arrival\.txt/ });
+  for (let i = 0; i < 40 && !(await lateOption.count()); i++) {
+    await goToFile.fill(i % 2 ? 'latearr' : 'latearri');
+    await page.waitForTimeout(500);
+  }
+  await lateOption.click();
+  await activeFile(late);
+  await waitForText(page, paneId, 'late\n');
+  console.log('PASS quick open finds files created after the first search');
+
+  // The command palette shows a hidden editor with quick open.
+  await input.click();
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+  await input.waitFor({ state: 'hidden' });
+  await page.keyboard.press('Control+a');
+  await page.keyboard.press(':');
+  await page.keyboard.type('editor quick open');
+  await page.keyboard.press('Enter');
+  await goToFile.waitFor();
+  await waitForAsync(page, () => document.activeElement?.getAttribute('aria-label') === 'Go to file');
+  await page.keyboard.type('b.ts');
+  await editorPane.getByRole('option', { name: /^b\.ts/ }).waitFor();
+  await page.keyboard.press('Enter');
+  await activeFile(fileB);
+  await waitForText(page, paneId, 'const x = 1;\n');
+  console.log('PASS the command palette runs quick open');
 
   // Language servers, with a fake one (test-bin/fake-lsp).
   const lspDir = process.env.BTMUX_TEST_LSP;

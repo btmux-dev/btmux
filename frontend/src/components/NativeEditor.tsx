@@ -13,6 +13,7 @@ import type { PaneEditor } from '../lib/nativeEditor/paneEditor';
 import type { EditorAppearance } from '../lib/nativeEditor/theme';
 import { onReveal } from '../lib/nativeEditor/reveal';
 import { registerEditorCommands } from '../lib/nativeEditor/registry';
+import { IS_MAC } from '../lib/nvimKeys';
 import { editorConnection } from '../lib/nativeEditor/connection';
 import type { BufferSummary, LspServerStatus } from '../generated/protocol';
 import { ClientConfig, LayoutRect } from '../state/types';
@@ -116,9 +117,9 @@ export function NativeEditor({
   }, [editor, config?.format_on_save]);
 
   useEffect(() => {
-    if (!editor) return;
+    if (!editor || !visible) return;
     return registerEditorCommands(paneId, (action) => editor.command(action));
-  }, [editor, paneId]);
+  }, [editor, paneId, visible]);
 
   useEffect(() => {
     if (!editor) return;
@@ -262,7 +263,7 @@ export function NativeEditor({
           <VStack hAlign="center" vAlign="center" gap={1} className="btm-sans absolute inset-0">
             <Text color="secondary">No open files</Text>
             <Text size="sm" color="secondary">
-              Open one from the file browser (prefix + f).
+              Open one with quick open ({IS_MAC ? '⌘P' : 'Ctrl+P'}) or the file browser (prefix + f).
             </Text>
           </VStack>
         )}

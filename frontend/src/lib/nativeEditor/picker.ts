@@ -6,6 +6,9 @@ export interface PickItem {
   label: string;
   /** Shown dimmed after the label. */
   detail?: string;
+  /** Matched characters (code points) of the label and detail, highlighted. */
+  labelMatches?: number[];
+  detailMatches?: number[];
   run(): void;
 }
 
@@ -32,6 +35,34 @@ export function fuzzyMatch(text: string, query: string): boolean {
 }
 
 let nextId = 0;
+
+/** `text` with the code points at `matches` highlighted. */
+function highlighted(text: string, matches: number[] | undefined): (string | HTMLElement)[] {
+  if (!matches?.length) return [text];
+  const at = new Set(matches);
+  const parts: (string | HTMLElement)[] = [];
+  let run = '';
+  let marked = false;
+  const flush = () => {
+    if (!run) return;
+    if (marked) {
+      const mark = document.createElement('span');
+      mark.className = 'cm-btmux-picker-match';
+      mark.textContent = run;
+      parts.push(mark);
+    } else parts.push(run);
+    run = '';
+  };
+  Array.from(text).forEach((c, i) => {
+    if (at.has(i) !== marked) {
+      flush();
+      marked = !marked;
+    }
+    run += c;
+  });
+  flush();
+  return parts;
+}
 
 function pickerPanel(view: EditorView, spec: PickerSpec): Panel {
   const id = `cm-btmux-picker-${nextId++}`;
@@ -63,11 +94,11 @@ function pickerPanel(view: EditorView, spec: PickerSpec): Panel {
         li.id = `${id}-${i}`;
         li.setAttribute('role', 'option');
         li.setAttribute('aria-selected', String(i === selected));
-        li.textContent = item.label;
+        li.append(...highlighted(item.label, item.labelMatches));
         if (item.detail) {
           const detail = document.createElement('span');
           detail.className = 'cm-btmux-picker-detail';
-          detail.textContent = item.detail;
+          detail.append(...highlighted(item.detail, item.detailMatches));
           li.append(detail);
         }
         li.addEventListener('mousedown', (e) => {
@@ -80,16 +111,22 @@ function pickerPanel(view: EditorView, spec: PickerSpec): Panel {
     input.setAttribute('aria-activedescendant', shown.length ? `${id}-${selected}` : '');
     list.children[selected]?.scrollIntoView({ block: 'nearest' });
   };
-  const update = async () => {
-    const text = input.value;
-    const g = ++generation;
-    const items = spec.query ? await spec.query(text).catch(() => []) : (spec.items ?? []);
-    if (g !== generation) return;
-    shown = spec.query ? items : items.filter((item) => fuzzyMatch(item.label, text));
-    selected = 0;
-    render();
-  };
+  // The last update, which Enter waits for.
+  let settled = Promise.resolve();
+  const update = () =>
+    (settled = (async () => {
+      const text = input.value;
+      const g = ++generation;
+      const items = spec.query ? await spec.query(text).catch(() => []) : (spec.items ?? []);
+      if (g !== generation) return;
+      shown = spec.query ? items : items.filter((item) => fuzzyMatch(item.label, text));
+      selected = 0;
+      render();
+    })());
+  let picked = false;
   const pick = (i: number) => {
+    if (picked) return;
+    picked = true;
     const item = shown[i];
     close();
     item?.run();
@@ -97,7 +134,13 @@ function pickerPanel(view: EditorView, spec: PickerSpec): Panel {
   let timer: ReturnType<typeof setTimeout> | undefined;
   input.addEventListener('input', () => {
     clearTimeout(timer);
-    timer = setTimeout(() => void update(), spec.query ? 150 : 0);
+    timer = setTimeout(
+      () => {
+        timer = undefined;
+        void update();
+      },
+      spec.query ? 150 : 0,
+    );
   });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -107,7 +150,13 @@ function pickerPanel(view: EditorView, spec: PickerSpec): Panel {
       render();
     } else if (e.key === 'Enter') {
       e.preventDefault();
-      pick(selected);
+      // Pick from results for what was typed.
+      if (timer !== undefined) {
+        clearTimeout(timer);
+        timer = undefined;
+        void update();
+      }
+      void settled.then(() => pick(selected));
     } else if (e.key === 'Escape') {
       e.preventDefault();
       close();
@@ -149,6 +198,7 @@ export const pickerExtension = [
     '.cm-btmux-picker li': { padding: '1px 12px', cursor: 'pointer', whiteSpace: 'pre' },
     '.cm-btmux-picker li[aria-selected=true]': { background: 'var(--btm-editor-selection)' },
     '.cm-btmux-picker-detail': { opacity: 0.6, marginLeft: '1em' },
+    '.cm-btmux-picker-match': { color: 'var(--btm-editor-blue)', fontWeight: 'bold' },
   }),
 ];
 
