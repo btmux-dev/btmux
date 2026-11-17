@@ -246,6 +246,7 @@ pub fn buffers() -> Vec<serde_json::Value> {
 }
 
 /// Refuse to drop unsaved changes (an upgrade).
+#[cfg(unix)]
 pub fn check_saved() -> Result<(), String> {
     let inner = hub().inner.lock().unwrap();
     let mut dirty: Vec<_> = inner
