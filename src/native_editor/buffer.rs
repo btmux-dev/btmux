@@ -47,10 +47,30 @@ pub enum DiskStatus {
     Deleted,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Stamp {
+    #[serde(with = "epoch")]
+    #[cfg_attr(test, ts(type = "[number, number] | null"))]
     mtime: Option<SystemTime>,
     len: u64,
+}
+
+/// A time as seconds and nanoseconds since the epoch; earlier ones as none.
+mod epoch {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    pub fn serialize<S: Serializer>(time: &Option<SystemTime>, s: S) -> Result<S::Ok, S::Error> {
+        time.and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| (d.as_secs(), d.subsec_nanos()))
+            .serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<SystemTime>, D::Error> {
+        let time = Option::<(u64, u32)>::deserialize(d)?;
+        Ok(time.map(|(secs, nanos)| UNIX_EPOCH + Duration::new(secs, nanos)))
+    }
 }
 
 impl Stamp {
@@ -63,7 +83,8 @@ impl Stamp {
 }
 
 /// What was last loaded from or saved to disk.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Disk {
     stamp: Option<Stamp>,
     hash: Option<u64>,
@@ -302,6 +323,23 @@ pub struct Buffer {
     pub servers: Vec<u64>,
 }
 
+/// An unsaved buffer as `btmux upgrade` hands it over, without its update
+/// log or language servers.
+#[cfg(unix)]
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct HandedBuffer {
+    path: PathBuf,
+    text: String,
+    version: u64,
+    saved_version: u64,
+    line_ending: LineEnding,
+    bom: bool,
+    disk: Disk,
+    disk_status: DiskStatus,
+    language_id: Option<String>,
+}
+
 /// Updates a push added: from `version`, with what language servers see.
 pub struct Pushed {
     pub version: u64,
@@ -323,6 +361,40 @@ impl Buffer {
             disk: loaded.disk,
             disk_status: DiskStatus::Same,
             language_id: None,
+            servers: Vec::new(),
+        }
+    }
+
+    #[cfg(unix)]
+    pub fn handoff(&self) -> HandedBuffer {
+        HandedBuffer {
+            path: self.path.clone(),
+            text: self.rope.to_string(),
+            version: self.version,
+            saved_version: self.saved_version,
+            line_ending: self.line_ending,
+            bom: self.bom,
+            disk: self.disk,
+            disk_status: self.disk_status,
+            language_id: self.language_id.clone(),
+        }
+    }
+
+    /// A handed over buffer. Its log is empty, so tabs reopen it.
+    #[cfg(unix)]
+    pub fn restored(handoff: HandedBuffer) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            path: handoff.path,
+            rope: Rope::from_str(&handoff.text),
+            version: handoff.version,
+            log: VecDeque::new(),
+            saved_version: handoff.saved_version,
+            line_ending: handoff.line_ending,
+            bom: handoff.bom,
+            disk: handoff.disk,
+            disk_status: handoff.disk_status,
+            language_id: handoff.language_id,
             servers: Vec::new(),
         }
     }

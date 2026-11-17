@@ -17,6 +17,7 @@ use axum::body::Bytes;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::native_editor::buffer::HandedBuffer;
 use crate::popup::PopupsHandoff;
 use crate::pty::kitty_keyboard::KittyKeyboard;
 use crate::pty::program_status::Record;
@@ -29,7 +30,7 @@ use crate::ws::control::ServerMessage;
 use crate::AppState;
 
 /// Bump on any change to the handoff file.
-pub const VERSION: u32 = 18;
+pub const VERSION: u32 = 19;
 const ENV: &str = "BTMUX_HANDOFF";
 
 struct Context {
@@ -61,6 +62,8 @@ struct Header {
     popups: PopupsHandoff,
     panes: Vec<PaneHeader>,
     telemetry: TelemetryStore,
+    /// The native editor's unsaved buffers.
+    editor: Vec<HandedBuffer>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -105,6 +108,7 @@ pub struct Inherited {
     pub popups: PopupsHandoff,
     pub panes: Vec<(Uuid, OwnedFd, Handoff)>,
     pub telemetry: TelemetryStore,
+    pub editor: Vec<HandedBuffer>,
 }
 
 impl Inherited {
@@ -117,6 +121,10 @@ impl Inherited {
         let mut mgr = state.write().await;
         let restored = mgr.restore_handoff(self.sessions, self.popups, self.panes);
         mgr.telemetry = self.telemetry;
+        // For the restored buffers' language servers.
+        crate::native_editor::lsp::config::set_sandboxes(mgr.sandbox_mounts());
+        drop(mgr);
+        crate::native_editor::restore(self.editor).await;
         tracing::info!("upgraded in place with {} session(s)", restored);
         self.listener
     }
@@ -207,6 +215,7 @@ pub fn take() -> Result<Option<Inherited>, String> {
         popups: header.popups,
         panes,
         telemetry: header.telemetry.restored(),
+        editor: header.editor,
     }))
 }
 
@@ -312,7 +321,6 @@ async fn check(exe: &Path) -> Result<(&'static Context, String), Refusal> {
     crate::ws::nvim::check_saved()
         .await
         .map_err(Refusal::Busy)?;
-    crate::native_editor::check_saved().map_err(Refusal::Busy)?;
     Ok((context, target))
 }
 
@@ -327,9 +335,6 @@ async fn execute(state: AppState, context: &Context, exe: &Path) -> String {
     // Held until exec, so nothing changes or spawns meanwhile.
     let mut manager = state.write().await;
     // Before anything stops: Neovim refuses to quit with unsaved changes.
-    if let Err(error) = crate::native_editor::check_saved() {
-        return error;
-    }
     if let Err(error) = crate::ws::nvim::quit().await {
         return error;
     }
@@ -347,6 +352,7 @@ async fn execute(state: AppState, context: &Context, exe: &Path) -> String {
             tracing::warn!("failed to persist state to {}: {}", path.display(), error);
         }
     }
+    let editor = crate::native_editor::freeze();
     let error = exec(
         context,
         exe,
@@ -354,7 +360,9 @@ async fn execute(state: AppState, context: &Context, exe: &Path) -> String {
         popups,
         &panes,
         manager.telemetry.clone(),
+        editor,
     );
+    crate::native_editor::thaw();
     let kept = [context.listener]
         .into_iter()
         .chain(context.lock)
@@ -375,6 +383,7 @@ fn exec(
     popups: PopupsHandoff,
     panes: &[(Uuid, RawFd, Handoff)],
     telemetry: TelemetryStore,
+    editor: Vec<HandedBuffer>,
 ) -> String {
     let dir = context
         .state_file
@@ -382,7 +391,7 @@ fn exec(
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .unwrap_or_else(std::env::temp_dir);
-    let file = match write(&dir, context, sessions, popups, panes, telemetry) {
+    let file = match write(&dir, context, sessions, popups, panes, telemetry, editor) {
         Ok(file) => file,
         Err(error) => return format!("cannot write handoff: {error}"),
     };
@@ -410,6 +419,7 @@ fn write(
     popups: PopupsHandoff,
     panes: &[(Uuid, RawFd, Handoff)],
     telemetry: TelemetryStore,
+    editor: Vec<HandedBuffer>,
 ) -> std::io::Result<File> {
     use std::os::unix::fs::OpenOptionsExt;
     let path = dir.join(format!(".handoff-{}", Uuid::new_v4()));
@@ -458,6 +468,7 @@ fn write(
             })
             .collect(),
         telemetry,
+        editor,
     };
     let header = serde_json::to_vec(&header)?;
     let mut out = std::io::BufWriter::new(&mut file);
@@ -613,6 +624,11 @@ mod tests {
             crate::telemetry::PaneTelemetry::decl(&config),
             crate::telemetry::ModelSeries::decl(&config),
             crate::telemetry::AgentUsage::decl(&config),
+            HandedBuffer::decl(&config),
+            crate::native_editor::buffer::Disk::decl(&config),
+            crate::native_editor::buffer::Stamp::decl(&config),
+            crate::native_editor::buffer::LineEnding::decl(&config),
+            crate::native_editor::buffer::DiskStatus::decl(&config),
         ]
         .join("\n");
         // Without doc comments.

@@ -1,6 +1,6 @@
 /** In-place upgrade keeps shells, replay, and browser sessions. Run with `just test-browser`. */
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
@@ -201,6 +201,53 @@ try {
   await api('/api/server/upgrade', { executable: endedInfo.executable });
   await until(async () => (await api('/api/info')).instance !== endedInfo.instance, 'server did not come back');
   assert.deepEqual(await api(endedPath), { status: 7 }, 'an ended popup keeps its status');
+
+  // Unsaved native editor changes survive an upgrade, still unsaved.
+  const editorDir = realpathSync(mkdtempSync(join(tmpdir(), 'btmux-upgrade-editor-')));
+  const editorFile = join(editorDir, 'crlf.txt');
+  writeFileSync(editorFile, '\ufeffone\r\ntwo\r\n');
+  await api(`/api/panes/${pane}/open-editor`, { path: editorFile, line: null, editor: 'native' });
+  const editor = page.locator(`[data-native-editor][data-pane-id="${pane}"]`);
+  const editorText = () =>
+    page.evaluate(
+      (id) =>
+        Array.from(
+          document.querySelectorAll(`[data-native-editor][data-pane-id="${id}"] > .cm-line`),
+          (line) => line.textContent,
+        ).join('\n'),
+      pane,
+    );
+  await until(async () => (await editorText()) === 'one\ntwo\n', 'the editor did not open');
+  await editor.click();
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.type('KEPT');
+  const opened = () =>
+    page.evaluate(
+      (path) => (window as any).testMessages.filter((m: any) => m.type === 'opened' && m.buffer.path === path).length,
+      editorFile,
+    );
+  const dirtyOnServer = () =>
+    page.evaluate(
+      (path) =>
+        (window as any).testMessages.filter((m: any) => m.type === 'buffers').slice(-1)[0]?.buffers.some(
+          (b: any) => b.path === path && b.dirty,
+        ) ?? false,
+      editorFile,
+    );
+  await until(dirtyOnServer, 'the edit did not reach the server');
+  const openedBefore = await opened();
+  const editorInfo = await api('/api/info');
+  await api('/api/server/upgrade', { executable: editorInfo.executable });
+  await until(async () => (await api('/api/info')).instance !== editorInfo.instance, 'server did not come back');
+  await until(async () => (await opened()) > openedBefore, 'the editor did not reopen its buffer');
+  assert.equal(await editorText(), 'one\ntwo\nKEPT', 'an upgrade keeps unsaved edits');
+  await page.locator('[aria-label="Unsaved"]').first().waitFor();
+  assert.equal(readFileSync(editorFile, 'utf8'), '\ufeffone\r\ntwo\r\n');
+  await editor.click();
+  await page.keyboard.press('ControlOrMeta+s');
+  await page.locator('[aria-label="Unsaved"]').first().waitFor({ state: 'detached' });
+  assert.equal(readFileSync(editorFile, 'utf8'), '\ufeffone\r\ntwo\r\nKEPT', 'saving keeps the BOM and CRLF');
+  rmSync(editorDir, { recursive: true });
 
   // The control socket reconnects and follows structural changes again.
   await api(`/api/sessions/${session.id}/windows`, {});
