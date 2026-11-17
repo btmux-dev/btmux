@@ -9,8 +9,9 @@ import {
   keymap,
   lineNumbers,
   rectangularSelection,
+  runScopeHandlers,
 } from '@codemirror/view';
-import { Compartment, EditorSelection, EditorState, type Extension } from '@codemirror/state';
+import { Compartment, EditorSelection, EditorState, Prec, type Extension } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { bracketMatching, foldGutter, foldKeymap, indentOnInput, indentUnit } from '@codemirror/language';
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
@@ -26,6 +27,14 @@ import { noteOpened, quickOpen } from './quickOpen';
 import { QUICK_OPEN_NEEDS_FOLDER } from './registry';
 import { findPaneState, useStore } from '../../state/store';
 import { workspaceFolder } from '../vscodeFolder';
+import type { VimHost } from './vim';
+
+type Vim = typeof import('./vim');
+// Loaded once vim is turned on.
+let vimLoader: Promise<Vim> | null = null;
+
+/** The keymap scope of quick open's chord, run ahead of vim (`keydown`). */
+const QUICK_OPEN_SCOPE = 'btmux-quick-open';
 
 /** Longest wait for formatting before a save goes ahead without it. */
 const FORMAT_TIMEOUT_MS = 3000;
@@ -67,16 +76,35 @@ export class PaneEditor {
   private readonly themeC = new Compartment();
   private readonly languageC = new Compartment();
   private readonly lspC = new Compartment();
+  private readonly vimC = new Compartment();
   /** Docs whose server had failed when last configured. */
   private failed = new WeakMap<Doc, boolean>();
   private stopStatus: () => void;
-  private lastEsc = -Infinity;
+  /** The last Esc of a quick run, and whether the run can hide the editor. */
+  private esc = { last: -Infinity, armed: false };
+  private vim = false;
+  private vimLib: Vim | null = null;
+  private readonly vimHost: VimHost = {
+    save: (force) => this.save(force),
+    epoch: () => this.epoch,
+    hide: () => this.events.hide(),
+    mode: (mode) => {
+      if (mode === this.vimMode) return;
+      this.vimMode = mode;
+      this.events.changed();
+    },
+  };
   private waiting: { path: string; resolve: (view: EditorView | null) => void }[] = [];
   private quickOpenWaiting = false;
   private destroyed = false;
   cursor = { line: 1, column: 1, selected: 0 };
   problems = { errors: 0, warnings: 0 };
   formatOnSave = false;
+  /** Changes when the shown file or the editor's visibility does. */
+  private epoch = 0;
+  private visible = true;
+  /** Vim's mode while vim is on, for the status line. */
+  vimMode: string | null = null;
 
   constructor(
     parent: HTMLElement,
@@ -111,15 +139,16 @@ export class PaneEditor {
         'data-pane-id': this.paneId,
         'aria-label': 'Editor',
       }),
+      // Ahead of vim, which takes Esc and Ctrl-P.
+      Prec.highest(EditorView.domEventHandlers({ keydown: (e, view) => this.keydown(e, view) })),
       EditorView.domEventHandlers({
-        keydown: (e) => this.keydown(e),
         // Jumps to other files open where the user is.
         focus: () => {
           setDisplay((path) => this.display(path));
           if (this.active) noteOpened(this.active);
         },
       }),
-      keymap.of([{ key: 'Mod-p', run: () => this.quickOpen(), preventDefault: true }]),
+      keymap.of([{ key: 'Mod-p', run: () => this.quickOpen(), preventDefault: true, scope: QUICK_OPEN_SCOPE }]),
     ];
   }
 
@@ -155,6 +184,8 @@ export class PaneEditor {
   private extensions(doc: Doc, text: string): Extension {
     return [
       this.common(),
+      // Ahead of the keymaps, so vim's chords win over theirs.
+      this.vimC.of(this.vimExtension()),
       lineNumbers(),
       highlightActiveLineGutter(),
       highlightSpecialChars(),
@@ -199,18 +230,26 @@ export class PaneEditor {
     return lspExtension(doc);
   }
 
-  private keydown(e: KeyboardEvent): boolean {
-    // A quick second Esc hides the editor; the first still closes panels and completions.
+  private keydown(e: KeyboardEvent, view: EditorView): boolean {
+    // A quick second Esc hides the editor; the first still closes panels and
+    // completions. With vim, only a run of Escs that starts in normal mode
+    // with nothing pending hides it: one that leaves insert or visual mode,
+    // or cancels a command, never does.
     if (e.key === 'Escape' && !e.repeat && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
-      if (e.timeStamp - this.lastEsc < DOUBLE_ESC_MS) {
-        this.lastEsc = -Infinity;
-        e.preventDefault();
-        this.events.hide();
-        return true;
+      const idle = this.vimLib?.vimIdle(this.view) ?? true;
+      if (e.timeStamp - this.esc.last >= DOUBLE_ESC_MS) {
+        this.esc = { last: e.timeStamp, armed: idle };
+        return false;
       }
-      this.lastEsc = e.timeStamp;
-    } else this.lastEsc = -Infinity;
-    return false;
+      this.esc.last = e.timeStamp;
+      if (!this.esc.armed || !idle) return false;
+      this.esc = { last: -Infinity, armed: false };
+      e.preventDefault();
+      this.events.hide();
+      return true;
+    }
+    this.esc = { last: -Infinity, armed: false };
+    return runScopeHandlers(view, e, QUICK_OPEN_SCOPE);
   }
 
   private countProblems() {
@@ -263,6 +302,7 @@ export class PaneEditor {
       this.active = active && this.docs.has(active) ? active : null;
       // Recent files are those viewed here, not other tabs' or restored ones.
       if (this.active && focused) noteOpened(this.active);
+      this.epoch++;
       const doc = this.active ? this.docs.get(this.active) : undefined;
       // Not loaded yet: shown once it is (docChanged).
       if (!doc || !doc.attach(this.view)) this.view.setState(this.placeholder());
@@ -319,6 +359,28 @@ export class PaneEditor {
       selection: EditorSelection.cursor(target.from),
       effects: EditorView.scrollIntoView(target.from, { y: 'center' }),
     });
+  }
+
+  /** Turn vim keybindings on or off in every open file, keeping their views. */
+  setVim(on: boolean) {
+    if (on === this.vim) return;
+    this.vim = on;
+    if (!on || this.vimLib) return this.applyVim();
+    void (vimLoader ??= import('./vim')).then((lib) => {
+      if (!this.vimLib) {
+        this.vimLib = lib;
+        lib.setVimHost(this.view, this.vimHost);
+      }
+      this.applyVim();
+    });
+  }
+
+  private vimExtension(): Extension {
+    return this.vim && this.vimLib ? Prec.high(this.vimLib.vimExtension) : [];
+  }
+
+  private applyVim() {
+    for (const doc of this.docs.values()) doc.update({ effects: this.vimC.reconfigure(this.vimExtension()) });
   }
 
   setAppearance(appearance: EditorAppearance) {
@@ -382,20 +444,35 @@ export class PaneEditor {
     return ran instanceof Promise ? true : ran;
   }
 
-  /** Write the active file; `force` overwrites outside changes. */
-  async save(force: boolean, path = this.active) {
+  /** Shown over its pane, or hidden. */
+  setVisible(visible: boolean) {
+    if (visible === this.visible) return;
+    this.visible = visible;
+    this.epoch++;
+  }
+
+  /**
+   * Write the active file; `force` overwrites outside changes. Resolves
+   * true once the file holds every local change.
+   */
+  async save(force: boolean, path = this.active): Promise<boolean> {
     const doc = path ? this.docs.get(path) : undefined;
-    if (!doc?.buffer) return;
+    if (!doc?.buffer) return false;
     if (this.formatOnSave && doc.view && !force) {
       const timeout = new Promise((resolve) => setTimeout(resolve, FORMAT_TIMEOUT_MS));
       await Promise.race([format(doc.view).catch(() => {}), timeout]);
     }
     doc.push();
+    // Edits the server doesn't have, or dropped as stale, aren't in what it writes.
+    const mark = doc.saveMark();
     const result = await editorConnection.save(doc.buffer, force);
+    const complete = mark !== null && doc.confirmed(mark);
     if (result.conflict) this.conflicts.add(doc.path);
     else this.conflicts.delete(doc.path);
     if (result.error && !result.conflict) this.events.error(result.error);
+    else if (!result.error && !complete) this.events.error("Some edits weren't in the save yet; save again.");
     this.events.changed();
+    return !result.error && !result.conflict && complete;
   }
 
   /** Reload the active file from disk, dropping unsaved changes. */

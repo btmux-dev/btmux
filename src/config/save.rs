@@ -100,6 +100,7 @@ fn apply(doc: &mut DocumentMut, u: &ConfigUpdate) {
     let mut terminal = Edits::new();
     let mut log = Edits::new();
     let mut notifications = Edits::new();
+    let mut native_editor = Edits::new();
 
     if let Some(prefix) = &u.prefix {
         push(&mut root, "prefix", text(prefix));
@@ -118,6 +119,9 @@ fn apply(doc: &mut DocumentMut, u: &ConfigUpdate) {
     }
     if let Some(v) = &u.editor {
         push(&mut root, "editor", name(v));
+    }
+    if let Some(v) = u.vim_mode {
+        push(&mut native_editor, "vim", Some(v.into()));
     }
     if let Some(v) = u.window_grid_count {
         push(
@@ -265,6 +269,7 @@ fn apply(doc: &mut DocumentMut, u: &ConfigUpdate) {
         ("terminal", terminal),
         ("log", log),
         ("notifications", notifications),
+        ("native-editor", native_editor),
     ] {
         if !edits.is_empty() {
             edit(section(doc, name), edits);
@@ -426,6 +431,21 @@ mod tests {
         assert!(text.contains("[github]\nenabled = false\n"), "{text}");
         assert!(text.contains("[terminal]\nfont-size = 14.5\n"), "{text}");
         assert!(text.contains("[keys]\nsplit-vertical = \"v\"\n"), "{text}");
+    }
+
+    #[test]
+    fn writes_vim_mode_into_native_editor() {
+        let text = saved(
+            "[native-editor]\nformat-on-save = true\n",
+            ConfigUpdate {
+                vim_mode: Some(true),
+                ..ConfigUpdate::default()
+            },
+        );
+        assert!(
+            text.contains("[native-editor]\nformat-on-save = true\nvim = true\n"),
+            "{text}"
+        );
     }
 
     #[test]

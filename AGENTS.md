@@ -537,6 +537,32 @@ ignored) opens on that line through `open`'s `line`; `:line` alone moves in the
 shown file. MCP has
 `open_in_editor`, `editor_buffers`, and `editor_diagnostics`.
 
+`[native-editor] vim` (`ClientConfig.vim_mode`, a Settings toggle through
+`ConfigUpdate`) adds `@replit/codemirror-vim`, loaded once it is first turned
+on, through a compartment (`PaneEditor.setVim`), at `Prec.high` and ahead of
+every keymap, so its Ctrl chords win; the prefix is still taken first by
+`useKeybindings.ts`, Alt chords try the editor's keymaps first (on macOS
+vim takes them all in normal mode), and quick open's `Mod-p` runs before it
+in `PaneEditor.keydown`. `lib/nativeEditor/vim.ts` keeps vim's
+global definitions in one place: `:w`, `:wq`/`:x`, `:q` reach the editor
+through `setVimHost` (save goes through the server like `Mod-s`; `:q` hides;
+`:wq` hides only if `PaneEditor.save` wrote every local edit and the shown
+file and visibility didn't change meanwhile), `gd`, `K` (a hover tooltip of
+its own, since lsp-client's follows the pointer; keys other than modifiers
+and Cmd chords drop it, pending or shown), and `]d`/`[d`. `PaneEditor.save`
+resolves true only if the server echoed every update sent before it
+(`Doc.saveMark`): echoes precede the reply on the socket, and a push it
+dropped as stale gets none. The double-Esc hide in `PaneEditor.keydown` runs
+at `Prec.highest`, before vim: a quick run of Escs hides only if its first
+came in normal mode with nothing pending, no search highlight, and no macro
+recording (`vimIdle`), so leaving insert or visual mode never hides. Vim's
+state lives in a view plugin, so each new state (a file switch, a reopen in
+`Doc.opened`) starts in normal mode; one replacing a state in insert mode
+goes back into insert mode, so what's typed next isn't run as commands.
+Leaving insert mode, however it happens, closes completions. Registers are
+global to the tab. The mobile key bar's synthetic keydowns reach vim like
+real ones.
+
 ### Built-in Neovim
 
 `prefix + e` (`editor` action) opens the `editor` setting. With `neovim`, it toggles a Neovim GUI over the active pane
@@ -889,6 +915,10 @@ transparent background). Keys are **kebab-case in TOML but camelCase on the wire
 — `TerminalOptions` uses `rename_all(serialize = "camelCase", deserialize = "kebab-case")`
 so the same struct round-trips both ways. Unset fields serialize as `null`, and
 the frontend applies its `CONFIG_DEFAULTS` (`state/configDefaults.ts`).
+
+`[native-editor]` holds `format-on-save` and `vim` (both default off), sent
+flat as `ClientConfig.format_on_save` and `vim_mode`; only `vim` is in
+`ConfigUpdate`, so Settings can toggle it.
 
 There are dark and light schemes. `appearance` (`auto`, `dark`, `light`)
 picks the shown one; `auto` uses the system color mode browsers report

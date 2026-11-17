@@ -663,6 +663,8 @@ impl Default for MultipassConfig {
 pub struct NativeEditorConfig {
     /// Format with the language server before saving.
     pub format_on_save: bool,
+    /// Vim keybindings.
+    pub vim: bool,
 }
 
 /// `[language-server.NAME]`: a language server the native editor can run.
@@ -1430,6 +1432,8 @@ pub struct ClientConfig {
     pub editors: Vec<Editor>,
     /// `[native-editor] format-on-save`.
     pub format_on_save: bool,
+    /// `[native-editor] vim`.
+    pub vim_mode: bool,
     /// Whether the server found Chrome or Chromium for the browser surface.
     pub browser: bool,
     /// Whether this tab reaches the server through a btmux connect relay;
@@ -2032,6 +2036,7 @@ pub fn generate_config_toml() -> String {
 # on PATH. A table of the same name replaces a built-in one.
 # [native-editor]
 # format-on-save = false
+# vim = false   # Vim keybindings; :w saves, :q hides, a double Esc hides only from normal mode
 # [language-server.rust-analyzer]
 # command = "rust-analyzer"
 # args = []
@@ -2333,6 +2338,7 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         window_sort: file.window_sort.clone(),
         editor: file.editor.unwrap_or(Editor::Native),
         format_on_save: file.native_editor.format_on_save,
+        vim_mode: file.native_editor.vim,
         editors: [
             (Editor::Native, true),
             (Editor::Neovim, crate::ws::nvim::available()),
@@ -2390,6 +2396,8 @@ pub struct ConfigUpdate {
     pub session_sort: Option<SessionSort>,
     pub window_sort: Option<WindowSort>,
     pub editor: Option<Editor>,
+    /// `[native-editor] vim`.
+    pub vim_mode: Option<bool>,
     pub window_grid_count: Option<u32>,
     pub appearance: Option<Appearance>,
     pub colors_dark: Option<String>,
@@ -2460,6 +2468,9 @@ impl ConfigUpdate {
         }
         if other.editor.is_some() {
             self.editor = other.editor;
+        }
+        if other.vim_mode.is_some() {
+            self.vim_mode = other.vim_mode;
         }
         if other.window_grid_count.is_some() {
             self.window_grid_count = other.window_grid_count;
@@ -2602,6 +2613,9 @@ pub fn resolve_with_overrides(
     }
     if let Some(editor) = &overrides.editor {
         file.editor = Some(*editor);
+    }
+    if let Some(vim) = overrides.vim_mode {
+        file.native_editor.vim = vim;
     }
     if let Some(window_grid_count) = overrides.window_grid_count {
         file.window_grid_count = Some(window_grid_count.clamp(1, 24));
@@ -3041,6 +3055,29 @@ palette:
     }
 
     #[test]
+    fn native_editor_settings_default_off_and_parse() {
+        let defaults = FileConfig::default().native_editor;
+        assert!(!defaults.format_on_save && !defaults.vim);
+        assert!(!resolve_binds(&FileConfig::default(), ColorMode::Dark).vim_mode);
+        let example = generate_config_toml();
+        let table = example
+            .lines()
+            .skip_while(|line| *line != "# [native-editor]")
+            .take_while(|line| line.starts_with("# ") && !line.starts_with("# [language-server"))
+            .map(|line| line.trim_start_matches('#').trim_start())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(table.contains("vim = false"), "{table}");
+        let file: FileConfig = toml::from_str(&table).unwrap();
+        assert_eq!(file.native_editor, NativeEditorConfig::default());
+        let file: FileConfig =
+            toml::from_str("[native-editor]\nvim = true\nformat-on-save = true\n").unwrap();
+        assert!(file.native_editor.vim && file.native_editor.format_on_save);
+        assert!(resolve_binds(&file, ColorMode::Dark).vim_mode);
+        assert!(toml::from_str::<FileConfig>("[native-editor]\nvim-mode = true\n").is_err());
+    }
+
+    #[test]
     fn check_for_updates_defaults_on_and_can_be_disabled() {
         assert!(FileConfig::default().check_for_updates);
         let file: FileConfig = toml::from_str("check-for-updates = false").unwrap();
@@ -3156,6 +3193,7 @@ palette:
                 session_sort: Some(SessionSort::Alphabetical),
                 window_sort: Some(WindowSort::Created),
                 editor: Some(Editor::Pane),
+                vim_mode: Some(true),
                 window_grid_count: Some(9),
                 cursor_blink: Some(false),
                 scrollback: Some(42),
@@ -3184,6 +3222,7 @@ palette:
         assert_eq!(resolved.session_sort, SessionSort::Alphabetical);
         assert_eq!(resolved.window_sort, WindowSort::Created);
         assert_eq!(resolved.editor, Editor::Pane);
+        assert!(resolved.vim_mode);
         assert_eq!(resolved.window_grid_count, 9);
         assert_eq!(resolved.terminal.cursor_blink, Some(false));
         assert_eq!(resolved.terminal.scrollback, Some(42));

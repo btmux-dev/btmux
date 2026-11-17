@@ -2,7 +2,7 @@
 // documents it is sent and logs each method to $BTMUX_FAKE_LSP/log (if set):
 // - diagnostics: an error on every "bad"
 // - completion: "fakeCompletion"
-// - hover: "Fake hover for WORD"
+// - hover: "Fake hover for WORD", 700 ms late for "slow"
 // - definition: WORD's first line in other.fake beside the document
 // - rename: every WORD in the .fake files of the document's directory,
 //   open or not (as edits to the open text or the file on disk)
@@ -54,6 +54,8 @@ function wordAt(text: string, pos: Position) {
 
 function occurrences(text: string, word: string): Range[] {
   const ranges: Range[] = [];
+  // No word at the cursor (an empty line): `\b\b` would match forever.
+  if (!word) return ranges;
   const re = new RegExp(`\\b${word}\\b`, 'g');
   for (let m = re.exec(text); m; m = re.exec(text))
     ranges.push({ start: position(text, m.index), end: position(text, m.index + word.length) });
@@ -196,16 +198,27 @@ function handle(msg: any): unknown {
       }));
     }
     case 'textDocument/codeLens':
-      return [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }, command: { title: 'Ask me', command: 'fake.ask' } }];
+      return [
+        {
+          range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+          command: { title: 'Ask me', command: 'fake.ask' },
+        },
+      ];
     case 'workspace/executeCommand':
       if (p.command === 'fake.ask')
-        request('window/showMessageRequest', { type: 3, message: 'Proceed?', actions: [{ title: 'Yes' }, { title: 'No' }] });
+        request('window/showMessageRequest', {
+          type: 3,
+          message: 'Proceed?',
+          actions: [{ title: 'Yes' }, { title: 'No' }],
+        });
       return null;
     case 'textDocument/codeAction': {
       const uri = p.textDocument.uri;
       const t = text(uri);
       const edits = occurrences(t, 'bad').map((range) => ({ range, newText: 'good' }));
-      return edits.length ? [{ title: 'Replace bad with good', kind: 'quickfix', edit: { changes: { [uri]: edits } } }] : [];
+      return edits.length
+        ? [{ title: 'Replace bad with good', kind: 'quickfix', edit: { changes: { [uri]: edits } } }]
+        : [];
     }
     case 'textDocument/foldingRange':
       return [{ startLine: 0, endLine: 2 }];
@@ -217,7 +230,10 @@ function handle(msg: any): unknown {
         let to = at;
         while (from > 0 && /\w/.test(t[from - 1])) from--;
         while (to < t.length && /\w/.test(t[to])) to++;
-        const line = { start: { line: pos.line, character: 0 }, end: { line: pos.line, character: t.split('\n')[pos.line].length } };
+        const line = {
+          start: { line: pos.line, character: 0 },
+          end: { line: pos.line, character: t.split('\n')[pos.line].length },
+        };
         return { range: { start: position(t, from), end: position(t, to) }, parent: { range: line } };
       });
     }
@@ -316,6 +332,11 @@ process.stdin.on('data', (chunk: Buffer) => {
       // Late capabilities: features must ask once they arrive.
       if (msg.method === 'initialize') setTimeout(reply, 300);
       else if (msg.method === 'textDocument/formatting' && text(msg.params.textDocument.uri).includes('slow'))
+        setTimeout(reply, 700);
+      else if (
+        msg.method === 'textDocument/hover' &&
+        wordAt(text(msg.params.textDocument.uri), msg.params.position) === 'slow'
+      )
         setTimeout(reply, 700);
       else reply();
     } else if (msg.method) notify(msg);
