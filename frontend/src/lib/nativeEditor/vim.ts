@@ -6,6 +6,18 @@ import { EditorView, ViewPlugin, runScopeHandlers, showTooltip, type Tooltip } f
 import { jumpToDefinition, LSPPlugin } from '@codemirror/lsp-client';
 import { forEachDiagnostic } from '@codemirror/lint';
 import { ask, has } from './features';
+import {
+  blameCurrentLine,
+  hunkLines,
+  nextHunk,
+  prevHunk,
+  previewHunk,
+  resetBuffer,
+  resetHunk,
+  stageBuffer,
+  stageHunk,
+  gitCommands,
+} from './gitSigns';
 
 /** What ex commands and the mode line reach in the editor showing a view. */
 export interface VimHost {
@@ -54,6 +66,40 @@ Vim.mapCommand('gd', 'action', 'btmuxDefinition', {}, { context: 'normal' });
 Vim.mapCommand('K', 'action', 'btmuxHover', {}, { context: 'normal' });
 Vim.mapCommand(']d', 'action', 'btmuxNextDiagnostic', {}, { context: 'normal' });
 Vim.mapCommand('[d', 'action', 'btmuxPrevDiagnostic', {}, { context: 'normal' });
+
+// Git signs, with the mappings gitsigns.nvim suggests (`\` is Vim's default leader).
+const gitActions: [string, string, (view: EditorView) => boolean, string?][] = [
+  [']c', 'btmuxNextHunk', nextHunk],
+  ['[c', 'btmuxPrevHunk', prevHunk],
+  ['\\hs', 'btmuxStageHunk', stageHunk, 'visual'],
+  ['\\hr', 'btmuxResetHunk', resetHunk, 'visual'],
+  ['\\hS', 'btmuxStageBuffer', stageBuffer],
+  ['\\hR', 'btmuxResetBuffer', resetBuffer],
+  ['\\hp', 'btmuxPreviewHunk', previewHunk],
+  ['\\hb', 'btmuxBlameLine', blameCurrentLine],
+  ['\\tb', 'btmuxToggleLineBlame', gitCommands['editor-toggle-line-blame']],
+];
+for (const [keys, name, run, visual] of gitActions) {
+  Vim.defineAction(name, (cm) => {
+    run(cm.cm6);
+    // A range staged or reset from visual mode ends it.
+    if (visual && cm.state.vim?.visualMode) Vim.exitVisualMode(cm);
+  });
+  Vim.mapCommand(keys, 'action', name, {}, { context: 'normal' });
+  if (visual) Vim.mapCommand(keys, 'action', name, {}, { context: 'visual' });
+}
+// `ih`: the hunk's lines, as a text object.
+Vim.defineMotion('btmuxHunk', (cm, head) => {
+  const lines = hunkLines(cm.cm6, head.line);
+  if (!lines) return null;
+  const last = cm.cm6.state.doc.line(lines.last);
+  return [
+    { line: lines.first - 1, ch: 0 },
+    { line: lines.last - 1, ch: last.length },
+  ];
+});
+for (const context of ['operatorPending', 'visual'])
+  Vim.mapCommand('ih', 'motion', 'btmuxHunk', { linewise: true }, { context });
 
 /**
  * Move the cursor to the next or previous diagnostic's start, wrapping.

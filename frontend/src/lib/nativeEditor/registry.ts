@@ -1,4 +1,17 @@
-/** Commands the command palette runs in a pane's native editor: quick open and language server commands. */
+/** The native editor's Git commands, after gitsigns.nvim. */
+export const GIT_COMMANDS = [
+  'editor-next-hunk',
+  'editor-prev-hunk',
+  'editor-preview-hunk',
+  'editor-stage-hunk',
+  'editor-reset-hunk',
+  'editor-stage-buffer',
+  'editor-reset-buffer',
+  'editor-blame-line',
+  'editor-toggle-line-blame',
+];
+
+/** Commands the command palette runs in a pane's native editor: quick open, language server, and Git commands. */
 export const EDITOR_COMMANDS = [
   'editor-quick-open',
   'editor-code-actions',
@@ -9,6 +22,7 @@ export const EDITOR_COMMANDS = [
   'editor-supertypes',
   'editor-subtypes',
   'editor-expand-selection',
+  ...GIT_COMMANDS,
 ];
 
 export const QUICK_OPEN_NEEDS_FOLDER = 'Quick open needs a folder on this machine';

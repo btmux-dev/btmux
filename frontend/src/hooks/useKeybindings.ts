@@ -640,6 +640,22 @@ export function runAction(
       else runEditorCommand(paneId, action, failed);
       break;
     }
+    case 'editor-next-hunk':
+    case 'editor-prev-hunk':
+    case 'editor-preview-hunk':
+    case 'editor-stage-hunk':
+    case 'editor-reset-hunk':
+    case 'editor-stage-buffer':
+    case 'editor-reset-buffer':
+    case 'editor-blame-line':
+    case 'editor-toggle-line-blame': {
+      const win = session?.windows[session.active_window];
+      const paneId = win?.zoomed_pane ?? win?.panes[win.active_pane]?.id ?? null;
+      const failed = () => useStore.getState().showToast('Needs a file open in the editor', 'info');
+      if (!paneId || !nativeEditorOver(store, paneId)) failed();
+      else runEditorCommand(paneId, action, failed);
+      break;
+    }
     case 'shut-down-neovim':
     case 'shut-down-vscode':
       send({ type: 'shut_down_editor', editor: action === 'shut-down-neovim' ? 'neovim' : 'vscode' });

@@ -550,6 +550,21 @@ servers: Array<number>, };
 export type BufferSummary = { id: string, path: string, dirty: boolean, };
 
 // prettier-ignore
+export type Blame = {
+/**
+ * `None` for lines not committed yet.
+ */
+commit: string | null, author: string,
+/**
+ * Seconds since the epoch.
+ */
+time: number, summary: string,
+/**
+ * The whole commit message, when asked for.
+ */
+message: string | null, };
+
+// prettier-ignore
 export type ServerState = "starting" | "ready" | "failed";
 
 // prettier-ignore
@@ -567,7 +582,7 @@ export type LspServerStatus = { id: number, name: string, root: string, state: S
 progress: Array<LspProgress>, };
 
 // prettier-ignore
-export type EditorClientMessage = { "type": "open", req: number, path: string, resume: Resume | null, } | { "type": "release", buffer: string, } | { "type": "push", buffer: string, version: number, updates: Array<Update>, } | { "type": "save", req: number, buffer: string, force: boolean, } | { "type": "revert", req: number, buffer: string, } | { "type": "lsp", server: number, message: unknown, buffer: string | null, version: number | null, } | { "type": "lsp_prompt_answer", server: number, token: number, action: string | null, } | { "type": "apply_edit", req: number, edit: unknown, buffer: string | null, version: number | null, };
+export type EditorClientMessage = { "type": "open", req: number, path: string, resume: Resume | null, } | { "type": "release", buffer: string, } | { "type": "push", buffer: string, version: number, updates: Array<Update>, } | { "type": "save", req: number, buffer: string, force: boolean, } | { "type": "revert", req: number, buffer: string, } | { "type": "lsp", server: number, message: unknown, buffer: string | null, version: number | null, } | { "type": "lsp_prompt_answer", server: number, token: number, action: string | null, } | { "type": "apply_edit", req: number, edit: unknown, buffer: string | null, version: number | null, } | { "type": "git_stage", req: number, buffer: string, generation: number, text: string, } | { "type": "git_blame", req: number, buffer: string, version: number, line: number, full: boolean, };
 
 // prettier-ignore
 export type EditorServerMessage = { "type": "opened", req: number, buffer: BufferInfo, } | { "type": "resumed", req: number, buffer: string, } | { "type": "updates", buffer: string, version: number, updates: Array<Update>, } | { "type": "buffer_state", buffer: string, dirty: boolean, disk: DiskStatus, } | { "type": "buffers", buffers: Array<BufferSummary>, } | { "type": "result", req: number, error: string | null,
@@ -578,7 +593,11 @@ conflict: boolean, } | { "type": "lsp", server: number, message: unknown, } | { 
 /**
  * LSP `MessageType`: 1 error, 2 warning, 3 info, 4 log.
  */
-level: number, message: string, actions: Array<string>, } | { "type": "lsp_prompt_done", server: number, token: number, } | { "type": "lsp_show_document", uri: string,
+level: number, message: string, actions: Array<string>, } | { "type": "lsp_prompt_done", server: number, token: number, } | { "type": "git_base", buffer: string, generation: number, text: string | null, untracked: boolean, } | { "type": "git_blame", req: number, blame: Blame | null,
+/**
+ * The buffer wasn't at the version asked for.
+ */
+stale: boolean, error: string | null, } | { "type": "lsp_show_document", uri: string,
 /**
  * In the browser rather than the editor.
  */

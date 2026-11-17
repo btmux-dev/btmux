@@ -3,6 +3,7 @@
 //! `@codemirror/collab` (`/ws/editor`).
 
 pub mod buffer;
+pub mod git;
 pub mod lsp;
 pub mod text;
 
@@ -79,6 +80,25 @@ pub enum EditorClientMessage {
         #[cfg_attr(test, ts(type = "number | null"))]
         version: Option<u64>,
     },
+    /// Make `text` the file's index content, if the index is still at
+    /// `generation` (`git_base`).
+    GitStage {
+        req: u32,
+        buffer: Uuid,
+        #[cfg_attr(test, ts(type = "number"))]
+        generation: u64,
+        text: String,
+    },
+    /// Blame 1-based `line` of the buffer at `version`; `full` adds the
+    /// commit message.
+    GitBlame {
+        req: u32,
+        buffer: Uuid,
+        #[cfg_attr(test, ts(type = "number"))]
+        version: u64,
+        line: u32,
+        full: bool,
+    },
 }
 
 #[derive(Deserialize, Debug)]
@@ -145,6 +165,22 @@ pub enum EditorServerMessage {
         #[cfg_attr(test, ts(type = "number"))]
         token: u64,
     },
+    /// The file as the Git index has it, which git signs diff against, on
+    /// open and on change; `null` outside a repository or for ignored files.
+    GitBase {
+        buffer: Uuid,
+        #[cfg_attr(test, ts(type = "number"))]
+        generation: u64,
+        text: Option<String>,
+        untracked: bool,
+    },
+    GitBlame {
+        req: u32,
+        blame: Option<git::Blame>,
+        /// The buffer wasn't at the version asked for.
+        stale: bool,
+        error: Option<String>,
+    },
     /// A server asks to show a document (`window/showDocument`).
     LspShowDocument {
         uri: String,
@@ -202,6 +238,17 @@ struct Inner {
     stalled: HashSet<SocketId>,
     /// Saves writing their file.
     saving: usize,
+    /// Buffers in a Git worktree.
+    git: HashMap<Uuid, GitState>,
+}
+
+struct GitState {
+    file: git::GitFile,
+    base: Option<git::Base>,
+    /// The commit blame starts from.
+    head: Option<git2::Oid>,
+    /// Counts changes of `base` and `head`.
+    generation: u64,
 }
 
 pub struct Hub {
@@ -328,6 +375,7 @@ pub async fn restore(handed: EditorHandoff) -> tokio::task::JoinHandle<()> {
     // Nothing watched the files during the upgrade; their tabs hear of changes.
     tokio::spawn(async move {
         for path in restored {
+            hub().attach_git(path.clone()).await;
             hub().check_disk(path).await;
         }
     })
@@ -537,6 +585,182 @@ impl Hub {
                 let error = self.apply_edit(edit, expect).await.err();
                 self.reply(socket, req, error, false);
             }
+            EditorClientMessage::GitStage {
+                req,
+                buffer,
+                generation,
+                text,
+            } => self.git_stage(socket, req, buffer, generation, text),
+            EditorClientMessage::GitBlame {
+                req,
+                buffer,
+                version,
+                line,
+                full,
+            } => self.git_blame(socket, req, buffer, version, line, full),
+        }
+    }
+
+    /// Stage `text` as the buffer's index content, if the index is still at `generation`.
+    fn git_stage(
+        &'static self,
+        socket: SocketId,
+        req: u32,
+        id: Uuid,
+        generation: u64,
+        text: String,
+    ) {
+        let taken = (|| {
+            let inner = self.inner.lock().unwrap();
+            if inner.frozen {
+                return Err(UPGRADING.to_owned());
+            }
+            let b = inner.buffers.get(&id).ok_or("The buffer is closed")?;
+            let g = inner.git.get(&id).ok_or("Not in a Git repository")?;
+            let base = g.base.clone().ok_or("Git doesn't track this file")?;
+            if g.generation != generation {
+                return Err("The index changed meanwhile; try again".to_owned());
+            }
+            Ok((g.file.clone(), base, b.line_ending, b.bom))
+        })();
+        // Spawned: later messages, such as pushes, don't wait for git.
+        tokio::spawn(async move {
+            let result = match taken {
+                Ok((file, base, line_ending, bom)) => tokio::task::spawn_blocking(move || {
+                    git::stage(&file, &base, &text, line_ending, bom)
+                })
+                .await
+                .unwrap_or_else(|e| Err(e.to_string())),
+                Err(e) => Err(e),
+            };
+            // The new base reaches the tab before the reply.
+            self.refresh_git(vec![id]).await;
+            self.reply(socket, req, result.err(), false);
+        });
+    }
+
+    fn git_blame(
+        &'static self,
+        socket: SocketId,
+        req: u32,
+        id: Uuid,
+        version: u64,
+        line: u32,
+        full: bool,
+    ) {
+        let taken = {
+            let inner = self.inner.lock().unwrap();
+            match (inner.buffers.get(&id), inner.git.get(&id)) {
+                (Some(b), Some(g)) if b.version == version => Some((
+                    g.file.clone(),
+                    buffer::encode(&b.rope.to_string(), b.line_ending, b.bom),
+                )),
+                (Some(b), _) if b.version != version => {
+                    let stale = EditorServerMessage::GitBlame {
+                        req,
+                        blame: None,
+                        stale: true,
+                        error: None,
+                    };
+                    inner.send_to(socket, &stale);
+                    return;
+                }
+                _ => None,
+            }
+        };
+        tokio::spawn(async move {
+            let result = match taken {
+                Some((file, contents)) => git::blame(&file, contents, line, full).await,
+                None => Ok(None),
+            };
+            let (blame, error) = match result {
+                Ok(blame) => (blame, None),
+                Err(e) => (None, Some(e)),
+            };
+            let msg = EditorServerMessage::GitBlame {
+                req,
+                blame,
+                stale: false,
+                error,
+            };
+            self.inner.lock().unwrap().send_to(socket, &msg);
+        });
+    }
+
+    /// Reread the index and HEAD for `ids`, telling followers of changes.
+    async fn refresh_git(&self, ids: Vec<Uuid>) {
+        let files: Vec<(Uuid, git::GitFile)> = {
+            let inner = self.inner.lock().unwrap();
+            ids.into_iter()
+                .filter_map(|id| Some((id, inner.git.get(&id)?.file.clone())))
+                .collect()
+        };
+        if files.is_empty() {
+            return;
+        }
+        let bases = tokio::task::spawn_blocking(move || {
+            files
+                .into_iter()
+                .map(|(id, file)| (id, git::read(&file)))
+                .collect::<Vec<_>>()
+        })
+        .await
+        .unwrap_or_default();
+        let mut inner = self.inner.lock().unwrap();
+        for (id, read) in bases {
+            let Some(g) = inner.git.get_mut(&id) else {
+                continue;
+            };
+            if g.base == read.base && g.head == read.head {
+                continue;
+            }
+            g.base = read.base;
+            g.head = read.head;
+            g.generation += 1;
+            let msg = base_message(id, g);
+            inner.send_to_followers(id, &msg);
+        }
+    }
+
+    /// `path` changed: if it is in a watched git dir (the index, `HEAD`,
+    /// `ORIG_HEAD`, …), reread the index and HEAD for its buffers.
+    async fn check_git(&self, path: &Path) {
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            return;
+        };
+        if name.ends_with(".lock") || name.starts_with(git::SCRATCH_PREFIX) {
+            return;
+        }
+        let ids: Vec<Uuid> = {
+            let inner = self.inner.lock().unwrap();
+            inner
+                .git
+                .iter()
+                .filter(|(_, g)| Some(g.file.git_dir.as_path()) == path.parent())
+                .map(|(id, _)| *id)
+                .collect()
+        };
+        self.refresh_git(ids).await;
+    }
+
+    /// Find the repository of a buffer restored from an upgrade.
+    #[cfg(unix)]
+    async fn attach_git(&self, path: PathBuf) {
+        let p = path.clone();
+        let Ok(found) = tokio::task::spawn_blocking(move || find_git(&p)).await else {
+            return;
+        };
+        let mut inner = self.inner.lock().unwrap();
+        let Some(id) = inner.by_path.get(&path).copied() else {
+            return;
+        };
+        if inner.git.contains_key(&id) {
+            return;
+        }
+        inner.insert_git(id, found);
+        if let Some(g) = inner.git.get(&id) {
+            let msg = base_message(id, g);
+            inner.send_to_followers(id, &msg);
         }
     }
 
@@ -608,6 +832,16 @@ impl Hub {
                 inner.send_to(socket, &EditorServerMessage::Opened { req, buffer: info });
             }
         }
+        let base = match inner.git.get(&id) {
+            Some(g) => base_message(id, g),
+            None => EditorServerMessage::GitBase {
+                buffer: id,
+                generation: 0,
+                text: None,
+                untracked: false,
+            },
+        };
+        inner.send_to(socket, &base);
         inner.send_summaries();
         Ok(())
     }
@@ -620,8 +854,12 @@ impl Hub {
         }
         let p = path.clone();
         let config = lsp::config::current();
-        let (loaded, target) = tokio::task::spawn_blocking(move || {
-            (buffer::load(&p), lsp::config::target(&config, &p))
+        let (loaded, target, git) = tokio::task::spawn_blocking(move || {
+            (
+                buffer::load(&p),
+                lsp::config::target(&config, &p),
+                find_git(&p),
+            )
         })
         .await
         .map_err(|e| e.to_string())?;
@@ -636,6 +874,7 @@ impl Hub {
         inner.by_path.insert(path.clone(), id);
         inner.buffers.insert(id, buffer);
         inner.watch(&path);
+        inner.insert_git(id, git);
         if let Some(target) = target {
             inner.lsp_attach(id, target);
         }
@@ -874,6 +1113,22 @@ impl Hub {
     }
 }
 
+fn base_message(id: Uuid, g: &GitState) -> EditorServerMessage {
+    EditorServerMessage::GitBase {
+        buffer: id,
+        generation: g.generation,
+        text: g.base.as_ref().map(|b| b.text.clone()),
+        untracked: g.base.as_ref().is_some_and(|b| b.untracked),
+    }
+}
+
+/// The repository holding `path` and what git signs follow there.
+fn find_git(path: &Path) -> Option<(git::GitFile, git::Snapshot)> {
+    let file = git::locate(path)?;
+    let read = git::read(&file);
+    Some((file, read))
+}
+
 fn state_message(b: &Buffer) -> EditorServerMessage {
     EditorServerMessage::BufferState {
         buffer: b.id,
@@ -1041,6 +1296,9 @@ impl Inner {
         if let Some(b) = self.buffers.remove(&id) {
             self.by_path.remove(&b.path);
             self.unwatch(&b.path);
+            if let Some(g) = self.git.remove(&id) {
+                self.unwatch_dir(&g.file.git_dir);
+            }
             self.lsp_closed(id, &b.path, &b.servers);
         }
     }
@@ -1067,16 +1325,42 @@ impl Inner {
     }
 
     fn watch(&mut self, path: &Path) {
-        let Some(dir) = path.parent() else { return };
+        if let Some(dir) = path.parent() {
+            self.watch_dir(dir);
+        }
+    }
+
+    fn unwatch(&mut self, path: &Path) {
+        if let Some(dir) = path.parent() {
+            self.unwatch_dir(dir);
+        }
+    }
+
+    fn watch_dir(&mut self, dir: &Path) {
         self.watcher
             .get_or_insert_with(watch::Watcher::new)
             .watch(dir);
     }
 
-    fn unwatch(&mut self, path: &Path) {
-        if let (Some(dir), Some(watcher)) = (path.parent(), self.watcher.as_mut()) {
+    fn unwatch_dir(&mut self, dir: &Path) {
+        if let Some(watcher) = self.watcher.as_mut() {
             watcher.unwatch(dir);
         }
+    }
+
+    /// Track a buffer's repository, watching its index.
+    fn insert_git(&mut self, id: Uuid, found: Option<(git::GitFile, git::Snapshot)>) {
+        let Some((file, read)) = found else { return };
+        self.watch_dir(&file.git_dir);
+        self.git.insert(
+            id,
+            GitState {
+                file,
+                base: read.base,
+                head: read.head,
+                generation: 1,
+            },
+        );
     }
 }
 
@@ -1125,6 +1409,7 @@ mod watch {
                         }
                     }
                     for path in paths {
+                        super::hub().check_git(&path).await;
                         super::hub().check_disk(path).await;
                     }
                 }
