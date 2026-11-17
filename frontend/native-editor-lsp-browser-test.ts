@@ -424,6 +424,30 @@ try {
   assert.equal(await code.getAttribute('href'), 'https://example.com/D1');
   console.log('PASS diagnostic tags and codes');
 
+  // Inlay hints resolve: a tooltip on hover, a command and a location in their
+  // label, and edits on a double click.
+  const hinted = join(dir, 'hints.fake');
+  writeFileSync(hinted, 'let x = 1;\n');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: hinted, line: 1, editor: 'native' });
+  const hint = pane.locator('.cm-lsp-inlay-hint', { hasText: ': hint' });
+  await hint.waitFor();
+  await pane.locator('.cm-lsp-code-lens').first().waitFor();
+  const [colon, type] = [
+    hint.locator('.cm-lsp-inlay-hint-part').nth(0),
+    hint.locator('.cm-lsp-inlay-hint-part').nth(1),
+  ];
+  await type.hover();
+  await page.locator('.cm-tooltip').getByText('Type of').waitFor();
+  assert.equal(await page.getByText('Fake hover for').count(), 0);
+  await until('the resolved command', async () => (await colon.getAttribute('class'))?.includes('command') ?? false);
+  await colon.click();
+  await until('the command', () => log().includes('execute fake.hint ["x"]'));
+  await hint.dblclick();
+  await until('the inserted hint', async () => (await lines(page, paneId)) === 'let x: hint = 1;\n');
+  await type.click({ modifiers: ['ControlOrMeta'] });
+  await until('the location', async () => (await lines(page, paneId)) === 'thing defined here\n');
+  console.log('PASS inlay hint resolve');
+
   // A restarted server's watches work too.
   const count = (re: RegExp) => (log().match(re) ?? []).length;
   writeFileSync(join(dir, 'crash.fake'), 'x\n');

@@ -528,7 +528,11 @@ Changes whose annotation `needsConfirmation` (`lsp/annotations.rs`)
 are first confirmed in the tab (`applyWorkspaceEdit`), or, for a server's
 `workspace/applyEdit`, through an `lsp_prompt`; either can skip just those
 changes. Diagnostics tagged unnecessary fade and deprecated ones strike
-through (a hint only does), and their codes link to `codeDescription`.
+through (a hint only does), and their codes link to `codeDescription`. Inlay
+hints resolve (`inlayHint/resolve`) once the pointer enters them: hovering
+shows their tooltip instead of the server's hover (`hovers` in `features.ts`
+replaces lsp-client's), label parts run their command on click and jump to
+their location on Mod-click, and a double click applies their edits.
 Crashed servers restart up to 3 times a minute; idle ones stop after 60 s. The backend also pulls diagnostics (`textDocument/diagnostic`) after
 changes settle, publishing them with pushed ones; watches the root for
 registered `didChangeWatchedFiles` globs (`lsp/watch.rs`: never home or above,

@@ -1,6 +1,5 @@
 import {
   findReferencesKeymap,
-  hoverTooltips,
   jumpToDefinition,
   jumpToDefinitionKeymap,
   LSPClient,
@@ -439,7 +438,6 @@ function client(server: number): LSPClient {
     },
     extensions: [
       serverCompletions,
-      hoverTooltips(),
       signatureHelp(),
       keymap.of([
         { key: 'Shift-Alt-f', run: formatCommand, preventDefault: true },

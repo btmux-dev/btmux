@@ -16,12 +16,14 @@ import {
   EditorView,
   ViewPlugin,
   WidgetType,
+  hoverTooltip,
   keymap,
   type DecorationSet,
   type ViewUpdate,
 } from '@codemirror/view';
 import { foldService, getIndentUnit, indentUnit } from '@codemirror/language';
 import { useStore } from '../../state/store';
+import { IS_MAC } from '../nvimKeys';
 import type { Overlay } from '../../state/types';
 import { editorConnection } from './connection';
 import { viewDocs, type Doc } from './doc';
@@ -148,25 +150,199 @@ const highlightPlugin = ViewPlugin.fromClass(
   },
 );
 
-// Inlay hints for the visible lines.
+// Inlay hints for the visible lines. Their tooltips show on hover, label
+// parts jump to their location (Mod-click) or run their command (click), and
+// a double click applies their text edits, resolving them as needed.
+type Markup = string | { kind: 'markdown' | 'plaintext'; value: string };
+type HintPart = { value: string; tooltip?: Markup; location?: Location; command?: Command };
+type InlayHint = {
+  position: Position;
+  label: string | HintPart[];
+  tooltip?: Markup;
+  textEdits?: TextEdit[];
+  paddingLeft?: boolean;
+  paddingRight?: boolean;
+  data?: unknown;
+};
+
+/** The hint each widget's DOM shows, kept current when the DOM is reused. */
+const hintOf = new WeakMap<HTMLElement, { hint: InlayHint; doc: Text }>();
+const resolvedHints = new WeakMap<InlayHint, Promise<InlayHint>>();
+/** Resolved hints, for clicks that can't wait. */
+const settledHints = new WeakMap<InlayHint, InlayHint>();
+
+/** `hint` with what the server left out, if it resolves hints. */
+function resolveHint(p: LSPPlugin, hint: InlayHint): Promise<InlayHint> {
+  const provider = (p.client.serverCapabilities as any)?.inlayHintProvider;
+  if (!provider?.resolveProvider) return Promise.resolve(hint);
+  let resolved = resolvedHints.get(hint);
+  if (!resolved) {
+    resolved = p.client
+      .request<InlayHint, InlayHint>('inlayHint/resolve', hint)
+      .then(
+        (r) => ({ ...hint, ...r }),
+        () => hint,
+      )
+      .then((r) => (settledHints.set(hint, r), r));
+    resolvedHints.set(hint, resolved);
+  }
+  return resolved;
+}
+
+const hintParts = (hint: InlayHint): HintPart[] =>
+  typeof hint.label === 'string' ? [{ value: hint.label }] : hint.label;
+
 class HintWidget extends WidgetType {
+  readonly key: string;
   constructor(
-    readonly text: string,
-    readonly left: boolean,
-    readonly right: boolean,
+    readonly hint: InlayHint,
+    readonly doc: Text,
   ) {
     super();
+    this.key = JSON.stringify([hintParts(hint).map((part) => part.value), hint.paddingLeft, hint.paddingRight]);
   }
   eq(other: HintWidget) {
-    return other.text === this.text && other.left === this.left && other.right === this.right;
+    return other.hint === this.hint;
   }
   toDOM() {
     const span = document.createElement('span');
     span.className = 'cm-lsp-inlay-hint';
-    span.textContent = `${this.left ? ' ' : ''}${this.text}${this.right ? ' ' : ''}`;
+    span.dataset.key = this.key;
+    if (this.hint.paddingLeft) span.append(' ');
+    for (const part of hintParts(this.hint)) {
+      const el = document.createElement('span');
+      el.className = part.command ? 'cm-lsp-inlay-hint-part cm-lsp-inlay-hint-command' : 'cm-lsp-inlay-hint-part';
+      el.textContent = part.value;
+      span.append(el);
+    }
+    if (this.hint.paddingRight) span.append(' ');
+    hintOf.set(span, { hint: this.hint, doc: this.doc });
     return span;
   }
+  // Same label: keep the DOM, now showing this hint.
+  updateDOM(dom: HTMLElement) {
+    if (dom.dataset.key !== this.key) return false;
+    hintOf.set(dom, { hint: this.hint, doc: this.doc });
+    return true;
+  }
+  ignoreEvent() {
+    return false;
+  }
 }
+
+/** The hint under the pointer, its DOM, and the label part's index there. */
+function hoveredHint(view: EditorView, target?: EventTarget | null) {
+  const el =
+    target instanceof Element
+      ? target.closest<HTMLElement>('.cm-lsp-inlay-hint')
+      : view.contentDOM.querySelector<HTMLElement>('.cm-lsp-inlay-hint:hover');
+  const found = el && hintOf.get(el);
+  if (!el || !found || !view.contentDOM.contains(el)) return null;
+  const part =
+    target instanceof Element
+      ? target.closest('.cm-lsp-inlay-hint-part')
+      : el.querySelector('.cm-lsp-inlay-hint-part:hover');
+  const index = part ? [...el.querySelectorAll('.cm-lsp-inlay-hint-part')].indexOf(part) : -1;
+  return { el, ...found, index };
+}
+
+const hintClicks = Prec.high(
+  EditorView.domEventHandlers({
+    mousedown(e, view) {
+      const found = e.button === 0 ? hoveredHint(view, e.target) : null;
+      const p = plugin(view);
+      if (!found || !p) return false;
+      // Not a word selection: a double click applies the hint's edits.
+      if (e.detail > 1) {
+        e.preventDefault();
+        return true;
+      }
+      if (found.index < 0) return false;
+      // Resolved on the way in, usually.
+      const part = hintParts(settledHints.get(found.hint) ?? found.hint)[found.index];
+      const mod = IS_MAC ? e.metaKey : e.ctrlKey;
+      if (!part || (!mod && !part.command)) return false;
+      e.preventDefault();
+      void resolveHint(p, found.hint).then((hint) => {
+        const resolved = hintParts(hint)[found.index] ?? part;
+        if (mod && resolved.location) void jump(view, resolved.location);
+        else if (!mod && resolved.command) void execute(view, resolved.command);
+      });
+      return true;
+    },
+    mouseover(e, view) {
+      const found = hoveredHint(view, e.target);
+      const p = plugin(view);
+      if (!found || !p) return false;
+      void resolveHint(p, found.hint).then((hint) => {
+        // Commands the server only gave now.
+        if (hintOf.get(found.el)?.hint !== found.hint) return;
+        const parts = found.el.querySelectorAll('.cm-lsp-inlay-hint-part');
+        hintParts(hint).forEach((part, i) => parts[i]?.classList.toggle('cm-lsp-inlay-hint-command', !!part.command));
+      });
+      return false;
+    },
+    dblclick(e, view) {
+      const found = hoveredHint(view, e.target);
+      const p = plugin(view);
+      if (!found || !p) return false;
+      e.preventDefault();
+      void resolveHint(p, found.hint).then((hint) => {
+        // Edits are for the document the hint was made in.
+        if (view.state.doc === found.doc) applyEdits(view, hint.textEdits ?? null, 'input');
+      });
+      return true;
+    },
+  }),
+);
+
+/** Hover tooltips: the inlay hint's under the pointer, else the server's hover. */
+const hovers = hoverTooltip(
+  async (view, pos) => {
+    const p = plugin(view);
+    if (!p) return null;
+    const found = hoveredHint(view);
+    if (found) {
+      const hint = await resolveHint(p, found.hint);
+      const tooltip = (found.index >= 0 ? hintParts(hint)[found.index]?.tooltip : undefined) ?? hint.tooltip;
+      if (!tooltip || !found.el.isConnected) return null;
+      const at = view.posAtDOM(found.el);
+      return { pos: at, end: at, above: true, create: () => tooltipDOM(p, tooltip, 'plaintext') };
+    }
+    if (!has(p, 'hoverProvider')) return null;
+    const result = await ask<{ contents: HoverContents; range?: Range } | null>(view, 'textDocument/hover', (p) => ({
+      position: p.toPosition(pos),
+    }));
+    if (!result) return null;
+    const doc = view.state.doc;
+    return {
+      pos: result.range ? offset(doc, result.range.start) : pos,
+      end: result.range ? offset(doc, result.range.end) : pos,
+      above: true,
+      create: () => tooltipDOM(p, hoverMarkdown(result.contents), 'markdown'),
+    };
+  },
+  { hideOn: (tr) => tr.docChanged },
+);
+
+type MarkedString = string | { language: string; value: string };
+type HoverContents = MarkedString | MarkedString[] | { kind: 'markdown' | 'plaintext'; value: string };
+
+/** Hover contents as one markup value; marked strings are markdown, code fenced. */
+function hoverMarkdown(contents: HoverContents): Markup {
+  const one = (m: MarkedString) => (typeof m === 'string' ? m : '```' + m.language + '\n' + m.value + '\n```');
+  if (Array.isArray(contents)) return { kind: 'markdown', value: contents.map(one).join('\n\n') };
+  if (typeof contents === 'string' || 'language' in contents) return { kind: 'markdown', value: one(contents) };
+  return contents;
+}
+
+function tooltipDOM(p: LSPPlugin, value: Markup, kind: 'markdown' | 'plaintext') {
+  const dom = document.createElement('div');
+  dom.className = 'cm-lsp-hover-tooltip cm-lsp-documentation';
+  dom.innerHTML = p.docToHTML(value, kind);
+  return { dom };
+}
+
 const hints = decorationField();
 const hintRequester = requester(
   300,
@@ -174,19 +350,16 @@ const hintRequester = requester(
     const p = plugin(view);
     if (!p || !has(p, 'inlayHintProvider')) return;
     const { from, to } = view.viewport;
-    const result = await ask<
-      { position: Position; label: string | { value: string }[]; paddingLeft?: boolean; paddingRight?: boolean }[]
-    >(view, 'textDocument/inlayHint', (p) => ({ range: { start: p.toPosition(from), end: p.toPosition(to) } }));
+    const result = await ask<InlayHint[]>(view, 'textDocument/inlayHint', (p) => ({
+      range: { start: p.toPosition(from), end: p.toPosition(to) },
+    }));
     if (!result) return;
     const doc = view.state.doc;
     const widgets = result
-      .map((h) => {
-        const text = typeof h.label === 'string' ? h.label : h.label.map((part) => part.value).join('');
-        return {
-          at: offset(doc, h.position),
-          deco: Decoration.widget({ widget: new HintWidget(text, !!h.paddingLeft, !!h.paddingRight), side: 1 }),
-        };
-      })
+      .map((h) => ({
+        at: offset(doc, h.position),
+        deco: Decoration.widget({ widget: new HintWidget(h, doc), side: 1 }),
+      }))
       .sort((a, b) => a.at - b.at);
     const builder = new RangeSetBuilder<Decoration>();
     for (const w of widgets) builder.add(w.at, w.at, w.deco);
@@ -734,6 +907,8 @@ export const lspFeatures: Extension = [
   highlightPlugin,
   hints.field,
   hintRequester,
+  hintClicks,
+  hovers,
   semantic.field,
   semanticRequester,
   lenses.field,
@@ -769,6 +944,8 @@ export const lspFeatures: Extension = [
       borderRadius: '3px',
       backgroundColor: 'color-mix(in srgb, var(--btm-editor-fg) 8%, transparent)',
     },
+    '.cm-lsp-inlay-hint-command': { cursor: 'pointer' },
+    '.cm-lsp-inlay-hint-command:hover': { textDecoration: 'underline' },
     '.cm-lsp-code-lens': { opacity: 0.65, fontSize: '85%', whiteSpace: 'pre' },
     '.cm-lsp-code-lens button': {
       font: 'inherit',

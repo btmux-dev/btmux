@@ -15,7 +15,9 @@
 // - formatting: trailing spaces removed, 700 ms late for text with "slow"
 // - pulled diagnostics: an error on every "worse"
 // - semantic tokens: every "thing" is a function
-// - inlay hints: ": hint" after every "let NAME"
+// - inlay hints: ": hint" after every "let NAME", which resolve with a
+//   tooltip, a command on ": " (fake.hint), the location of other.fake on
+//   "hint", and an edit inserting the hint
 // - document highlights, symbols, call hierarchy: occurrences of WORD
 // - code lenses: "fake.ask" on line 1, which asks the user (showMessageRequest)
 // - code actions: replace "bad" with "good"; on a last line "end", append "!"
@@ -126,7 +128,7 @@ function handle(msg: any): unknown {
           documentFormattingProvider: true,
           diagnosticProvider: { interFileDependencies: false, workspaceDiagnostics: false },
           semanticTokensProvider: { legend: { tokenTypes: ['function'], tokenModifiers: [] }, full: true },
-          inlayHintProvider: true,
+          inlayHintProvider: { resolveProvider: true },
           documentHighlightProvider: true,
           documentSymbolProvider: true,
           workspaceSymbolProvider: true,
@@ -135,7 +137,7 @@ function handle(msg: any): unknown {
           codeActionProvider: true,
           foldingRangeProvider: true,
           selectionRangeProvider: true,
-          executeCommandProvider: { commands: ['fake.ask', 'fake.shout'] },
+          executeCommandProvider: { commands: ['fake.ask', 'fake.shout', 'fake.hint'] },
           workspace: {
             fileOperations: Object.fromEntries(
               ['willRename', 'didRename', 'didCreate', 'didDelete'].map((op) => [
@@ -259,8 +261,22 @@ function handle(msg: any): unknown {
       const t = text(p.textDocument.uri);
       return [...t.matchAll(/let (\w+)/g)].map((m) => ({
         position: position(t, m.index! + m[0].length),
-        label: ': hint',
+        label: [{ value: ': ' }, { value: 'hint' }],
+        data: { uri: p.textDocument.uri, name: m[1] },
       }));
+    }
+    case 'inlayHint/resolve': {
+      const other = uriOf(join(dirname(pathOf(p.data.uri)), 'other.fake'));
+      const start = { line: 0, character: 0 };
+      return {
+        ...p,
+        tooltip: { kind: 'markdown', value: `Type of **${p.data.name}**` },
+        label: [
+          { value: ': ', command: { title: 'Hint', command: 'fake.hint', arguments: [p.data.name] } },
+          { value: 'hint', location: { uri: other, range: { start, end: start } } },
+        ],
+        textEdits: [{ range: { start: p.position, end: p.position }, newText: ': hint' }],
+      };
     }
     case 'textDocument/documentHighlight': {
       const t = text(p.textDocument.uri);
@@ -306,6 +322,7 @@ function handle(msg: any): unknown {
         },
       ];
     case 'workspace/executeCommand':
+      log(`execute ${p.command} ${JSON.stringify(p.arguments ?? [])}`);
       if (p.command === 'fake.ask')
         request('window/showMessageRequest', {
           type: 3,

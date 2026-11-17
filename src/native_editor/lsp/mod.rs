@@ -360,7 +360,11 @@ fn client_capabilities() -> Value {
             "selectionRange": {},
             "rangeFormatting": {},
             "onTypeFormatting": {},
-            "inlayHint": { "resolveSupport": { "properties": [] } },
+            "inlayHint": {
+                "resolveSupport": {
+                    "properties": ["tooltip", "textEdits", "label.tooltip", "label.location", "label.command"],
+                },
+            },
             "callHierarchy": {},
             "typeHierarchy": {},
             "semanticTokens": {
