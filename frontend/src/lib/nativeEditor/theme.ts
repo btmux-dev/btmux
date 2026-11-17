@@ -57,6 +57,18 @@ export function editorTheme(a: EditorAppearance): Extension {
         '.cm-scroller': { fontFamily: 'inherit', lineHeight: '1.45' },
         '.cm-content': { caretColor: theme.cursor },
         '.cm-cursor, .cm-dropCursor': { borderLeftColor: theme.cursor, borderLeftWidth: '2px' },
+        // Vim's block cursor; partial ones (pending operator, replace) have no letter.
+        '& .cm-vimCursorLayer .cm-fat-cursor': { background: theme.cursor },
+        '& .cm-vimCursorLayer .cm-fat-cursor:not([style*="transparent"])': {
+          color: `${theme.cursorAccent} !important`,
+        },
+        '&:not(.cm-focused) .cm-vimCursorLayer .cm-fat-cursor': {
+          background: 'none',
+          outline: `1px solid ${theme.cursor}`,
+          color: 'transparent !important',
+        },
+        '.cm-vim-panel': { fontFamily: 'inherit', padding: '2px 8px' },
+        '.cm-vim-panel input': { font: 'inherit', color: 'inherit' },
         '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, ::selection':
           { backgroundColor: theme.selectionBackground },
         '.cm-activeLine': { backgroundColor: 'color-mix(in srgb, var(--btm-editor-fg) 5%, transparent)' },

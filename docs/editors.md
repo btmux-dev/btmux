@@ -27,6 +27,31 @@ be shorter), or, for VS Code on macOS, in `/Applications`. The configured editor
 command palette or a `[keys]` binding, and `btmux open-editor --kind vscode`
 opens one from a pane.
 
+## Vim mode
+
+`[native-editor] vim = true` (also in Settings) gives the native editor Vim
+keybindings ([codemirror-vim](https://github.com/replit/codemirror-vim)).
+Turning it on or off applies to open editors at once.
+
+```toml
+[native-editor]
+vim = true
+```
+
+- The status line shows the mode (NORMAL, INSERT, VISUAL, …), and normal mode
+  has a block cursor in the theme's cursor color.
+- `:w` saves (`:w!` overwrites changes made on disk), `:q` hides the editor,
+  keeping unsaved changes, and `:wq` or `:x` save and hide it.
+- Esc leaves insert and visual mode. A quick double Esc hides the editor only
+  when it starts in normal mode with no command pending, so Escs that leave
+  insert mode never hide it.
+- With a language server: `gd` goes to the definition, `K` shows the hover,
+  and `]d`/`[d` move to the next/previous diagnostic.
+- Ctrl chords (`Ctrl-d`, `Ctrl-u`, `Ctrl-o`, `Ctrl-v`, `Ctrl-r`, …) go to Vim
+  rather than the editor's own keymap or the browser, except the btmux prefix
+  and shortcuts browsers keep (such as Ctrl-W and Ctrl-T outside macOS).
+- Mode and registers are per browser tab; edits are shared as always.
+
 ## Language servers
 
 The native editor starts a language server for each file it opens, one per

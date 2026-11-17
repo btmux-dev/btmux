@@ -117,6 +117,10 @@ export function NativeEditor({
   }, [editor, config?.format_on_save]);
 
   useEffect(() => {
+    editor?.setVim(!!config?.vim_mode);
+  }, [editor, config?.vim_mode]);
+
+  useEffect(() => {
     if (!editor || !visible) return;
     return registerEditorCommands(paneId, (action) => editor.command(action));
   }, [editor, paneId, visible]);
@@ -270,6 +274,11 @@ export function NativeEditor({
       </div>
       {active && (
         <HStack gap={3} vAlign="center" className="shrink-0 px-2 py-0.5">
+          {editor?.vimMode && (
+            <Text size="sm" weight="semibold" maxLines={1} className="shrink-0" aria-label="Vim mode">
+              {editor.vimMode}
+            </Text>
+          )}
           <Text size="sm" color="secondary" maxLines={1} className="min-w-0">
             {active}
           </Text>

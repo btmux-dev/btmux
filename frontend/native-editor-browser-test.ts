@@ -83,8 +83,7 @@ try {
   await input.waitFor();
   await waitForText(page, paneId, 'one\ntwo\nthree\n');
   await waitForAsync(page, () => document.activeElement?.hasAttribute('data-native-editor') ?? false);
-  const cursorLine = () =>
-    page.evaluate(() => document.querySelector('.cm-activeLine')?.textContent ?? null);
+  const cursorLine = () => page.evaluate(() => document.querySelector('.cm-activeLine')?.textContent ?? null);
   assert.equal(await cursorLine(), 'two');
   console.log('PASS open-editor shows the native editor on the given line, with focus');
 
@@ -152,13 +151,17 @@ try {
   // Another pane gets its own editor, with both shown.
   await page.keyboard.press('Control+a');
   await page.keyboard.press('%');
-  const secondPane: string = await waitForAsync(page, async (first) => {
-    const { useStore } = await import('/src/state/store.tsx' as string);
-    const s = useStore.getState();
-    const session = s.allSessions.find((x: any) => x.name.startsWith('native-editor-'));
-    const pane = session?.windows[session.active_window].panes.find((p: any) => p.id !== first);
-    return pane?.id ?? false;
-  }, paneId);
+  const secondPane: string = await waitForAsync(
+    page,
+    async (first) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      const s = useStore.getState();
+      const session = s.allSessions.find((x: any) => x.name.startsWith('native-editor-'));
+      const pane = session?.windows[session.active_window].panes.find((p: any) => p.id !== first);
+      return pane?.id ?? false;
+    },
+    paneId,
+  );
   await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: fileA, line: null, editor: 'native' });
   await api(`/api/panes/${secondPane}/open-editor`, 'POST', { path: fileB, line: null, editor: 'native' });
   await waitForText(page, secondPane, 'const x = 1;\n');
@@ -501,7 +504,8 @@ try {
     writeFileSync(two, 'two\n');
     await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: slow, line: null, editor: 'native' });
     await waitForText(page, paneId, 'slow   \n');
-    const formats = () => (readFileSync(join(lspDir, 'log'), 'utf8').match(/^textDocument\/formatting$/gm) ?? []).length;
+    const formats = () =>
+      (readFileSync(join(lspDir, 'log'), 'utf8').match(/^textDocument\/formatting$/gm) ?? []).length;
     const asked = formats();
     await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
     await page.keyboard.press('ControlOrMeta+s');
@@ -541,6 +545,171 @@ try {
     await page.waitForTimeout(1000);
     assert.equal(await page.locator('.cm-lsp-message-error').count(), 0);
     console.log('PASS a missing language server shows in the status line without errors');
+  }
+
+  // Vim mode, from config.toml.
+  if (configHome) {
+    const config = join(configHome, 'btmux', 'config.toml');
+    const vimDir = join(dir, 'vim');
+    mkdirSync(vimDir, { recursive: true });
+    mkdirSync(join(configHome, 'btmux'), { recursive: true });
+    const vimFile = join(vimDir, 'vim.txt');
+    writeFileSync(vimFile, 'alpha\nbeta\n');
+    const lspConfig = lspDir
+      ? [
+          '[language-server.fake]',
+          'command = "fake-lsp"',
+          '[[language]]',
+          'name = "fake"',
+          'file-types = ["fake"]',
+          'language-servers = ["fake"]',
+        ]
+      : [];
+    writeFileSync(config, ['[native-editor]', 'vim = true', ...lspConfig, ''].join('\n'));
+    const vimMode = (on: boolean) =>
+      waitForAsync(
+        page,
+        async (on) => {
+          const { useStore } = await import('/src/state/store.tsx' as string);
+          return useStore.getState().config?.vim_mode === on;
+        },
+        on,
+      );
+    await vimMode(true);
+    await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: vimFile, line: 1, editor: 'native' });
+    await waitForText(page, paneId, 'alpha\nbeta\n');
+    const content = page.locator(`[data-native-editor][data-pane-id="${paneId}"]`);
+    const mode = page.locator(`[data-editor-pane="${paneId}"] [aria-label="Vim mode"]`);
+    const showsMode = (label: string, p = page) =>
+      p.locator(`[data-editor-pane="${paneId}"] [aria-label="Vim mode"]`).getByText(label, { exact: true }).waitFor();
+    await content.click();
+    await page.keyboard.press('g');
+    await page.keyboard.press('g');
+    await showsMode('NORMAL');
+    const cursor = page.locator(`[data-editor-pane="${paneId}"] .cm-vimCursorLayer .cm-fat-cursor`);
+    await cursor.waitFor();
+    // The theme's cursor color, not codemirror-vim's default.
+    const [background, themed] = await cursor.evaluate(async (el) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      const probe = document.createElement('div');
+      probe.style.color = useStore.getState().config.theme.cursor;
+      document.body.append(probe);
+      const themed = getComputedStyle(probe).color;
+      probe.remove();
+      return [getComputedStyle(el).backgroundColor, themed];
+    });
+    assert.equal(background, themed);
+    console.log('PASS vim mode shows NORMAL and a block cursor');
+
+    await page.keyboard.type('ihello ');
+    await waitForText(page, paneId, 'hello alpha\nbeta\n');
+    await showsMode('INSERT');
+    // A double Esc in insert mode only leaves it.
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
+    assert(await content.isVisible(), 'a double Esc in insert mode keeps the editor');
+    await showsMode('NORMAL');
+    console.log('PASS insert mode, and a double Esc in it keeps the editor');
+
+    // The mobile key bar's Esc: a synthetic keydown on the editor.
+    await page.keyboard.press('A');
+    await showsMode('INSERT');
+    await page.evaluate(async (id) => {
+      const { dispatchKey } = await import('/src/lib/paneTerminal.ts' as string);
+      dispatchKey(document.querySelector(`[data-native-editor][data-pane-id="${id}"]`)!, 'Escape');
+    }, paneId);
+    await showsMode('NORMAL');
+    console.log('PASS a synthetic Esc (mobile key bar) leaves insert mode');
+
+    const command = async (text: string) => {
+      await page.keyboard.press(':');
+      await page.locator(`[data-editor-pane="${paneId}"] .cm-vim-panel input`).waitFor();
+      await page.keyboard.type(text);
+      await page.keyboard.press('Enter');
+    };
+    const unsaved = page.getByRole('tab', { name: 'vim.txt' }).locator('[aria-label="Unsaved"]');
+    await unsaved.waitFor();
+    await command('w');
+    await unsaved.waitFor({ state: 'detached' });
+    assert.equal(readFileSync(vimFile, 'utf8'), 'hello alpha\nbeta\n');
+    console.log('PASS :w saves to disk');
+
+    await page.keyboard.type('dd');
+    await waitForText(page, paneId, 'beta\n');
+    await page.keyboard.type('u');
+    await waitForText(page, paneId, 'hello alpha\nbeta\n');
+    console.log('PASS dd and u');
+
+    // Each tab has its own mode; edits still reach both.
+    const second = await openPage();
+    await waitForText(second, paneId, 'hello alpha\nbeta\n');
+    await content.click();
+    await page.keyboard.type('ggOtop');
+    await showsMode('INSERT');
+    await waitForText(second, paneId, 'top\nhello alpha\nbeta\n');
+    await showsMode('NORMAL', second);
+    await page.keyboard.press('Escape');
+    await second.context().close();
+    console.log('PASS vim state is per tab; edits go through the server');
+
+    // From normal mode, a double Esc hides the editor, as does :q.
+    await page.waitForTimeout(400);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    await content.waitFor({ state: 'hidden' });
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('e');
+    await content.waitFor({ state: 'visible' });
+    await content.click();
+    await command('q');
+    await content.waitFor({ state: 'hidden' });
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('e');
+    await content.waitFor({ state: 'visible' });
+    await content.click();
+    await command('wq');
+    await content.waitFor({ state: 'hidden' });
+    assert.equal(readFileSync(vimFile, 'utf8'), 'top\nhello alpha\nbeta\n');
+    console.log('PASS a double Esc from normal mode, :q, and :wq hide the editor');
+
+    if (lspDir) {
+      writeFileSync(join(vimDir, 'main.fake'), 'use thing;\nlet bad = 1;\n');
+      writeFileSync(join(vimDir, 'other.fake'), 'first\nthing defined here\n');
+      await api(`/api/panes/${paneId}/open-editor`, 'POST', {
+        path: join(vimDir, 'main.fake'),
+        line: 1,
+        editor: 'native',
+      });
+      await waitForText(page, paneId, 'use thing;\nlet bad = 1;\n');
+      await page.locator(`[data-editor-pane="${paneId}"] .cm-lintRange-error`).first().waitFor();
+      await content.click();
+      await page.keyboard.type('gg');
+      await page.keyboard.type(']d');
+      await page.locator(`[data-editor-pane="${paneId}"]`).getByText('Ln 2, Col 5', { exact: true }).waitFor();
+      await page.keyboard.type('gg');
+      await page.keyboard.type('w');
+      await page.keyboard.type('K');
+      await page.locator('.cm-tooltip').getByText('Fake hover for').waitFor();
+      await page.keyboard.type('gd');
+      await waitForText(page, paneId, 'first\nthing defined here\n');
+      console.log('PASS ]d, K, and gd use the language server');
+    }
+
+    // Turning it off applies live, without remounting the editor.
+    await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: vimFile, line: 1, editor: 'native' });
+    await waitForText(page, paneId, 'top\nhello alpha\nbeta\n');
+    const handle = await content.elementHandle();
+    writeFileSync(config, lspConfig.join('\n'));
+    await vimMode(false);
+    await mode.waitFor({ state: 'detached' });
+    await content.click();
+    await page.keyboard.press('ControlOrMeta+Home');
+    await page.keyboard.type('ix');
+    await waitForText(page, paneId, 'ixtop\nhello alpha\nbeta\n');
+    assert.equal(await handle!.evaluate((el) => el.isConnected), true);
+    assert.equal(await page.locator(`[data-editor-pane="${paneId}"] .cm-vimCursorLayer`).count(), 0);
+    console.log('PASS turning vim off applies live');
   }
 } finally {
   await browser.close();

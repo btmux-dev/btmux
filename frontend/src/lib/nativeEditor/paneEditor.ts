@@ -10,7 +10,7 @@ import {
   lineNumbers,
   rectangularSelection,
 } from '@codemirror/view';
-import { Compartment, EditorSelection, EditorState, type Extension } from '@codemirror/state';
+import { Compartment, EditorSelection, EditorState, Prec, type Extension } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { bracketMatching, foldGutter, foldKeymap, indentOnInput, indentUnit } from '@codemirror/language';
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
@@ -26,6 +26,7 @@ import { noteOpened, quickOpen } from './quickOpen';
 import { QUICK_OPEN_NEEDS_FOLDER } from './registry';
 import { findPaneState, useStore } from '../../state/store';
 import { workspaceFolder } from '../vscodeFolder';
+import { setVimHost, vimExtension, vimIdle } from './vim';
 
 /** Longest wait for formatting before a save goes ahead without it. */
 const FORMAT_TIMEOUT_MS = 3000;
@@ -67,16 +68,21 @@ export class PaneEditor {
   private readonly themeC = new Compartment();
   private readonly languageC = new Compartment();
   private readonly lspC = new Compartment();
+  private readonly vimC = new Compartment();
   /** Docs whose server had failed when last configured. */
   private failed = new WeakMap<Doc, boolean>();
   private stopStatus: () => void;
-  private lastEsc = -Infinity;
+  /** The last Esc of a quick run, and whether the run can hide the editor. */
+  private esc = { last: -Infinity, armed: false };
+  private vim = false;
   private waiting: { path: string; resolve: (view: EditorView | null) => void }[] = [];
   private quickOpenWaiting = false;
   private destroyed = false;
   cursor = { line: 1, column: 1, selected: 0 };
   problems = { errors: 0, warnings: 0 };
   formatOnSave = false;
+  /** Vim's mode while vim is on, for the status line. */
+  vimMode: string | null = null;
 
   constructor(
     parent: HTMLElement,
@@ -86,6 +92,20 @@ export class PaneEditor {
   ) {
     this.appearance = appearance;
     this.view = new EditorView({ parent, state: this.placeholder() });
+    setVimHost(this.view, {
+      save: async (force) => {
+        const path = this.active;
+        await this.save(force);
+        const status = path ? this.status(path) : null;
+        return !!status && !status.dirty && !status.conflict;
+      },
+      hide: () => this.events.hide(),
+      mode: (mode) => {
+        if (mode === this.vimMode) return;
+        this.vimMode = mode;
+        this.events.changed();
+      },
+    });
     // Drop a server's features once it fails, and add them back if it recovers.
     this.stopStatus = editorConnection.onLspStatus(() => {
       for (const doc of this.docs.values()) {
@@ -111,8 +131,9 @@ export class PaneEditor {
         'data-pane-id': this.paneId,
         'aria-label': 'Editor',
       }),
+      // Ahead of vim, which takes Esc.
+      Prec.highest(EditorView.domEventHandlers({ keydown: (e) => this.keydown(e) })),
       EditorView.domEventHandlers({
-        keydown: (e) => this.keydown(e),
         // Jumps to other files open where the user is.
         focus: () => {
           setDisplay((path) => this.display(path));
@@ -155,6 +176,8 @@ export class PaneEditor {
   private extensions(doc: Doc, text: string): Extension {
     return [
       this.common(),
+      // Ahead of the keymaps, so vim's chords win over theirs.
+      this.vimC.of(this.vim ? Prec.high(vimExtension) : []),
       lineNumbers(),
       highlightActiveLineGutter(),
       highlightSpecialChars(),
@@ -200,16 +223,24 @@ export class PaneEditor {
   }
 
   private keydown(e: KeyboardEvent): boolean {
-    // A quick second Esc hides the editor; the first still closes panels and completions.
+    // A quick second Esc hides the editor; the first still closes panels and
+    // completions. With vim, only a run of Escs that starts in normal mode
+    // with nothing pending hides it: one that leaves insert or visual mode,
+    // or cancels a command, never does.
     if (e.key === 'Escape' && !e.repeat && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
-      if (e.timeStamp - this.lastEsc < DOUBLE_ESC_MS) {
-        this.lastEsc = -Infinity;
-        e.preventDefault();
-        this.events.hide();
-        return true;
+      const idle = vimIdle(this.view);
+      if (e.timeStamp - this.esc.last >= DOUBLE_ESC_MS) {
+        this.esc = { last: e.timeStamp, armed: idle };
+        return false;
       }
-      this.lastEsc = e.timeStamp;
-    } else this.lastEsc = -Infinity;
+      this.esc.last = e.timeStamp;
+      if (!this.esc.armed || !idle) return false;
+      this.esc = { last: -Infinity, armed: false };
+      e.preventDefault();
+      this.events.hide();
+      return true;
+    }
+    this.esc = { last: -Infinity, armed: false };
     return false;
   }
 
@@ -319,6 +350,14 @@ export class PaneEditor {
       selection: EditorSelection.cursor(target.from),
       effects: EditorView.scrollIntoView(target.from, { y: 'center' }),
     });
+  }
+
+  /** Turn vim keybindings on or off in every open file, keeping their views. */
+  setVim(on: boolean) {
+    if (on === this.vim) return;
+    this.vim = on;
+    for (const doc of this.docs.values())
+      doc.update({ effects: this.vimC.reconfigure(on ? Prec.high(vimExtension) : []) });
   }
 
   setAppearance(appearance: EditorAppearance) {
