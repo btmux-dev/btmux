@@ -152,7 +152,7 @@ try {
   await pane.getByRole('option', { name: /Replace bad with good/ }).waitFor();
   await page.keyboard.press('Enter');
   await until('the fix', async () => (await lines(page, paneId))?.startsWith('let thing = good;') ?? false);
-  await pane.getByText('1 errors, 0 warnings').waitFor();
+  await pane.getByText('1 error, 0 warnings').waitFor();
   console.log('PASS code actions');
 
   // Document symbols jump within the file.

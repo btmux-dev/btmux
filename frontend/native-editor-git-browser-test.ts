@@ -28,7 +28,8 @@ const file = path.join(repo, 'f.txt');
 git('init', '--initial-branch=main');
 writeFileSync(file, 'one\ntwo\nthree\nfour\nfive\nsix\nseven\n');
 git('add', '.');
-git('commit', '-m', 'Add f', '-m', 'With a body');
+// A body longer than the window, which the blame tooltip scrolls.
+git('commit', '-m', 'Add f', '-m', ['With a body', ...Array.from({ length: 80 }, (_, i) => `Line ${i}`)].join('\n'));
 // A changed line, an added one, and a removed one.
 writeFileSync(file, 'one\nTWO\nthree\nfour\nnew\nfive\nseven\n');
 
@@ -171,6 +172,12 @@ try {
   await page.keyboard.press('ArrowUp');
   await run('editor-blame-line');
   await page.locator('.cm-git-blame-message', { hasText: 'With a body' }).waitFor();
+  const blameBox = await page.locator('.cm-git-blame-tooltip').evaluate((el) => {
+    el.scrollTop = 100;
+    const r = el.getBoundingClientRect();
+    return { top: r.top, bottom: r.bottom, scrollTop: el.scrollTop, viewport: innerHeight };
+  });
+  assert.ok(blameBox.scrollTop > 0 && blameBox.top >= 0 && blameBox.bottom <= blameBox.viewport, JSON.stringify(blameBox));
   await page.keyboard.press('ArrowDown');
   await page.locator('.cm-git-blame-tooltip').waitFor({ state: 'detached' });
   await run('editor-toggle-line-blame');

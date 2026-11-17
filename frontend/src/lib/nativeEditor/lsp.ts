@@ -12,7 +12,7 @@ import {
   type WorkspaceFile,
 } from '@codemirror/lsp-client';
 import { StateEffect, StateField, type Extension, type Text } from '@codemirror/state';
-import { EditorView, keymap, showPanel, type Panel } from '@codemirror/view';
+import { EditorView, keymap, showPanel, type Panel, type Tooltip } from '@codemirror/view';
 import { getIndentUnit, indentUnit, LanguageDescription } from '@codemirror/language';
 import { setDiagnostics, type Diagnostic } from '@codemirror/lint';
 import { languages } from '@codemirror/language-data';
@@ -475,6 +475,35 @@ setRawDiagnostics((p) => diagnostics.get(p.client)?.get(p.uri)?.diagnostics ?? [
 export const serverFailed = (server: number | undefined) =>
   editorConnection.lspStatus.find((s) => s.id === server)?.state === 'failed';
 
+// lsp-client's signature help has no key to close it, so Esc hides the
+// tooltip shown until another replaces it (a new parameter, a new call).
+// Its state field is the first extension `signatureHelp` returns.
+const signatureField = (signatureHelp() as readonly Extension[])[0] as StateField<{ tooltip: Tooltip } | null>;
+const dismissSignature = StateEffect.define<Tooltip['create']>();
+const dismissedSignature = StateField.define<Tooltip['create'] | null>({
+  create: () => null,
+  update: (value, tr) => tr.effects.reduce((v, e) => (e.is(dismissSignature) ? e.value : v), value),
+});
+const signatureDismissal: Extension = [
+  dismissedSignature,
+  EditorView.editorAttributes.compute([signatureField, dismissedSignature], (state): Record<string, string> => {
+    const dismissed = state.field(dismissedSignature);
+    return dismissed && state.field(signatureField, false)?.tooltip.create === dismissed
+      ? { class: 'cm-btmux-signature-dismissed' }
+      : {};
+  }),
+  // An observer, so Esc still reaches vim and closes completions.
+  EditorView.domEventObservers({
+    keydown(e, view) {
+      if (e.key !== 'Escape' || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      const create = view.state.field(signatureField, false)?.tooltip.create;
+      if (create && create !== view.state.field(dismissedSignature))
+        view.dispatch({ effects: dismissSignature.of(create) });
+    },
+  }),
+  EditorView.theme({ '&.cm-btmux-signature-dismissed .cm-lsp-signature-tooltip': { display: 'none' } }),
+];
+
 /** The language server features for `doc`, through its first server. */
 export function lspExtension(doc: Doc): Extension {
   const server = doc.servers[0];
@@ -483,6 +512,7 @@ export function lspExtension(doc: Doc): Extension {
   return [
     client(server).plugin(doc.uri, doc.languageId),
     lspFeatures,
+    signatureDismissal,
     // Cmd-click (Ctrl elsewhere) jumps to the definition.
     EditorView.domEventHandlers({
       mousedown(e, view) {

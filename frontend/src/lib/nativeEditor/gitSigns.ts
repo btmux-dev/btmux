@@ -767,7 +767,8 @@ export function gitSigns(initial: () => GitBase | null): Extension {
       '.cm-git-added-line': { backgroundColor: 'color-mix(in srgb, var(--btm-editor-green) 12%, transparent)' },
       '.cm-git-added-text': { backgroundColor: 'color-mix(in srgb, var(--btm-editor-green) 28%, transparent)' },
       '.cm-git-blame': { opacity: 0.5, paddingLeft: '3em', fontStyle: 'italic', whiteSpace: 'pre' },
-      '.cm-git-blame-tooltip': { padding: '4px 8px', maxWidth: '60ch' },
+      // Scrolls in the space CodeMirror shrinks it to, like hovers.
+      '.cm-git-blame-tooltip': { padding: '4px 8px', maxWidth: '60ch', maxHeight: '30em', overflow: 'auto' },
       '.cm-git-blame-head': { fontWeight: 'bold' },
       '.cm-git-blame-message': { whiteSpace: 'pre-wrap', marginTop: '4px' },
     }),
