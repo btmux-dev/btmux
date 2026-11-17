@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { chromium, type Page } from 'playwright';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import path from 'node:path';
 import { waitForAsync } from './browser-test-utils';
@@ -93,6 +93,27 @@ write('tests/orders.test.ts', `import { expect, test } from 'bun:test';\n\ntest.
 // needs the standard library's sources, which a toolchain without `rust-src`
 // lacks: point RUST_SRC_PATH at them.
 assert(process.env.RUST_SRC_PATH, 'RUST_SRC_PATH is required (the Rust standard library sources)');
+
+// Hover docs color their code through tree-sitter, which needs a Rust parser
+// and queries: NVIM_TS_RUNTIME names a directory holding parser/ and queries/,
+// else the user's own Neovim is asked for one.
+const treesitterRuntime =
+  process.env.NVIM_TS_RUNTIME ||
+  execFileSync(
+    'nvim',
+    [
+      '--headless',
+      '-c',
+      "lua io.stdout:write(vim.fs.dirname(vim.fs.dirname(vim.api.nvim_get_runtime_file('parser/rust.so', false)[1] or '')))",
+      '-c',
+      'q',
+    ],
+    { encoding: 'utf8' },
+  ).trim();
+assert(
+  existsSync(path.join(treesitterRuntime, 'queries', 'rust', 'highlights.scm')),
+  'no Rust tree-sitter parser and queries found: set NVIM_TS_RUNTIME',
+);
 const router = path.join(home, 'router');
 mkdirSync(path.join(router, 'src'), { recursive: true });
 writeFileSync(path.join(router, 'Cargo.toml'), '[package]\nname = "router"\nversion = "0.1.0"\nedition = "2024"\n');
@@ -128,7 +149,14 @@ impl Request {
         Some(Request { method, path, headers })
     }
 
-    /// The value of a header, by lowercase name.
+    /// Returns the value of a header.
+    ///
+    /// Names are matched in lowercase.\
+    /// The last value wins if repeated.
+    ///
+    /// ${'```'}
+    /// request.header("host")
+    /// ${'```'}
     fn header(&self, name: &str) -> Option<&str> {
         self.headers.get(name).map(String::as_str)
     }
@@ -170,8 +198,16 @@ writeFileSync(
 vim.diagnostic.enable(false)
 vim.o.statusline = '%<%f %h%w%m%r%=%-14.(%l,%c%V%) %P'
 vim.o.signcolumn = 'no'
+-- Translucent menus and floats, blurring what is behind them.
+vim.o.pumblend = 25
+vim.o.winblend = 25
 vim.o.autocomplete = true
 vim.o.completeopt = 'menuone,noselect,fuzzy,popup'
+vim.opt.runtimepath:append(${JSON.stringify(treesitterRuntime)})
+vim.api.nvim_create_autocmd('FileType', {
+  pattern = 'rust',
+  callback = function() vim.treesitter.start() end,
+})
 vim.lsp.config('rust_analyzer', {
   cmd = { 'rust-analyzer' },
   cmd_env = { RUST_SRC_PATH = ${JSON.stringify(process.env.RUST_SRC_PATH)} },
@@ -457,9 +493,18 @@ try {
         // At the top of the window, so the menu opens below the cursor.
         await page.keyboard.type('ztorequest.');
         await page.waitForTimeout(2500);
-        await page.keyboard.press('Control+n');
-        await page.waitForTimeout(500);
-        completed = (await page.locator('[aria-current="true"]').count()) > 0;
+        // Down to header(), whose docs fill the card beside the menu.
+        for (let step = 0; step < 8 && !completed; step++) {
+          await page.keyboard.press('Control+n');
+          await page.waitForTimeout(400);
+          const current = await page
+            .locator('[aria-current="true"]')
+            .first()
+            .textContent({ timeout: 500 })
+            .catch(() => null);
+          completed = !!current?.includes('header(');
+        }
+        await page.waitForTimeout(1500);
         if (!completed) {
           await escape();
           await command('e!');
