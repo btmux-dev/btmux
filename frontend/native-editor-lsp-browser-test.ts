@@ -334,6 +334,49 @@ try {
   assert.match(log(), /^resolve importedThing \{"from":"defaults"\}$/m);
   console.log('PASS completion resolve');
 
+  // An import resolved after switching files still lands in the file completed in.
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('slowI');
+  await completions.locator('.cm-completionLabel', { hasText: 'slowImport' }).waitFor();
+  await page.keyboard.press('Enter');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: join(dir, 'other.fake'), line: 1, editor: 'native' });
+  await until('other.fake', async () => (await lines(page, paneId))?.startsWith('thing defined here') ?? false);
+  await until('the late resolve', () => log().includes('resolve slowImport'));
+  await page.waitForTimeout(1000);
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: complete, line: 1, editor: 'native' });
+  await until(
+    'the late import',
+    async () => (await lines(page, paneId)) === 'use slow;\nuse lib;\nstart\nimportedThing\nslowImport',
+  );
+  console.log('PASS completion resolve after switching files');
+
+  // Completions don't leave workspace mappings behind once they end.
+  const activeMappings = () =>
+    waitForAsync(
+      page,
+      async (id) => {
+        // The app's own module instances, by the URLs Vite rewrote its imports to.
+        const source = await (await fetch('/src/lib/nativeEditor/completion.ts')).text();
+        const url = (name: string) => source.match(new RegExp(`from "([^"]*${name}[^"]*)"`))![1];
+        const { EditorView } = await import(url('@codemirror_view'));
+        const { LSPPlugin } = await import(url('@codemirror_lsp-client'));
+        const content = document.querySelector(`[data-native-editor][data-pane-id="${id}"]`)!;
+        const view = EditorView.findFromDOM(content.closest('.cm-editor') as HTMLElement);
+        return String(LSPPlugin.get(view)?.client.activeMappings.length ?? 'none');
+      },
+      paneId,
+    );
+  for (let i = 0; i < 3; i++) {
+    await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+    await page.keyboard.press('ControlOrMeta+End');
+    await page.keyboard.type(' fa');
+    await completions.locator('.cm-completionLabel', { hasText: 'fakeCompletion' }).waitFor();
+    await page.keyboard.press('Escape');
+  }
+  assert.equal(await activeMappings(), '0');
+  console.log('PASS completion mappings are released');
+
   // File operations: a file created and edited, the shown one moved with its tab.
   const moving = join(dir, 'move.fake');
   const moved = join(dir, 'mod', 'moved.fake');
@@ -458,6 +501,26 @@ try {
   await until('the withdrawn question', async () => (await page.getByText('Withdrawn soon?').count()) === 0);
   await until('its cancellation', () => log().includes('answer window/showMessageRequest undefined'));
   console.log('PASS withdrawn prompts');
+
+  // Declining a code action's edit skips its command too.
+  const runs = () =>
+    log()
+      .split('\n')
+      .filter((l) => l === 'execute fake.hint ["after"]').length;
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+  await page.keyboard.press('ControlOrMeta+.');
+  await pane.getByRole('option', { name: /Confirm, then run/ }).click();
+  await page.getByText('Confirm, then run includes changes that need confirmation: Comment out').waitFor();
+  await page.keyboard.press('Escape');
+  await until('the dismissed confirmation', async () => (await page.getByText('Apply all changes').count()) === 0);
+  await page.waitForTimeout(500);
+  assert.equal(runs(), 0);
+  await page.keyboard.press('ControlOrMeta+.');
+  await pane.getByRole('option', { name: /Confirm, then run/ }).click();
+  await page.getByText('Apply all changes', { exact: true }).click();
+  await until('the command after the edit', () => runs() === 1);
+  assert((await lines(page, paneId))?.startsWith('// let unused'));
+  console.log('PASS declined code actions skip their command');
 
   // Inlay hints resolve: a tooltip on hover, a command and a location in their
   // label, and edits on a double click.

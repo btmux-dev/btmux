@@ -1016,7 +1016,9 @@ impl Hub {
         let change = tokio::task::spawn_blocking(move || -> Result<_, String> {
             // Before it's gone.
             let dir = match &op {
-                Step::Delete { path, .. } => path.is_dir(),
+                Step::Delete { path, .. } => {
+                    std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
+                }
                 _ => false,
             };
             if !file_ops::run(&op)? {
@@ -1045,6 +1047,14 @@ impl Hub {
             self.did_change_files(kind, &[change]).await;
         }
         Ok(())
+    }
+
+    /// Refuse renames (from the file browser) onto paths open buffers have.
+    pub fn check_renames(&self, changes: &[FileChange]) -> Result<(), String> {
+        let inner = self.inner.lock().unwrap();
+        changes
+            .iter()
+            .try_for_each(|c| inner.check_destination(&c.old, &c.new))
     }
 
     /// Before files are created, renamed, or deleted (from the file
@@ -1556,6 +1566,18 @@ impl Inner {
         }
     }
 
+    /// Refuse to move `from` onto a path an open buffer has (at or under
+    /// `to`): two buffers would share it.
+    fn check_destination(&self, from: &Path, to: &Path) -> Result<(), String> {
+        if from == to {
+            return Ok(());
+        }
+        match self.by_path.keys().find(|p| p.starts_with(to)) {
+            Some(p) => Err(format!("{} is open in the editor", p.display())),
+            None => Ok(()),
+        }
+    }
+
     /// Refuse a file operation that would lose or confuse open buffers:
     /// overwriting one, or deleting unsaved changes.
     fn check_file_op(&self, step: &Step) -> Result<(), String> {
@@ -1575,12 +1597,7 @@ impl Inner {
                 true => Err(open(path)),
                 false => Ok(()),
             },
-            Step::Rename { to, overwrite, .. } => {
-                if let Some((_, p)) = under(to).first().filter(|_| *overwrite && to.exists()) {
-                    return Err(open(p));
-                }
-                Ok(())
-            }
+            Step::Rename { from, to, .. } => self.check_destination(from, to),
             Step::Delete { path, .. } => {
                 for (id, p) in under(path) {
                     if self.buffers.get(&id).is_some_and(|b| b.dirty()) {
@@ -1601,6 +1618,11 @@ impl Inner {
         target: Option<lsp::config::Target>,
         git: Option<(git::GitFile, git::Snapshot)>,
     ) {
+        // One buffer per path: a rename onto another's path is refused first.
+        if self.by_path.get(&path).is_some_and(|other| *other != id) {
+            tracing::warn!(path = %path.display(), "not moving a buffer onto another");
+            return;
+        }
         let Some(b) = self.buffers.get_mut(&id) else {
             return;
         };
@@ -1770,6 +1792,41 @@ mod tests {
         let mut inner = hub().inner.lock().unwrap();
         inner.buffers.remove(&id);
         inner.by_path.remove(&path);
+        drop(inner);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn renames_onto_open_buffers_are_refused() {
+        let dir = std::env::temp_dir().join(format!("btmux-collide-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        let (a, b) = (dir.join("a.txt"), dir.join("sub/b.txt"));
+        std::fs::write(&a, "a").unwrap();
+        std::fs::write(&b, "b").unwrap();
+        let (a, b) = (
+            resolve(&a.to_string_lossy()).unwrap(),
+            resolve(&b.to_string_lossy()).unwrap(),
+        );
+        let ids = [
+            hub().load_buffer(a.clone()).await.unwrap(),
+            hub().load_buffer(b.clone()).await.unwrap(),
+        ];
+        let rename = |to: &Path| file_change(&a, to, false);
+        // Onto the file, or the directory holding it.
+        assert!(hub().check_renames(&[rename(&b)]).is_err());
+        assert!(hub().check_renames(&[rename(b.parent().unwrap())]).is_err());
+        hub()
+            .check_renames(&[rename(&a.with_file_name("c.txt"))])
+            .unwrap();
+        let uri = |p: &Path| lsp::config::uri(p);
+        let edit = json!({ "documentChanges": [{ "kind": "rename", "oldUri": uri(&a), "newUri": uri(&b), "options": { "overwrite": true } }] });
+        assert!(hub().apply_edit(edit, None, None).await.is_err());
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "b");
+        let mut inner = hub().inner.lock().unwrap();
+        for (id, path) in ids.iter().zip([&a, &b]) {
+            inner.buffers.remove(id);
+            inner.by_path.remove(path);
+        }
         drop(inner);
         std::fs::remove_dir_all(dir).unwrap();
     }

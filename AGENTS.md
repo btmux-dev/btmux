@@ -518,8 +518,10 @@ keeps `$/progress` work in `lsp_status`, which editors show as progress toasts
 `apply_edit`, which edits every file named, loading unopened ones as unsaved
 buffers, and runs file operations (`file_ops.rs`) in order between runs of
 text edits (each run all or none), after checking them all against a dry run;
-a sandboxed server's stay in its mounts, deletes go to the trash, and open
-buffers and pane editors' files follow a rename (`repath`, `PaneEditor::moved`).
+a sandboxed server's stay in its mounts, deletes go to the trash, a symlink
+is moved or deleted itself (not its target), a rename onto a path an open
+buffer has is refused (also from the file browser: one buffer per path), and
+open buffers and pane editors' files follow a rename (`repath`, `PaneEditor::moved`).
 Servers whose `fileOperations` filters match hear of those, and of the file
 browser's creates, copies, renames, moves, and deletes (`lsp/file_events.rs`):
 the file browser first applies `will…Files` edits (10 s at most), then sends

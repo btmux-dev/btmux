@@ -682,22 +682,24 @@ function choose(title: string, actions: string[]): Promise<string | null> {
 /**
  * Apply workspace edit `title` from `doc`'s language server, its positions in
  * `doc` at `version`, first asking about changes that need confirmation.
+ * False if it was declined or failed.
  */
 export async function applyWorkspaceEdit(
   title: string,
   edit: WorkspaceEdit,
   doc: Doc | undefined,
   version: number | null,
-) {
+): Promise<boolean> {
   const { labels, rest } = confirmations(edit);
   if (labels.length) {
     const actions = rest ? [APPLY_ALL, SKIP_CONFIRMATIONS] : [APPLY_ALL];
     const chosen = await choose(`${title} includes changes that need confirmation: ${labels.join(', ')}`, actions);
     if (chosen === SKIP_CONFIRMATIONS && rest) edit = rest;
-    else if (chosen !== APPLY_ALL) return;
+    else if (chosen !== APPLY_ALL) return false;
   }
   const result = await editorConnection.applyEdit(edit, doc?.servers[0] ?? null, doc?.buffer ?? null, version);
   if (result.error) toast(`${title} failed`, result.error);
+  return !result.error;
 }
 
 function codeActions(view: EditorView) {
@@ -729,7 +731,8 @@ function codeActions(view: EditorView) {
             if (typeof (action as Command).command === 'string') return void execute(view, action as Command);
             let a = action as CodeAction;
             if (!a.edit && !a.command && resolve) a = await p.client.request('codeAction/resolve', a);
-            if (a.edit) await applyWorkspaceEdit(a.title, a.edit as WorkspaceEdit, doc, version);
+            // The command follows the edit, if it was made.
+            if (a.edit && !(await applyWorkspaceEdit(a.title, a.edit as WorkspaceEdit, doc, version))) return;
             if (a.command) await execute(view, a.command);
           } catch (error) {
             toast(`${action.title} failed`, error);

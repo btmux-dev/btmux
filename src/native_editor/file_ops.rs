@@ -61,11 +61,28 @@ pub fn resolve_new(path: &Path) -> Result<PathBuf, String> {
     Err(format!("Cannot edit {}", path.display()))
 }
 
+/// The file a text edit's URI names, symlinks resolved, as buffers know it.
 fn path_of(uri: &Value) -> Result<PathBuf, String> {
     let uri = uri.as_str().unwrap_or_default();
     lsp::config::path(uri)
         .ok_or_else(|| format!("Cannot edit {uri}"))
         .and_then(|p| resolve_new(&p))
+}
+
+/// The entry a file operation's URI names: its parent resolved, but not
+/// itself, so a symlink is renamed or deleted rather than its target.
+fn entry_of(uri: &Value) -> Result<PathBuf, String> {
+    let uri = uri.as_str().unwrap_or_default();
+    let path = lsp::config::path(uri).ok_or_else(|| format!("Cannot edit {uri}"))?;
+    match (path.parent(), path.file_name()) {
+        (Some(dir), Some(name)) => Ok(resolve_new(dir)?.join(name)),
+        _ => Err(format!("Cannot edit {uri}")),
+    }
+}
+
+/// Whether the entry at `path` exists, a broken symlink too.
+fn entry_exists(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok()
 }
 
 fn flag(change: &Value, name: &str) -> bool {
@@ -79,18 +96,18 @@ pub fn parse(edit: &Value) -> Result<Vec<Step>, String> {
         for change in changes {
             steps.push(match change["kind"].as_str() {
                 Some("create") => Step::Create {
-                    path: path_of(&change["uri"])?,
+                    path: entry_of(&change["uri"])?,
                     overwrite: flag(change, "overwrite"),
                     ignore_if_exists: flag(change, "ignoreIfExists"),
                 },
                 Some("rename") => Step::Rename {
-                    from: path_of(&change["oldUri"])?,
-                    to: path_of(&change["newUri"])?,
+                    from: entry_of(&change["oldUri"])?,
+                    to: entry_of(&change["newUri"])?,
                     overwrite: flag(change, "overwrite"),
                     ignore_if_exists: flag(change, "ignoreIfExists"),
                 },
                 Some("delete") => Step::Delete {
-                    path: path_of(&change["uri"])?,
+                    path: entry_of(&change["uri"])?,
                     recursive: flag(change, "recursive"),
                     ignore_if_not_exists: flag(change, "ignoreIfNotExists"),
                 },
@@ -151,7 +168,7 @@ fn exists(path: &Path, before: &[&Step]) -> bool {
             _ => {}
         }
     }
-    path.exists()
+    entry_exists(&path)
 }
 
 /// Check that every step can run, in order, and that file operations stay
@@ -249,7 +266,7 @@ pub fn run(step: &Step) -> Result<bool, String> {
             overwrite,
             ignore_if_exists,
         } => {
-            let found = path.exists();
+            let found = entry_exists(path);
             if found && !overwrite {
                 return if *ignore_if_exists {
                     Ok(false)
@@ -257,6 +274,11 @@ pub fn run(step: &Step) -> Result<bool, String> {
                     Err(format!("{} already exists", path.display()))
                 };
             }
+            // Replace a symlink itself, not the file it points to.
+            if path.is_symlink() {
+                std::fs::remove_file(path).map_err(fail("replace", path))?;
+            }
+            let found = entry_exists(path);
             parent(path)?;
             std::fs::OpenOptions::new()
                 .write(true)
@@ -273,7 +295,7 @@ pub fn run(step: &Step) -> Result<bool, String> {
             overwrite,
             ignore_if_exists,
         } => {
-            if to.exists() && !overwrite {
+            if entry_exists(to) && !overwrite {
                 return if *ignore_if_exists {
                     Ok(false)
                 } else {
@@ -374,6 +396,34 @@ mod tests {
         assert!(d.join("moved/b.rs").exists());
         assert!(!d.join("new").exists());
         assert_eq!(run(&create(false, true)), Ok(false));
+        std::fs::remove_dir_all(d).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn moves_and_replaces_symlinks_not_targets() {
+        let d = dir();
+        std::fs::write(d.join("target.txt"), "text").unwrap();
+        std::os::unix::fs::symlink(d.join("target.txt"), d.join("alias.txt")).unwrap();
+        let uri = |name: &str| lsp::config::uri(&d.join(name));
+        let edit = json!({ "documentChanges": [
+            { "kind": "rename", "oldUri": uri("alias.txt"), "newUri": uri("renamed.txt") },
+            { "kind": "create", "uri": uri("renamed.txt"), "options": { "overwrite": true } },
+        ] });
+        let steps = parse(&edit).unwrap();
+        check(&steps, None).unwrap();
+        run(&steps[0]).unwrap();
+        assert!(d.join("renamed.txt").is_symlink());
+        assert_eq!(
+            std::fs::read_to_string(d.join("target.txt")).unwrap(),
+            "text"
+        );
+        run(&steps[1]).unwrap();
+        assert!(!d.join("renamed.txt").is_symlink());
+        assert_eq!(
+            std::fs::read_to_string(d.join("target.txt")).unwrap(),
+            "text"
+        );
         std::fs::remove_dir_all(d).unwrap();
     }
 

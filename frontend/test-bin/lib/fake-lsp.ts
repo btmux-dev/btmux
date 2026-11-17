@@ -8,7 +8,7 @@
 // - code actions on "withdraw": ask the user, then cancel the question
 // - completion: "fakeCompletion", with 100 paragraphs of docs, and
 //   "importedThing", whose resolve adds documentation and an import ("use lib;"
-//   on line 1)
+//   on line 1); "slowImport" resolves 700 ms late, importing "use slow;"
 // - signature help: in "sig(", the parameter after as many commas
 // - hover: "Fake hover for WORD", 700 ms late for "slow", 200 paragraphs for "use"
 // - definition: WORD's first line in other.fake beside the document
@@ -179,6 +179,7 @@ function handle(msg: any): unknown {
             },
           },
           { label: 'importedThing', kind: 6, labelDetails: { description: 'lib' } },
+          { label: 'slowImport', kind: 6 },
         ],
       };
     case 'textDocument/signatureHelp': {
@@ -198,9 +199,14 @@ function handle(msg: any): unknown {
         detail: `fn ${p.label}()`,
         documentation: p.documentation ?? { kind: 'markdown', value: `Docs for **${p.label}**` },
         additionalTextEdits:
-          p.label === 'importedThing'
-            ? [{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } }, newText: 'use lib;\n' }]
-            : undefined,
+          p.label === 'fakeCompletion'
+            ? undefined
+            : [
+                {
+                  range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+                  newText: p.label === 'slowImport' ? 'use slow;\n' : 'use lib;\n',
+                },
+              ],
       };
     case 'textDocument/hover': {
       const word = wordAt(text(p.textDocument.uri), p.position);
@@ -380,8 +386,24 @@ function handle(msg: any): unknown {
             { range: { start: at(3), end: at(3) }, newText: '!', annotationId: 'plain' },
           ]),
         });
-      if (t.includes('withdraw'))
+      if (t.includes('withdraw')) {
         actions.push({ title: 'Ask, then withdraw', command: { title: 'Withdraw', command: 'fake.withdraw' } });
+        // An edit needing confirmation, then a command that relies on it.
+        const start = { line: 0, character: 0 };
+        actions.push({
+          title: 'Confirm, then run',
+          edit: {
+            documentChanges: [
+              {
+                textDocument: { uri, version: null },
+                edits: [{ range: { start, end: start }, newText: '// ', annotationId: 'ask' }],
+              },
+            ],
+            changeAnnotations: { ask: { label: 'Comment out', needsConfirmation: true } },
+          },
+          command: { title: 'After', command: 'fake.hint', arguments: ['after'] },
+        });
+      }
       if (t.includes('move me')) {
         const dir = dirname(pathOf(uri));
         const extra = uriOf(join(dir, 'mod', 'extra.fake'));
@@ -560,6 +582,7 @@ process.stdin.on('data', (chunk: Buffer) => {
       if (msg.method === 'initialize') setTimeout(reply, 300);
       else if (msg.method === 'textDocument/formatting' && text(msg.params.textDocument.uri).includes('slow'))
         setTimeout(reply, 700);
+      else if (msg.method === 'completionItem/resolve' && msg.params.label === 'slowImport') setTimeout(reply, 700);
       else if (
         msg.method === 'textDocument/hover' &&
         wordAt(text(msg.params.textDocument.uri), msg.params.position) === 'slow'

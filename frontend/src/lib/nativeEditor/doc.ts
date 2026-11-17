@@ -73,11 +73,16 @@ export class Doc implements BufferListener {
     return this.view?.state ?? this.ownState;
   }
 
+  /** Closed: no longer following its buffer. */
+  closed = false;
+
   open() {
+    this.closed = false;
     editorConnection.open(this);
   }
 
   close() {
+    this.closed = true;
     editorConnection.close(this);
   }
 

@@ -588,6 +588,9 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
 
             let (from_path, to_path) = (std::path::Path::new(from), std::path::Path::new(to));
             let change = file_change(from_path, to_path, from_path.is_dir());
+            if let Err(e) = hub().check_renames(std::slice::from_ref(&change)) {
+                return error_response(id, &e);
+            }
             hub()
                 .will_change_files(FileKind::Rename, std::slice::from_ref(&change))
                 .await;
@@ -696,7 +699,10 @@ async fn dispatch(request: &ClientMessage, state: &FilesState) -> ServerMessage 
                 match target {
                     Ok((src, dst)) => {
                         let change = file_change(&src, &dst, src.is_dir());
-                        moves.push((src, dst, change));
+                        match hub().check_renames(std::slice::from_ref(&change)) {
+                            Ok(()) => moves.push((src, dst, change)),
+                            Err(e) => errors.push(e),
+                        }
                     }
                     Err(e) => errors.push(e),
                 }

@@ -1,8 +1,9 @@
 // Server completions, after @codemirror/lsp-client's `serverCompletionSource`,
 // plus `completionItem/resolve`: documentation and detail for the selected
 // item, and additional edits (auto-imports) once one is applied, also after
-// a snippet. Label details show beside the label.
+// a snippet and into a file no longer shown. Label details show beside the label.
 import {
+  completionStatus,
   insertCompletionText,
   snippet,
   type Completion,
@@ -11,8 +12,17 @@ import {
   type CompletionSource,
 } from '@codemirror/autocomplete';
 import { LSPPlugin, type WorkspaceMapping } from '@codemirror/lsp-client';
-import { EditorState, MapMode, type Text } from '@codemirror/state';
-import type { EditorView } from '@codemirror/view';
+import {
+  ChangeSet,
+  EditorState,
+  MapMode,
+  StateEffect,
+  StateField,
+  type ChangeDesc,
+  type Text,
+} from '@codemirror/state';
+import { ViewPlugin, type EditorView } from '@codemirror/view';
+import { viewDocs, type Doc } from './doc';
 
 type Position = { line: number; character: number };
 type Range = { start: Position; end: Position };
@@ -115,9 +125,47 @@ function offset(doc: Text, pos: Position) {
   return pos.character < 0 || pos.character > line.length ? null : line.from + pos.character;
 }
 
-/** The latest completion's mapping per view; older ones are released once no edits wait for them. */
+/**
+ * The latest completion request's mapping per view, from the document it was
+ * made in to the one an option applies to. Released by the next request, or
+ * when completion ends or the view shows another state.
+ */
 const mappings = new WeakMap<EditorView, WorkspaceMapping>();
-const waiting = new WeakSet<WorkspaceMapping>();
+
+function release(view: EditorView) {
+  mappings.get(view)?.destroy();
+  mappings.delete(view);
+}
+
+const releaseMappings = ViewPlugin.define((view) => ({
+  update(u) {
+    if (mappings.has(view) && !completionStatus(u.state)) release(view);
+  },
+  destroy() {
+    release(view);
+  },
+}));
+
+/** Changes since applied options, by id, until their additional edits arrive: shown or not. */
+const track = StateEffect.define<{ id: number; on: boolean }>();
+const tracked = StateField.define<Map<number, ChangeDesc>>({
+  create: () => new Map(),
+  update(value, tr) {
+    let next = value;
+    if (tr.docChanged && value.size) {
+      next = new Map();
+      for (const [id, changes] of value) next.set(id, changes.composeDesc(tr.changes.desc));
+    }
+    for (const e of tr.effects) {
+      if (!e.is(track)) continue;
+      if (next === value) next = new Map(value);
+      if (e.value.on) next.set(e.value.id, ChangeSet.empty(tr.state.doc.length).desc);
+      else next.delete(e.value.id);
+    }
+    return next;
+  },
+});
+let nextTrack = 0;
 
 const source: CompletionSource = async (context) => {
   const view = context.view;
@@ -129,8 +177,7 @@ const source: CompletionSource = async (context) => {
   if (!reason) return null;
   plugin.client.sync();
   // Follows edits from here on, for additional edits applied later.
-  const old = mappings.get(view);
-  if (old && !waiting.has(old)) old.destroy();
+  release(view);
   const mapping = plugin.client.workspaceMapping();
   mappings.set(view, mapping);
   const start = plugin.syncedDoc;
@@ -165,24 +212,27 @@ const source: CompletionSource = async (context) => {
     const text = textOf(item);
     const snippetText = (item.insertTextFormat ?? defaults?.insertTextFormat) === 2;
 
-    /** `edits`, in the document the request was made in, into this view if it still shows it. */
-    const applyExtra = (edits: TextEdit[] | undefined) => {
-      if (!edits?.length || LSPPlugin.get(view) !== plugin) return;
-      const changed = mapping.getMapping(uri);
+    /**
+     * `edits`, in the document the request was made in, into `doc`, changed
+     * by `before` until the option applied and by what `id` tracked since.
+     */
+    const applyExtra = (doc: Doc, id: number, before: ChangeDesc, edits: TextEdit[] | undefined) => {
+      const stop = track.of({ id, on: false });
+      const since = doc.state?.field(tracked, false)?.get(id);
+      // Closed, or reopened from scratch.
+      if (doc.closed || !since) return;
+      const changed = before.composeDesc(since);
       const changes = [];
-      for (const edit of edits) {
+      for (const edit of edits ?? []) {
         let from = offset(start, edit.range.start);
         let to = offset(start, edit.range.end);
+        if (from === null || to === null || changed.touchesRange(from, to)) continue;
+        from = changed.mapPos(from, 1, MapMode.TrackDel);
+        to = changed.mapPos(to, -1, MapMode.TrackDel);
         if (from === null || to === null) continue;
-        if (changed) {
-          if (changed.touchesRange(from, to)) continue;
-          from = changed.mapPos(from, 1, MapMode.TrackDel);
-          to = changed.mapPos(to, -1, MapMode.TrackDel);
-          if (from === null || to === null) continue;
-        }
         changes.push({ from, to, insert: edit.newText });
       }
-      if (changes.length) view.dispatch({ changes, userEvent: 'input.complete' });
+      doc.update({ changes, effects: stop, userEvent: 'input.complete' });
     };
 
     const detail = item.labelDetails?.description ?? item.detail;
@@ -197,19 +247,16 @@ const source: CompletionSource = async (context) => {
           ? item.commitCharacters
           : undefined,
       apply: (v, completion, from, to) => {
+        // Additional edits come now or once resolved, maybe once another file
+        // shows; positions map from the request through what's tracked from here.
+        const pending = item.additionalTextEdits ? Promise.resolve(item) : resolvable ? resolve() : null;
+        const doc = viewDocs.get(v);
+        const before = mapping.getMapping(uri);
+        const id = nextTrack++;
+        if (pending && doc && before) v.dispatch({ effects: track.of({ id, on: true }) });
         if (snippetText) snippet(lspToSnippet(text))(v, completion, from, to);
         else v.dispatch(insertCompletionText(v.state, text, from, to));
-        // Already there, or once resolved.
-        if (item.additionalTextEdits) applyExtra(item.additionalTextEdits);
-        else if (resolvable) {
-          waiting.add(mapping);
-          void resolve()
-            .then((r) => applyExtra(r.additionalTextEdits))
-            .finally(() => {
-              waiting.delete(mapping);
-              if (mappings.get(view) !== mapping) mapping.destroy();
-            });
-        }
+        if (pending && doc && before) void pending.then((r) => applyExtra(doc, id, before, r.additionalTextEdits));
       },
       info:
         item.documentation || resolvable
@@ -240,4 +287,8 @@ const source: CompletionSource = async (context) => {
 };
 
 /** Completions from the view's language server. */
-export const serverCompletions = EditorState.languageData.of(() => [{ autocomplete: source }]);
+export const serverCompletions = [
+  EditorState.languageData.of(() => [{ autocomplete: source }]),
+  tracked,
+  releaseMappings,
+];
