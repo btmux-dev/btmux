@@ -291,7 +291,7 @@ server's arguments, which the exec passes on. It refuses
 while the built-in Neovim has unsaved changes. The server holds the state
 lock, quits Neovim (`:qall`) and stops VS Code, stops every PTY reader (unread
 output stays in the kernel), and writes session snapshots, replay
-journals, title/cwd, program-set colors, kitty keyboard flags, OSC 133 prompt state, agent telemetry, any partly read escape sequence, and
+journals, title/cwd, program-set colors, kitty keyboard flags, OSC 133 prompt state, agent telemetry, the native editor's unsaved buffers, any partly read escape sequence, and
 accepted input not yet written to the PTY (the writer stops too)
 to an unlinked file. PTY masters, the listener, the profile lock, and that
 file survive `execve`; shells stay its children. The new process takes them
@@ -472,8 +472,19 @@ rename would drop its mode, owner, and hard links), and refuses if the file
 changed on disk since it was loaded or saved, unless forced. A watcher on open files' directories reloads a clean buffer as one
 minimal update and marks a dirty one changed or deleted. Buffers nobody follows
 are dropped unless dirty (one loaded by MCP gets 60 s for a tab to follow it);
-dirty ones stay, listed by the `buffers` message, and
-`btmux upgrade` refuses while any exist (they aren't handed off yet).
+dirty ones stay, listed by the `buffers` message. `btmux upgrade` hands
+them off with their id, text, versions, update log, line ending, BOM, and disk
+state, so tabs resume rather than reopen: a reopen can't tell an applied but
+unconfirmed update from an unsent one, and would apply it twice. Language server
+ids are handed off too (`HandedServers`), as resumed tabs keep theirs; `seal`
+takes them just before the exec, after which no ids are given out. `freeze`
+refuses changes until the exec, so tabs keep unsent edits, and first waits up to
+5 s for saves in progress (spawned, so they finish without their tab), so the
+buffers match the disk. Paths go as bytes, since JSON strings must be UTF-8, and
+the disk hash is SHA-256, stable across builds. The new process restores them
+(`restore`, from `main.rs` once sandboxes are known) before the listener
+serves, starts their language servers, and then checks them against the disk,
+as the watcher missed the upgrade.
 
 Language servers (`native_editor/lsp/`) have btmux as their only client.
 `[[language]]` and `[language-server.NAME]` (Helix-style) override built-in

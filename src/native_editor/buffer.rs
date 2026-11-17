@@ -1,7 +1,6 @@
 //! One open file: the authoritative text, its update log, and what is on disk.
 
 use std::collections::VecDeque;
-use std::hash::Hasher;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -47,10 +46,30 @@ pub enum DiskStatus {
     Deleted,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Stamp {
+    #[serde(with = "epoch")]
+    #[cfg_attr(test, ts(type = "[number, number] | null"))]
     mtime: Option<SystemTime>,
     len: u64,
+}
+
+/// A time as seconds and nanoseconds since the epoch; earlier ones as none.
+mod epoch {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    pub fn serialize<S: Serializer>(time: &Option<SystemTime>, s: S) -> Result<S::Ok, S::Error> {
+        time.and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| (d.as_secs(), d.subsec_nanos()))
+            .serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<SystemTime>, D::Error> {
+        let time = Option::<(u64, u32)>::deserialize(d)?;
+        Ok(time.map(|(secs, nanos)| UNIX_EPOCH + Duration::new(secs, nanos)))
+    }
 }
 
 impl Stamp {
@@ -63,7 +82,8 @@ impl Stamp {
 }
 
 /// What was last loaded from or saved to disk.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Disk {
     stamp: Option<Stamp>,
     hash: Option<u64>,
@@ -77,10 +97,10 @@ pub struct Loaded {
     pub disk: Disk,
 }
 
+/// Stable across builds, since upgrades hand it to another binary.
 fn hash(bytes: &[u8]) -> u64 {
-    let mut hasher = std::hash::DefaultHasher::new();
-    hasher.write(bytes);
-    hasher.finish()
+    let digest = aws_lc_rs::digest::digest(&aws_lc_rs::digest::SHA256, bytes);
+    u64::from_le_bytes(digest.as_ref()[..8].try_into().unwrap())
 }
 
 /// Read `path`; a missing file is an empty new one.
@@ -302,6 +322,61 @@ pub struct Buffer {
     pub servers: Vec<u64>,
 }
 
+/// An unsaved buffer as `btmux upgrade` hands it over, without its
+/// language servers.
+#[cfg(unix)]
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct HandedBuffer {
+    id: Uuid,
+    #[serde(with = "path_bytes")]
+    #[cfg_attr(test, ts(type = "Array<number>"))]
+    path: PathBuf,
+    /// Cloned cheaply under the hub's lock, and written out after.
+    #[serde(with = "rope_text")]
+    #[cfg_attr(test, ts(type = "string"))]
+    text: Rope,
+    version: u64,
+    /// Updates that led to `version`, so tabs resume and confirm their own.
+    log: Vec<Update>,
+    saved_version: u64,
+    line_ending: LineEnding,
+    bom: bool,
+    disk: Disk,
+    disk_status: DiskStatus,
+    language_id: Option<String>,
+}
+
+/// A path as its bytes, which needn't be UTF-8.
+#[cfg(unix)]
+pub(super) mod path_bytes {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    use std::path::{Path, PathBuf};
+
+    pub fn serialize<S: Serializer>(path: &Path, s: S) -> Result<S::Ok, S::Error> {
+        path.as_os_str().as_bytes().serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<PathBuf, D::Error> {
+        Ok(std::ffi::OsString::from_vec(Vec::deserialize(d)?).into())
+    }
+}
+
+#[cfg(unix)]
+mod rope_text {
+    use ropey::Rope;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(rope: &Rope, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(rope)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Rope, D::Error> {
+        Ok(Rope::from_str(&String::deserialize(d)?))
+    }
+}
+
 /// Updates a push added: from `version`, with what language servers see.
 pub struct Pushed {
     pub version: u64,
@@ -323,6 +398,42 @@ impl Buffer {
             disk: loaded.disk,
             disk_status: DiskStatus::Same,
             language_id: None,
+            servers: Vec::new(),
+        }
+    }
+
+    #[cfg(unix)]
+    pub fn handoff(&self) -> HandedBuffer {
+        HandedBuffer {
+            id: self.id,
+            path: self.path.clone(),
+            text: self.rope.clone(),
+            version: self.version,
+            log: self.log.iter().cloned().collect(),
+            saved_version: self.saved_version,
+            line_ending: self.line_ending,
+            bom: self.bom,
+            disk: self.disk,
+            disk_status: self.disk_status,
+            language_id: self.language_id.clone(),
+        }
+    }
+
+    /// A handed over buffer, which tabs resume.
+    #[cfg(unix)]
+    pub fn restored(handoff: HandedBuffer) -> Self {
+        Self {
+            id: handoff.id,
+            path: handoff.path,
+            rope: handoff.text,
+            version: handoff.version,
+            log: handoff.log.into(),
+            saved_version: handoff.saved_version,
+            line_ending: handoff.line_ending,
+            bom: handoff.bom,
+            disk: handoff.disk,
+            disk_status: handoff.disk_status,
+            language_id: handoff.language_id,
             servers: Vec::new(),
         }
     }
@@ -549,6 +660,19 @@ mod tests {
         ));
         assert_eq!(std::fs::read(&path).unwrap(), binary);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Paths need not be UTF-8, which JSON strings must be.
+    #[cfg(unix)]
+    #[test]
+    fn hands_over_any_path() {
+        use std::os::unix::ffi::OsStringExt;
+        let mut b = buffer("a\nb\n");
+        b.path = std::ffi::OsString::from_vec(b"/tmp/\xff.txt".to_vec()).into();
+        let json = serde_json::to_string(&b.handoff()).unwrap();
+        let restored = Buffer::restored(serde_json::from_str(&json).unwrap());
+        assert_eq!(restored.path, b.path);
+        assert_eq!(restored.rope.to_string(), "a\nb\n");
     }
 
     fn tempfile_dir() -> PathBuf {

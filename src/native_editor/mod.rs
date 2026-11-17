@@ -22,6 +22,8 @@ use buffer::{Buffer, DiskStatus, LineEnding, OnDisk, SaveError, Update};
 const SOCKET_QUEUE: usize = 1024;
 /// How long a buffer loaded for automation stays without a tab following it.
 const UNFOLLOWED: std::time::Duration = std::time::Duration::from_secs(60);
+/// Why changes are refused while an upgrade hands the buffers over.
+const UPGRADING: &str = "btmux is upgrading; try again in a moment";
 
 /// From a tab.
 #[derive(Deserialize, Debug)]
@@ -194,10 +196,18 @@ struct Inner {
     summaries: Vec<BufferSummary>,
     watcher: Option<watch::Watcher>,
     lsp: lsp::Lsp,
+    /// The buffers were handed to an upgrade: changes wait for its outcome.
+    frozen: bool,
+    /// Sockets whose pushes were dropped meanwhile.
+    stalled: HashSet<SocketId>,
+    /// Saves writing their file.
+    saving: usize,
 }
 
 pub struct Hub {
     inner: Mutex<Inner>,
+    /// Signaled when no save is in progress any more.
+    saves_done: tokio::sync::Notify,
 }
 
 static HUB: LazyLock<Hub> = LazyLock::new(Hub::new);
@@ -245,24 +255,82 @@ pub fn buffers() -> Vec<serde_json::Value> {
     list
 }
 
-/// Refuse to drop unsaved changes (an upgrade).
+/// The native editor's state as `btmux upgrade` hands it over.
 #[cfg(unix)]
-pub fn check_saved() -> Result<(), String> {
-    let inner = hub().inner.lock().unwrap();
-    let mut dirty: Vec<_> = inner
-        .buffers
-        .values()
-        .filter(|b| b.dirty())
-        .map(|b| b.path.display().to_string())
-        .collect();
-    if dirty.is_empty() {
-        return Ok(());
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct EditorHandoff {
+    /// The unsaved buffers.
+    buffers: Vec<buffer::HandedBuffer>,
+    servers: lsp::HandedServers,
+}
+
+/// How long an upgrade waits for saves in progress.
+#[cfg(unix)]
+const SAVE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The unsaved buffers, for an upgrade to hand over, once saves in progress
+/// finish. Changes are refused until `thaw`, so none are lost after this;
+/// tabs keep unsent edits.
+#[cfg(unix)]
+pub async fn freeze() -> Result<Vec<buffer::HandedBuffer>, String> {
+    hub().freeze().await
+}
+
+/// What the upgrade hands over, just before its exec: language server ids
+/// stop being given out, so the next process gives none out twice.
+#[cfg(unix)]
+pub fn seal(buffers: Vec<buffer::HandedBuffer>) -> EditorHandoff {
+    let servers = hub().inner.lock().unwrap().lsp.seal();
+    EditorHandoff { buffers, servers }
+}
+
+/// The upgrade failed: accept changes again.
+#[cfg(unix)]
+pub fn thaw() {
+    hub().thaw();
+}
+
+/// Take over the editor state an upgraded server handed over, before tabs
+/// connect. Returns the check of the files against the disk, which runs on.
+#[cfg(unix)]
+pub async fn restore(handed: EditorHandoff) -> tokio::task::JoinHandle<()> {
+    let buffers: Vec<Buffer> = handed.buffers.into_iter().map(Buffer::restored).collect();
+    let paths: Vec<PathBuf> = buffers.iter().map(|b| b.path.clone()).collect();
+    let config = lsp::config::current();
+    let targets = tokio::task::spawn_blocking(move || {
+        paths
+            .iter()
+            .map(|p| lsp::config::target(&config, p))
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default();
+    let mut inner = hub().inner.lock().unwrap();
+    inner.lsp.restore(handed.servers);
+    let mut restored = Vec::new();
+    let targets = targets.into_iter().chain(std::iter::repeat_with(|| None));
+    for (buffer, target) in buffers.into_iter().zip(targets) {
+        let (id, path) = (buffer.id, buffer.path.clone());
+        if inner.by_path.contains_key(&path) {
+            continue;
+        }
+        inner.by_path.insert(path.clone(), id);
+        inner.buffers.insert(id, buffer);
+        inner.watch(&path);
+        if let Some(target) = target {
+            inner.lsp_attach(id, target);
+        }
+        restored.push(path);
     }
-    dirty.sort();
-    Err(format!(
-        "The editor has unsaved changes: {}",
-        dirty.join(", ")
-    ))
+    inner.send_summaries();
+    drop(inner);
+    // Nothing watched the files during the upgrade; their tabs hear of changes.
+    tokio::spawn(async move {
+        for path in restored {
+            hub().check_disk(path).await;
+        }
+    })
 }
 
 /// Apply `op` to the editor over `pane_id`, telling every tab.
@@ -339,7 +407,46 @@ impl Hub {
     fn new() -> Self {
         Self {
             inner: Mutex::new(Inner::default()),
+            saves_done: tokio::sync::Notify::new(),
         }
+    }
+
+    #[cfg(unix)]
+    async fn freeze(&self) -> Result<Vec<buffer::HandedBuffer>, String> {
+        self.inner.lock().unwrap().frozen = true;
+        // Saves in progress finish first, so the buffers match the disk.
+        let settled = async {
+            loop {
+                let done = self.saves_done.notified();
+                {
+                    let inner = self.inner.lock().unwrap();
+                    if inner.saving == 0 {
+                        let dirty = inner.buffers.values().filter(|b| b.dirty());
+                        return dirty.map(Buffer::handoff).collect();
+                    }
+                }
+                done.await;
+            }
+        };
+        match tokio::time::timeout(SAVE_WAIT, settled).await {
+            Ok(buffers) => Ok(buffers),
+            Err(_) => {
+                self.thaw();
+                Err("the editor is still saving a file".into())
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn thaw(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.frozen = false;
+        inner.lsp.unseal();
+        // Their tabs reconnect and resume, sending the dropped edits again.
+        for socket in std::mem::take(&mut inner.stalled) {
+            inner.drop_socket(socket);
+        }
+        inner.send_summaries();
     }
 
     /// Register a socket; its messages arrive on the receiver.
@@ -596,6 +703,11 @@ impl Hub {
 
     fn push(&self, socket: SocketId, id: Uuid, version: u64, updates: Vec<Update>) {
         let mut inner = self.inner.lock().unwrap();
+        // The tab sends it again once reconnected.
+        if inner.frozen {
+            inner.stalled.insert(socket);
+            return;
+        }
         let Some(buffer) = inner.buffers.get_mut(&id) else {
             return;
         };
@@ -631,45 +743,74 @@ impl Hub {
         }
     }
 
-    async fn save(&self, id: Uuid, force: bool) -> Result<(), SaveError> {
+    async fn save(&'static self, id: Uuid, force: bool) -> Result<(), SaveError> {
         let (path, text, version, line_ending, bom, disk) = {
-            let inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap();
+            if inner.frozen {
+                return Err(SaveError::Io(UPGRADING.into()));
+            }
             let b = inner
                 .buffers
                 .get(&id)
                 .ok_or_else(|| SaveError::Io("The buffer is closed".into()))?;
-            (
+            let taken = (
                 b.path.clone(),
                 b.rope.to_string(),
                 b.version,
                 b.line_ending,
                 b.bom,
                 b.disk,
-            )
+            );
+            inner.saving += 1;
+            taken
         };
-        let disk = tokio::task::spawn_blocking(move || {
-            buffer::save(&path, &text, line_ending, bom, disk, force)
+        // Spawned, so it finishes and is counted even if the tab goes away.
+        tokio::spawn(async move {
+            let saved = tokio::task::spawn_blocking(move || {
+                buffer::save(&path, &text, line_ending, bom, disk, force)
+            })
+            .await
+            .map_err(|e| SaveError::Io(e.to_string()))
+            .and_then(|saved| saved);
+            let mut inner = self.inner.lock().unwrap();
+            if let Ok(disk) = saved {
+                inner.saved(id, version, disk);
+            }
+            inner.saving -= 1;
+            if inner.saving == 0 {
+                self.saves_done.notify_waiters();
+            }
+            saved.map(drop)
         })
         .await
-        .map_err(|e| SaveError::Io(e.to_string()))??;
-        let mut inner = self.inner.lock().unwrap();
-        let Some(b) = inner.buffers.get_mut(&id) else {
-            return Ok(());
+        .map_err(|e| SaveError::Io(e.to_string()))?
+    }
+}
+
+impl Inner {
+    /// Record a save of `id` at `version`.
+    fn saved(&mut self, id: Uuid, version: u64, disk: buffer::Disk) {
+        let Some(b) = self.buffers.get_mut(&id) else {
+            return;
         };
         b.saved_version = version;
         b.disk = disk;
         b.disk_status = DiskStatus::Same;
         let state = state_message(b);
-        inner.send_to_followers(id, &state);
-        inner.lsp_saved(id);
-        inner.collect(id);
-        inner.send_summaries();
-        Ok(())
+        self.send_to_followers(id, &state);
+        self.lsp_saved(id);
+        self.collect(id);
+        self.send_summaries();
     }
+}
 
+impl Hub {
     async fn revert(&self, id: Uuid) -> Result<(), String> {
         let path = {
             let inner = self.inner.lock().unwrap();
+            if inner.frozen {
+                return Err(UPGRADING.into());
+            }
             inner
                 .buffers
                 .get(&id)
@@ -681,6 +822,9 @@ impl Hub {
             .await
             .map_err(|e| e.to_string())??;
         let mut inner = self.inner.lock().unwrap();
+        if inner.frozen {
+            return Err(UPGRADING.into());
+        }
         inner.reload(id, loaded);
         inner.collect(id);
         inner.send_summaries();
@@ -745,6 +889,9 @@ impl Inner {
         targets: Vec<(Uuid, Vec<Value>, Option<u64>)>,
         expect: Option<(Uuid, u64)>,
     ) -> Result<(), String> {
+        if self.frozen {
+            return Err(UPGRADING.into());
+        }
         // Edits made against an older version would land in the wrong place.
         let stale =
             |id: &Uuid, version: u64| self.buffers.get(id).map(|b| b.version) != Some(version);
@@ -1091,6 +1238,123 @@ mod tests {
         let id = inner.by_path.remove(&path).unwrap();
         assert_eq!(inner.buffers.remove(&id).unwrap().rope.to_string(), "Bbc\n");
         drop(inner);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// An unsaved buffer survives an upgrade's handoff, still unsaved, and
+    /// a tab whose update was applied but not confirmed resumes it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn hands_over_unsaved_buffers() {
+        let dir = std::env::temp_dir().join(format!("btmux-handoff-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("f.txt");
+        std::fs::write(&path, "\u{feff}one\r\ntwo\r\n").unwrap();
+        let other = dir.join("g.txt");
+        std::fs::write(&other, "a\n").unwrap();
+        let path = resolve(&path.to_string_lossy()).unwrap();
+        let other = resolve(&other.to_string_lossy()).unwrap();
+        let tab = |changes: Value| Update {
+            client_id: "tab".into(),
+            changes,
+        };
+        // Applied, but the tab hasn't seen it confirmed.
+        let accepted = tab(json!([3, [0, "!"], 5]));
+        // What the old process hands over, and drops.
+        let mut buffers = Vec::new();
+        let mut ids = Vec::new();
+        for (p, update) in [(&path, &accepted), (&other, &tab(json!([1, [0, "!"], 1])))] {
+            let id = hub().load_buffer(p.clone()).await.unwrap();
+            let mut inner = hub().inner.lock().unwrap();
+            let b = inner.buffers.get_mut(&id).unwrap();
+            b.push(0, std::slice::from_ref(update)).unwrap().unwrap();
+            buffers.push(b.handoff());
+            ids.push(id);
+            inner.buffers.remove(&id);
+            inner.by_path.remove(p);
+            inner.unwatch(p);
+        }
+        // Not the shared hub's: sealing it would stop other tests' servers.
+        let servers = lsp::Lsp::default().seal();
+        let json = serde_json::to_string(&EditorHandoff { buffers, servers }).unwrap();
+        // Changed on disk meanwhile; a new length, as mtimes may not have moved.
+        std::fs::write(&other, "bb\n").unwrap();
+        restore(serde_json::from_str(&json).unwrap())
+            .await
+            .await
+            .unwrap();
+        let find = |p: &Path| {
+            let inner = hub().inner.lock().unwrap();
+            let b = &inner.buffers[&inner.by_path[p]];
+            (b.id, b.since(0), b.dirty(), b.disk_status)
+        };
+        let (id, missed, dirty, disk) = find(&path);
+        assert_eq!((id, dirty, disk), (ids[0], true, DiskStatus::Same));
+        assert_eq!(missed.unwrap()[0].changes, accepted.changes);
+        let (other_id, _, dirty, disk) = find(&other);
+        assert_eq!((dirty, disk), (true, DiskStatus::Changed));
+        // The tab resends it with a newer one: only the newer one applies.
+        let unsent = tab(json!([9, [0, "?"]]));
+        hub().push(SocketId::MAX, id, 0, vec![accepted, unsent]);
+        let text = hub().inner.lock().unwrap().buffers[&id].rope.to_string();
+        assert_eq!(text, "one!\ntwo\n?");
+        assert!(matches!(
+            hub().save(other_id, false).await,
+            Err(SaveError::Conflict)
+        ));
+        // The file as loaded: saving needs no force, and keeps its encoding.
+        hub().save(id, false).await.unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            "\u{feff}one!\r\ntwo\r\n?".as_bytes()
+        );
+        let mut inner = hub().inner.lock().unwrap();
+        assert!(!inner.by_path.contains_key(&path));
+        inner.buffers.remove(&other_id);
+        inner.by_path.remove(&other);
+        inner.unwatch(&other);
+        drop(inner);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// An upgrade hands over what a save in progress leaves, not what it found.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn upgrades_wait_for_saves() {
+        // Its own hub: a frozen one refuses other tests' edits.
+        let hub: &'static Hub = Box::leak(Box::new(Hub::new()));
+        let dir = std::env::temp_dir().join(format!("btmux-freeze-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("f.txt");
+        std::fs::write(&path, "abc\n").unwrap();
+        let path = resolve(&path.to_string_lossy()).unwrap();
+        let id = hub.load_buffer(path).await.unwrap();
+        let version = {
+            let mut inner = hub.inner.lock().unwrap();
+            let b = inner.buffers.get_mut(&id).unwrap();
+            b.edit(&[text::Change {
+                from: 3,
+                to: 3,
+                insert: "!".into(),
+            }]);
+            // Writing the file.
+            inner.saving += 1;
+            inner.buffers[&id].version
+        };
+        let freezing = tokio::spawn(hub.freeze());
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(!freezing.is_finished());
+        // Saves starting now wait for the upgrade.
+        assert!(matches!(hub.save(id, false).await, Err(SaveError::Io(_))));
+        {
+            let mut inner = hub.inner.lock().unwrap();
+            let disk = inner.buffers[&id].disk;
+            inner.saved(id, version, disk);
+            inner.saving -= 1;
+            hub.saves_done.notify_waiters();
+        }
+        assert!(freezing.await.unwrap().unwrap().is_empty());
+        hub.thaw();
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

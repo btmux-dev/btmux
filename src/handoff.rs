@@ -17,6 +17,8 @@ use axum::body::Bytes;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::native_editor::buffer::HandedBuffer;
+use crate::native_editor::EditorHandoff;
 use crate::popup::PopupsHandoff;
 use crate::pty::kitty_keyboard::KittyKeyboard;
 use crate::pty::program_status::Record;
@@ -29,7 +31,7 @@ use crate::ws::control::ServerMessage;
 use crate::AppState;
 
 /// Bump on any change to the handoff file.
-pub const VERSION: u32 = 18;
+pub const VERSION: u32 = 19;
 const ENV: &str = "BTMUX_HANDOFF";
 
 struct Context {
@@ -61,6 +63,7 @@ struct Header {
     popups: PopupsHandoff,
     panes: Vec<PaneHeader>,
     telemetry: TelemetryStore,
+    editor: EditorHandoff,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -105,6 +108,7 @@ pub struct Inherited {
     pub popups: PopupsHandoff,
     pub panes: Vec<(Uuid, OwnedFd, Handoff)>,
     pub telemetry: TelemetryStore,
+    pub editor: EditorHandoff,
 }
 
 impl Inherited {
@@ -112,13 +116,23 @@ impl Inherited {
         self.lock.take().map(crate::persistence::ProfileLock::adopt)
     }
 
-    /// Restore the sessions and panes; the listener is returned.
-    pub async fn restore(self, state: &AppState) -> std::net::TcpListener {
+    /// Restore the sessions and panes; the listener and the editor's state,
+    /// restored once sandboxes are known, are returned.
+    pub async fn restore(self, state: &AppState) -> (std::net::TcpListener, Editor) {
         let mut mgr = state.write().await;
         let restored = mgr.restore_handoff(self.sessions, self.popups, self.panes);
         mgr.telemetry = self.telemetry;
         tracing::info!("upgraded in place with {} session(s)", restored);
-        self.listener
+        (self.listener, Editor(self.editor))
+    }
+}
+
+/// The native editor's state, restored before the listener serves.
+pub struct Editor(EditorHandoff);
+
+impl Editor {
+    pub async fn restore(self) {
+        crate::native_editor::restore(self.0).await;
     }
 }
 
@@ -207,6 +221,7 @@ pub fn take() -> Result<Option<Inherited>, String> {
         popups: header.popups,
         panes,
         telemetry: header.telemetry.restored(),
+        editor: header.editor,
     }))
 }
 
@@ -312,7 +327,6 @@ async fn check(exe: &Path) -> Result<(&'static Context, String), Refusal> {
     crate::ws::nvim::check_saved()
         .await
         .map_err(Refusal::Busy)?;
-    crate::native_editor::check_saved().map_err(Refusal::Busy)?;
     Ok((context, target))
 }
 
@@ -326,10 +340,23 @@ async fn execute(state: AppState, context: &Context, exe: &Path) -> String {
     tracing::info!("upgrading in place to {}", exe.display());
     // Held until exec, so nothing changes or spawns meanwhile.
     let mut manager = state.write().await;
+    // Before anything stops, as it may wait for a save.
+    let editor = match crate::native_editor::freeze().await {
+        Ok(editor) => editor,
+        Err(error) => return error,
+    };
+    let error = execute_frozen(&mut manager, context, exe, editor).await;
+    crate::native_editor::thaw();
+    error
+}
+
+async fn execute_frozen(
+    manager: &mut crate::session::manager::SessionManager,
+    context: &Context,
+    exe: &Path,
+    editor: Vec<HandedBuffer>,
+) -> String {
     // Before anything stops: Neovim refuses to quit with unsaved changes.
-    if let Err(error) = crate::native_editor::check_saved() {
-        return error;
-    }
     if let Err(error) = crate::ws::nvim::quit().await {
         return error;
     }
@@ -354,6 +381,7 @@ async fn execute(state: AppState, context: &Context, exe: &Path) -> String {
         popups,
         &panes,
         manager.telemetry.clone(),
+        crate::native_editor::seal(editor),
     );
     let kept = [context.listener]
         .into_iter()
@@ -375,6 +403,7 @@ fn exec(
     popups: PopupsHandoff,
     panes: &[(Uuid, RawFd, Handoff)],
     telemetry: TelemetryStore,
+    editor: EditorHandoff,
 ) -> String {
     let dir = context
         .state_file
@@ -382,7 +411,7 @@ fn exec(
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .unwrap_or_else(std::env::temp_dir);
-    let file = match write(&dir, context, sessions, popups, panes, telemetry) {
+    let file = match write(&dir, context, sessions, popups, panes, telemetry, editor) {
         Ok(file) => file,
         Err(error) => return format!("cannot write handoff: {error}"),
     };
@@ -410,6 +439,7 @@ fn write(
     popups: PopupsHandoff,
     panes: &[(Uuid, RawFd, Handoff)],
     telemetry: TelemetryStore,
+    editor: EditorHandoff,
 ) -> std::io::Result<File> {
     use std::os::unix::fs::OpenOptionsExt;
     let path = dir.join(format!(".handoff-{}", Uuid::new_v4()));
@@ -458,6 +488,7 @@ fn write(
             })
             .collect(),
         telemetry,
+        editor,
     };
     let header = serde_json::to_vec(&header)?;
     let mut out = std::io::BufWriter::new(&mut file);
@@ -613,6 +644,14 @@ mod tests {
             crate::telemetry::PaneTelemetry::decl(&config),
             crate::telemetry::ModelSeries::decl(&config),
             crate::telemetry::AgentUsage::decl(&config),
+            EditorHandoff::decl(&config),
+            crate::native_editor::buffer::HandedBuffer::decl(&config),
+            crate::native_editor::buffer::Update::decl(&config),
+            crate::native_editor::lsp::HandedServers::decl(&config),
+            crate::native_editor::buffer::Disk::decl(&config),
+            crate::native_editor::buffer::Stamp::decl(&config),
+            crate::native_editor::buffer::LineEnding::decl(&config),
+            crate::native_editor::buffer::DiskStatus::decl(&config),
         ]
         .join("\n");
         // Without doc comments.

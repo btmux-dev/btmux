@@ -1,5 +1,5 @@
-// handoff version 18
-type Header = { version: number, listener: number, lock: number | null, sessions: Array<SessionSnapshot>, popups: PopupsHandoff, panes: Array<PaneHeader>, telemetry: TelemetryStore, };
+// handoff version 19
+type Header = { version: number, listener: number, lock: number | null, sessions: Array<SessionSnapshot>, popups: PopupsHandoff, panes: Array<PaneHeader>, telemetry: TelemetryStore, editor: EditorHandoff, };
 type PaneHeader = { id: string, fd: number, pid: number, cols: number, rows: number,
 journal: Array<Event>, title: string | null, cwd: string | null, cwd_remote: boolean, spawn_cwd: string | null, color_reports: boolean, colors: Array<[number, number, number] | null>, kitty: KittyKeyboard,
 pending: number,
@@ -49,3 +49,15 @@ type ModelSeries = { agent: string, model: string | null, buckets: { [key in big
 type AgentUsage = {
 input_tokens: number, output_tokens: number, cached_tokens: number, cache_write_tokens: number,
 reasoning_tokens: number, requests: number, tool_calls: number, duration_ms: number, cost_usd: number | null, };
+type EditorHandoff = {
+buffers: Array<HandedBuffer>, servers: HandedServers, };
+type HandedBuffer = { id: string, path: Array<number>,
+text: string, version: bigint,
+log: Array<Update>, saved_version: bigint, line_ending: LineEnding, bom: boolean, disk: Disk, disk_status: DiskStatus, language_id: string | null, };
+type Update = { client_id: string,
+changes: unknown, };
+type HandedServers = { next_id: bigint, servers: Array<HandedServer>, };
+type Disk = { stamp: Stamp | null, hash: bigint | null, };
+type Stamp = { mtime: [number, number] | null, len: bigint, };
+type LineEnding = "lf" | "crlf";
+type DiskStatus = "same" | "changed" | "deleted";
