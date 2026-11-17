@@ -541,8 +541,9 @@ shown file. MCP has
 `ConfigUpdate`) adds `@replit/codemirror-vim`, loaded once it is first turned
 on, through a compartment (`PaneEditor.setVim`), at `Prec.high` and ahead of
 every keymap, so its Ctrl chords win; the prefix is still taken first by
-`useKeybindings.ts`, and Alt chords try the editor's keymaps first (on macOS
-vim takes them all in normal mode). `lib/nativeEditor/vim.ts` keeps vim's
+`useKeybindings.ts`, Alt chords try the editor's keymaps first (on macOS
+vim takes them all in normal mode), and quick open's `Mod-p` runs before it
+in `PaneEditor.keydown`. `lib/nativeEditor/vim.ts` keeps vim's
 global definitions in one place: `:w`, `:wq`/`:x`, `:q` reach the editor
 through `setVimHost` (save goes through the server like `Mod-s`; `:q` hides;
 `:wq` hides only if `PaneEditor.save` wrote every local edit and the shown

@@ -9,6 +9,7 @@ import {
   keymap,
   lineNumbers,
   rectangularSelection,
+  runScopeHandlers,
 } from '@codemirror/view';
 import { Compartment, EditorSelection, EditorState, Prec, type Extension } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
@@ -31,6 +32,9 @@ import type { VimHost } from './vim';
 type Vim = typeof import('./vim');
 // Loaded once vim is turned on.
 let vimLoader: Promise<Vim> | null = null;
+
+/** The keymap scope of quick open's chord, run ahead of vim (`keydown`). */
+const QUICK_OPEN_SCOPE = 'btmux-quick-open';
 
 /** Longest wait for formatting before a save goes ahead without it. */
 const FORMAT_TIMEOUT_MS = 3000;
@@ -135,8 +139,8 @@ export class PaneEditor {
         'data-pane-id': this.paneId,
         'aria-label': 'Editor',
       }),
-      // Ahead of vim, which takes Esc.
-      Prec.highest(EditorView.domEventHandlers({ keydown: (e) => this.keydown(e) })),
+      // Ahead of vim, which takes Esc and Ctrl-P.
+      Prec.highest(EditorView.domEventHandlers({ keydown: (e, view) => this.keydown(e, view) })),
       EditorView.domEventHandlers({
         // Jumps to other files open where the user is.
         focus: () => {
@@ -144,7 +148,7 @@ export class PaneEditor {
           if (this.active) noteOpened(this.active);
         },
       }),
-      keymap.of([{ key: 'Mod-p', run: () => this.quickOpen(), preventDefault: true }]),
+      keymap.of([{ key: 'Mod-p', run: () => this.quickOpen(), preventDefault: true, scope: QUICK_OPEN_SCOPE }]),
     ];
   }
 
@@ -226,7 +230,7 @@ export class PaneEditor {
     return lspExtension(doc);
   }
 
-  private keydown(e: KeyboardEvent): boolean {
+  private keydown(e: KeyboardEvent, view: EditorView): boolean {
     // A quick second Esc hides the editor; the first still closes panels and
     // completions. With vim, only a run of Escs that starts in normal mode
     // with nothing pending hides it: one that leaves insert or visual mode,
@@ -245,7 +249,7 @@ export class PaneEditor {
       return true;
     }
     this.esc = { last: -Infinity, armed: false };
-    return false;
+    return runScopeHandlers(view, e, QUICK_OPEN_SCOPE);
   }
 
   private countProblems() {

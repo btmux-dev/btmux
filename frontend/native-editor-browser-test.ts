@@ -630,6 +630,18 @@ try {
     await showsMode('NORMAL');
     console.log('PASS a synthetic Esc (mobile key bar) leaves insert mode');
 
+    // Quick open's Ctrl-P (off macOS) wins over vim's in normal mode.
+    const linux = await openPage((context) =>
+      context.addInitScript(() => Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'Linux x86_64' })),
+    );
+    await waitForText(linux, paneId, 'hello alpha\nbeta\n');
+    await linux.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+    await showsMode('NORMAL', linux);
+    await linux.keyboard.press('Control+p');
+    await linux.locator(`[data-editor-pane="${paneId}"]`).getByRole('combobox', { name: 'Go to file' }).waitFor();
+    await linux.context().close();
+    console.log('PASS Ctrl-P opens quick open in vim normal mode');
+
     const command = async (text: string) => {
       await page.keyboard.press(':');
       await page.locator(`[data-editor-pane="${paneId}"] .cm-vim-panel input`).waitFor();
