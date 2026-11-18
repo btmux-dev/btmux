@@ -241,6 +241,60 @@ kill-dev:
 run: build
     ./target/release/btmux
 
+# Docs site (Starlight)
+docs-dev:
+    cd docs && bun install && bun run dev
+
+docs-build:
+    cd docs && bun install && bun run build
+
+# Retake the docs' screenshots (docs/src/assets/screenshots) from a fresh stack with demo sessions
+docs-screenshots:
+    cd frontend && bunx playwright install chromium && bun browser-test-stack.ts docs-screenshots.ts
+
+# Regenerate the docs' command reference from `btmux --help`
+docs-cli:
+    cargo build
+    node docs/scripts/cli-reference.mjs target/debug/btmux
+
+# Regenerate the docs' option reference from `btmux generate-config`
+docs-config:
+    #!/usr/bin/env bash
+    set -eu
+    reference=docs/src/content/docs/configuration/reference.md
+    temp_dir=$(mktemp -d "${reference%/*}/.docs-config.XXXXXX")
+    trap 'rm -rf "$temp_dir"' EXIT
+    {
+        printf '%s\n' '---' 'title: "All options"' 'sidebar:' '  order: 3' '---' '' 'Every option with its default, as `btmux generate-config` prints it. Uncomment a line to change it.' '' '```toml'
+        cargo run -q -- generate-config
+        echo '```'
+    } > "$temp_dir/page"
+    mv "$temp_dir/page" "$reference"
+
+# Encode recorded demos (just record-desktop-demo) into docs/public/demos
+docs-demos-encode in=".":
+    scripts/encode-demos.sh {{in}} docs/public/demos
+
+# Upload the encoded demos to the "media" prerelease
+docs-demos-upload:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # A prerelease, so releases/latest (update check, install script) never resolves to it.
+    if ! gh release view media >/dev/null 2>&1; then
+        gh release create media --prerelease --latest=false --title "Website media" \
+            --notes "Demo videos for btmux.dev, made with just record-desktop-demo and just docs-demos-encode. Not a btmux release."
+    fi
+    [[ "$(gh release view media --json isPrerelease -q .isPrerelease)" == true ]] || {
+        echo "The media release must be a prerelease" >&2
+        exit 1
+    }
+    gh release upload media --clobber docs/public/demos/*
+
+# Download the demos from the "media" release into docs/public/demos
+docs-demos-fetch:
+    mkdir -p docs/public/demos
+    gh release download media --dir docs/public/demos --clobber
+
 # Run backend regression tests
 test:
     cargo test

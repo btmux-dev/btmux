@@ -1,0 +1,43 @@
+---
+title: "btmux"
+description: "A terminal emulator and tmux-style session manager for the desktop, the browser, and your phone."
+template: "splash"
+hero:
+  tagline: "A terminal emulator and tmux-style session manager. Runs as a desktop app and in the browser, on macOS, Linux, and Windows."
+  actions:
+    - text: "Install"
+      link: "/btmux/start/installation/"
+      icon: "right-arrow"
+    - text: "GitHub"
+      link: "https://github.com/buntec/btmux"
+      icon: "github"
+      variant: "minimal"
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+<CardGrid>
+  <Card title="Sessions that stay" icon="laptop">
+    Close a browser tab and your shells keep running on the server. You can
+    also [keep the desktop server running](/start/desktop/#keeping-shells-running)
+    when you quit the app.
+  </Card>
+  <Card title="tmux, as you know it" icon="seti:shell">
+    Sessions, windows, splits, zoom, and the prefix keys from tmux. See
+    [what differs](/start/tmux/).
+  </Card>
+  <Card title="Made for coding agents" icon="rocket">
+    See which [agents](/agents/) are working, blocked, or done, get notified,
+    and run them in a [sandbox](/features/sandbox/).
+  </Card>
+  <Card title="More than a terminal" icon="puzzle">
+    A [file browser and Git](/features/files-and-git/),
+    [editors](/features/editors/), a [browser](/features/browser/), and a
+    [process viewer](/features/process-viewer/), over any pane.
+  </Card>
+</CardGrid>
+
+btmux is [MIT licensed](https://github.com/buntec/btmux/blob/main/LICENSE) and
+built on [wterm](https://github.com/vercel-labs/wterm),
+[libghostty](https://github.com/ghostty-org/ghostty), and
+[Tauri](https://github.com/tauri-apps/tauri).
