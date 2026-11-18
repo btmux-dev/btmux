@@ -267,15 +267,22 @@
 
       async function upgrade() {
         if (!desktopServer?.upgrade) return;
+        // A poll mid-exec would drop the server from this window's list.
+        clearTimeout(tailnetTimer);
+        generation++;
         busy(`Upgrading the desktop server to ${desktopServer.upgrade}…`);
+        let failure;
         try {
           await invoke("upgrade_server", { address: desktopServer.address });
-          await refresh();
         } catch (message) {
-          showError(message);
-          // Disabled while busy, which dropped its focus.
-          (desktopServer?.upgrade ? element("desktop-upgrade") : element("desktop-connect")).focus();
+          failure = message;
         }
+        // Even a failure may have moved or stopped it.
+        await refresh();
+        if (failure === undefined) return;
+        showError(failure);
+        // Disabled while busy, which dropped its focus.
+        (desktopServer?.upgrade ? element("desktop-upgrade") : element("desktop-connect")).focus();
       }
 
       async function stop() {

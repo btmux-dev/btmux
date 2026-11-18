@@ -6,6 +6,7 @@ use reqwest::blocking::Client;
 use serde::Deserialize;
 
 use crate::discovery::{self, RunningServer};
+use crate::upgrade_status::{Progress, is_newer, progress};
 
 #[derive(Deserialize)]
 struct ServerInfo {
@@ -23,10 +24,14 @@ impl ServerInfo {
 }
 
 fn client() -> Result<Client, reqwest::Error> {
+    client_with(Duration::from_millis(500))
+}
+
+fn client_with(timeout: Duration) -> Result<Client, reqwest::Error> {
     Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_millis(500))
+        .timeout(timeout)
         .build()
 }
 
@@ -55,10 +60,7 @@ pub enum Tailnet {
 }
 
 pub fn ready(server: &RunningServer) -> bool {
-    client()
-        .ok()
-        .and_then(|client| probe(&client, server))
-        .is_some_and(|info| info.profile == server.profile)
+    check(server.clone()).is_some()
 }
 
 pub fn shutdown(server: &RunningServer) -> Result<(), String> {
@@ -83,25 +85,24 @@ pub fn shutdown(server: &RunningServer) -> Result<(), String> {
 /// does; does nothing if it already runs `target` or later.
 pub fn upgrade(server: &RunningServer, exe: &Path, target: &str) -> Result<(), String> {
     // The server first runs `exe` to check it, for up to 10 s.
-    let client = Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(15))
-        .build()
+    let client = client_with(Duration::from_secs(15))
         .map_err(|_| "Could not upgrade the desktop server.".to_string())?;
-    let info = || -> Option<serde_json::Value> {
+    let info = |timeout: Duration| -> Option<serde_json::Value> {
         client
             .get(format!("http://{}/api/info", server.address))
             .bearer_auth(&server.token)
+            .timeout(timeout)
             .send()
+            .and_then(|response| response.error_for_status())
             .ok()?
             .json()
             .ok()
     };
-    let before = info().ok_or("The desktop server is no longer available.")?;
+    let before =
+        info(Duration::from_secs(15)).ok_or("The desktop server is no longer available.")?;
     // Another window may have upgraded it since the picker listed it. Even a
     // same-version handoff restarts its editors and browser.
-    if !newer(target, before["version"].as_str().unwrap_or_default()) {
+    if !is_newer(target, before["version"].as_str().unwrap_or_default()) {
         return Ok(());
     }
     let response = client
@@ -124,30 +125,22 @@ pub fn upgrade(server: &RunningServer, exe: &Path, target: &str) -> Result<(), S
     let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(250));
-        let Some(info) = info() else { continue };
-        if info["instance"] != before["instance"] {
-            // An exec keeps the pid; a service manager's restart doesn't.
-            if info["pid"] != before["pid"] {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let Some(info) = info(remaining.max(Duration::from_millis(100))) else {
+            continue;
+        };
+        match progress(&before, &info) {
+            Progress::Pending => {}
+            Progress::Upgraded => return Ok(()),
+            Progress::Restarted => {
                 return Err(
                     "The desktop server restarted instead of upgrading, closing its shells.".into(),
                 );
             }
-            return Ok(());
-        }
-        if let Some(error) = info["upgrade_error"].as_str() {
-            return Err(failed(error));
+            Progress::Failed(error) => return Err(failed(&error)),
         }
     }
     Err("Timed out waiting for the upgraded desktop server.".into())
-}
-
-/// Whether release `a` is newer than `b` (`x.y.z`, ignoring any suffix).
-pub fn newer(a: &str, b: &str) -> bool {
-    let parse = |version: &str| -> Option<Vec<u64>> {
-        let release = version.split(['-', '+']).next()?;
-        release.split('.').map(|part| part.parse().ok()).collect()
-    };
-    matches!((parse(a), parse(b)), (Some(a), Some(b)) if a.len() == b.len() && a > b)
 }
 
 /// A running server, with its version and tailnet status.
@@ -164,10 +157,10 @@ pub fn check(server: RunningServer) -> Option<Discovered> {
 }
 
 impl Discovered {
-    fn new(server: RunningServer, info: ServerInfo) -> Self {
+    fn new(server: RunningServer, mut info: ServerInfo) -> Self {
         Self {
             server,
-            version: info.version.clone(),
+            version: std::mem::take(&mut info.version),
             tailnet: info.tailnet(),
         }
     }
@@ -231,17 +224,6 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
-
-    #[test]
-    fn compares_release_versions() {
-        assert!(newer("0.0.210", "0.0.209"));
-        assert!(newer("0.1.0", "0.0.209"));
-        assert!(newer("0.0.210", "0.0.209-dev"));
-        assert!(!newer("0.0.209", "0.0.209"));
-        assert!(!newer("0.0.208", "0.0.209"));
-        assert!(!newer("0.0.210", "test"));
-        assert!(!newer("1.0", "0.0.1"));
-    }
 
     #[test]
     fn skips_servers_already_at_the_target() {

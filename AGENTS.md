@@ -357,7 +357,10 @@ the pid to tell an exec from a service manager's restart. Bump
 `handoff::VERSION` whenever the handoff file changes; `just protocol` then
 records its shape in `src/handoff.schema`, and the tests reject a changed shape
 without a bump. The Home Manager module upgrades this way when only the package
-changed, and doesn't restart on status 3.
+changed, and doesn't restart on status 3. The desktop picker's **Upgrade** does the same for
+a desktop server kept running, when the app is newer; `upgrade_status.rs`
+(release comparison, upgrade progress from `/api/info`) is shared with the
+launcher, as `discovery.rs` is.
 
 `discovery.rs` is shared with the Tauri launcher. After binding, standalone
 servers (not bundled desktop servers) publish an owner-only `state.server`

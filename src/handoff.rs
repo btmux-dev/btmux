@@ -27,6 +27,7 @@ use crate::pty::{set_cloexec, Handoff};
 use crate::session::manager::SessionSnapshot;
 use crate::session::NotificationLevel;
 use crate::telemetry::TelemetryStore;
+use crate::upgrade_status::Progress;
 use crate::ws::control::ServerMessage;
 use crate::AppState;
 
@@ -587,20 +588,17 @@ async fn upgrade_server(profile: Option<&str>) -> Result<String, (i32, String)> 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     while tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(250)).await;
-        if let Some(info) = info().await {
-            if info["instance"] != before["instance"] {
-                // An exec keeps the pid; a service manager's restart doesn't.
-                if info["pid"] != before["pid"] {
-                    return Err(failed(
-                        "the server restarted instead of upgrading in place; its shells were lost"
-                            .into(),
-                    ));
-                }
-                return Ok(info["version"].as_str().unwrap_or("?").to_string());
+        let Some(info) = info().await else { continue };
+        match crate::upgrade_status::progress(&before, &info) {
+            Progress::Pending => {}
+            Progress::Upgraded => return Ok(info["version"].as_str().unwrap_or("?").to_string()),
+            Progress::Restarted => {
+                return Err(failed(
+                    "the server restarted instead of upgrading in place; its shells were lost"
+                        .into(),
+                ))
             }
-            if let Some(error) = info["upgrade_error"].as_str() {
-                return Err((KEPT, format!("upgrade failed: {error}")));
-            }
+            Progress::Failed(error) => return Err((KEPT, format!("upgrade failed: {error}"))),
         }
     }
     Err(failed("timed out waiting for the upgraded server".into()))

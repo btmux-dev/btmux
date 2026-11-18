@@ -26,6 +26,10 @@ use tauri_plugin_shell::process::{Command, CommandChild, CommandEvent};
 #[rustfmt::skip]
 #[path = "../../../src/discovery.rs"]
 mod discovery;
+#[allow(dead_code)]
+#[rustfmt::skip]
+#[path = "../../../src/upgrade_status.rs"]
+mod upgrade_status;
 #[cfg(target_os = "macos")]
 mod cli;
 mod remote;
@@ -161,8 +165,10 @@ async fn discover_servers(
             let bundled = Some(server.address) == bundled;
             let desktop = server.profile.as_deref() == Some(DESKTOP_PROFILE);
             // Windows can't upgrade in place.
-            let upgrade =
-                cfg!(unix) && desktop && !bundled && servers::newer(APP_VERSION, &found.version);
+            let upgrade = cfg!(unix)
+                && desktop
+                && !bundled
+                && upgrade_status::is_newer(APP_VERSION, &found.version);
             let choice = ServerChoice {
                 address: server.address.to_string(),
                 profile: server.profile.clone().unwrap_or_else(|| "default".into()),
@@ -450,13 +456,16 @@ fn terminate(child: CommandChild) {
     let _ = child.kill();
 }
 
+fn bundled_btmux(app: &AppHandle) -> Result<Command, String> {
+    app.shell()
+        .sidecar("btmux")
+        .map_err(|_| "Could not find the bundled btmux server.".to_string())
+}
+
 // The bundled server's command, with the desktop profile.
 fn sidecar(app: &AppHandle, port: u16) -> Result<Command, String> {
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-    let mut sidecar = app
-        .shell()
-        .sidecar("btmux")
-        .map_err(|_| "Could not find the bundled btmux server.".to_string())?;
+    let mut sidecar = bundled_btmux(app)?;
     // Can take seconds: probe before taking locks.
     #[cfg(target_os = "macos")]
     if let Some(shell) = login_shell() {
@@ -783,10 +792,7 @@ async fn upgrade_server(
     if server.profile.as_deref() != Some(DESKTOP_PROFILE) {
         return Err("Only desktop servers can be upgraded here.".into());
     }
-    let sidecar = app
-        .shell()
-        .sidecar("btmux")
-        .map_err(|_| "Could not find the bundled btmux server.".to_string())?;
+    let sidecar = bundled_btmux(&app)?;
     let exe = PathBuf::from(std::process::Command::from(sidecar).get_program());
     tauri::async_runtime::spawn_blocking(move || servers::upgrade(&server, &exe, APP_VERSION))
         .await
