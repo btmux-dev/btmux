@@ -27,15 +27,15 @@ btmux-demo[hidden] {
 }
 btmux-demo .demo-frame {
   position: relative;
-  aspect-ratio: var(--demo-width, 1024) / var(--demo-height, 640);
+  aspect-ratio: var(--demo-width, 1280) / var(--demo-height, 800);
   overflow: hidden;
   background: var(--sl-color-gray-6);
 }
 btmux-demo .demo-stage {
   position: absolute;
   inset: 0 auto auto 0;
-  width: calc(var(--demo-width, 1024) * 1px);
-  height: calc(var(--demo-height, 640) * 1px);
+  width: calc(var(--demo-width, 1280) * 1px);
+  height: calc(var(--demo-height, 800) * 1px);
   transform: scale(var(--demo-scale, 1));
   transform-origin: 0 0;
   pointer-events: none;
@@ -43,9 +43,9 @@ btmux-demo .demo-stage {
 /* Starlight sizes content iframes to the column; this one is the recording's. */
 btmux-demo .replayer-wrapper iframe {
   display: block;
-  width: calc(var(--demo-width, 1024) * 1px);
+  width: calc(var(--demo-width, 1280) * 1px);
   max-width: none;
-  height: calc(var(--demo-height, 640) * 1px);
+  height: calc(var(--demo-height, 800) * 1px);
   border: 0;
 }
 btmux-demo:not(.demo-mouse) .replayer-mouse {

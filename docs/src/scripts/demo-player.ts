@@ -133,8 +133,8 @@ class BtmuxDemo extends HTMLElement {
     this.stage.replaceChildren();
     this.scheme = scheme;
     const meta = events.find((event) => event.type === 4)?.data ?? {
-      width: 1024,
-      height: 640,
+      width: 1280,
+      height: 800,
     };
     this.style.setProperty("--demo-width", String(meta.width));
     this.style.setProperty("--demo-height", String(meta.height));
@@ -204,7 +204,7 @@ class BtmuxDemo extends HTMLElement {
 
   // The recording's viewport, scaled to the frame's width.
   private fit() {
-    const width = Number(this.style.getPropertyValue("--demo-width")) || 1024;
+    const width = Number(this.style.getPropertyValue("--demo-width")) || 1280;
     this.style.setProperty(
       "--demo-scale",
       String(this.frame.clientWidth / width),

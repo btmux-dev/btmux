@@ -80,7 +80,7 @@ const startedAt = Date.now();
 await Bun.sleep(800);
 
 const browser = await chromium.launch({ headless: true, channel: process.env.BTMUX_TEST_BROWSER });
-const context = await browser.newContext({ viewport: { width: 960, height: 600 }, colorScheme: scheme });
+const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: scheme });
 const page = await context.newPage();
 // The fonts and images the page loads; the replay needs no others.
 const loaded = new Set<string>();
