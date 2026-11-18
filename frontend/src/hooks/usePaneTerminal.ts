@@ -4,6 +4,7 @@ import { useStore } from '../state/store';
 import { announceWallpaperKeyboardCursor } from '../lib/wallpaperInteraction';
 import { clipboardImage, pasteImage } from '../lib/pasteImage';
 import { paneMessageHandler } from '../lib/paneSocket';
+import { terminalInput, type InputSocket } from '../lib/terminalInput';
 import type { ConnectionState } from '../lib/connectionState';
 
 interface Options {
@@ -79,6 +80,11 @@ export function usePaneTerminal({ containerRef, paneId, termOptions, visibleRef,
 
       let ws: WebSocket | null = null;
       let ready = false;
+      let input: InputSocket | null = null;
+      const detachInput = () => {
+        if (input) terminalInput.detach(paneId, input);
+        input = null;
+      };
 
       const syncDims = () =>
         setDims((prev) =>
@@ -167,8 +173,15 @@ export function usePaneTerminal({ containerRef, paneId, termOptions, visibleRef,
             if (disposed || ws !== socket) return;
             try {
               const msg = JSON.parse(data);
+              if (msg.type === 'input_mode' && input)
+                terminalInput.report(input, { hidden: msg.hidden, inputs: msg.inputs });
               if (msg.type === 'ready') {
                 ready = true;
+                detachInput();
+                input = terminalInput.attach(paneId, (on) => {
+                  if (ws === socket && socket.readyState === WebSocket.OPEN)
+                    socket.send(JSON.stringify({ type: 'watch_input', on }));
+                });
                 // wterm paints on the next frame; reveal after it.
                 cancelAnimationFrame(revealRaf);
                 revealRaf = requestAnimationFrame(() =>
@@ -205,6 +218,7 @@ export function usePaneTerminal({ containerRef, paneId, termOptions, visibleRef,
           if (disposed || ws !== socket) return;
           ws = null;
           ready = false;
+          detachInput();
           setConnection('reconnecting');
           reconnectTimer = window.setTimeout(connect, Math.min(1000 * 2 ** attempts++, 10000));
         };
@@ -212,7 +226,10 @@ export function usePaneTerminal({ containerRef, paneId, termOptions, visibleRef,
       };
       const offData = term.onData((bytes) => {
         if (ws?.readyState === WebSocket.OPEN && ready) {
-          for (let i = 0; i < bytes.length; i += 16384) ws.send(bytes.slice(i, i + 16384));
+          for (let i = 0; i < bytes.length; i += 16384) {
+            ws.send(bytes.slice(i, i + 16384));
+            if (input) terminalInput.sent(input);
+          }
         }
         const rect = container.getBoundingClientRect();
         const cursor = term.cursor();
@@ -251,6 +268,7 @@ export function usePaneTerminal({ containerRef, paneId, termOptions, visibleRef,
         cancelAnimationFrame(connectRaf);
         cancelAnimationFrame(revealRaf);
         observer.disconnect();
+        detachInput();
         ws?.close();
         term.dispose();
         if (registry && registry.get(paneId) === term) registry.delete(paneId);

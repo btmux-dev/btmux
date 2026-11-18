@@ -200,8 +200,8 @@ pub struct PtyHandle {
     pub cwd: Arc<Mutex<Option<String>>>,
     /// The last OSC 7 named another host (an ssh session).
     pub cwd_remote: Arc<AtomicBool>,
-    /// The terminal is canonical without echo, as at a password prompt.
-    hidden_input: Arc<AtomicBool>,
+    /// Whether the terminal hides what's typed, as at a password prompt.
+    hidden_input: HiddenInput,
     /// Server port, injected as BTMUX_API_URL into the shell environment.
     port: u16,
     /// Maximum backend replay buffer size in bytes, derived from the config's
@@ -231,6 +231,7 @@ impl PtyHandle {
     ) -> Self {
         let (input_tx, _) = mpsc::channel::<PtyInput>(32);
         let (output_tx, _) = broadcast::channel::<Output>(256);
+        let probe = Arc::new(Mutex::new(None));
 
         Self {
             input_tx: InputSender(input_tx),
@@ -263,11 +264,11 @@ impl PtyHandle {
             exit_tx: env.exit_tx.clone(),
             meta_tx: env.meta_tx.clone(),
             pending_cpr_pgrps: Arc::new(Mutex::new(VecDeque::new())),
-            probe: Arc::new(Mutex::new(None)),
+            hidden_input: HiddenInput::new(&probe),
+            probe,
             title: Arc::new(Mutex::new(None)),
             cwd: Arc::new(Mutex::new(None)),
             cwd_remote: Arc::default(),
-            hidden_input: Arc::default(),
             port: env.port,
             scrollback_bytes: scrollback_lines as usize * 1000,
             palette: env.palette.clone(),
@@ -296,11 +297,9 @@ impl PtyHandle {
         *self.exit_status.lock().unwrap()
     }
 
-    /// Whether the program reads a line without echoing it, as `sudo`,
-    /// `ssh`, and `read -s` do for passwords; raw-mode programs (editors,
-    /// `ssh` sessions) don't count. Checked after each output chunk.
-    pub fn hidden_input(&self) -> bool {
-        self.hidden_input.load(Ordering::Relaxed)
+    /// Whether the terminal hides what's typed, as at a password prompt.
+    pub fn hidden_input(&self) -> HiddenInput {
+        self.hidden_input.clone()
     }
 
     /// Whether the shell runs and hasn't been reaped.
@@ -717,6 +716,43 @@ impl PtyHandle {
     }
 }
 
+/// Whether the program in a PTY reads a line without echoing it, as `sudo`,
+/// `ssh`, and `read -s` do for passwords; raw-mode programs (editors, `ssh`
+/// sessions) don't count. `None` where btmux can't tell (Windows).
+#[derive(Clone)]
+pub struct HiddenInput {
+    #[cfg(unix)]
+    probe: Arc<Mutex<Option<Probe>>>,
+    tx: Arc<watch::Sender<Option<bool>>>,
+}
+
+impl HiddenInput {
+    fn new(#[allow(unused_variables)] probe: &Arc<Mutex<Option<Probe>>>) -> Self {
+        Self {
+            #[cfg(unix)]
+            probe: probe.clone(),
+            tx: Arc::new(watch::channel(cfg!(unix).then_some(false)).0),
+        }
+    }
+
+    /// Check the terminal now, publishing a change to subscribers.
+    pub fn check(&self) -> Option<bool> {
+        #[cfg(unix)]
+        if let Some(now) = unix::hides_input(&self.probe) {
+            self.tx.send_if_modified(|hidden| {
+                let changed = *hidden != Some(now);
+                *hidden = Some(now);
+                changed
+            });
+        }
+        *self.tx.borrow()
+    }
+
+    pub fn subscribe(&self) -> watch::Receiver<Option<bool>> {
+        self.tx.subscribe()
+    }
+}
+
 pub fn validate_size(cols: u16, rows: u16) -> Result<(), String> {
     if cols == 0 || rows == 0 || cols > 500 || rows > 200 {
         return Err("PTY size must be 1..500 columns and 1..200 rows".into());
@@ -733,8 +769,7 @@ struct OutputPipeline {
     probe: Arc<Mutex<Option<Probe>>>,
     title: Arc<Mutex<Option<String>>>,
     cwd: Arc<Mutex<Option<String>>>,
-    #[cfg(unix)]
-    hidden_input: Arc<AtomicBool>,
+    hidden_input: HiddenInput,
     program_status: Arc<Mutex<program_status::ProgramStatus>>,
     scrollback: Arc<Mutex<Replay>>,
     output_tx: broadcast::Sender<Output>,
@@ -766,7 +801,6 @@ impl PtyHandle {
             probe: self.probe.clone(),
             title: self.title.clone(),
             cwd: self.cwd.clone(),
-            #[cfg(unix)]
             hidden_input: self.hidden_input.clone(),
             program_status: self.program_status.clone(),
             scrollback: self.scrollback.clone(),
@@ -816,8 +850,9 @@ impl OutputPipeline {
         self.apply_program_status();
         #[cfg(unix)]
         self.poll_cwd();
-        #[cfg(unix)]
-        self.poll_hidden_input();
+        // Before the output goes out: password prompts turn echo off before
+        // writing themselves, so viewers learn it no later than they see them.
+        self.hidden_input.check();
         let mut sb = self.scrollback.lock().unwrap();
         if !result.scrollback.is_empty() {
             sb.push(Output::Data(exact_bytes(result.scrollback)));

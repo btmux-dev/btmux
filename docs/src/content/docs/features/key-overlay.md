@@ -39,6 +39,12 @@ hidden" instead of the keys. btmux tells from the terminal's modes: `sudo`,
 `ssh`, `passwd`, `read -s`, and similar prompts turn echo off and keep line
 editing on. Key bindings still show.
 
+Keys typed into a terminal appear once the server confirms the mode they were
+typed in, which takes a round trip. Until then, and if it can't tell, the
+overlay shows "Terminal input hidden" rather than risk showing a password: on
+Windows servers, which can't read the mode, it shows that for all terminal
+typing, while key bindings and keys typed elsewhere still show.
+
 It can't see prompts that read keys one at a time, in raw mode:
 
 - a password prompt on another machine, in an `ssh` or sandbox session,
@@ -62,6 +68,9 @@ position = "bottom"   # "bottom-left", "bottom-right", "top", "top-left", "top-r
 
 A capture listener on `window` sees each key before any surface does, and
 `useKeybindings` notes what it did with it (the prefix, a binding, a repeat)
-before the key is committed (`lib/keyCast.ts`). The server checks each PTY's
-terminal modes after output and input (canonical without echo) and lists the
-panes and popups at a password prompt in its state broadcasts.
+before the key is committed (`lib/keyCast.ts`). Terminal input waits for
+the server: while the overlay is shown, each pane socket asks for
+`input_mode` reports (`watch_input`). The server checks the terminal's modes
+(canonical without echo) after each output chunk, before that output goes out,
+and around each input frame; each report says whether any check since the last
+one hid input, and how many input frames came before it.

@@ -27,18 +27,22 @@ try {
   const api = (path: string) => `${url}/api${path}`;
   const run = (command: string) =>
     page.request.post(api(`/panes/${paneId}/input`), { data: { text: command, keys: ['Enter'] } });
-  const hidden = (id: string) =>
-    page.evaluate(async (id) => {
-      const { useStore } = await import('/src/state/store.tsx' as string);
-      return useStore.getState().hiddenInput.has(id) as boolean;
-    }, id);
-  const waitForHidden = async (want: boolean) => {
-    const deadline = Date.now() + 10_000;
-    while ((await hidden(paneId)) !== want) {
-      assert(Date.now() < deadline, `hidden input never became ${want}`);
-      await page.waitForTimeout(50);
-    }
-  };
+  const waitForScreen = (text: string) =>
+    page.waitForFunction(
+      (text) => document.querySelector('[data-pane-terminal]')?.textContent?.includes(text),
+      text,
+      { timeout: 10_000 },
+    );
+  // Everything the overlay ever rendered, so a key shown for a moment counts.
+  const recordOverlay = () =>
+    page.evaluate(() => {
+      const seen: string[] = [];
+      (window as unknown as { overlaySeen: string[] }).overlaySeen = seen;
+      new MutationObserver(() => {
+        for (const entry of document.querySelectorAll('[data-key-overlay-entry]')) seen.push(entry.textContent ?? '');
+      }).observe(document.body, { subtree: true, childList: true, characterData: true });
+    });
+  const everShown = () => page.evaluate(() => (window as unknown as { overlaySeen: string[] }).overlaySeen.join('\n'));
   const entries = page.locator('[data-key-overlay-entry]');
   const overlayText = async () => (await entries.allTextContents()).join('\n');
   const waitForEntry = async (text: string) => {
@@ -74,19 +78,57 @@ try {
   await page.keyboard.press('z');
   console.log('PASS prefix sequences show their action');
 
-  // A password prompt hides what's typed, and what's typed after it shows again.
+  // The prefix times out: it says so, then goes, without another key.
+  await page.keyboard.press('Control+a');
+  await waitForEntry('prefix, no key');
+  await page.waitForFunction(() => document.querySelectorAll('[data-key-overlay-entry]').length === 0, null, {
+    timeout: 10_000,
+  });
+  console.log('PASS a timed-out prefix shows as such and goes');
+
+  // Text inserted without a keydown (soft keyboards, dictation).
+  await page.keyboard.insertText('inserted');
+  await waitForEntry('inserted');
+  await page.keyboard.press('Control+u');
+  console.log('PASS inserted text shows');
+
+  // A password prompt hides what's typed the moment the prompt shows.
+  await recordOverlay();
   await run("stty -echo; printf 'Password: '; read secret; stty echo; echo; echo got-$secret");
-  await waitForHidden(true);
+  await waitForScreen('Password:');
   await page.keyboard.type('hunter2');
   await waitForEntry('Password input hidden');
-  assert(!(await overlayText()).includes('hunter2'), 'the password never shows');
   await page.keyboard.press('Enter');
-  await waitForHidden(false);
+  await waitForScreen('got-hunter2');
   await page.keyboard.type('visible');
   await waitForEntry('visible');
-  assert(!(await overlayText()).includes('hunter2'), 'the password never shows');
+  assert(!(await everShown()).includes('hunter'), 'the password never shows');
   await page.keyboard.press('Control+u');
+  // A prompt that turns echo off after writing itself, with no output after.
+  await run("printf 'Late: '; stty -echo; read secret; stty echo; echo; echo late-$secret");
+  await waitForScreen('Late:');
+  await page.waitForTimeout(200);
+  await page.keyboard.type('qz');
+  await page.keyboard.press('Enter');
+  await waitForScreen('late-qz');
+  await page.waitForTimeout(300);
+  assert(!(await everShown()).includes('qz'), 'input after a late echo-off never shows');
   console.log('PASS password prompts hide their input');
+
+  // Long runs wrap on a phone-sized screen.
+  await page.setViewportSize({ width: 390, height: 800 });
+  await page.locator('[data-pane-terminal]').first().click();
+  await page.keyboard.type('abcdefghijklmnopqrstuvwxyz012345');
+  await waitForEntry('012345');
+  const overflow = await page.evaluate(() => {
+    const entry = [...document.querySelectorAll('[data-key-overlay-entry]')].at(-1)!;
+    const card = entry.getBoundingClientRect();
+    return [...entry.querySelectorAll('span')].some((span) => span.getBoundingClientRect().right > card.right + 0.5);
+  });
+  assert(!overflow, 'the run stays inside its card');
+  await page.keyboard.press('Control+u');
+  await page.setViewportSize({ width: 1200, height: 800 });
+  console.log('PASS long runs wrap on narrow screens');
 
   // It stays above modal dialogs: it shows itself again, last in the top layer.
   await page.evaluate(() => {

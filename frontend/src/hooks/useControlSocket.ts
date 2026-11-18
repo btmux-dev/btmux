@@ -118,7 +118,6 @@ export function useControlSocket() {
           setSessions(msg.sessions);
           setAllSessions(msg.all_sessions);
           setAgentPanes(msg.agent_panes);
-          useStore.getState().setHiddenInput(msg.hidden_input);
           setControlConnectionState('connected');
         } else if (msg.type === 'agent_telemetry') {
           useStore.getState().updateAgentTelemetry(msg.panes, msg.replace, msg.removed_panes);

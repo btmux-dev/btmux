@@ -1,11 +1,44 @@
 // Run with `just test-frontend` (bun test).
 import { expect, test } from 'bun:test';
-import { KeyCaster, type Entry, type KeyInfo } from './src/lib/keyCast';
+import { HOLD_MS, KeyCaster, type Entry, type KeyInfo } from './src/lib/keyCast';
+import type { InputSocket } from './src/lib/terminalInput';
+
+/** Terminal sockets the test drives: input it sends and the server's reports. */
+function fakeInputs() {
+  const sockets = new Map<string, InputSocket>();
+  const listeners = new Set<() => void>();
+  return {
+    socket: (id: string) => sockets.get(id) ?? null,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    open(id: string) {
+      const socket: InputSocket = { sent: 0, reports: [], closed: false, watch: () => {} };
+      sockets.set(id, socket);
+      return socket;
+    },
+    report(socket: InputSocket, hidden: boolean | null, inputs = socket.sent) {
+      socket.reports.push({ inputs, hidden });
+      for (const listener of listeners) listener();
+    },
+    close(socket: InputSocket) {
+      socket.closed = true;
+      for (const listener of listeners) listener();
+    },
+  };
+}
 
 function setup(mac = true) {
   let now = 0;
-  const caster = new KeyCaster(mac, () => now);
-  const press = (key: string, mods: Partial<KeyInfo> = {}, note?: Parameters<KeyCaster['note']>[1]) => {
+  const inputs = fakeInputs();
+  const caster = new KeyCaster(mac, inputs, () => now);
+  const press = (
+    key: string,
+    mods: Partial<KeyInfo> = {},
+    note?: Parameters<KeyCaster['note']>[1],
+    terminal: { id: string; socket: InputSocket } | null = null,
+  ) => {
     const source = {};
     const code = /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : '';
     caster.key(source, {
@@ -17,15 +50,16 @@ function setup(mac = true) {
       metaKey: false,
       altGraph: false,
       isComposing: false,
-      hidden: false,
       ...mods,
-    });
+    }, terminal?.id ?? null);
     if (note) caster.note(source, note);
+    // The terminal sends what isn't a binding.
+    if (terminal && !note) terminal.socket.sent += 1;
     caster.flush();
     now += 100;
   };
   const wait = (ms: number) => (now += ms);
-  return { caster, press, wait };
+  return { caster, press, wait, inputs };
 }
 
 function describe(entry: Entry): string {
@@ -36,7 +70,7 @@ function describe(entry: Entry): string {
     case 'chord':
       return `chord:${cap(entry.cap)}${entry.count > 1 ? `×${entry.count}` : ''}`;
     case 'hidden':
-      return 'hidden';
+      return `hidden:${entry.reason}`;
     case 'binding':
       return [
         'binding:',
@@ -119,26 +153,88 @@ test('chords count repeats; chords mode drops typing', () => {
 test('Option text on macOS is typing, not a chord', () => {
   const { caster, press } = setup();
   // German layout: Option+L types "@".
-  caster.key({}, keyInfo({ key: '@', code: 'KeyL', altKey: true }));
+  caster.key({}, keyInfo({ key: '@', code: 'KeyL', altKey: true }), null);
   caster.flush();
   press('x', { altKey: true });
   expect(shown(caster)).toEqual(['text:@', 'chord:⌥X']);
 });
 
-test('keys to a password prompt are hidden, but bindings still show', () => {
+test('terminal input waits for the server to say it was shown', () => {
+  const { caster, press, inputs } = setup();
+  const socket = inputs.open('pane');
+  const pane = { id: 'pane', socket };
+  press('l', {}, undefined, pane);
+  press('s', {}, undefined, pane);
+  expect(shown(caster)).toEqual([]);
+  inputs.report(socket, false, 1);
+  expect(shown(caster)).toEqual(['text:l']);
+  inputs.report(socket, false, 2);
+  expect(shown(caster)).toEqual(['text:ls']);
+});
+
+test('input a report says was hidden is hidden, bindings still show in order', () => {
+  const { caster, press, inputs } = setup();
+  const socket = inputs.open('pane');
+  const pane = { id: 'pane', socket };
+  for (const key of 'hunter2') press(key, {}, undefined, pane);
+  press('a', { ctrlKey: true }, { kind: 'prefix' }, pane);
+  press('o', {}, { kind: 'binding', label: 'Next pane' }, pane);
+  press('Enter', {}, undefined, pane);
+  // Held behind the password, which the server hasn't confirmed.
+  expect(shown(caster)).toEqual([]);
+  // One report for all of it: the Enter turned echo back on, but the password hid.
+  inputs.report(socket, true);
+  expect(shown(caster)).toEqual(['hidden:password', 'binding:⌃A o = Next pane', 'hidden:password']);
+});
+
+test('input is hidden when the server cannot tell, the socket closed, or it never answered', () => {
+  const { caster, press, wait, inputs } = setup();
+  const windows = inputs.open('windows');
+  press('a', {}, undefined, { id: 'windows', socket: windows });
+  inputs.report(windows, null);
+  const closed = inputs.open('closed');
+  press('b', {}, undefined, { id: 'closed', socket: closed });
+  inputs.close(closed);
+  const silent = inputs.open('silent');
+  press('c', {}, undefined, { id: 'silent', socket: silent });
+  expect(shown(caster)).toEqual(['hidden:unknown']);
+  wait(HOLD_MS);
+  caster.drain();
+  expect(shown(caster)).toEqual(['hidden:unknown']);
+  expect(caster.snapshot().length).toBe(1);
+  // A terminal btmux doesn't know.
+  press('d', {}, undefined, { id: 'gone', socket: inputs.open('other') });
+  expect(shown(caster)).toEqual(['hidden:unknown']);
+});
+
+test('text without a keydown goes through the same check', () => {
+  const { caster, inputs } = setup();
+  const socket = inputs.open('pane');
+  caster.text('secret', 'pane');
+  socket.sent += 1;
+  caster.flush();
+  expect(shown(caster)).toEqual([]);
+  inputs.report(socket, true);
+  caster.text('ok', null);
+  caster.flush();
+  expect(shown(caster)).toEqual(['hidden:password', 'text:ok']);
+});
+
+test('cancelling the prefix tells subscribers', () => {
   const { caster, press } = setup();
-  for (const key of 'hunter2') press(key, { hidden: true });
-  press('a', { ctrlKey: true, hidden: true }, { kind: 'prefix' });
-  press('o', { hidden: true }, { kind: 'binding', label: 'Next pane' });
-  caster.text('composed', true);
-  expect(shown(caster)).toEqual(['hidden', 'binding:⌃A o = Next pane', 'hidden']);
+  let changes = 0;
+  caster.subscribe(() => changes++);
+  press('a', { ctrlKey: true }, { kind: 'prefix' });
+  const before = changes;
+  caster.cancelPrefix();
+  expect(changes).toBeGreaterThan(before);
 });
 
 test('a synthetic copy replaces the key it copies', () => {
   const { caster } = setup();
   const original = {};
-  caster.key(original, keyInfo({ key: 'c' }));
-  caster.key({}, keyInfo({ key: 'c', ctrlKey: true }), true);
+  caster.key(original, keyInfo({ key: 'c' }), null);
+  caster.key({}, keyInfo({ key: 'c', ctrlKey: true }), null, true);
   caster.flush();
   expect(shown(caster)).toEqual(['chord:⌃C']);
 });
@@ -169,7 +265,6 @@ function keyInfo(info: Partial<KeyInfo> & { key: string }): KeyInfo {
     metaKey: false,
     altGraph: false,
     isComposing: false,
-    hidden: false,
     ...info,
   };
 }

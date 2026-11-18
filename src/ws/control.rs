@@ -56,7 +56,6 @@ pub(crate) fn broadcast_state(mgr: &crate::session::manager::SessionManager) {
         sessions: mgr.session_summaries(),
         all_sessions: mgr.all_snapshots(),
         agent_panes: mgr.running_agent_panes(),
-        hidden_input: mgr.hidden_input(),
     };
     let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
     // Language servers for sandboxed files run in the guest.
@@ -76,7 +75,6 @@ fn initial_messages(mgr: &crate::session::manager::SessionManager) -> Vec<String
             sessions: mgr.session_summaries(),
             all_sessions: mgr.all_snapshots(),
             agent_panes: mgr.running_agent_panes(),
-            hidden_input: mgr.hidden_input(),
         })
         .unwrap(),
     ];
@@ -1181,9 +1179,6 @@ pub enum ServerMessage {
         sessions: Vec<SessionSummary>,
         all_sessions: Vec<SessionSnapshot>,
         agent_panes: Vec<Uuid>,
-        /// Panes and popups whose program reads input without echo, as at a
-        /// password prompt.
-        hidden_input: Vec<Uuid>,
     },
     Config {
         config: Box<ClientConfig>,

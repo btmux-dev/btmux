@@ -4,6 +4,7 @@ import { Lock } from 'lucide-react';
 import { clsx } from 'clsx';
 import type { KeyOverlayPosition } from '../generated/protocol';
 import { ENTRY_MS, keyCaster, type Cap, type Entry, type KeyInfo } from '../lib/keyCast';
+import { terminalInput } from '../lib/terminalInput';
 import { getAnimations } from '../state/configDefaults';
 import { useStore } from '../state/store';
 
@@ -16,13 +17,12 @@ const POSITIONS: Record<KeyOverlayPosition, string> = {
   'top-right': 'top-4 right-4 items-end',
 };
 
-/** The pane or popup a key goes to, if it is at a password prompt. */
-function hidden(target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) return false;
-  const id =
-    target.closest('[data-popup]')?.getAttribute('data-popup') ??
-    target.closest('[data-pane-id]')?.getAttribute('data-pane-id');
-  return !!id && useStore.getState().hiddenInput.has(id);
+/** The pane or popup whose terminal input goes to; '' for one btmux doesn't know. */
+function terminalOf(target: EventTarget | null): string | null {
+  const element = target instanceof Element ? target.closest('[data-pane-terminal]') : null;
+  if (!element) return null;
+  for (const [id, term] of useStore.getState().terminals) if (term.element === element) return id;
+  return '';
 }
 
 function keyInfo(e: KeyboardEvent): KeyInfo {
@@ -35,7 +35,6 @@ function keyInfo(e: KeyboardEvent): KeyInfo {
     metaKey: e.metaKey,
     altGraph: e.getModifierState?.('AltGraph') ?? false,
     isComposing: e.isComposing,
-    hidden: hidden(e.target),
   };
 }
 
@@ -64,23 +63,43 @@ function KeyOverlayView() {
   // notes what it made of a key before the key is committed.
   useEffect(() => {
     let timer = 0;
-    const onKeyDown = (e: KeyboardEvent) => {
-      keyCaster.key(e, keyInfo(e), !e.isTrusted);
+    // Committed once the input reached the terminal's socket.
+    const flushSoon = () => {
       clearTimeout(timer);
       timer = window.setTimeout(() => keyCaster.flush());
     };
-    const onCompositionEnd = (e: CompositionEvent) => keyCaster.text(e.data, hidden(e.target));
+    let lastKey: { key: string; at: number } | null = null;
+    const onKeyDown = (e: KeyboardEvent) => {
+      keyCaster.key(e, keyInfo(e), terminalOf(e.target), !e.isTrusted);
+      lastKey = { key: e.key, at: e.timeStamp };
+      flushSoon();
+    };
+    const onCompositionEnd = (e: CompositionEvent) => {
+      keyCaster.text(e.data, terminalOf(e.target));
+      flushSoon();
+    };
+    // Text without a keydown: soft keyboards, dictation, insertText.
+    const onBeforeInput = (e: InputEvent) => {
+      if (e.inputType !== 'insertText' || e.isComposing || !e.data) return;
+      if (lastKey?.key === e.data && e.timeStamp - lastKey.at < 50) return;
+      keyCaster.text(e.data, terminalOf(e.target));
+      flushSoon();
+    };
+    terminalInput.setWatching(true);
     // A prefix ended without a key (timeout, the mobile key bar) shows as cancelled.
     const unsubscribe = useStore.subscribe((state, prev) => {
       if (prev.prefixActive && !state.prefixActive) window.setTimeout(() => keyCaster.cancelPrefix());
     });
     window.addEventListener('keydown', onKeyDown, true);
     window.addEventListener('compositionend', onCompositionEnd, true);
+    window.addEventListener('beforeinput', onBeforeInput, true);
     return () => {
       clearTimeout(timer);
       unsubscribe();
       window.removeEventListener('keydown', onKeyDown, true);
       window.removeEventListener('compositionend', onCompositionEnd, true);
+      window.removeEventListener('beforeinput', onBeforeInput, true);
+      terminalInput.setWatching(false);
       keyCaster.clear();
     };
   }, []);
@@ -157,7 +176,7 @@ function renderEntry(entry: Entry): ReactNode {
   switch (entry.kind) {
     case 'text':
       return (
-        <span className="btm-mono whitespace-pre">
+        <span className="btm-mono min-w-0 whitespace-pre-wrap break-all">
           {entry.truncated && <span className="text-secondary">…</span>}
           {entry.tokens.map((token, i) =>
             token.named ? (
@@ -182,7 +201,9 @@ function renderEntry(entry: Entry): ReactNode {
       return (
         <>
           <Lock className="size-5 text-secondary" />
-          <span className="text-base text-secondary">Password input hidden</span>
+          <span className="text-base text-secondary">
+            {entry.reason === 'password' ? 'Password input hidden' : 'Terminal input hidden'}
+          </span>
         </>
       );
     case 'binding':

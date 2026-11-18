@@ -2,6 +2,7 @@
 import type { KeyOverlayMode } from '../generated/protocol';
 import { macOptionText } from './macOption';
 import { IS_MAC } from './nvimKeys';
+import { terminalInput, type InputSocket } from './terminalInput';
 
 /** A key as shown: modifier names and the key's name. */
 export interface Cap {
@@ -32,7 +33,10 @@ export type Entry =
       cancelled: boolean;
       count: number;
     }
-  | { id: number; at: number; kind: 'hidden' };
+  /** Input to a terminal at a password prompt, or one btmux can't tell about. */
+  | { id: number; at: number; kind: 'hidden'; reason: HiddenReason };
+
+export type HiddenReason = 'password' | 'unknown';
 
 /** What `useKeybindings` made of a key. */
 export type KeyNote =
@@ -52,8 +56,6 @@ export interface KeyInfo {
   /** AltGr, which types text with Ctrl and Alt held on Windows. */
   altGraph: boolean;
   isComposing: boolean;
-  /** Typed into a program reading a password. */
-  hidden: boolean;
 }
 
 /** How long an entry stays after its last key. */
@@ -62,6 +64,8 @@ export const ENTRY_MS = 2500;
 const RUN_GAP_MS = 1500;
 const MAX_ENTRIES = 4;
 const MAX_RUN = 32;
+/** Terminal input waits this long for the server to say whether it was hidden. */
+export const HOLD_MS = 2000;
 
 const IGNORED = new Set([
   'Shift',
@@ -139,12 +143,30 @@ function sameCap(a: Cap, b: Cap): boolean {
   return a.key === b.key && a.mods.join() === b.mods.join();
 }
 
+/** The terminals keys go to: their `/ws/pane` sockets (`terminalInput`). */
+export interface TerminalInputs {
+  socket(id: string): InputSocket | null;
+  subscribe(listener: () => void): () => void;
+}
+
 interface Pending {
-  source: object;
-  info: KeyInfo;
+  source: object | null;
+  key: KeyInfo | null;
+  text: string | null;
+  /** The pane or popup the input goes to. */
+  terminal: string | null;
+  socket: InputSocket | null;
+  /** The socket's input frames before this input. */
+  before: number;
   note: KeyNote | null;
   synthetic: boolean;
   at: number;
+}
+
+interface Held extends Pending {
+  /** The socket's input frames after this input. */
+  sent: number;
+  deadline: number;
 }
 
 /** A synthetic key this soon after a real one is its copy. */
@@ -153,14 +175,20 @@ const REPLACE_MS = 50;
 export class KeyCaster {
   private entries: Entry[] = [];
   private pending: Pending | null = null;
+  /** Committed in order, once each terminal input is known to be shown or hidden. */
+  private held: Held[] = [];
+  private timer: ReturnType<typeof setTimeout> | undefined;
   private nextId = 0;
   private listeners = new Set<() => void>();
   mode: KeyOverlayMode = 'all';
 
   constructor(
     private readonly mac: boolean,
+    private readonly inputs: TerminalInputs,
     private readonly now: () => number = () => performance.now(),
-  ) {}
+  ) {
+    inputs.subscribe(() => this.drain());
+  }
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -173,22 +201,28 @@ export class KeyCaster {
   }
 
   /**
-   * A keydown, committed by `flush` once `note` had its say. A synthetic key
-   * right after a real one replaces it, as the mobile key bar's copies do.
+   * A keydown to `terminal` (a pane or popup id, or null), committed by
+   * `flush` once `note` had its say. A synthetic key right after a real one
+   * replaces it, as the mobile key bar's copies do.
    */
-  key(source: object, info: KeyInfo, synthetic = false) {
-    const now = this.now();
+  key(source: object, info: KeyInfo, terminal: string | null, synthetic = false) {
     const last = this.pending;
-    if (last && synthetic && !last.synthetic && now - last.at < REPLACE_MS) {
-      this.pending = { source, info, note: last.note, synthetic, at: now };
+    if (last?.key && synthetic && !last.synthetic && this.now() - last.at < REPLACE_MS) {
+      this.pending = { ...this.input(terminal), source, key: info, note: last.note, synthetic };
       return;
     }
     this.flush();
-    this.pending = { source, info, note: null, synthetic, at: now };
+    this.pending = { ...this.input(terminal), source, key: info, synthetic };
+  }
+
+  /** Text typed without a keydown (an IME composition, dictation), committed by `flush`. */
+  text(text: string, terminal: string | null) {
+    this.flush();
+    if (text) this.pending = { ...this.input(terminal), text };
   }
 
   note(source: object, note: KeyNote) {
-    if (this.pending?.source === source) this.pending.note = note;
+    if (this.pending && this.pending.source === source) this.pending.note = note;
   }
 
   /** The prefix timed out without a key. */
@@ -199,14 +233,6 @@ export class KeyCaster {
     last.pending = false;
     last.cancelled = true;
     this.touch(last);
-  }
-
-  /** Committed text without key events, such as an IME composition. */
-  text(text: string, hidden: boolean) {
-    this.flush();
-    if (!text) return;
-    if (hidden) this.addHidden();
-    else if (this.mode === 'all') for (const char of text) this.addText(char, false);
     this.changed();
   }
 
@@ -223,7 +249,9 @@ export class KeyCaster {
   }
 
   clear() {
+    clearTimeout(this.timer);
     this.pending = null;
+    this.held = [];
     this.entries = [];
     this.changed();
   }
@@ -232,11 +260,69 @@ export class KeyCaster {
     const pending = this.pending;
     if (!pending) return;
     this.pending = null;
-    if (this.commit(pending)) this.changed();
+    this.held.push({ ...pending, sent: pending.socket?.sent ?? 0, deadline: this.now() + HOLD_MS });
+    this.drain();
   }
 
-  private commit({ info, note }: Pending): boolean {
-    if (info.isComposing || IGNORED.has(info.key)) return false;
+  /** Commit held input whose terminal said whether it was hidden, or that waited too long. */
+  drain() {
+    clearTimeout(this.timer);
+    let changed = false;
+    while (this.held.length > 0) {
+      const verdict = this.verdict(this.held[0]);
+      if (verdict === undefined) break;
+      changed = this.commit(this.held.shift()!, verdict) || changed;
+    }
+    if (this.held.length > 0) {
+      this.timer = setTimeout(() => this.drain(), Math.max(0, this.held[0].deadline - this.now()) + 1);
+    }
+    if (changed) this.changed();
+  }
+
+  private input(terminal: string | null): Pending {
+    const socket = terminal === null ? null : this.inputs.socket(terminal);
+    return {
+      source: null,
+      key: null,
+      text: null,
+      terminal,
+      socket,
+      before: socket?.sent ?? 0,
+      note: null,
+      synthetic: false,
+      at: this.now(),
+    };
+  }
+
+  /** Whether held input is hidden; undefined while its terminal hasn't said. */
+  private verdict(held: Held): HiddenReason | false | undefined {
+    // Keys btmux took never reach the terminal.
+    if (held.terminal === null || held.note) return false;
+    const socket = held.socket;
+    if (!socket || socket.closed) return 'unknown';
+    const late = this.now() >= held.deadline;
+    // Reports covering this input's frames, or the mode now if it sent none.
+    const covering =
+      held.sent > held.before
+        ? socket.reports.filter((report) => report.inputs > held.before)
+        : socket.reports.slice(-1);
+    const done = held.sent > held.before ? covering.some((report) => report.inputs >= held.sent) : covering.length > 0;
+    if (!done) return late ? 'unknown' : undefined;
+    if (covering.some((report) => report.hidden === true)) return 'password';
+    if (covering.some((report) => report.hidden === null)) return 'unknown';
+    return false;
+  }
+
+  private commit(input: Held, hidden: HiddenReason | false): boolean {
+    if (input.text !== null) {
+      if (hidden) this.addHidden(hidden);
+      else if (this.mode === 'all') for (const char of input.text) this.addText(char, false);
+      else return false;
+      return true;
+    }
+    const info = input.key;
+    if (!info || info.isComposing || IGNORED.has(info.key)) return false;
+    const note = input.note;
     const cap = capOf(info, this.mac);
     const last = this.last();
     if (note?.kind === 'prefix') {
@@ -279,8 +365,8 @@ export class KeyCaster {
       }
       return true;
     }
-    if (info.hidden) {
-      this.addHidden();
+    if (hidden) {
+      this.addHidden(hidden);
       return true;
     }
     const text = typedText(info, this.mac);
@@ -317,10 +403,15 @@ export class KeyCaster {
     this.touch(last);
   }
 
-  private addHidden() {
+  private addHidden(reason: HiddenReason) {
     const last = this.last();
-    if (last?.kind === 'hidden') this.touch(last);
-    else this.push({ kind: 'hidden' });
+    if (last?.kind === 'hidden') {
+      // A password prompt says more than not knowing.
+      if (reason === 'password') last.reason = reason;
+      this.touch(last);
+    } else {
+      this.push({ kind: 'hidden', reason });
+    }
   }
 
   private last(): Entry | undefined {
@@ -346,4 +437,4 @@ export class KeyCaster {
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
 
 /** The client's key overlay. */
-export const keyCaster = new KeyCaster(IS_MAC);
+export const keyCaster = new KeyCaster(IS_MAC, terminalInput);

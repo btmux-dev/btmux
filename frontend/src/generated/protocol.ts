@@ -815,12 +815,7 @@ folder: string | null, } | { "type": "kill_agent", pane_id: string, agent_id: nu
 folder: string | null, } | { "type": "editor_view", pane_id: string, op: EditorViewOp, } | { "type": "shut_down_editor", editor: Editor, } | { "type": "run_command", command: string, session_id: string, } | { "type": "create_worktree", pane_id: string, branch: string, } | { "type": "remove_worktree", pane_id: string, } | { "type": "update_config", update: ConfigUpdate, } | { "type": "save_config", update: ConfigUpdate, } | { "type": "reset_config" };
 
 // prettier-ignore
-export type ServerMessage = { "type": "agent_telemetry", panes: Array<AgentTelemetry>, removed_panes: Array<string>, replace: boolean, } | { "type": "command_result", request_id: string | null, error: string | null, } | { "type": "state", sessions: Array<SessionSummary>, all_sessions: Array<SessionSnapshot>, agent_panes: Array<string>,
-/**
- * Panes and popups whose program reads input without echo, as at a
- * password prompt.
- */
-hidden_input: Array<string>, } | { "type": "config", config: ClientConfig, } | { "type": "toast", message: string, level: NotificationLevel,
+export type ServerMessage = { "type": "agent_telemetry", panes: Array<AgentTelemetry>, removed_panes: Array<string>, replace: boolean, } | { "type": "command_result", request_id: string | null, error: string | null, } | { "type": "state", sessions: Array<SessionSummary>, all_sessions: Array<SessionSnapshot>, agent_panes: Array<string>, } | { "type": "config", config: ClientConfig, } | { "type": "toast", message: string, level: NotificationLevel,
 /**
  * Stays until dismissed.
  */

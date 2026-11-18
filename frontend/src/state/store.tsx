@@ -42,8 +42,6 @@ interface AppStore {
   agentGridOpen: boolean;
   agentGridMounted: boolean;
   agentPanes: Set<string>;
-  /** Panes and popups at a password prompt, whose keys the key overlay hides. */
-  hiddenInput: Set<string>;
   /** Whether this client shows pressed keys. Local UI state. */
   keyOverlay: boolean;
   setKeyOverlay: (on: boolean) => void;
@@ -132,7 +130,6 @@ interface AppStore {
   setAgentGridOpen: (open: boolean) => void;
   markAgentGridMounted: () => void;
   setAgentPanes: (paneIds: string[]) => void;
-  setHiddenInput: (ids: string[]) => void;
   setWidgets: (widgets: WidgetSummary[]) => void;
   setPopups: (popups: PopupSummary[]) => void;
   setPopupShown: (popup: PopupSummary | null) => void;
@@ -251,7 +248,6 @@ export const useStore = create<AppStore>((set, get) => ({
   agentGridOpen: false,
   agentGridMounted: false,
   agentPanes: new Set(),
-  hiddenInput: new Set(),
   keyOverlay: initialKeyOverlay(),
   setKeyOverlay: (keyOverlay) => {
     try {
@@ -336,10 +332,6 @@ export const useStore = create<AppStore>((set, get) => ({
     set((state) => ({ agentGridOpen: open, agentGridMounted: state.agentGridMounted || open })),
   markAgentGridMounted: () => set((s) => (s.agentGridMounted ? s : { agentGridMounted: true })),
   setAgentPanes: (paneIds) => set({ agentPanes: new Set(paneIds) }),
-  setHiddenInput: (ids) =>
-    set((s) =>
-      ids.length === s.hiddenInput.size && ids.every((id) => s.hiddenInput.has(id)) ? s : { hiddenInput: new Set(ids) },
-    ),
   setWidgets: (widgets) => set({ widgets }),
   setPopups: (popups) => set({ popups }),
   setPopupShown: (popupShown) => set({ popupShown }),

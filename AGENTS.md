@@ -112,7 +112,7 @@ derived from each browser tab's URL, so session navigation is per-tab.
 
    **Broadcast fan-out:** `SessionManager` owns a `tokio::sync::broadcast::Sender<String>` (`events()`) carrying pre-serialized `ServerMessage` JSON. Every control socket subscribes to that stream, so a mutation in one browser tab, a REST/MCP call, a config reload, or an agent notification reaches _all_ tabs. On connect a socket is also sent its current `Config` + `State` directly so it doesn't wait for the next event. `ServerMessage` includes `State { sessions, all_sessions }` (`Vec<SessionSummary>` for the StatusBar/picker + `Vec<SessionSnapshot>` with full window/layout data), `Config`, `Toast`, pane notification/clear messages, and per-request `CommandResult` replies. `request_id` command results go only to the originating socket.
 
-2. **`/ws/pane/{pane_id}?cols=&rows=`** (`src/ws/pane_io.rs`) — one socket **per visible pane**, carrying raw terminal bytes. Binary frames = PTY I/O; a JSON text frame `{type:"resize",cols,rows}` reports the viewer's size and `{type:"claim"}` makes it the size owner; other text frames are ignored. The server sends `{type:"owner",owner}` before the replay and whenever ownership changes. On connect, a checkpoint and journal are replayed, followed by `ready`. The browser accepts input only after this initial replay completes. Runs of output go out merged, up to 1 MiB per frame (`coalesce`). On relayed sockets (btmux connect), output is compressed: a `{type:"compression",format:"deflate-raw"}` frame comes first, then each binary frame is a u32 uncompressed length plus the next sync-flushed piece of one deflate stream (`connect::PaneDeflater`), which `lib/paneSocket.ts` inflates in order with the text frames.
+2. **`/ws/pane/{pane_id}?cols=&rows=`** (`src/ws/pane_io.rs`) — one socket **per visible pane**, carrying raw terminal bytes. Binary frames = PTY I/O; a JSON text frame `{type:"resize",cols,rows}` reports the viewer's size, `{type:"claim"}` makes it the size owner, and `{type:"watch_input",on}` asks for `input_mode` reports (see *Key overlay*); other text frames are ignored. The server sends `{type:"owner",owner}` before the replay and whenever ownership changes. On connect, a checkpoint and journal are replayed, followed by `ready`. The browser accepts input only after this initial replay completes. Runs of output go out merged, up to 1 MiB per frame (`coalesce`). On relayed sockets (btmux connect), output is compressed: a `{type:"compression",format:"deflate-raw"}` frame comes first, then each binary frame is a u32 uncompressed length plus the next sync-flushed piece of one deflate stream (`connect::PaneDeflater`), which `lib/paneSocket.ts` inflates in order with the text frames.
 
    `?mirror=1` creates a read-only attachment for window-grid and agent view thumbnails. Mirrors receive output and ordered size frames but never resize or write to the PTY. A `{type:"current_size",cols,rows}` frame precedes the replay, whose `size` frames walk the pane's resize history; the agent view lays out tiles from that frame and `size` frames after `ready`.
 
@@ -1106,10 +1106,16 @@ listener runs before every surface's; `useKeybindings` calls `keyCaster.note`
 for the prefix, bindings, and repeats in the same dispatch, and the key is
 committed after it (`lib/keyCast.ts`; a synthetic copy right after a real key
 replaces it, as `MobileKeyBar`'s do). It is a manual popover shown again when a
-modal dialog opens, so it stays above the top layer. Keys to a pane or popup in
-`State.hidden_input` are hidden: `PtyHandle::hidden_input` is canonical mode
-without echo (a password prompt, not a raw-mode program), checked after each
-output chunk and write. `[key-overlay]` sets `mode` and `position`.
+modal dialog opens, so it stays above the top layer. Input to a terminal is
+held until its pane socket says whether it was hidden (`lib/terminalInput.ts`):
+while the overlay shows, sockets send `{type:"watch_input",on}` and get
+`{type:"input_mode",hidden,inputs}`, `hidden` meaning any check since the last
+report hid input (`null` on Windows, which can't tell) and `inputs` the frames
+received before it. `PtyHandle::hidden_input` (canonical mode without echo: a
+password prompt, not a raw-mode program) is checked by the reader before each
+chunk's output goes out, so a prompt's report precedes it, and around each input
+frame. Unknown or unanswered input (2 s) shows as hidden. `[key-overlay]` sets
+`mode` and `position`.
 
 **LaTeX overlay:** frontend-only. `lib/latexDetect.ts` is a pure, tiered
 heuristic detector (explicit delimiters → bare `[`/`]` blocks → `$…$` → bare
