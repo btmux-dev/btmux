@@ -12,6 +12,11 @@ actions, saved state, and API types can change in any release.
 
 - A documentation site with a desktop walkthrough and references for commands
   and configuration. ([#135](https://github.com/btmux-dev/btmux/pull/135))
+- The desktop app puts its bundled `btmux` command on `PATH`: on macOS through
+  **btmux → Install Command-Line Tool…**, on Windows from the installer.
+  ([#152](https://github.com/btmux-dev/btmux/pull/152))
+- Nix syntax highlighting in the native editor.
+  ([#151](https://github.com/btmux-dev/btmux/pull/151))
 
 ### Changed
 
