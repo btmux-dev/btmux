@@ -554,9 +554,9 @@ export function AgentGrid({ send }: Props) {
                 align="start"
                 startContent={
                   <Icon
-                    icon={agent?.icon ?? Bot}
+                    icon={agent?.logo ?? Bot}
                     size="sm"
-                    color="secondary"
+                    color="primary"
                     label={agent?.name ?? entry.agentStatus.agent ?? 'Agent'}
                   />
                 }
