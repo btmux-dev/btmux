@@ -16,6 +16,7 @@ actions, saved state, and API types can change in any release.
   ([#160](https://github.com/btmux-dev/btmux/pull/160))
 - Justfile support in the native editor: syntax highlighting, with recipe
   bodies highlighted as shell, and just-lsp as a built-in language server.
+  ([#161](https://github.com/btmux-dev/btmux/pull/161))
 
 ## [0.0.208] - 2026-11-18
 
