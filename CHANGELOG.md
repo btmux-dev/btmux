@@ -8,6 +8,8 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+## [0.0.209] - 2026-11-18
+
 ### Added
 
 - A key overlay that shows pressed keys and the key bindings they ran, for
