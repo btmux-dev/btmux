@@ -1024,10 +1024,17 @@ try {
     };
     (window as any).restoreControlSend = () => delete (control as any).send;
   });
-  for (const label of ['Neovim', 'VS Code']) {
-    await page.getByRole('button', { name: label, exact: true }).click();
-    await page.getByRole('menuitem', { name: `Show ${label}` }).click();
-    const open = label === 'Neovim' ? 'nvimOpen' : 'vscodeOpen';
+  for (const open of ['nvimOpen', 'vscodeOpen']) {
+    await page.evaluate((open) => {
+      const store = (window as any).nvimStore;
+      const session = store
+        .getState()
+        .allSessions.find((s: any) => location.pathname.startsWith(`/s/${encodeURIComponent(s.name)}/`));
+      const win = session.windows[session.active_window];
+      const paneId = win.zoomed_pane ?? win.panes[win.active_pane].id;
+      if (open === 'nvimOpen') store.getState().setNvimOpen(true, paneId);
+      else store.getState().setVscodeOpen(true, paneId);
+    }, open);
     await page.waitForFunction((open) => (window as any).nvimStore.getState()[open], open);
     await page.getByRole('button', { name: 'Terminal editor', exact: true }).click();
     await page.waitForFunction((open) => !(window as any).nvimStore.getState()[open], open);

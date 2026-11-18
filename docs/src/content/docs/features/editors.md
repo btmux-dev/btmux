@@ -55,9 +55,9 @@ and `--kind native|neovim|vscode|pane` overrides it. Outside btmux it runs `$EDI
 
 ## Using both
 
-Whatever `editor` says, the status bar has a button for each editor the server
-can run, with the configured one first. The `editor-native`, `editor-neovim`,
-and `editor-vscode` actions toggle one directly, from the command palette or a
+The status bar has a button for the configured editor. The `editor-native`,
+`editor-neovim`, and `editor-vscode` actions toggle any editor the server can
+run, from the command palette or a
 [`[keys]`](../configuration/keybindings.md) binding.
 
 Neovim and VS Code are found on the server's `PATH`, else your shell's (a service's `PATH`
