@@ -19,14 +19,13 @@ pub fn router() -> Router<AppState> {
 
 #[derive(Deserialize)]
 #[cfg_attr(test, derive(utoipa::ToSchema))]
-struct CreateWorktreeRequest {
+pub(crate) struct CreateWorktreeRequest {
     branch: String,
     /// Make its window the active one. Default true.
     select: Option<bool>,
 }
 
-#[cfg_attr(test, utoipa::path(post, path = "/api/panes/{pane_id}/worktree", tag = "Worktrees", operation_id = "create-a-worktree", summary = "Create a worktree", params(("pane_id" = Uuid, Path, description = "Pane ID")), request_body = CreateWorktreeRequest, responses((status = 200, description = "The new worktree and its window's pane", body = crate::worktree::Created), (status = 404, description = "No such pane"), (status = 400, description = "Invalid request", body = String, content_type = "text/plain"), (status = 409, description = "Conflict", body = String, content_type = "text/plain"))))]
-async fn api_create_worktree(
+pub(crate) async fn api_create_worktree(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
     Json(body): Json<CreateWorktreeRequest>,
@@ -37,8 +36,10 @@ async fn api_create_worktree(
     }
 }
 
-#[cfg_attr(test, utoipa::path(delete, path = "/api/panes/{pane_id}/worktree", tag = "Worktrees", operation_id = "remove-a-worktree", summary = "Remove a worktree", params(("pane_id" = Uuid, Path, description = "Pane ID")), responses((status = 200, description = "The removed worktree and the panes it closed", body = crate::worktree::Removed), (status = 404, description = "No such pane"), (status = 400, description = "Invalid request", body = String, content_type = "text/plain"), (status = 409, description = "Conflict", body = String, content_type = "text/plain"))))]
-async fn api_remove_worktree(State(state): State<AppState>, Path(pane_id): Path<Uuid>) -> Response {
+pub(crate) async fn api_remove_worktree(
+    State(state): State<AppState>,
+    Path(pane_id): Path<Uuid>,
+) -> Response {
     match worktree::remove(&state, pane_id).await {
         Ok(removed) => Json(removed).into_response(),
         Err(error) => error_response(error),

@@ -525,6 +525,19 @@ pub async fn close(state: &AppState, id: Uuid) {
     });
 }
 
+#[derive(Serialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
+pub struct PopupOpened {
+    pub id: Uuid,
+}
+
+#[derive(Serialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
+pub struct PopupExited {
+    /// The program's exit status, if known.
+    pub status: Option<i32>,
+}
+
 #[derive(Deserialize, Serialize)]
 #[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct PopupRequest {
@@ -541,7 +554,6 @@ pub struct PopupRequest {
     pub title: Option<String>,
 }
 
-#[cfg_attr(test, utoipa::path(post, path = "/api/panes/{pane_id}/popup", tag = "Popups", operation_id = "open-popup", summary = "Open a popup", description = "Runs a program in a popup over the pane. Replies once a client started it; then wait for its exit status.", params(("pane_id" = Uuid, Path, description = "Pane ID")), request_body = PopupRequest, responses((status = 200, description = "Started in a client", body = Object, example = json!({"id": "3b9d…"})), (status = 404, description = "No such pane"), (status = 409, description = "No client is showing the pane"), (status = 422, description = "The program can't start"))))]
 /// Opens a popup and replies `{"id": ...}` once a tab started it: 409 if no
 /// tab does, 422 if its program can't start.
 pub async fn api_popup(
@@ -605,7 +617,7 @@ pub async fn api_popup(
     };
     match progress {
         Progress::Running | Progress::Ended(Outcome::Exited(_)) => {
-            Json(serde_json::json!({ "id": id })).into_response()
+            Json(PopupOpened { id }).into_response()
         }
         Progress::Ended(Outcome::Failed(error)) => {
             (StatusCode::UNPROCESSABLE_ENTITY, error).into_response()
@@ -617,7 +629,6 @@ pub async fn api_popup(
     }
 }
 
-#[cfg_attr(test, utoipa::path(get, path = "/api/panes/{pane_id}/popup/{id}", tag = "Popups", operation_id = "wait-for-popup", summary = "Wait for a popup", params(("pane_id" = Uuid, Path, description = "Pane ID"), ("id" = Uuid, Path, description = "Popup ID")), responses((status = 200, description = "The program's exit status", body = Object, example = json!({"status": 0})), (status = 404, description = "No such popup"), (status = 409, description = "No client showed the popup"), (status = 422, description = "The program failed to start"))))]
 /// Replies `{"status": ...}` once the popup's program exits.
 pub async fn api_wait(
     State(state): State<AppState>,
@@ -628,7 +639,7 @@ pub async fn api_wait(
             let mgr = state.read().await;
             match mgr.popups.progress(id, pane_id) {
                 Progress::Ended(Outcome::Exited(status)) => {
-                    return Json(serde_json::json!({ "status": status })).into_response()
+                    return Json(PopupExited { status }).into_response()
                 }
                 Progress::Ended(Outcome::Failed(error)) => {
                     return (StatusCode::UNPROCESSABLE_ENTITY, error).into_response()

@@ -47,8 +47,12 @@ curl -H "$auth" -X POST "$api/panes/<pane-id>/focus"
 
 ## Endpoints
 
-The [API reference](/automation/api/) lists every endpoint with its
-parameters, request and response bodies, and status codes. It is generated
-from the server's code as an
+The [API reference](/automation/api/) lists the endpoints for automation:
+sessions, windows, panes, pane input and output, agents, worktrees, popups,
+notifications, and the server. For each, it gives the parameters, request and
+response bodies, and status codes. Endpoints the btmux app uses for itself,
+such as file previews and editors, aren't listed.
+
+The reference is generated from the server's code as an
 [OpenAPI 3.1 document](../../../../openapi.json), which clients and tools can
 read too.

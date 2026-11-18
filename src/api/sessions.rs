@@ -23,8 +23,10 @@ pub fn router() -> Router<AppState> {
         )
 }
 
-#[cfg_attr(test, utoipa::path(get, path = "/api/sessions/{session_id}", tag = "Sessions", operation_id = "get-a-session", summary = "Get a session", params(("session_id" = Uuid, Path, description = "Session ID")), responses((status = 200, description = "The session with its windows, panes, and layouts", body = crate::session::manager::SessionSnapshot), (status = 404, description = "No such session"))))]
-async fn api_get_session(State(state): State<AppState>, Path(session_id): Path<Uuid>) -> Response {
+pub(crate) async fn api_get_session(
+    State(state): State<AppState>,
+    Path(session_id): Path<Uuid>,
+) -> Response {
     let mgr = state.read().await;
     match mgr.snapshot_by_id(session_id) {
         Some(snapshot) => Json(snapshot).into_response(),
@@ -34,19 +36,18 @@ async fn api_get_session(State(state): State<AppState>, Path(session_id): Path<U
 
 #[derive(Deserialize)]
 #[cfg_attr(test, derive(utoipa::ToSchema))]
-struct RenameSessionRequest {
+pub(crate) struct RenameSessionRequest {
     name: String,
 }
 
 #[derive(Serialize)]
 #[cfg_attr(test, derive(utoipa::ToSchema))]
-struct RenameSessionResponse {
+pub(crate) struct RenameSessionResponse {
     id: Uuid,
     name: String,
 }
 
-#[cfg_attr(test, utoipa::path(post, path = "/api/sessions/{session_id}/rename", tag = "Sessions", operation_id = "rename-a-session", summary = "Rename a session", params(("session_id" = Uuid, Path, description = "Session ID")), request_body = RenameSessionRequest, responses((status = 200, description = "The session's new name", body = RenameSessionResponse), (status = 404, description = "No such session"))))]
-async fn api_rename_session(
+pub(crate) async fn api_rename_session(
     State(state): State<AppState>,
     Path(session_id): Path<Uuid>,
     Json(body): Json<RenameSessionRequest>,
@@ -72,8 +73,10 @@ async fn api_rename_session(
     .into_response()
 }
 
-#[cfg_attr(test, utoipa::path(delete, path = "/api/sessions/{session_id}", tag = "Sessions", operation_id = "kill-a-session", summary = "Kill a session", params(("session_id" = Uuid, Path, description = "Session ID")), responses((status = 204, description = "Done"), (status = 404, description = "No such session"), (status = 409, description = "It is the last session"))))]
-async fn api_kill_session(State(state): State<AppState>, Path(session_id): Path<Uuid>) -> Response {
+pub(crate) async fn api_kill_session(
+    State(state): State<AppState>,
+    Path(session_id): Path<Uuid>,
+) -> Response {
     let mut mgr = state.write().await;
     if !super::session_exists(&mgr, session_id) {
         return StatusCode::NOT_FOUND.into_response();

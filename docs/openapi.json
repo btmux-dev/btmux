@@ -35,6 +35,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           }
         }
       },
@@ -74,6 +77,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           }
         }
       },
@@ -97,6 +103,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           }
         }
       }
@@ -131,6 +140,9 @@
               }
             }
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such session"
           }
@@ -157,6 +169,9 @@
         "responses": {
           "204": {
             "description": "Done"
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such session"
@@ -207,6 +222,9 @@
               }
             }
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such session"
           }
@@ -253,6 +271,9 @@
               }
             }
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such session"
           }
@@ -292,6 +313,9 @@
         "responses": {
           "204": {
             "description": "Done"
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such session"
@@ -340,6 +364,9 @@
               }
             }
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such session"
           }
@@ -369,6 +396,9 @@
         "responses": {
           "204": {
             "description": "Done"
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such session"
@@ -402,6 +432,9 @@
           "204": {
             "description": "Done"
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such window"
           },
@@ -433,6 +466,9 @@
         "responses": {
           "204": {
             "description": "Done"
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such window"
@@ -483,6 +519,9 @@
           "400": {
             "description": "Empty name"
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such window"
           }
@@ -509,6 +548,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           }
         }
       }
@@ -548,16 +590,16 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
-                },
-                "example": {
-                  "pane_id": "6f1c…"
+                  "$ref": "#/components/schemas/SplitPaneResponse"
                 }
               }
             }
           },
           "400": {
             "description": "Invalid direction"
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such pane"
@@ -587,6 +629,9 @@
         "responses": {
           "204": {
             "description": "Done"
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such pane"
@@ -620,6 +665,9 @@
           "204": {
             "description": "Done"
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such pane"
           }
@@ -648,6 +696,9 @@
         "responses": {
           "204": {
             "description": "Done"
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such pane"
@@ -688,6 +739,9 @@
         "responses": {
           "204": {
             "description": "Done"
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such pane"
@@ -741,6 +795,9 @@
           "400": {
             "description": "Invalid direction"
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such session"
           },
@@ -782,6 +839,9 @@
         "responses": {
           "204": {
             "description": "Done"
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such session"
@@ -825,6 +885,9 @@
           "204": {
             "description": "Done"
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such session"
           },
@@ -866,6 +929,9 @@
         "responses": {
           "204": {
             "description": "Done"
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such session"
@@ -910,6 +976,9 @@
           "204": {
             "description": "Done"
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such session"
           }
@@ -950,6 +1019,9 @@
           "204": {
             "description": "Done"
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such session"
           }
@@ -989,6 +1061,9 @@
         "responses": {
           "204": {
             "description": "Done"
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such session"
@@ -1033,6 +1108,9 @@
           "400": {
             "description": "Unknown preset"
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such session"
           }
@@ -1061,6 +1139,9 @@
         "responses": {
           "204": {
             "description": "Done"
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such session"
@@ -1118,11 +1199,24 @@
               }
             }
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such pane"
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The operation failed",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1179,18 +1273,17 @@
             "content": {
               "application/octet-stream": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "integer",
-                    "format": "int32",
-                    "minimum": 0
-                  }
+                  "type": "string",
+                  "format": "binary"
                 }
               }
             }
           },
           "400": {
             "description": "The shell failed to start"
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such pane"
@@ -1267,11 +1360,24 @@
               }
             }
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such pane"
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The operation failed",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1303,6 +1409,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           }
         }
       }
@@ -1343,7 +1452,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/PromptOutcome"
+                  "$ref": "#/components/schemas/PromptReply"
                 }
               }
             }
@@ -1358,11 +1467,24 @@
               }
             }
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such pane"
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The operation failed",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1433,11 +1555,24 @@
               }
             }
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such pane"
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The operation failed",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1479,6 +1614,9 @@
               }
             }
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such pane"
           }
@@ -1517,6 +1655,9 @@
           "204": {
             "description": "Done"
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such pane"
           }
@@ -1544,8 +1685,67 @@
           "204": {
             "description": "Done"
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such pane"
+          }
+        }
+      }
+    },
+    "/api/telemetry": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent usage",
+        "description": "Tokens, cost, requests, and tool calls per agent and model, per minute, for the last 24 hours, as agent view's Usage tab shows them.",
+        "operationId": "agent-usage",
+        "responses": {
+          "200": {
+            "description": "Each agent's usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AgentTelemetry"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token"
+          }
+        }
+      }
+    },
+    "/api/agent-limits": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Subscription limits",
+        "description": "How much of each subscription limit Claude Code and Codex accounts on the server have used, and when each resets. Agents using an API key, or not logged in, aren't listed.",
+        "operationId": "agent-limits",
+        "responses": {
+          "200": {
+            "description": "Each logged-in agent's limits",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AgentLimits"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           }
         }
       }
@@ -1600,11 +1800,24 @@
               }
             }
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such pane"
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The operation failed",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1654,11 +1867,24 @@
               }
             }
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such pane"
           },
           "409": {
             "description": "Conflict",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The operation failed",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1706,13 +1932,23 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
-                },
-                "example": {
-                  "id": "3b9d…"
+                  "$ref": "#/components/schemas/PopupOpened"
                 }
               }
             }
+          },
+          "400": {
+            "description": "No command",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such pane"
@@ -1720,8 +1956,21 @@
           "409": {
             "description": "No client is showing the pane"
           },
+          "410": {
+            "description": "The popup closed before it started"
+          },
           "422": {
-            "description": "The program can't start"
+            "description": "The program can't start",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "The pane already has a popup open"
           }
         }
       }
@@ -1757,23 +2006,26 @@
         ],
         "responses": {
           "200": {
-            "description": "The program's exit status",
+            "description": "The program exited",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
-                },
-                "example": {
-                  "status": 0
+                  "$ref": "#/components/schemas/PopupExited"
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such popup"
           },
           "409": {
             "description": "No client showed the popup"
+          },
+          "410": {
+            "description": "The server stopped waiting"
           },
           "422": {
             "description": "The program failed to start"
@@ -1802,6 +2054,9 @@
         "responses": {
           "204": {
             "description": "Done"
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           },
           "422": {
             "description": "Empty title"
@@ -1843,6 +2098,9 @@
           "204": {
             "description": "Done"
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such pane"
           }
@@ -1870,6 +2128,9 @@
           "204": {
             "description": "Done"
           },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
           "404": {
             "description": "No such pane"
           }
@@ -1893,6 +2154,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           }
         }
       }
@@ -1914,6 +2178,9 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           }
         }
       }
@@ -1928,6 +2195,9 @@
         "responses": {
           "202": {
             "description": "Stopping; every shell closes"
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           }
         }
       }
@@ -1948,6 +2218,65 @@
           "address": {
             "type": "string",
             "description": "CIDR notation."
+          }
+        }
+      },
+      "AgentLimit": {
+        "type": "object",
+        "required": [
+          "label",
+          "percent",
+          "severity"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "percent": {
+            "type": "number",
+            "format": "double"
+          },
+          "resets_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Unix seconds."
+          },
+          "severity": {
+            "$ref": "#/components/schemas/LimitSeverity"
+          }
+        }
+      },
+      "AgentLimits": {
+        "type": "object",
+        "required": [
+          "agent",
+          "updated_at",
+          "limits"
+        ],
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "plan": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "As the CLI reports it, e.g. `max` or `prolite`."
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Unix seconds of the last successful read."
+          },
+          "limits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentLimit"
+            }
           }
         }
       },
@@ -2036,6 +2365,92 @@
               "null"
             ],
             "description": "Background work the agent's screen shows, such as \"2 shells, 1 monitor\"."
+          }
+        }
+      },
+      "AgentTelemetry": {
+        "type": "object",
+        "required": [
+          "pane_id",
+          "updated_at",
+          "totals",
+          "models"
+        ],
+        "properties": {
+          "pane_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/AgentUsage",
+            "description": "Over all retained history and models."
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelTelemetry"
+            },
+            "description": "Most tokens first; an update holds only models with changed minutes."
+          }
+        }
+      },
+      "AgentUsage": {
+        "type": "object",
+        "required": [
+          "input_tokens",
+          "output_tokens",
+          "cached_tokens",
+          "cache_write_tokens",
+          "reasoning_tokens",
+          "requests",
+          "tool_calls",
+          "duration_ms"
+        ],
+        "properties": {
+          "input_tokens": {
+            "type": "number",
+            "format": "double",
+            "description": "Input includes cache reads and writes; cached tokens are a subset."
+          },
+          "output_tokens": {
+            "type": "number",
+            "format": "double"
+          },
+          "cached_tokens": {
+            "type": "number",
+            "format": "double"
+          },
+          "cache_write_tokens": {
+            "type": "number",
+            "format": "double"
+          },
+          "reasoning_tokens": {
+            "type": "number",
+            "format": "double",
+            "description": "Reasoning is a subset of output tokens."
+          },
+          "requests": {
+            "type": "number",
+            "format": "double"
+          },
+          "tool_calls": {
+            "type": "number",
+            "format": "double"
+          },
+          "duration_ms": {
+            "type": "number",
+            "format": "double"
+          },
+          "cost_usd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
           }
         }
       },
@@ -2444,6 +2859,44 @@
             }
           }
         ]
+      },
+      "LimitSeverity": {
+        "type": "string",
+        "enum": [
+          "normal",
+          "warning",
+          "critical"
+        ]
+      },
+      "ModelTelemetry": {
+        "type": "object",
+        "required": [
+          "agent",
+          "totals",
+          "buckets"
+        ],
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`None` is usage reported without a model, such as Claude's tool calls."
+          },
+          "totals": {
+            "$ref": "#/components/schemas/AgentUsage",
+            "description": "Over all retained history, even when `buckets` holds only changed minutes."
+          },
+          "buckets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UsageBucket"
+            }
+          }
+        }
       },
       "NavigateRequest": {
         "type": "object",
@@ -3020,6 +3473,31 @@
           }
         ]
       },
+      "PopupExited": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The program's exit status, if known."
+          }
+        }
+      },
+      "PopupOpened": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "PopupRequest": {
         "type": "object",
         "required": [
@@ -3102,6 +3580,25 @@
             "description": "The rendered screen once output went quiet; None once the pane has\nclosed."
           }
         }
+      },
+      "PromptReply": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/PromptOutcome"
+          },
+          {
+            "type": "object",
+            "required": [
+              "submitted"
+            ],
+            "properties": {
+              "submitted": {
+                "type": "boolean"
+              }
+            }
+          }
+        ],
+        "description": "With `wait`, the turn's outcome; without, `{\"submitted\": true}`."
       },
       "Removed": {
         "type": "object",
@@ -3321,6 +3818,18 @@
           }
         }
       },
+      "SplitPaneResponse": {
+        "type": "object",
+        "required": [
+          "pane_id"
+        ],
+        "properties": {
+          "pane_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
       "SwitchWindowRequest": {
         "type": "object",
         "required": [
@@ -3464,6 +3973,23 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "UsageBucket": {
+        "type": "object",
+        "required": [
+          "timestamp",
+          "usage"
+        ],
+        "properties": {
+          "timestamp": {
+            "type": "number",
+            "format": "double",
+            "description": "Unix seconds, rounded down to a minute."
+          },
+          "usage": {
+            "$ref": "#/components/schemas/AgentUsage"
           }
         }
       },
