@@ -25,6 +25,7 @@ import { getPrefix, getSmoothScrollDuration } from '../state/configDefaults';
 import { KeyCap, KeyHint } from './KeyHint';
 import { actionLabel } from '../lib/actionLabel';
 import { runAction } from '../hooks/useKeybindings';
+import { EDITOR_COMMANDS } from '../lib/nativeEditor/registry';
 import { usePressHint } from '../hooks/usePressHint';
 import { smoothScrollBy } from '../lib/smoothScroll';
 import { isDesktopApp, openDesktopWindow, switchDesktopServer } from '../lib/desktopApp';
@@ -67,27 +68,7 @@ const KEY_SECTIONS: { title: string; actions: string[] }[] = [
       'process-view',
       'editor',
       'editor-native',
-      'editor-quick-open',
-      'editor-code-actions',
-      'editor-document-symbols',
-      'editor-workspace-symbols',
-      'editor-incoming-calls',
-      'editor-go-to-declaration',
-      'editor-go-to-implementation',
-      'editor-go-to-type-definition',
-      'editor-outgoing-calls',
-      'editor-supertypes',
-      'editor-subtypes',
-      'editor-expand-selection',
-      'editor-next-hunk',
-      'editor-prev-hunk',
-      'editor-preview-hunk',
-      'editor-stage-hunk',
-      'editor-reset-hunk',
-      'editor-stage-buffer',
-      'editor-reset-buffer',
-      'editor-blame-line',
-      'editor-toggle-line-blame',
+      ...EDITOR_COMMANDS,
       'editor-neovim',
       'editor-vscode',
       'shut-down-neovim',

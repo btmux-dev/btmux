@@ -15,12 +15,14 @@
 //   additional edit
 // - signature help: in "sig(", the parameter after as many commas
 // - hover: "Fake hover for WORD", 700 ms late for "slow", 200 paragraphs for "use"
-// - definition: WORD's first line in other.fake beside the document
+// - definition and type definition: WORD's first line in other.fake beside the document
+// - references: occurrences of WORD in the document
 // - prepare rename: WORD's range and name; an error for "use" and "let",
 //   null where there's no word
 // - rename: every WORD in the .fake files of the document's directory,
 //   open or not (as edits to the open text or the file on disk)
-// - formatting: trailing spaces removed, 700 ms late for text with "slow"
+// - formatting: trailing spaces removed, 700 ms late for text with "slow"; range
+//   formatting: trailing spaces removed from the range's lines
 // - pulled diagnostics: an error on every "worse"
 // - semantic tokens: every "thing" is a function
 // - inlay hints: ": hint" after every "let NAME", which resolve with a
@@ -142,6 +144,9 @@ function handle(msg: any): unknown {
           signatureHelpProvider: { triggerCharacters: ['(', ','] },
           hoverProvider: true,
           definitionProvider: true,
+          typeDefinitionProvider: true,
+          referencesProvider: true,
+          documentRangeFormattingProvider: true,
           renameProvider: { prepareProvider: true },
           documentFormattingProvider: true,
           diagnosticProvider: { interFileDependencies: true, workspaceDiagnostics: false },
@@ -263,6 +268,11 @@ function handle(msg: any): unknown {
       const other = uriOf(join(dirname(pathOf(p.textDocument.uri)), 'other.fake'));
       return [{ uri: other, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } }];
     }
+    case 'textDocument/references': {
+      const t = text(p.textDocument.uri);
+      return occurrences(t, wordAt(t, p.position)).map((range) => ({ uri: p.textDocument.uri, range }));
+    }
+    case 'textDocument/typeDefinition':
     case 'textDocument/definition': {
       const word = wordAt(text(p.textDocument.uri), p.position);
       const other = uriOf(join(dirname(pathOf(p.textDocument.uri)), 'other.fake'));
@@ -491,6 +501,19 @@ function handle(msg: any): unknown {
         };
         return { range: { start: position(t, from), end: position(t, to) }, parent: { range: line } };
       });
+    }
+    case 'textDocument/rangeFormatting': {
+      const lines = text(p.textDocument.uri).split('\n');
+      const edits = [];
+      for (let line = p.range.start.line; line <= Math.min(p.range.end.line, lines.length - 1); line++) {
+        const trimmed = lines[line].replace(/[ \t]+$/, '');
+        if (trimmed !== lines[line])
+          edits.push({
+            range: { start: { line, character: trimmed.length }, end: { line, character: lines[line].length } },
+            newText: '',
+          });
+      }
+      return edits;
     }
     case 'textDocument/formatting': {
       const t = text(p.textDocument.uri);

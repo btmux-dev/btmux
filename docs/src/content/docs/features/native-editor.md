@@ -15,16 +15,27 @@ on disk or warns you if there are unsaved edits.
 ![The native editor with a completion menu from rust-analyzer and the selected method's docs](../../../assets/screenshots/editor-completion-dark.png)
 ![The native editor with a completion menu from rust-analyzer and the selected method's docs](../../../assets/screenshots/editor-completion-light.png)
 
-| Key              | Does                                              |
-| ---------------- | ------------------------------------------------- |
-| `Mod-s`          | Saves                                             |
-| `Mod-p`          | Quick open: finds a file under the pane's folder  |
-| `Alt-w`          | Closes the file, asking to save unsaved changes   |
-| Esc twice        | Hides the editor                                  |
+Keys follow VS Code's defaults. These are the ones to know first:
 
-Mod is Cmd on macOS and Ctrl elsewhere. Quick open starts with open and
-recent files. Append `:42` to open a file at line 42, or enter `:42` alone
-to jump there in the current file.
+| Key                         | Does                                                        |
+| --------------------------- | ----------------------------------------------------------- |
+| `Mod-s`                     | Saves                                                       |
+| `Mod-p`                     | Quick open: finds a file under the pane's folder            |
+| `Alt-w`                     | Closes the file, asking to save unsaved changes             |
+| `Ctrl--` / `Ctrl-Shift--`   | Goes back or forward to where you jumped from, across files |
+| `Ctrl-g`                    | Goes to a line                                              |
+| `Mod-Shift-Enter`           | Inserts a line above                                        |
+| `Mod-d` / `Mod-F2`          | Selects the next or every occurrence of the word            |
+| `Mod-k`, then another key   | VS Code's chords; a popup lists them, and other keys type   |
+| Esc twice                   | Hides the editor                                            |
+
+Mod is Cmd on macOS and Ctrl elsewhere. Go back and forward are `Alt-←` and
+`Alt-→` on Windows, and `Ctrl-Alt--` and `Ctrl-Shift--` on Linux. Browsers
+keep `Mod-w` and `Mod-t`, so the editor takes them only in the desktop app:
+`Mod-w` closes the file there, and Close Window moves to `Cmd-Shift-W`.
+
+Quick open starts with open and recent files. Append `:42` to open a file at
+line 42, or enter `:42` alone to jump there in the current file.
 
 ![Quick open in the native editor, listing files that match what was typed](../../../assets/screenshots/editor-quick-open-dark.png)
 ![Quick open in the native editor, listing files that match what was typed](../../../assets/screenshots/editor-quick-open-light.png)
@@ -35,20 +46,102 @@ to jump there in the current file.
 ([codemirror-vim](https://github.com/replit/codemirror-vim)). It applies to
 open editors at once.
 
-- The status line shows the mode, and normal mode has a block cursor.
+- The status line shows the mode, and the keys of a command you haven't
+  finished.
 - `:w` saves (`:w!` overwrites changes made on disk), `:q` hides the editor
   and keeps unsaved changes, `:wq` or `:x` saves and hides it, and `:bd`
   closes the file (`:bd!` discards unsaved changes).
 - A double Esc hides the editor only from normal mode with no command pending,
   so leaving insert mode never hides it.
-- With a language server, `gd` goes to the definition, `K` shows the hover,
-  and `]d` and `[d` move between diagnostics.
-- Ctrl chords such as `Ctrl-d`, `Ctrl-o`, and `Ctrl-v` go to Vim, except the
-  btmux prefix and shortcuts the browser keeps (such as Ctrl-W outside macOS).
+- Ctrl chords such as `Ctrl-d` and `Ctrl-v` go to Vim, except the btmux
+  prefix and shortcuts the browser keeps (such as Ctrl-W outside macOS, so
+  `<C-w>d` works only there and in the desktop app).
 - Mode and registers are per client; edits are shared as always.
 - On macOS, holding `h` `j` `k` `l` in a browser opens the accent menu
   instead of repeating; see
   [Key repeat on macOS](/configuration/keybindings/#key-repeat-on-macos).
+
+### Mappings
+
+Vim predates language servers, so these follow Neovim's own defaults where it
+has them, and otherwise what most Neovim configurations use
+([kickstart.nvim](https://github.com/nvim-lua/kickstart.nvim),
+[gitsigns.nvim](https://github.com/lewis6991/gitsigns.nvim)). `<leader>` is
+Space.
+
+| Keys                          | Does                                         |
+| ----------------------------- | -------------------------------------------- |
+| `gd`, `Ctrl-]` / `gD`         | Goes to the definition / declaration         |
+| `K`                           | Shows the hover                              |
+| `grn`                         | Renames, across files                        |
+| `gra`                         | Code actions, also for a visual selection    |
+| `grr`                         | References                                   |
+| `gri` / `grt`                 | Goes to the implementation / type definition |
+| `grx`                         | Runs the code lens on the line               |
+| `gO` / `gW`                   | Symbols in the file / workspace              |
+| `an` / `in` in visual mode    | Grows / shrinks the selection                |
+| `gq` with a motion            | Formats, or wraps lines without a server     |
+| `<leader>f`                   | Formats the file, or the visual selection    |
+| `]d` / `[d`, `]D` / `[D`      | Next / previous diagnostic, last / first     |
+| `<C-w>d`                      | Shows the diagnostics on the line            |
+| `Ctrl-o` / `Ctrl-i`           | Goes back / forward, across files            |
+
+The [Git signs](#git-signs) mappings start with `<leader>h`. Neovim's
+insert-mode `Ctrl-s` (signature help) isn't mapped, as `Ctrl+S` saves outside
+macOS; signature help shows as you type a call, or with `Mod-Shift-Space`.
+
+### Which keys come next
+
+Pause after the start of a mapping, such as the leader or `g`, and a popup
+lists the keys that can follow and what they do, as
+[which-key.nvim](https://github.com/folke/which-key.nvim) does. It also lists
+Vim's own keys after `g`, `z`, `[`, and `]`, motions and text objects after an
+operator such as `d`, and the registers after `"`. Esc drops the keys typed so
+far. `[native-editor] which-key = false` turns the popup off.
+
+### Your own mappings
+
+Map keys to any btmux action (the `editor-*` ones below, or any in
+[`[keys]`](../configuration/keybindings.md)), or to other keys:
+
+```toml
+[native-editor]
+leader = ","
+
+[native-editor.vim-keys]
+"<leader>ff" = "editor-quick-open"
+"<leader>d" = { action = "editor-problems", desc = "Problems" }
+"<leader>f" = { action = "editor-format", modes = ["normal", "visual"] }
+"<C-h>" = "navigate-left"
+"jk" = { keys = "<Esc>", modes = ["insert"] }
+"gd" = "none"
+
+[native-editor.vim-groups]
+"<leader>f" = "find"
+```
+
+| Setting                 | Does                                                                 |
+| ----------------------- | -------------------------------------------------------------------- |
+| `leader`                | The key `<leader>` stands for: Space by default, or one key like `,` |
+| `vim-keys`              | Keys in Vim notation, mapped to an action, a table, or `"none"`      |
+| `modes`                 | `normal` (the default), `visual`, `insert`                           |
+| `desc`                  | What the popup shows; the action's name by default                   |
+| `keys`                  | Keys Vim gets instead of an action                                   |
+| `"none"`                | Removes the default mapping on those keys                            |
+| `vim-groups`            | The name the popup shows for keys that start several mappings        |
+| `timeout`               | How long a mapping that starts a longer one waits, in ms (1000)      |
+
+Keys are written as in Vim: `<C-w>`, `<A-x>` (Alt), `<D-k>` (Cmd), `<S-Tab>`,
+`<Space>`, `<CR>`, `<Esc>`. An action in insert mode needs a key that types
+nothing, such as `<C-k>`; map typed keys like `jk` with `keys`.
+
+Keys that start a mapping wait for the rest, as in Vim. When the next key
+doesn't continue one, the longest mapping among the keys runs and the rest
+are mapped again; keys no mapping starts with go to Vim, so `gg` and `viw`
+still work. A mapping that also starts a longer one, such as `<leader>h`
+beside `<leader>hs`, runs once no key follows within `timeout`. A Vim command
+the leader shadows (with `,`, repeating `f` backward) runs only when the next
+key isn't mapped. Esc drops keys typed so far, so it can't be mapped.
 
 ## Language servers
 
@@ -91,18 +184,21 @@ under `[language-server.nil]`, along with `command = "nil"`. Files in a
 Diagnostics, semantic highlighting, inlay hints, code lenses, folding, and
 completion with signature help need no keys. The rest:
 
-| Feature                                    | Keys                                 |
-| ------------------------------------------ | ------------------------------------ |
-| Hover                                      | The mouse                            |
-| Go to definition                           | `F12`, or Cmd-click (Ctrl-click elsewhere) |
-| References                                 | `Shift-F12`                          |
-| Rename, across files                       | `F2`                                 |
-| Code actions                               | `Mod-.`                              |
-| Symbols in the file                        | `Mod-Shift-O`                        |
-| Symbols in the workspace                   | `Mod-Alt-O`                          |
-| Calls to the symbol                        | `Shift-Alt-H`                        |
-| Grow the selection to the enclosing syntax | `Mod-I` (`Mod-U` shrinks it)         |
-| Format the document or the selection       | `Shift-Alt-F`                        |
+| Feature                                    | Keys                                                  |
+| ------------------------------------------ | ----------------------------------------------------- |
+| Hover                                      | The mouse, or `Mod-K Mod-I`                           |
+| Go to definition                           | `F12`, or Cmd-click (Ctrl-click elsewhere)            |
+| References                                 | `Shift-F12`                                           |
+| Rename, across files                       | `F2`                                                  |
+| Code actions                               | `Mod-.`                                               |
+| Symbols in the file                        | `Mod-Shift-O`                                         |
+| Symbols in the workspace                   | `Mod-Alt-O`, or `Mod-T` in the desktop app            |
+| Calls to the symbol                        | `Shift-Alt-H`                                         |
+| Grow or shrink the selection by syntax     | `Ctrl-Shift-Cmd-→` / `←` (`Shift-Alt-→` / `←` elsewhere), or `Mod-I` |
+| Next or previous problem                   | `F8` / `Shift-F8`                                     |
+| All problems                               | `Mod-Shift-M`                                         |
+| Format the document or the selection       | `Shift-Alt-F`; `Mod-K Mod-F` the selection            |
+| Fold or unfold everything                  | `Mod-K Mod-0` / `Mod-K Mod-J`                         |
 
 `[native-editor] format-on-save = true` formats on every save. Renames and
 code actions also change files that aren't open: those wait in the editor,
@@ -116,16 +212,16 @@ additions, blue marks edits, and red marks deletions. Signs and status line
 counts update as you edit or stage. Click a sign to preview, stage, or reset
 its hunk.
 
-| Action                                    | Keys                      | Vim           |
-| ----------------------------------------- | ------------------------- | ------------- |
-| Next or previous hunk                     | `Alt-F5` / `Shift-Alt-F5` | `]c` / `[c`   |
-| Preview the hunk                          | Click its sign            | `\hp`         |
-| Stage the hunk, or the selection's hunks  |                           | `\hs`         |
-| Reset the hunk to the index               |                           | `\hr`         |
-| Stage or reset the whole buffer           |                           | `\hS` / `\hR` |
-| Blame the line, with the commit message   |                           | `\hb`         |
-| Toggle blame at the end of the cursor line |                          | `\tb`         |
-| The hunk as a text object (`dih`, `vih`)  |                           | `ih`          |
+| Action                                     | Keys                      | Vim                             |
+| ------------------------------------------ | ------------------------- | ------------------------------- |
+| Next or previous hunk                      | `Alt-F5` / `Shift-Alt-F5` | `]c` / `[c`                     |
+| Preview the hunk                           | Click its sign            | `<leader>hp`                    |
+| Stage the hunk, or the selection's hunks   |                           | `<leader>hs`                    |
+| Reset the hunk to the index                |                           | `<leader>hr`                    |
+| Stage or reset the whole buffer            |                           | `<leader>hS` / `<leader>hR`     |
+| Blame the line, with the commit message    |                           | `<leader>hb`                    |
+| Toggle blame at the end of the cursor line |                           | `<leader>tb`                    |
+| The hunk as a text object (`dih`, `vih`)   |                           | `ih`                            |
 
 Staging writes the buffer's text to the index, saved or not. Resetting edits
 the buffer, so undo brings the change back.
@@ -133,7 +229,8 @@ the buffer, so undo brings the change back.
 ## Actions
 
 The command palette has every command on this page as an `editor-*` action,
-such as `editor-quick-open`, `editor-stage-hunk`, and
-`editor-toggle-line-blame`, plus the symbol's outgoing calls, supertypes, and
-subtypes. They are unbound by default; bind them in
-[`[keys]`](../configuration/keybindings.md).
+such as `editor-quick-open`, `editor-go-to-definition`, `editor-format`,
+`editor-stage-hunk`, and `editor-go-back`, plus the symbol's outgoing calls,
+supertypes, and subtypes. Bind them after the prefix in
+[`[keys]`](../configuration/keybindings.md), or in Vim mode in
+[`vim-keys`](#your-own-mappings).

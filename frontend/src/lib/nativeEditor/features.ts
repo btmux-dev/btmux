@@ -484,6 +484,27 @@ const lensRequester = requester(
   { refresh: 'workspace/codeLens/refresh' },
 );
 
+/** Run the code lens on the cursor's line, or pick one of several. */
+function runCodeLens(view: EditorView) {
+  const line = view.state.doc.lineAt(view.state.selection.main.head);
+  const commands: Command[] = [];
+  view.state.field(lenses.field, false)?.between(line.from, line.from, (_from, _to, deco) => {
+    const widget = deco.spec.widget;
+    if (widget instanceof LensWidget) commands.push(...widget.commands);
+  });
+  if (!commands.length) {
+    useStore.getState().showToast('No code lens on this line', 'info');
+    return true;
+  }
+  if (commands.length === 1) void execute(view, commands[0]);
+  else
+    openPicker(view, {
+      title: 'Code lenses',
+      items: commands.map((command) => ({ label: command.title, run: () => void execute(view, command) })),
+    });
+  return true;
+}
+
 // Folding ranges from the server, besides the parser's.
 const setFolds = StateEffect.define<{ from: number; to: number }[]>();
 /** For `foldGutter`, which redraws only on its own triggers. */
@@ -528,10 +549,26 @@ const serverFolds = foldService.of((state, lineStart, lineEnd) => {
 });
 
 // Selection ranges: grow the selection to the next enclosing syntax node.
+// Each expansion keeps the selection it replaced, so shrinking walks back;
+// any other selection change forgets them.
+const pushExpansion = StateEffect.define<EditorSelection>();
+const popExpansion = StateEffect.define<null>();
+const expansions = StateField.define<readonly EditorSelection[]>({
+  create: () => [],
+  update(stack, tr) {
+    for (const e of tr.effects) {
+      if (e.is(pushExpansion)) return [...stack, e.value];
+      if (e.is(popExpansion)) return stack.slice(0, -1);
+    }
+    return tr.selection || tr.docChanged ? [] : stack;
+  },
+});
+
 async function expandSelection(view: EditorView) {
   const p = plugin(view);
   if (!p || !has(p, 'selectionRangeProvider')) return false;
-  const { from, to, head } = view.state.selection.main;
+  const before = view.state.selection;
+  const { from, to, head } = before.main;
   type SelectionRange = { range: Range; parent?: SelectionRange };
   const result = await ask<SelectionRange[]>(view, 'textDocument/selectionRange', (p) => ({
     positions: [p.toPosition(head)],
@@ -541,11 +578,23 @@ async function expandSelection(view: EditorView) {
     const start = offset(doc, r.range.start);
     const end = offset(doc, r.range.end);
     if (start <= from && end >= to && end - start > to - from) {
-      view.dispatch({ selection: EditorSelection.range(start, end), userEvent: 'select' });
+      view.dispatch({
+        selection: EditorSelection.range(start, end),
+        effects: pushExpansion.of(before),
+        userEvent: 'select',
+      });
       return true;
     }
   }
   return false;
+}
+
+/** Undo the last expansion. */
+function shrinkSelection(view: EditorView) {
+  const stack = view.state.field(expansions, false);
+  if (!stack?.length) return false;
+  view.dispatch({ selection: stack[stack.length - 1], effects: popExpansion.of(null), userEvent: 'select' });
+  return true;
 }
 
 // Range and on-type formatting.
@@ -565,10 +614,15 @@ function applyEdits(view: EditorView, edits: TextEdit[] | null, userEvent: strin
   view.dispatch({ changes, userEvent });
 }
 
-async function formatSelection(view: EditorView) {
+/** Whether the server can format a range (`gq`, format selection). */
+export const canFormatRange = (view: EditorView) => {
   const p = plugin(view);
-  const { from, to } = view.state.selection.main;
-  if (!p || from === to || !has(p, 'documentRangeFormattingProvider')) return false;
+  return !!p && has(p, 'documentRangeFormattingProvider');
+};
+
+/** Format `from..to` with the server; false if it can't. */
+export async function formatRange(view: EditorView, from: number, to: number) {
+  if (from === to || !canFormatRange(view)) return false;
   const edits = await ask<TextEdit[]>(view, 'textDocument/rangeFormatting', (p) => ({
     range: { start: p.toPosition(from), end: p.toPosition(to) },
     options: formatOptions(view),
@@ -576,6 +630,11 @@ async function formatSelection(view: EditorView) {
   applyEdits(view, edits, 'format');
   return true;
 }
+
+export const formatSelection = (view: EditorView) => {
+  const { from, to } = view.state.selection.main;
+  return formatRange(view, from, to);
+};
 
 const onTypeFormatting = EditorView.updateListener.of((u) => {
   const p = plugin(u.view);
@@ -752,7 +811,11 @@ async function jump(view: EditorView, location: Location) {
   const target = location.uri === p.uri ? view : await p.client.workspace.displayFile(location.uri);
   if (!target) return;
   const at = offset(target.state.doc, location.range.start);
-  target.dispatch({ selection: { anchor: at }, effects: EditorView.scrollIntoView(at, { y: 'center' }) });
+  target.dispatch({
+    selection: { anchor: at },
+    effects: EditorView.scrollIntoView(at, { y: 'center' }),
+    userEvent: 'select.jump',
+  });
   target.focus();
 }
 
@@ -901,6 +964,8 @@ export const editorCommands: Record<string, (view: EditorView) => boolean | Prom
   'editor-supertypes': hierarchy('supertypes'),
   'editor-subtypes': hierarchy('subtypes'),
   'editor-expand-selection': expandSelection,
+  'editor-shrink-selection': shrinkSelection,
+  'editor-run-code-lens': runCodeLens,
 };
 
 export const lspFeatures: Extension = [
@@ -914,6 +979,7 @@ export const lspFeatures: Extension = [
   semanticRequester,
   lenses.field,
   lensRequester,
+  expansions,
   foldsField,
   foldRequester,
   serverFolds,
@@ -927,6 +993,14 @@ export const lspFeatures: Extension = [
       { key: 'Mod-Alt-o', run: workspaceSymbols, preventDefault: true },
       { key: 'Shift-Alt-h', run: hierarchy('incoming'), preventDefault: true },
       { key: 'Mod-i', run: (view) => (void expandSelection(view), true) },
+      // VS Code's expand and shrink selection.
+      {
+        key: 'Shift-Alt-ArrowRight',
+        mac: 'Ctrl-Shift-Cmd-ArrowRight',
+        run: (view) => (void expandSelection(view), true),
+        preventDefault: true,
+      },
+      { key: 'Shift-Alt-ArrowLeft', mac: 'Ctrl-Shift-Cmd-ArrowLeft', run: shrinkSelection },
       {
         key: 'Shift-Alt-f',
         run: (view) => {

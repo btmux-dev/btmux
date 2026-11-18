@@ -212,7 +212,7 @@ try {
   await page.keyboard.press('ControlOrMeta+z');
   console.log('PASS the preview marks the words the current text removed');
 
-  // Vim gets gitsigns' suggested mappings.
+  // Vim gets gitsigns' suggested mappings, on the Space leader.
   const configHome = process.env.BTMUX_TEST_CONFIG_HOME;
   if (configHome) {
     mkdirSync(path.join(configHome, 'btmux'), { recursive: true });
@@ -235,9 +235,9 @@ try {
     await waitFor(cursorLine, 'EIGHT');
     await page.keyboard.type('[c');
     await waitFor(cursorLine, 'TWO');
-    await page.keyboard.type('\\hp');
+    await page.keyboard.type(' hp');
     await page.locator('.cm-git-preview .cm-git-removed-line', { hasText: 'two' }).waitFor();
-    await page.keyboard.type('\\hr');
+    await page.keyboard.type(' hr');
     await waitFor(() => signs(page), ['8:add', '9:add']);
     // `dih` deletes the hunk's lines.
     await page.keyboard.type('G');

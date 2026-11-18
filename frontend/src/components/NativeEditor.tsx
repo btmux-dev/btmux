@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
@@ -19,6 +20,8 @@ import type { BufferSummary, LspServerStatus } from '../generated/protocol';
 import { ClientConfig, LayoutRect } from '../state/types';
 import { ClientMessage } from '../protocol/messages';
 import { useStore } from '../state/store';
+import { runAction } from '../hooks/useKeybindings';
+import { WhichKey } from './WhichKey';
 import { STARTUP_THEME } from '../state/startupTheme';
 import { getTerminalFontFamily, getTerminalFontSize, getTerminalFontWeight } from '../state/configDefaults';
 import { buildFontFamily, terminalTransparency } from './TerminalPane';
@@ -105,6 +108,17 @@ export function NativeEditor({
   const opRef = useRef(op);
   opRef.current = op;
 
+  const navigate = useNavigate();
+  // A mapping to a btmux action: run it for this pane's session.
+  const action = (name: string) => {
+    const session = useStore
+      .getState()
+      .allSessions.find((s) => s.windows.some((w) => w.panes.some((p) => p.id === paneId)));
+    if (session) runAction(name, session.id, send, (to) => navigate(`/s/${encodeURIComponent(to)}`));
+  };
+  const actionRef = useRef(action);
+  actionRef.current = action;
+
   useEffect(() => {
     let disposed = false;
     let created: PaneEditor | null = null;
@@ -116,6 +130,7 @@ export function NativeEditor({
         error: (message) => useStore.getState().showToast(message, 'error'),
         open: (path, line) => opRef.current({ kind: 'open', path, line: line ?? null }),
         close: (path, force) => closeRef.current(path, force),
+        action: (name) => actionRef.current(name),
       });
       setEditor(created);
     });
@@ -141,6 +156,15 @@ export function NativeEditor({
   useEffect(() => {
     editor?.setVim(!!config?.vim_mode);
   }, [editor, config?.vim_mode]);
+
+  useEffect(() => {
+    editor?.setKeys(
+      config?.vim_binds ?? [],
+      config?.vim_groups ?? [],
+      config?.vim_timeout ?? 1000,
+      config?.which_key ?? true,
+    );
+  }, [editor, config?.vim_binds, config?.vim_groups, config?.vim_timeout, config?.which_key]);
 
   useEffect(() => {
     editor?.setVisible(visible);
@@ -307,6 +331,11 @@ export function NativeEditor({
             ))}
           </VStack>
         )}
+        {editor?.keys.popup && (
+          <div className="pointer-events-none absolute inset-x-2 bottom-2 z-10" onMouseDown={(e) => e.preventDefault()}>
+            <WhichKey pending={editor.keys.popup} />
+          </div>
+        )}
         {editor && !active && (
           <VStack hAlign="center" vAlign="center" gap={1} className="btm-sans absolute inset-0">
             <Text color="secondary">No open files</Text>
@@ -322,6 +351,11 @@ export function NativeEditor({
           {editor?.vimMode && (
             <Text size="sm" weight="semibold" maxLines={1} className="shrink-0" aria-label="Vim mode">
               {editor.vimMode}
+            </Text>
+          )}
+          {editor?.keys.showcmd && (
+            <Text size="sm" maxLines={1} className="btm-mono shrink-0" aria-label="Pending keys">
+              {editor.keys.showcmd}
             </Text>
           )}
           {/* The path gives up its room before the items after it. */}

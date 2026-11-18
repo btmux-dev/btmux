@@ -223,6 +223,31 @@ os: boolean,
 export type Bind = { key: string, action: string, };
 
 // prettier-ignore
+export type VimMode = "normal" | "visual" | "insert";
+
+// prettier-ignore
+export type VimBind = {
+/**
+ * Key names, as codemirror-vim names them.
+ */
+keys: Array<string>, mode: VimMode,
+/**
+ * The action run, or…
+ */
+action: string | null,
+/**
+ * …the keys vim gets instead.
+ */
+rhs: Array<string> | null,
+/**
+ * Shown in the which-key popup; the action's label if unset.
+ */
+desc: string | null, };
+
+// prettier-ignore
+export type VimGroup = { keys: Array<string>, name: string, };
+
+// prettier-ignore
 export type PopupBinding = { key: string, command: string,
 /**
  * Shown above the popup; the command by default.
@@ -452,6 +477,22 @@ format_on_save: boolean,
  * `[native-editor] vim`.
  */
 vim_mode: boolean,
+/**
+ * Vim mappings in the native editor: defaults and `[native-editor.vim-keys]`.
+ */
+vim_binds: Array<VimBind>,
+/**
+ * Which-key group names: defaults and `[native-editor.vim-groups]`.
+ */
+vim_groups: Array<VimGroup>,
+/**
+ * `[native-editor] timeout`, in ms.
+ */
+vim_timeout: number,
+/**
+ * `[native-editor] which-key`.
+ */
+which_key: boolean,
 /**
  * `[key-overlay] mode`.
  */

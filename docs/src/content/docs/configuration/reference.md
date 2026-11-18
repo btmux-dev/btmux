@@ -251,6 +251,11 @@ Every option with its default, as `btmux generate-config` prints it. Uncomment a
 # [native-editor]
 # format-on-save = false
 # vim = false   # Vim keybindings; :w saves, :q hides, a double Esc hides only from normal mode
+# leader = " "       # <leader> in vim-keys and vim-groups: one key, like "," or "<Space>"
+# timeout = 1000     # ms a vim mapping that is also a prefix waits for more keys
+# which-key = true   # show the keys that can follow a pending prefix
+# [native-editor.vim-keys]    # "keys" = "action", { action = "…", modes = ["normal", "visual"], desc = "…" }, { keys = "…" }, or "none"
+# [native-editor.vim-groups]  # "prefix" = "name shown for it in the which-key popup"
 # [language-server.rust-analyzer]
 # command = "rust-analyzer"
 # args = []

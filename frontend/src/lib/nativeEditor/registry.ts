@@ -11,22 +11,45 @@ export const GIT_COMMANDS = [
   'editor-toggle-line-blame',
 ];
 
-/** Commands the command palette runs in a pane's native editor: quick open, language server, and Git commands. */
-export const EDITOR_COMMANDS = [
-  'editor-quick-open',
+/** The native editor's language server commands. */
+export const LSP_COMMANDS = [
+  'editor-go-to-definition',
+  'editor-go-to-declaration',
+  'editor-go-to-type-definition',
+  'editor-go-to-implementation',
+  'editor-find-references',
+  'editor-rename',
+  'editor-hover',
+  'editor-signature-help',
   'editor-code-actions',
+  'editor-format',
+  'editor-run-code-lens',
   'editor-document-symbols',
   'editor-workspace-symbols',
   'editor-incoming-calls',
-  'editor-go-to-declaration',
-  'editor-go-to-implementation',
-  'editor-go-to-type-definition',
   'editor-outgoing-calls',
   'editor-supertypes',
   'editor-subtypes',
   'editor-expand-selection',
-  ...GIT_COMMANDS,
+  'editor-shrink-selection',
 ];
+
+/** The native editor's commands that need only a file open. */
+export const FILE_COMMANDS = [
+  'editor-next-diagnostic',
+  'editor-prev-diagnostic',
+  'editor-first-diagnostic',
+  'editor-last-diagnostic',
+  'editor-show-diagnostics',
+  'editor-problems',
+  'editor-go-back',
+  'editor-go-forward',
+  'editor-fold-all',
+  'editor-unfold-all',
+];
+
+/** Commands run in a pane's native editor: quick open, language server, file, and Git commands. */
+export const EDITOR_COMMANDS = ['editor-quick-open', ...LSP_COMMANDS, ...FILE_COMMANDS, ...GIT_COMMANDS];
 
 export const QUICK_OPEN_NEEDS_FOLDER = 'Quick open needs a folder on this machine';
 

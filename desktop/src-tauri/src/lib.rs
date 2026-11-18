@@ -38,6 +38,7 @@ mod zoom;
 
 const NEW_WINDOW: &str = "new-window";
 const SWITCH_SERVER: &str = "switch-server";
+const CLOSE_WINDOW: &str = "close-window";
 const ZOOM_IN: &str = "zoom-in";
 const ZOOM_OUT: &str = "zoom-out";
 const ACTUAL_SIZE: &str = "actual-size";
@@ -438,6 +439,7 @@ fn allow_remote(app: &AppHandle, origin: &str) -> Result<(), String> {
         .permission("allow-switch-server")
         .permission("allow-zoom")
         .permission("allow-new-window")
+        .permission("allow-close-window")
         .permission("allow-set-background")
         .permission("allow-set-color-scheme")
         .permission("shell:allow-open");
@@ -908,6 +910,13 @@ fn set_color_scheme(window: WebviewWindow, state: State<'_, Server>, scheme: Sch
         .insert(window.label().into(), scheme);
 }
 
+// Closes the page's window: Cmd+W the page didn't take (close.js). The native
+// editor takes it to close a file, as VS Code does; the menu has Cmd+Shift+W.
+#[tauri::command]
+fn close_window(window: WebviewWindow) {
+    let _ = window.close();
+}
+
 // The desktop app's own version, which may differ from the connected server's.
 #[tauri::command]
 fn desktop_info() -> &'static str {
@@ -965,6 +974,7 @@ fn open_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .min_inner_size(640.0, 400.0)
         .initialization_script(include_str!("notification.js"))
         .initialization_script(include_str!("zoom.js"))
+        .initialization_script(include_str!("close.js"))
         // Tauri's handler takes every drop, so pages (VS Code) never get one.
         .disable_drag_drop_handler()
         .initialization_script(include_str!("drop.js"))
@@ -1049,11 +1059,18 @@ pub fn run() {
             set_color_scheme,
             desktop_info,
             zoom,
-            new_window
+            new_window,
+            close_window
         ])
         .on_menu_event(|app, event| {
             let step = match event.id().as_ref() {
                 NEW_WINDOW => return spawn_window(app),
+                CLOSE_WINDOW => {
+                    if let Some(window) = focused_window(app) {
+                        let _ = window.close();
+                    }
+                    return;
+                }
                 SWITCH_SERVER => {
                     if let Some(window) = focused_window(app) {
                         show_picker(&window, "switch");
@@ -1118,6 +1135,24 @@ pub fn run() {
                     file.insert(&new, 0)?;
                     file.insert(&switch, 1)?;
                     file.insert(&PredefinedMenuItem::separator(app)?, 2)?;
+                }
+                // The File and Window menus' Close Window take Cmd+W before the
+                // page sees it; close.js closes the window unless the page takes
+                // it (the native editor, to close a file).
+                for (name, key) in [("File", Some("CmdOrCtrl+Shift+W")), ("Window", None)] {
+                    let Some(sub) = submenu(name) else { continue };
+                    for (position, item) in sub.items()?.into_iter().enumerate() {
+                        if let MenuItemKind::Predefined(close) = &item
+                            && close
+                                .text()
+                                .is_ok_and(|text| text.replace('&', "") == "Close Window")
+                        {
+                            sub.remove(close)?;
+                            let item =
+                                MenuItem::with_id(app, CLOSE_WINDOW, "Close Window", true, key)?;
+                            sub.insert(&item, position)?;
+                        }
+                    }
                 }
                 if let Some(view) = submenu("View") {
                     let items = [
