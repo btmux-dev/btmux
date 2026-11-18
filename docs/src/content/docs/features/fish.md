@@ -4,8 +4,8 @@ sidebar:
   order: 13
 ---
 
-The fish integration makes fish's colors follow the btmux color scheme, and
-can replace fish's completion and history menus with btmux's own.
+Match fish's colors to the btmux color scheme and optionally use btmux menus
+for completion and history.
 
 ```sh
 btmux install-fish-integration
@@ -40,8 +40,6 @@ With Home Manager, set `programs.btmux.fishPickMenus = true` instead.
 - `Ctrl+R` lists commands newest first, filtered on the current line. Line
   breaks in a command show as `␤` and tabs as `␉`.
 
-Two limits come from fish. It doesn't say how it would quote a candidate or
-whether a space follows it, so a chosen candidate gets its spaces escaped and
-no trailing space; other special characters, such as parentheses, need editing
-by hand. And candidates are computed before the menu opens, so a slow
-completion delays it, as it delays fish's own.
+A selected completion escapes spaces and omits a trailing space. Escape
+other special characters, such as parentheses, by hand. The menu opens after
+fish finishes computing candidates.

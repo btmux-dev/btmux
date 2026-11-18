@@ -4,8 +4,8 @@ sidebar:
   order: 4
 ---
 
-How btmux decides an agent's [state](index.md#states), and how to report or
-adjust it yourself.
+Inspect or report an agent's [state](index.md#states), or customize the
+screen rules btmux uses to detect it.
 
 ## Sources
 
@@ -29,7 +29,7 @@ btmux combines four kinds of evidence:
   [program status](https://www.superlogical.com/rex/docs/build/program-status)
   records; see [below](#osc-7501).
 
-When they disagree, the more reliable evidence wins:
+btmux uses these rules to resolve conflicting reports.
 
 1. A state [reported directly](#reporting-status-yourself) stands until its
    reporter changes it. Screen detection never overrides it.
@@ -44,8 +44,6 @@ When they disagree, the more reliable evidence wins:
    missed hooks such as an interrupt without `Stop`. The next hook takes over again.
 5. Process presence alone reports `unknown` activity.
 
-Some consequences:
-
 - Missing indicators do not prove completion: only completion reports set
   `done`, and idle screens do not acknowledge it. A finished agent stays `done`
   until its pane is viewed in a focused window.
@@ -57,10 +55,9 @@ Some consequences:
   identifies the agent and selects its rules. Names reported by hooks take
   precedence over process names. A newly detected agent ignores OSC titles
   that a previous program left behind.
-- Whatever set the state, the screen also fills `background` with the work an
-  agent leaves running between turns (`"2 shells, 1 monitor"`). The state
-  stays as it is: an idle agent with a dev server running is still idle. It
-  clears once the screen has shown none for 700 ms.
+- Screen rules also update `background`, which lists work left running
+  between turns, such as `"2 shells, 1 monitor"`. This field clears after
+  700 ms without a match and leaves the agent's state alone.
 
 States are not saved: they reset when the server restarts.
 

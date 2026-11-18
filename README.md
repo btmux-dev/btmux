@@ -4,8 +4,8 @@
 [![CI](https://github.com/btmux-dev/btmux/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/btmux-dev/btmux/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/github/license/btmux-dev/btmux)](LICENSE)
 
-A terminal emulator and tmux-style session manager. Runs as a desktop app and
-in the browser (including on mobile), on macOS, Linux, and Windows. Powered by
+A terminal emulator and tmux-style session manager for macOS, Linux, and
+Windows. Use it in the desktop app or a browser, including on mobile. Powered by
 [wterm](https://github.com/vercel-labs/wterm),
 [libghostty](https://github.com/ghostty-org/ghostty), and
 [Tauri](https://github.com/tauri-apps/tauri).
@@ -17,15 +17,14 @@ in the browser (including on mobile), on macOS, Linux, and Windows. Powered by
 
 ## Highlights
 
-- Familiar tmux concepts and key bindings: sessions, windows, splits, zoom, and more
-- Server-side sessions: connect from any number of clients
-- Tailscale integration: serve over HTTPS on your tailnet; sign in from a phone or tablet by scanning a QR code
-- Batteries included: file browser, Git GUI, process viewer, browser, an editor with language servers, Neovim GUI, VS Code integration
+- tmux-style sessions, windows, splits, zoom, and key bindings
+- Persistent shells with simultaneous clients
+- Tailscale HTTPS access with QR sign-in for mobile
+- File and Git browser, process viewer, and web browser
+- Native editor with language servers, Neovim GUI, and VS Code
 - Coding agent status tracking, usage, and notifications
-- Sandboxed sessions in a Multipass VM that sees only the directories you mount
-- LaTeX rendering overlay
-- Interactive, composable shader wallpapers
-- base16/base24 color schemes, dark and light mode
+- Sandboxed sessions in a Multipass VM with selected directories mounted
+- LaTeX overlay, shader wallpapers, and base16/base24 themes
 - tmux-style CLI, REST API, MCP server, and agent skill
 - Single self-contained binary (~20 MB), and a Nix Home Manager module
 
@@ -53,12 +52,11 @@ Windows, running as a service, upgrading, Nix, and building from source.
 
 ## Quick start
 
-**Desktop app**: open btmux. It starts its own server and connects, with no
-sign-in.
+Open the **desktop app** to start its own server or choose an existing one.
 
-**Server**: run `btmux`. It opens `http://127.0.0.1:8004` and prints the path
-of its access token file. Sign in with the username `btmux` and the file's
-contents as the password.
+Run `btmux` to start the **standalone server**. It opens
+`http://127.0.0.1:8004` and prints the path to its token file. Sign in as
+`btmux` with the token as your password.
 
 Key bindings start with a prefix, as in tmux, by default `Ctrl+A`. Press
 `<prefix> + ?` to see them all, or `<prefix> + :` to open the command palette.

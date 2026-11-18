@@ -4,14 +4,10 @@ sidebar:
   order: 14
 ---
 
-The key overlay shows the keys you press on screen, for recording tutorials
-and demos. It knows btmux's key bindings, so viewers see what a key did, not
-just which key it was.
-
-It is off by default and turned on per client: the keyboard button in the
-status bar, `toggle-key-overlay` in the command palette, or `?keys` in the
-URL (`http://localhost:8004/?keys`) for scripted recordings. A browser
-remembers the setting.
+Show key presses and btmux actions when recording a tutorial or demo.
+The overlay is off by default. Enable it per client with the status bar's
+keyboard button or `toggle-key-overlay` in the command palette. For scripted
+recordings, add `?keys` to the URL. The browser remembers the setting.
 
 ## What it shows
 
@@ -39,11 +35,9 @@ hidden" instead of the keys. btmux tells from the terminal's modes: `sudo`,
 `ssh`, `passwd`, `read -s`, and similar prompts turn echo off and keep line
 editing on. Key bindings still show.
 
-Keys typed into a terminal appear once the server confirms the mode they were
-typed in, which takes a round trip. Until then, and if it can't tell, the
-overlay shows "Terminal input hidden" rather than risk showing a password: on
-Windows servers, which can't read the mode, it shows that for all terminal
-typing, while key bindings and keys typed elsewhere still show.
+The overlay shows "Terminal input hidden" while the terminal mode is
+unknown. On Windows servers, the overlay hides all terminal typing. Key
+bindings and keys typed outside the terminal still show.
 
 It can't see prompts that read keys one at a time, in raw mode:
 

@@ -4,9 +4,8 @@ sidebar:
   order: 5
 ---
 
-Most default keys match tmux. The default prefix is `C-a`, the most common tmux
-remap; set `prefix = "C-b"` for stock tmux. This page covers where btmux
-differs.
+Most default keys match tmux. btmux uses `Ctrl+A` for the prefix. Set
+`prefix = "C-b"` for tmux's default.
 
 ## Same as tmux
 
@@ -30,7 +29,7 @@ differs.
 | `t`     | clock       | process viewer                                    |
 | `f`     | find-window | file browser                                      |
 | `m`     | mark pane   | LaTeX overlay                                     |
-| `[`     | copy mode   | opens the scrollback in `$EDITOR` inside the pane |
+| `[`     | copy mode   | opens scrollback in the [configured editor](../features/editors.md#capturing-a-pane) |
 | `l`     | last-window | pane right (`h` `j` `k` too); last-window unbound |
 | `/`     | describe key | search the scrollback                            |
 | `]`     | paste buffer | pastes the system clipboard                      |
@@ -50,9 +49,9 @@ Rebind any of them under [`[keys]`](../configuration/keybindings.md).
 - **Sessions are per client.** Two clients can show different sessions, while
   window and pane selection is shared by all of them. `L` goes back to that
   client's previous session.
-- **No attach or detach.** Closing the client is the detach; the server keeps
-  the shells running. After a server restart the layout returns but programs
-  and scrollback do not; `btmux upgrade` keeps both.
+- **Detach.** Close the browser tab to detach. See
+  [what survives](how-it-works.md#what-survives) when you close a desktop window,
+  restart the server, or upgrade it.
 - **Size owner.** The first client on a pane sets its size until it leaves or
   another client types, pastes, or clicks in it. tmux sizes to the smallest
   client by default.
@@ -70,10 +69,8 @@ Rebind any of them under [`[keys]`](../configuration/keybindings.md).
 - **`[keys]`.** Each action has one key. Overriding it moves the action off its
   default key rather than adding a second one.
 - **Popups.** `btmux display-popup` (or `popup`) takes `-t -d -e -T -E` and
-  always closes when its program exits. Several arguments run as a program
-  rather than a shell command. Bind one to a key with `[[popup]]` in
-  `config.toml`, where tmux uses `bind-key ... display-popup -E`; see
-  [Popups](../automation/popups.md).
+  closes when its program exits. Bind one with `[[popup]]` in `config.toml`.
+  See [Popups](../automation/popups.md) for arguments and key bindings.
 
 ## Not available
 

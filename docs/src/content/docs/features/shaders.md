@@ -15,12 +15,9 @@ components, bundled with btmux; nothing is downloaded at runtime.
 
 ## Building a stack
 
-Use Settings → Wallpaper. It lists every shader and blend mode, and lets you
-add, reorder, disable, and remove layers and edit each layer's parameters,
-with a live preview. **Randomize parameters** below a layer's controls rolls a
-coordinated set for that layer. **Save** writes the stack to `config.toml`.
-
-In TOML, layers are listed bottom first:
+In **Settings → Wallpaper**, edit and reorder layers with a live preview.
+**Randomize parameters** generates values for the selected layer. **Save**
+writes the stack to `config.toml`, with the bottom layer first.
 
 ```toml
 wallpaper-opacity = 0.25

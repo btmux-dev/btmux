@@ -4,29 +4,24 @@ sidebar:
   order: 4
 ---
 
-With `editor = "neovim"`, `<prefix> + e` opens your Neovim in a GUI that btmux
-draws [over the active pane](editors.md#over-a-pane), and the file browser and
-Git mode open files there. It runs your normal config. The command line,
-completion menu, messages, progress, and LSP signature help are native UI
-rather than terminal cells, and floating windows (LSP hover, diagnostics,
-plugin windows) appear as cards.
+Set `editor = "neovim"` to open the Neovim GUI
+[over the active pane](editors.md#over-a-pane) with `<prefix> + e`. The file
+browser and Git mode open files there. btmux draws the command line,
+completion menu, messages, progress, and LSP signature help in the GUI.
+Floating windows appear as cards.
 
 ![LSP completion in the Neovim GUI: a menu of members with their kinds, and the selected item's docs beside it](../../../assets/screenshots/neovim-completion-dark.png)
 ![LSP completion in the Neovim GUI: a menu of members with their kinds, and the selected item's docs beside it](../../../assets/screenshots/neovim-completion-light.png)
 
-LSP hover, like other floating windows, is a card:
-
 ![LSP hover in the Neovim GUI, shown as a card over the code](../../../assets/screenshots/neovim-hover-dark.png)
 ![LSP hover in the Neovim GUI, shown as a card over the code](../../../assets/screenshots/neovim-hover-light.png)
-
-The command line and its completions are drawn the same way:
 
 ![Neovim's command line and its completion list as native UI](../../../assets/screenshots/neovim-cmdline-dark.png)
 ![Neovim's command line and its completion list as native UI](../../../assets/screenshots/neovim-cmdline-light.png)
 
-Requires Neovim 0.12 or newer as `nvim` on the server's `PATH`. `:q` closes
-Neovim and the view. Without `editor = "neovim"`, the status bar's Neovim
-button and the `editor-neovim` action still open it.
+The GUI requires `nvim` 0.12 or newer on the server's `PATH`. With Neovim
+configured as your editor, open it from the status bar. You can also use
+`editor-neovim` from the command palette. Use `:q` to quit Neovim.
 
 `winblend` and `pumblend` make floating windows and the completion menu
 translucent, as in the screenshots, blurring what's behind them by
@@ -34,8 +29,7 @@ translucent, as in the screenshots, blurring what's behind them by
 
 ## Your Neovim config
 
-btmux starts Neovim with your normal config and sets `g:btmux`, so you can adapt
-it to the GUI:
+btmux loads your Neovim config and sets `g:btmux` for GUI-specific settings.
 
 ```lua
 if vim.g.btmux then
@@ -86,9 +80,8 @@ attaches.
 
 The Neovim GUI uses btmux's selected Base16/24 palette through the bundled
 `btmux` colorscheme. It applies when the GUI opens and follows live theme changes,
-including session-only color overrides. Your regular Neovim config still loads;
-the GUI applies its colorscheme afterward. `ColorScheme` autocmds can customize
-its highlights.
+including session-only color overrides. btmux applies its colorscheme after your config loads. Customize highlights
+with `ColorScheme` autocmds.
 
 The default background follows `[terminal] allow-transparency`, which defaults
 to enabled with a wallpaper or shader. Explicit highlight backgrounds (selection,

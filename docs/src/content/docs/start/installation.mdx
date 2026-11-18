@@ -6,11 +6,9 @@ sidebar:
 
 import { Steps, Tabs, TabItem } from "@astrojs/starlight/components";
 
-btmux comes as a desktop app, or as a server you open in a browser. Both
-include the `btmux` command.
-
-Release builds cover Apple Silicon macOS, x86-64/ARM64 Linux, and x64/ARM64
-Windows.
+The desktop app and standalone server both include the `btmux` command.
+Release builds support Apple Silicon macOS, x86-64 and ARM64 Linux, and x64
+and ARM64 Windows.
 
 ## Desktop app
 
@@ -21,9 +19,8 @@ Windows.
 brew install --cask btmux-dev/tap/btmux
 ```
 
-The app is signed and notarized. Intel Macs are not supported. To use its
-`btmux` command in a terminal, choose **btmux → Install Command-Line Tool…**
-(skip this if you also installed the `btmux` formula).
+The app is signed and notarized. To add `btmux` to your shell's `PATH`,
+choose **btmux → Install Command-Line Tool…** or install the Homebrew formula.
 
 </TabItem>
 <TabItem label="Linux">
@@ -53,14 +50,13 @@ blocks it, choose **More info → Run anyway**.
 </TabItem>
 </Tabs>
 
-Open btmux. It starts its own server and connects, with no sign-in. Continue
-with [First steps](first-steps.md), or read what else the
-[desktop app](desktop.md) does.
+Open btmux to connect to its own server or choose an existing one. Continue
+with [First steps](first-steps.md). See [Desktop app](desktop.md) for server options.
 
 ## Server only
 
-Install just the server on a headless or remote machine, or to use btmux in a
-browser.
+Install the standalone server for browser access on a local, remote, or
+headless machine.
 
 <Tabs syncKey="os">
 <TabItem label="macOS">
@@ -78,9 +74,8 @@ Or use the install script, as on Linux.
 curl -fsSL https://raw.githubusercontent.com/btmux-dev/btmux/main/scripts/install.sh | bash
 ```
 
-It downloads the latest release binary to `~/.local/bin`. Set
-`BTMUX_INSTALL_DIR` to choose another location. Homebrew works too:
-`brew install btmux-dev/tap/btmux`.
+The script installs to `~/.local/bin`. Set `BTMUX_INSTALL_DIR` to change the
+destination, or install with `brew install btmux-dev/tap/btmux`.
 
 </TabItem>
 <TabItem label="Windows">
@@ -150,8 +145,8 @@ The desktop app finds a running service and offers to connect to it.
 
 ## Upgrading
 
-Upgrade with whatever you installed with, then move the running server to the
-new binary:
+Update the installed binary, then run `btmux upgrade` to move the running
+server to it. For Homebrew, run:
 
 ```sh
 brew update && brew upgrade btmux   # or run the install script again
@@ -160,8 +155,7 @@ btmux upgrade
 
 `btmux upgrade` keeps running shells and their scrollback
 ([how](../internals/upgrade.md)). If it can't, `btmux restart` ends them and
-restores the layout. Windows has no in-place upgrade: quit btmux, replace it,
-and start it again.
+restores the layout. On Windows, quit btmux, replace the binary, and start it again.
 
 For the desktop app, quit it, then run `brew upgrade --cask btmux`
 or the new installer.
@@ -210,10 +204,11 @@ Other options:
   `programs.fish.enable` is set. `fishPickMenus = true` uses `btmux pick`
   menus for Tab, `Ctrl+R`, and `cdh`.
 
-The service is the one `btmux install` sets up; if you used that before, run
-`btmux uninstall` first. When only the package changes, activation runs
-`btmux upgrade`, so running shells survive. If that is refused, for example because
-Neovim has unsaved buffers, activation warns and you can run `btmux upgrade` later.
+If you installed the service with `btmux install`, run `btmux uninstall`
+before enabling the Home Manager service. When only the package changes,
+activation runs `btmux upgrade` to keep shells running. If the upgrade is
+refused, for example because Neovim has unsaved buffers, activation warns
+and you can run `btmux upgrade` later.
 
 ### From source
 

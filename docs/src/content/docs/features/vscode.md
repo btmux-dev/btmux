@@ -4,18 +4,17 @@ sidebar:
   order: 5
 ---
 
-With `editor = "vscode"`, `<prefix> + e` opens VS Code
-[over the active pane](editors.md#over-a-pane), in the pane's Git worktree
-(its root, not the subfolder the pane is in), else the pane's folder. On touch
-screens, the key bar has a button to hide it.
+Set `editor = "vscode"` to open VS Code
+[over the active pane](editors.md#over-a-pane) with `<prefix> + e`. VS Code
+opens at the pane's worktree root or, outside Git, its directory. On touch
+screens, use the key bar to hide it.
 
 Requires macOS or Linux, and either VS Code or `openvscode-server` on the server
 (see [Server](#server)). Webviews such as the Markdown preview need internet
 access.
 
-btmux still takes the prefix key while VS Code has focus. To give VS Code that
-key itself, press it twice: with the default prefix, `Ctrl+A Ctrl+A` sends one
-`Ctrl+A` to VS Code.
+Press the prefix twice to send it to VS Code. With the default prefix,
+`Ctrl+A Ctrl+A` sends one `Ctrl+A`.
 
 VS Code reloads only when shown over a pane in another folder, which ends its
 terminals and tasks. Over a pane connected to another host (ssh), it keeps its
@@ -25,9 +24,8 @@ Over a pane of a [sandboxed session](sandbox.md), VS Code still runs on the
 host: its terminals, tasks, and extensions act on files the sandbox can change,
 with your account. btmux warns about this once per session.
 
-Files open in the VS Code windows showing that pane's folder, in every client
-showing it, and not in windows of other folders. With another `editor`, VS Code
-is still [one click or command away](editors.md#using-both).
+Files open in every client showing that folder. You can also
+[open VS Code directly](editors.md#using-both) with another default editor.
 
 ## Server
 
@@ -36,7 +34,7 @@ is still [one click or command away](editors.md#using-both).
 server = "code"
 ```
 
-`server` picks the server, read when it starts:
+btmux reads `server` at VS Code startup.
 
 - `"code"` (default) runs `code serve-web` from an installed VS Code, found on
   the server's `PATH`, your shell's, or in `/Applications` on macOS. It
@@ -80,9 +78,8 @@ extensions with btmux's VS Code. It reads them from the default locations:
 
 ### How settings stay in sync
 
-btmux's VS Code keeps its own settings, in the browser. Each time a VS Code
-window loads, btmux reads the shared files and applies what changed in them
-since the last load.
+btmux stores browser settings separately and applies changes from shared
+files each time a VS Code window loads.
 
 - A change you make in btmux's VS Code stays until the shared file changes the
   same setting or binding.
@@ -92,8 +89,8 @@ since the last load.
 
 ### How extensions stay in sync
 
-Shared extensions are linked, not copied, when VS Code starts and again
-whenever desktop VS Code installs, updates, or removes one.
+btmux links shared extensions at startup and refreshes the links when
+desktop VS Code installs, updates, or removes an extension.
 
 - Desktop VS Code updates them; btmux's doesn't.
 - Uninstalling one in btmux's VS Code lasts until it starts again.

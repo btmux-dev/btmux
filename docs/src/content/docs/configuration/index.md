@@ -26,9 +26,9 @@ font-size = 16
 
 ## Changes apply live
 
-Saving the file updates every connected client. A few options are read only
-when something starts: log levels at server start, `[vscode] server` when VS
-Code starts, and most of `[multipass]` when the VM is created.
+Saving updates every connected client. Log levels apply at server startup,
+`[vscode] server` when VS Code starts, and most of `[multipass]` when btmux
+creates the VM.
 
 If the file can't be parsed, btmux keeps the last valid configuration and
 shows a banner until it is fixed. The banner's **Show error** button opens the
@@ -36,12 +36,10 @@ full message.
 
 ## Settings
 
-Press `<prefix> + :` and choose `config: open settings` to edit most options in
-a dialog, with live previews. **Apply** changes the running server only, to try
-things out: such changes are dropped on restart and whenever `config.toml`
-reloads. **Save** writes them to `config.toml`, keeping your comments and other
-settings. If the file is read-only, as Nix and Home Manager install it, the
-dialog shows the TOML to copy instead.
+Press `<prefix> + :` and choose `config: open settings` for live previews.
+**Apply** changes the running server until it restarts or reloads
+`config.toml`. **Save** edits the file and preserves comments and other
+settings. If the file is read-only, the dialog shows TOML you can copy.
 
 ![The Settings dialog on its General tab](../../../assets/screenshots/settings-dark.png)
 ![The Settings dialog on its General tab](../../../assets/screenshots/settings-light.png)
@@ -50,10 +48,9 @@ The command palette's color and font pickers work like Apply.
 
 ## Updates
 
-btmux checks GitHub for newer releases about once a day and shows a toast when
-one is available. It never downloads or installs anything:
-[upgrade](../start/installation.mdx#upgrading) with whatever you installed
-with. Set `check-for-updates = false` to turn the check off.
+btmux checks GitHub about once a day and shows a toast when an update is
+available. See [Upgrading](../start/installation.mdx#upgrading). Set
+`check-for-updates = false` to disable checks.
 
 ## Where things are set
 

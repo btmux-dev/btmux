@@ -4,14 +4,14 @@ sidebar:
   order: 12
 ---
 
-btmux scans the visible part of each pane for LaTeX: `$$…$$`, `\[…\]`,
-`\(…\)`, `\begin{equation}`-style environments, `$…$`, and the bare `[` / `]`
-blocks and `( … )` spans some coding agents print after their Markdown renderer
-drops the backslashes. When it finds any, a `∑ N` chip appears in the pane's
-title bar (or its top-right corner when title bars are off).
+The LaTeX overlay renders formulas from the visible pane in a KaTeX side
+panel. Open it with `<prefix> + m`, `latex: toggle overlay`, or the `∑ N`
+button that appears when btmux finds formulas. The button sits in the title
+bar or the pane's top-right corner.
 
-Click the chip, press `<prefix> + m`, or run `latex: toggle overlay` from the
-command palette to open a side panel with the formulas rendered by KaTeX.
+btmux recognizes `$$…$$`, `\[…\]`, `\(…\)`, `$…$`, and environments like
+`\begin{equation}`. It also detects bare `[` / `]` blocks and `( … )` spans
+from coding agents.
 
 <btmux-demo name="latex" label="Demo: an agent's LaTeX rendered in the side panel, with each formula's source highlighted on hover"></btmux-demo>
 

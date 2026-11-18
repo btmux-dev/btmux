@@ -4,15 +4,14 @@ sidebar:
   order: 1
 ---
 
-The file browser and Git mode are two views of one dialog, opened at the
-active pane's directory. Both are driven from the keyboard, and the footer
-lists the keys for where you are.
+Browse files or manage Git from the active pane's directory. The dialog
+footer lists the available keys.
 
 <btmux-demo name="files" label="Demo: the file browser's filter, file search, and content search, then Git mode"></btmux-demo>
 
 ## File browser
 
-`<prefix> + f` opens it: a list of entries and a preview of the focused one.
+`<prefix> + f` opens the file browser with a preview of the selected entry.
 
 ![The file browser with a rendered Markdown preview](../../../assets/screenshots/file-browser-dark.png)
 ![The file browser with a rendered Markdown preview](../../../assets/screenshots/file-browser-light.png)
@@ -48,8 +47,7 @@ falling back to `find` and `grep`. Both show at most 100 results.
 
 ## Git mode
 
-`<prefix> + g` opens the status of the pane's repository: staged, unstaged,
-and untracked files, with the focused file's diff beside the list.
+`<prefix> + g` opens the pane's Git status and shows the selected file's diff.
 
 ![Git mode: staged, unstaged, and untracked files beside a diff](../../../assets/screenshots/git-mode-dark.png)
 ![Git mode: staged, unstaged, and untracked files beside a diff](../../../assets/screenshots/git-mode-light.png)
@@ -110,13 +108,11 @@ behind, or have changes.
 
 ## GitHub status
 
-When a pane's branch is on GitHub, its corner shows the pull request and its
-checks: the PR number and state, its review, and how many checks passed,
-failed, or are pending. Click it to open the PR, or the branch if there is
-none.
+The pane's GitHub badge shows the pull request, review status, and check
+counts. Click it to open the PR or, if there's none, the branch.
 
-This needs the [GitHub CLI](https://cli.github.com), logged in with
-`gh auth login`. btmux asks `gh` and never reads your credentials.
+Install the [GitHub CLI](https://cli.github.com) and run `gh auth login`.
+btmux fetches status through `gh`.
 
 ```toml
 [github]

@@ -4,8 +4,8 @@ sidebar:
   order: 3
 ---
 
-Sessions, windows, and panes can be controlled over HTTP under `/api`. Every
-request needs the [access token](index.md#authentication).
+Manage sessions, windows, and panes over HTTP under `/api`. Send the
+[access token](index.md#authentication) with every request.
 
 ```sh
 api="${BTMUX_API_URL:-http://127.0.0.1:8004}/api"
@@ -21,8 +21,6 @@ curl -H "$auth" "$api/panes/<pane-id>/capture?lines=20"
 # Bring a pane to the front in every client
 curl -H "$auth" -X POST "$api/panes/<pane-id>/focus"
 ```
-
-Inside a pane, `$BTMUX_API_URL` is the server's address, without `/api`.
 
 ## Input and output
 

@@ -21,8 +21,6 @@ means the sequence you used in step 1.
 ![A btmux window split into three panes, with the sidebar on the left and the status bar below](../../../assets/screenshots/panes-dark.png)
 ![A btmux window split into three panes, with the sidebar on the left and the status bar below](../../../assets/screenshots/panes-light.png)
 
-Two keys are worth remembering first:
-
 - `<prefix> + ?` lists every key binding.
 - `<prefix> + :` opens the command palette. Type to filter, Enter to run.
 
@@ -30,8 +28,6 @@ Two keys are worth remembering first:
 ![The command palette listing layout commands](../../../assets/screenshots/command-palette-light.png)
 
 ## Panes
-
-A window is split into panes, each with its own shell.
 
 | Key                 | Action                                      |
 | ------------------- | ------------------------------------------- |
@@ -42,16 +38,14 @@ A window is split into panes, each with its own shell.
 | `<prefix> + Space`  | Cycle through layouts                       |
 | `<prefix> + x`      | Close the pane (asks first)                 |
 
-The mouse works too: click a pane to focus it, and drag a divider to resize.
-From the keyboard, `<prefix> + Ctrl+Arrow` resizes by one cell and
-`<prefix> + Alt+Arrow` by five.
+Click a pane to focus it. Drag a divider to resize, or use
+`<prefix> + Ctrl+Arrow` for one cell and `<prefix> + Alt+Arrow` for five.
 
-If a program needs `Ctrl+A` itself, such as readline's start-of-line, press it
-twice. Or [change the prefix](../configuration/keybindings.md).
+Press the [prefix](../configuration/keybindings.md) twice to send it to the shell.
 
 ## Windows
 
-Windows are like tabs. The status bar at the bottom lists them.
+Switch windows from the status bar or with these keys.
 
 | Key                    | Action                               |
 | ---------------------- | ------------------------------------ |
@@ -67,14 +61,10 @@ Windows are like tabs. The status bar at the bottom lists them.
 
 ## Sessions
 
-A session is a group of windows, usually one per project. Close a browser tab
-and your shells keep running on the server. Reconnect from this machine or
-[another](../features/remote-access.mdx) to pick up where you left off.
-
-By default, quitting the desktop app stops its own server. Your layout is
-saved, but running programs end. To keep them alive, choose
+Group a project's windows in one session. Shells stay running when you close
+a browser tab. To keep shells running after the desktop app quits, choose
 [**Keep it running after btmux quits**](desktop.md#keeping-shells-running)
-when starting the desktop server.
+when starting its server.
 
 | Key                  | Action                                         |
 | -------------------- | ---------------------------------------------- |
@@ -84,9 +74,9 @@ when starting the desktop server.
 | `<prefix> + L`       | Back to the last session                       |
 | `<prefix> + $`       | Rename the session                             |
 
-The switcher shows sessions and their windows as a tree, with a live preview.
-`/` filters by session, window, repository, or branch name; Enter switches; `c`
-creates, `m` renames, and `x` kills the selected row.
+In the switcher, press `/` to filter by session, window, repository, or branch.
+Enter switches to the selected row. Use `c` to create, `m` to rename, or `x`
+to close.
 
 ![The session switcher: a tree of sessions and windows with branch tokens, and a preview of the selected window](../../../assets/screenshots/session-switcher-dark.png)
 ![The session switcher: a tree of sessions and windows with branch tokens, and a preview of the selected window](../../../assets/screenshots/session-switcher-light.png)
@@ -100,13 +90,13 @@ creates, `m` renames, and `x` kills the selected row.
 - Select text with the mouse and copy as in any app. `<prefix> + ]` pastes the
   clipboard.
 - Cmd-click a URL (Ctrl-click outside macOS) to open it.
-- `<prefix> + [` opens the pane's scrollback in `$EDITOR`, for when you need
-  more than a search.
+- `<prefix> + [` opens the pane's scrollback in the
+  [configured editor](../features/editors.md#capturing-a-pane).
 
 ## Beyond the terminal
 
-Each of these opens over the active pane or as a dialog. Dialogs close with
-Esc; the editor and browser hide with their key, or Esc twice quickly:
+Press Esc to close a dialog. To hide the editor or browser, press its key
+again or press Esc twice quickly.
 
 | Key              | Opens                                                    |
 | ---------------- | -------------------------------------------------------- |
@@ -125,9 +115,7 @@ also in a [config file](../configuration/index.md).
 
 ## Where next
 
-- [How btmux works](how-it-works.md): the server, its clients, and what
-  survives a restart.
-- [Remote access](../features/remote-access.mdx): your sessions from a phone
-  or another machine.
-- [Coding agents](../agents/index.md): see which agent needs you.
-- Coming from tmux? See [what differs](tmux.md).
+- [What survives a restart](how-it-works.md#what-survives)
+- [Connect from another device](../features/remote-access.mdx)
+- [Track coding agents](../agents/index.md)
+- [Compare btmux and tmux](tmux.md)

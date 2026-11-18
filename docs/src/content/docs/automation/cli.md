@@ -4,12 +4,9 @@ sidebar:
   order: 2
 ---
 
-`btmux` has a subset of tmux's commands, with the same names, aliases, and
-main flags, for scripts and agents. Inside a pane they target that pane's
-server; elsewhere, the running server of `--profile`.
-
-[All commands](../configuration/commands.md) lists everything else `btmux`
-can do.
+`btmux` supports a subset of tmux commands, including familiar aliases and
+flags. Commands target the current pane's server or, outside btmux, the
+running server for `--profile`. See [All commands](../configuration/commands.md).
 
 ```sh
 btmux list-panes -F '#{pane_index} #{pane_id} #{pane_current_path}'
@@ -66,9 +63,8 @@ directory (`~/.claude/skills/` for Claude Code).
 
 ## Worktrees
 
-`new-worktree` and `remove-worktree` aren't tmux commands. They do what
-`<prefix> + W` and `<prefix> + X` do; see
-[Worktrees](../features/files-and-git.md#worktrees) for the rules.
+`new-worktree` and `remove-worktree` follow the same rules as the
+[worktree key bindings](../features/files-and-git.md#worktrees).
 
 - `new-worktree BRANCH` adds a Git worktree for the target pane's repository
   and opens a window there, in the pane's session. It prints the new pane's

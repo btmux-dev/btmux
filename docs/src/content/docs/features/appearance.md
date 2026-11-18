@@ -4,14 +4,12 @@ sidebar:
   order: 10
 ---
 
-Colors, fonts, and wallpapers can all be tried live in
-[Settings](../configuration/index.md#settings) before you save them. This page
-describes the options behind it.
+Preview colors, fonts, and wallpapers in
+[Settings](../configuration/index.md#settings) before saving.
 
 ## Dark and light
 
-btmux has a dark and a light color scheme. `appearance` picks which one is
-shown:
+`appearance` selects the dark or light color scheme.
 
 ```toml
 appearance = "auto"   # or "dark", "light"
@@ -20,9 +18,8 @@ colors-light = "kauz-light"
 ```
 
 `"auto"` follows the system setting of the client that connected or was
-focused last. The same scheme is shown in every client and reported to
-programs in panes. The sidebar's appearance button and the `choose-appearance`
-command switch it until the next restart.
+focused last. Clients and programs in panes see the same scheme. The sidebar's appearance
+button and `choose-appearance` switch it until the next restart.
 
 ## Color schemes
 

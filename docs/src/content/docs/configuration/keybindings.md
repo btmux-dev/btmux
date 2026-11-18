@@ -4,8 +4,8 @@ sidebar:
   order: 2
 ---
 
-Key bindings start with a prefix, as in tmux: press it, release, then press
-the key. Press `<prefix> + ?` in btmux for the live list.
+Press and release the prefix, then press the bound key. Use
+`<prefix> + ?` to see your current bindings.
 
 ```toml
 prefix = "C-a"   # the default: Ctrl+A
@@ -18,8 +18,7 @@ resize-pane-left = "M-ArrowLeft"
 
 A key is one character or a name such as `Space`, `Enter`, `Tab`, `Escape`,
 `ArrowLeft`, or `F1`-`F12`, with optional `C-` (Ctrl) and `M-` (Alt)
-modifiers. Each action has one key: setting it moves the action off its default
-key.
+modifiers. Setting a key replaces the action's default binding.
 
 ## Defaults
 
@@ -54,16 +53,8 @@ Every action is also in the command palette.
 
 ## Popup keys
 
-A `[[popup]]` table binds a key, after the prefix, that runs a command in a
-[popup](../automation/popups.md) over the active pane. Repeat it for more
-keys. The key is taken from any action bound to it.
-
-```toml
-[[popup]]
-key = "G"
-command = "lazygit"
-title = "Git" # optional; the command by default
-```
+Use one [`[[popup]]` table](../automation/popups.md#on-a-key) per command.
+Each key follows the prefix and replaces any existing binding.
 
 ## Prefix twice
 
@@ -78,9 +69,9 @@ Ctrl+Arrow for Spaces, so rebind the one-cell keys there.
 
 ## Repeating keys
 
-With `repeat-time` set, navigation, resize, and page-scroll keys repeat without
-the prefix for that many milliseconds. Any other key ends the repeat and goes
-to the terminal. The default is `0`, which turns it off; try `500`.
+`repeat-time` sets how many milliseconds you can repeat a navigation, resize,
+or page-scroll key without the prefix. Other keys end the repeat and go to
+the terminal. The default is `0` (off).
 
 ```toml
 repeat-time = 500
