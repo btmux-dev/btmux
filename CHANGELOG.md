@@ -8,6 +8,11 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Fixed
+
+- Markdown previews show images in a paragraph, such as badges, on one line,
+  as GitHub does, rather than one per line.
+
 ## [0.0.209] - 2026-11-18
 
 ### Added
