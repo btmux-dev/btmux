@@ -2038,6 +2038,8 @@ pub fn generate_config_toml() -> String {
 # "error", "warn", "info", "debug", "trace", or full EnvFilter syntax like
 # "btmux=debug,tower_http=info".
 # BTMUX_CONSOLE_LOG and BTMUX_FILE_LOG override these values when set.
+# Language servers' output goes to lsp.log.YYYY-MM-DD beside btmux's log,
+# unless file-level is "off".
 # [log]
 # console-level = "{DEFAULT_CONSOLE_LOG}"    # stderr output (keep the terminal quiet)
 # file-level = "{DEFAULT_FILE_LOG}"       # file output ($XDG_STATE_HOME/btmux/log/btmux.log.YYYY-MM-DD, falling back to ~/.local/state/btmux/)

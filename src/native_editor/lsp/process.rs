@@ -15,6 +15,8 @@ use crate::config::LanguageServerConfig;
 
 /// Messages larger than this end the connection.
 const MAX_MESSAGE: usize = 64 * 1024 * 1024;
+/// The tracing target written to `lsp.log`: server stderr, starts, and exits.
+pub const LOG_TARGET: &str = "lsp";
 /// Stderr lines kept for the error shown when a server exits.
 const STDERR_LINES: usize = 20;
 
@@ -199,17 +201,32 @@ async fn run(
         Err(e) => return failed(format!("Cannot start {}: {e}", config.command)),
     };
     let pid = child.id();
+    let label = match pid {
+        Some(pid) => format!("{name}[{pid}]"),
+        None => name.to_owned(),
+    };
+    let root = command.as_std().get_current_dir().unwrap_or(".".as_ref());
+    tracing::info!(
+        target: LOG_TARGET,
+        "{label}: started {} in {}",
+        std::iter::once(&config.command)
+            .chain(&config.args)
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(" "),
+        root.display()
+    );
     let mut stdin = child.stdin.take().expect("piped");
     let stdout = child.stdout.take().expect("piped");
     let stderr = child.stderr.take().expect("piped");
 
     let tail = Arc::new(Mutex::new(VecDeque::new()));
     let stderr_tail = tail.clone();
-    let server = name.to_owned();
+    let server = label.clone();
     tokio::spawn(async move {
         let mut lines = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = lines.next_line().await {
-            tracing::debug!(server, "{line}");
+            tracing::info!(target: LOG_TARGET, "{server}: {line}");
             let mut tail = stderr_tail.lock().unwrap();
             if tail.len() == STDERR_LINES {
                 tail.pop_front();
@@ -265,6 +282,7 @@ async fn run(
         Ok(status) => status.to_string(),
         Err(e) => e.to_string(),
     };
+    tracing::info!(target: LOG_TARGET, "{label}: exited ({status})");
     Exit {
         message: match tail.last() {
             Some(last) => format!("{name} exited ({status}): {last}"),

@@ -63,6 +63,7 @@ use clap::{CommandFactory, Parser};
 use notify::{RecursiveMode, Watcher};
 use time::UtcOffset;
 use tokio::sync::RwLock;
+use tracing_subscriber::filter::Targets;
 use tracing_subscriber::fmt::time::OffsetTime;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -215,20 +216,34 @@ async fn main() {
     let console_layer = tracing_subscriber::fmt::layer().with_filter(console_filter);
 
     let log_dir = persistence::log_dir();
-    if let Some(log_dir) = &log_dir {
-        let file_appender = tracing_appender::rolling::daily(log_dir, "btmux.log");
-        let file_layer = tracing_subscriber::fmt::layer()
-            .with_writer(file_appender)
+    let file_layer = log_dir.as_ref().map(|dir| {
+        tracing_subscriber::fmt::layer()
+            .with_writer(tracing_appender::rolling::daily(dir, "btmux.log"))
             .with_ansi(false)
-            .with_timer(local_time)
-            .with_filter(file_filter);
-        tracing_subscriber::registry()
-            .with(console_layer)
-            .with(file_layer)
-            .init();
-    } else {
-        tracing_subscriber::registry().with(console_layer).init();
-    }
+            .with_timer(local_time.clone())
+            .with_filter(file_filter)
+    });
+    // Language servers' stderr, starts, and exits, in their own file.
+    let lsp_layer = log_dir
+        .as_ref()
+        .filter(|_| file_level.trim() != "off")
+        .map(|dir| {
+            tracing_subscriber::fmt::layer()
+                .with_writer(tracing_appender::rolling::daily(dir, "lsp.log"))
+                .with_ansi(false)
+                .with_timer(local_time)
+                .with_level(false)
+                .with_target(false)
+                .with_filter(Targets::new().with_target(
+                    native_editor::lsp::process::LOG_TARGET,
+                    tracing::Level::TRACE,
+                ))
+        });
+    tracing_subscriber::registry()
+        .with(console_layer)
+        .with(file_layer)
+        .with(lsp_layer)
+        .init();
 
     if let Some(config::SubCommand::Version) = args.command {
         println!("btmux {}", config::VERSION);
@@ -481,7 +496,7 @@ async fn main() {
         executable: pty::server_exe().and_then(absolute_path),
         log_files: log_dir
             .filter(|_| file_level.trim() != "off")
-            .and_then(|dir| absolute_path(&dir.join("btmux.log.*"))),
+            .and_then(|dir| absolute_path(&dir.join("*.log.*"))),
         instance: uuid::Uuid::new_v4().to_string(),
         pid: std::process::id(),
     };
