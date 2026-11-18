@@ -63,8 +63,8 @@ status line shows each one's state and progress.
 Servers are found on the btmux server's `PATH`, else your shell's. These are
 built in and used when found: rust-analyzer, typescript-language-server,
 pyright, gopls, clangd, lua-language-server, nil (Nix), bash-language-server,
-taplo (TOML), yaml-language-server, and vscode-langservers-extracted (JSON,
-CSS, HTML). The Health tab of the About dialog lists the configured servers
+taplo (TOML), just-lsp (justfiles), yaml-language-server, and
+vscode-langservers-extracted (JSON, CSS, HTML). The Health tab of the About dialog lists the configured servers
 and whether btmux finds them.
 
 Add or replace languages and servers in `config.toml`:

@@ -14,6 +14,8 @@ actions, saved state, and API types can change in any release.
   recording demos. It is off by default; the status bar's keyboard button
   turns it on. Keys typed at a password prompt are hidden.
   ([#160](https://github.com/btmux-dev/btmux/pull/160))
+- Justfile support in the native editor: syntax highlighting, with recipe
+  bodies highlighted as shell, and just-lsp as a built-in language server.
 
 ## [0.0.208] - 2026-11-18
 

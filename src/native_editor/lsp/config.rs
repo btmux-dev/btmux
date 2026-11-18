@@ -87,6 +87,20 @@ const LANGUAGES: &[Builtin] = &[
     ),
     ("toml", "toml", &["toml"], &[], &["taplo"]),
     (
+        "just",
+        "just",
+        &[
+            "just",
+            "justfile",
+            "Justfile",
+            "JUSTFILE",
+            ".justfile",
+            ".Justfile",
+        ],
+        &[],
+        &["just-lsp"],
+    ),
+    (
         "yaml",
         "yaml",
         &["yaml", "yml"],
@@ -146,6 +160,7 @@ const SERVERS: &[(&str, &str, &[&str])] = &[
     ("nil", "nil", &[]),
     ("bash-language-server", "bash-language-server", &["start"]),
     ("taplo", "taplo", &["lsp", "stdio"]),
+    ("just-lsp", "just-lsp", &[]),
     ("yaml-language-server", "yaml-language-server", &["--stdio"]),
     (
         "vscode-json-language-server",
@@ -374,6 +389,10 @@ mod tests {
             config.language(Path::new("/x/.bashrc")).unwrap().name,
             "bash"
         );
+        for name in ["justfile", ".justfile", "tasks.just"] {
+            let path = Path::new("/x").join(name);
+            assert_eq!(config.language(&path).unwrap().name, "just");
+        }
         assert!(config.language(Path::new("/x/notes.txt")).is_none());
         assert_eq!(config.servers["pyright"].command, "pyright-langserver");
     }

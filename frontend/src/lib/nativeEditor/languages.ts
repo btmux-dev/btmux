@@ -9,6 +9,12 @@ export const languages = [
     extensions: ['nix'],
     load: () => import('./nix').then((m) => m.nix()),
   }),
+  LanguageDescription.of({
+    name: 'Just',
+    extensions: ['just'],
+    filename: /^\.?justfile$/i,
+    load: () => import('./just').then((m) => m.just()),
+  }),
 ];
 
 /** The language for a file name, loaded on first use. */
