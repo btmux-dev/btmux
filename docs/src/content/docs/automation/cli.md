@@ -42,7 +42,7 @@ btmux kill-pane -t "$pane"
 
 For coding agents, [`skills/btmux`](../../../../../skills/btmux/SKILL.md) is an
 [Agent Skill](https://agentskills.io) that teaches these commands. Install it
-with `npx skills add buntec/btmux`, or copy the folder into your agent's skills
+with `npx skills add btmux-dev/btmux`, or copy the folder into your agent's skills
 directory (`~/.claude/skills/` for Claude Code).
 
 ## Differences from tmux

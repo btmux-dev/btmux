@@ -3,7 +3,7 @@
 set -euo pipefail
 
 package_files=(nix/package.nix nix/desktop-package.nix)
-release_api="https://api.github.com/repos/buntec/btmux/releases/latest"
+release_api="https://api.github.com/repos/btmux-dev/btmux/releases/latest"
 
 version="${1:-}"
 version="${version#v}"
@@ -37,7 +37,7 @@ for package_file in "${package_files[@]}"; do
       name="btmux-desktop-$target.$extension"
     fi
     artifact="$tmp_dir/$name"
-    url="https://github.com/buntec/btmux/releases/download/v$version/$name"
+    url="https://github.com/btmux-dev/btmux/releases/download/v$version/$name"
 
     echo "fetching $url"
     curl --fail --location --silent --show-error --retry 5 --retry-delay 20 --output "$artifact" "$url"

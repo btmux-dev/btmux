@@ -30,7 +30,7 @@ stdenv.mkDerivation {
   inherit version;
 
   src = fetchurl {
-    url = "https://github.com/buntec/btmux/releases/download/v${version}/btmux-${target}";
+    url = "https://github.com/btmux-dev/btmux/releases/download/v${version}/btmux-${target}";
     inherit hash;
   };
 
@@ -51,7 +51,7 @@ stdenv.mkDerivation {
 
   meta = {
     description = "Browser-based terminal manager";
-    homepage = "https://github.com/buntec/btmux";
+    homepage = "https://github.com/btmux-dev/btmux";
     license = lib.licenses.mit;
     mainProgram = "btmux";
     platforms = lib.attrNames targets;

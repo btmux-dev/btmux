@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="buntec/btmux"
+REPO="btmux-dev/btmux"
 BINARY="btmux"
 INSTALL_DIR="${BTMUX_INSTALL_DIR:-}"
 

@@ -38,7 +38,7 @@ stdenv.mkDerivation {
   inherit version;
 
   src = fetchurl {
-    url = "https://github.com/buntec/btmux/releases/download/v${version}/btmux-desktop-${target}.${extension}";
+    url = "https://github.com/btmux-dev/btmux/releases/download/v${version}/btmux-desktop-${target}.${extension}";
     hash = hashes.${system};
   };
 
@@ -106,7 +106,7 @@ stdenv.mkDerivation {
 
   meta = {
     description = "Desktop client for btmux with a bundled server";
-    homepage = "https://github.com/buntec/btmux";
+    homepage = "https://github.com/btmux-dev/btmux";
     license = lib.licenses.mit;
     sourceProvenance = [ lib.sourceTypes.binaryNativeCode ];
     mainProgram = "btmux-desktop";

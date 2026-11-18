@@ -29,7 +29,7 @@ The app is signed and notarized. Intel Macs are not supported. To use its
 <TabItem label="Linux">
 
 Download `btmux-desktop-<arch>-unknown-linux-gnu.deb` from
-[Releases](https://github.com/buntec/btmux/releases/latest) and install it:
+[Releases](https://github.com/btmux-dev/btmux/releases/latest) and install it:
 
 ```sh
 sudo apt install ./btmux-desktop-*.deb
@@ -41,7 +41,7 @@ It installs the `btmux` command as `/usr/bin/btmux`.
 <TabItem label="Windows">
 
 Run `btmux-desktop-<arch>-pc-windows-msvc-setup.exe` from
-[Releases](https://github.com/buntec/btmux/releases/latest). It installs for the
+[Releases](https://github.com/btmux-dev/btmux/releases/latest). It installs for the
 current user, without admin rights, and adds the `btmux` command to your
 `PATH`.
 
@@ -75,7 +75,7 @@ Or use the install script, as on Linux.
 <TabItem label="Linux">
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/buntec/btmux/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/btmux-dev/btmux/main/scripts/install.sh | bash
 ```
 
 It downloads the latest release binary to `~/.local/bin`. Set
@@ -91,7 +91,7 @@ Download the release binary and put it on your `PATH`. In PowerShell:
 $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
 $dir = "$env:LOCALAPPDATA\Programs\btmux"
 New-Item -ItemType Directory -Force $dir | Out-Null
-Invoke-WebRequest "https://github.com/buntec/btmux/releases/latest/download/btmux-$arch-pc-windows-msvc.exe" -OutFile "$dir\btmux.exe"
+Invoke-WebRequest "https://github.com/btmux-dev/btmux/releases/latest/download/btmux-$arch-pc-windows-msvc.exe" -OutFile "$dir\btmux.exe"
 [Environment]::SetEnvironmentVariable('Path', "$([Environment]::GetEnvironmentVariable('Path', 'User'));$dir", 'User')
 ```
 

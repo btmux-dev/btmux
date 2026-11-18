@@ -10,7 +10,7 @@ fi
 
 tap_dir="$1"
 version="${2:-}"
-repo="buntec/btmux"
+repo="btmux-dev/btmux"
 
 if [[ -z "$version" ]]; then
   echo "looking up the latest GitHub release"

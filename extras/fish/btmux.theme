@@ -1,5 +1,5 @@
 # name: btmux
-# url: https://github.com/buntec/btmux
+# url: https://github.com/btmux-dev/btmux
 # Named ANSI colors only: btmux maps its base16/base24 scheme onto them, so
 # this follows the btmux theme, including live changes.
 

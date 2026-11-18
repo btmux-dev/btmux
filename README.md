@@ -38,13 +38,13 @@ brew install --cask buntec/btmux/btmux
 ```
 
 On Linux and Windows, get the `.deb` or the setup `.exe` from
-[Releases](https://github.com/buntec/btmux/releases/latest). Windows support is
+[Releases](https://github.com/btmux-dev/btmux/releases/latest). Windows support is
 experimental.
 
 **Server only**, to use btmux in a browser, on macOS or Linux:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/buntec/btmux/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/btmux-dev/btmux/main/scripts/install.sh | bash
 # or: brew install buntec/btmux/btmux
 ```
 
