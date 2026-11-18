@@ -8,6 +8,8 @@ The file browser and Git mode are two views of one dialog, opened at the
 active pane's directory. Both are driven from the keyboard, and the footer
 lists the keys for where you are.
 
+<btmux-demo name="files" label="Demo: the file browser's filter, file search, and content search, then Git mode"></btmux-demo>
+
 ## File browser
 
 `<prefix> + f` opens it: a list of entries and a preview of the focused one.

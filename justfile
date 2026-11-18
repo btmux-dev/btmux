@@ -215,19 +215,7 @@ update-homebrew-tap tap_dir version="":
 install: build
     cargo install --path .
 
-# Record demos of the installed macOS desktop app (port 8045). Needs
-# Accessibility and Screen Recording permissions for the terminal. Recreates
-# ~/btmux-demo with fresh clones as the playground. Mode: dark or light.
-# delay_scale in (0, 1] shortens all pauses, e.g. 0.5 runs twice as fast.
-# Demos: panes, files, nvim, agents, latex, shaders (default: all), e.g.
-# `just record-desktop-demo dark 1 agents latex`.
-# Output: demo-<name>.mp4 (dark) or demo-<name>-light.mp4 (light) in the repo root.
-# `just vm desktop-demo [--light] [DEMO...]` runs the server in the Multipass VM.
-record-desktop-demo mode="dark" delay_scale="1" *demos:
-    scripts/record-desktop-demo.sh --{{mode}} --delay-scale {{delay_scale}} {{demos}}
-
-# Linux VM via Multipass (scripts/vm.sh): up, deploy, release [TAG], info, shell,
-# desktop-demo [ARGS], stop, delete
+# Linux VM via Multipass (scripts/vm.sh): up, deploy, release [TAG], info, shell, stop, delete
 vm *args:
     scripts/vm.sh {{args}}
 
@@ -271,24 +259,45 @@ docs-config:
     } > "$temp_dir/page"
     mv "$temp_dir/page" "$reference"
 
-# Encode recorded demos (just record-desktop-demo) into docs/public/demos
-docs-demos-encode in=".":
-    scripts/encode-demos.sh {{in}} docs/public/demos
+# Demos: panes, files, editor, agents, latex (default: all), e.g.
+# `just docs-demos agents`. The editor demo needs rust-analyzer and
+# RUST_SRC_PATH (the Rust standard library's sources).
+# Record the docs' demos (docs/public/demos) with rrweb from fresh stacks, in dark and light
+docs-demos *demos:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd frontend
+    bunx playwright install chromium
+    demos=({{demos}})
+    [[ ${#demos[@]} -gt 0 ]] || demos=(panes files editor agents latex)
+    for demo in "${demos[@]}"; do
+        for scheme in dark light; do
+            DOCS_DEMO="$demo" DOCS_DEMO_SCHEME="$scheme" bun browser-test-stack.ts docs-demos.ts
+        done
+    done
+    # Drop assets no recording uses any more.
+    cd ../docs/public/demos
+    for asset in asset-*; do
+        gzip -dc ./*.json.gz | grep -F "$asset" >/dev/null || rm "$asset"
+    done
 
-# Upload the encoded demos to the "media" prerelease
+# Upload the demos to the "media" prerelease, removing files no longer in docs/public/demos
 docs-demos-upload:
     #!/usr/bin/env bash
     set -euo pipefail
     # A prerelease, so releases/latest (update check, install script) never resolves to it.
     if ! gh release view media >/dev/null 2>&1; then
         gh release create media --prerelease --latest=false --title "Website media" \
-            --notes "Demo videos for btmux.dev, made with just record-desktop-demo and just docs-demos-encode. Not a btmux release."
+            --notes "Demo recordings for the docs site, made with just docs-demos. Not a btmux release."
     fi
     [[ "$(gh release view media --json isPrerelease -q .isPrerelease)" == true ]] || {
         echo "The media release must be a prerelease" >&2
         exit 1
     }
     gh release upload media --clobber docs/public/demos/*
+    gh release view media --json assets -q '.assets[].name' | while read -r name; do
+        [[ -e "docs/public/demos/$name" ]] || gh release delete-asset media "$name" --yes
+    done
 
 # Download the demos from the "media" release into docs/public/demos
 docs-demos-fetch:
