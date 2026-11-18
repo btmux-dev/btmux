@@ -1,80 +1,74 @@
 # btmux
 
-A terminal emulator and tmux-style session manager. Runs as a stand-alone app and in the browser (including on mobile).
-For macOS, Linux and Windows. Powered by [wterm](https://github.com/vercel-labs/wterm), [libghostty](https://github.com/ghostty-org/ghostty) and [Tauri](https://github.com/tauri-apps/tauri).
+[![Release](https://img.shields.io/github/v/release/btmux-dev/btmux)](https://github.com/btmux-dev/btmux/releases/latest)
+[![CI](https://github.com/btmux-dev/btmux/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/btmux-dev/btmux/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/btmux-dev/btmux)](LICENSE)
+
+A terminal emulator and tmux-style session manager. Runs as a desktop app and
+in the browser (including on mobile), on macOS, Linux, and Windows. Powered by
+[wterm](https://github.com/vercel-labs/wterm),
+[libghostty](https://github.com/ghostty-org/ghostty), and
+[Tauri](https://github.com/tauri-apps/tauri).
+
+**[Documentation](https://btmux-dev.github.io/btmux/)** ·
+[Installation](https://btmux-dev.github.io/btmux/start/installation/) ·
+[First steps](https://btmux-dev.github.io/btmux/start/first-steps/) ·
+[Changelog](https://btmux-dev.github.io/btmux/project/changelog/)
 
 ## Highlights
 
-- Familiar tmux concepts and key bindings: sessions, windows, splits, zoom, etc.
+- Familiar tmux concepts and key bindings: sessions, windows, splits, zoom, and more
 - Server-side sessions: connect from any number of clients
-- Tailscale integration: serve over HTTPS on your tailnet; log in from a phone/tablet by scanning a QR code
+- Tailscale integration: serve over HTTPS on your tailnet; sign in from a phone or tablet by scanning a QR code
 - Batteries included: file browser, Git GUI, process viewer, browser, an editor with language servers, Neovim GUI, VS Code integration
-- Coding agent state tracking and notifications
-- Sandboxed sessions in a Multipass VM that sees only the directory you mount
+- Coding agent status tracking, usage, and notifications
+- Sandboxed sessions in a Multipass VM that sees only the directories you mount
 - LaTeX rendering overlay
-- Single self-contained binary (~20 MB)
 - Interactive, composable shader wallpapers
-- Support for base16/base24 color schemes, dark/light mode
-- Highly configurable
-- tmux-style CLI, REST API, MCP server and agent skill
-- Nix Home-Manager module
+- base16/base24 color schemes, dark and light mode
+- tmux-style CLI, REST API, MCP server, and agent skill
+- Single self-contained binary (~20 MB), and a Nix Home Manager module
 
 ## Install
 
-Release builds cover Apple Silicon macOS, x86-64/ARM64 Linux, and x64/ARM64
-Windows. Windows support is experimental.
+**Desktop app** on macOS:
 
-**Desktop app**:
+```sh
+brew install --cask buntec/btmux/btmux
+```
 
-- macOS: `brew install --cask buntec/btmux/btmux`
-- Linux: install `btmux-desktop-<arch>-unknown-linux-gnu.deb` from [Releases](https://github.com/buntec/btmux/releases/latest).
-- Windows: run `btmux-desktop-<arch>-pc-windows-msvc-setup.exe` from [Releases](https://github.com/buntec/btmux/releases/latest). It installs for the current user, without admin rights.
+On Linux and Windows, get the `.deb` or the setup `.exe` from
+[Releases](https://github.com/buntec/btmux/releases/latest). Windows support is
+experimental.
 
-The macOS app and binary are signed and notarized. The Windows installers are
-unsigned; if SmartScreen blocks one, choose **More info → Run anyway**. See
-[desktop details](desktop/README.md).
-
-**Browser / CLI** on macOS or Linux:
+**Server only**, to use btmux in a browser, on macOS or Linux:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/buntec/btmux/main/scripts/install.sh | bash
 # or: brew install buntec/btmux/btmux
 ```
 
-**Browser / CLI** on Windows: [download the release binary](docs/src/content/docs/start/installation.mdx#server-only) and put it on your `PATH`.
-
-Homebrew, background services, and Home Manager are covered in [Installation](docs/src/content/docs/start/installation.mdx).
+[Installation](https://btmux-dev.github.io/btmux/start/installation/) covers
+Windows, running as a service, upgrading, Nix, and building from source.
 
 ## Quick start
 
-**Desktop app**: open btmux. With no server running, it starts its own and
-connects, with no sign-in. If it finds other btmux servers, it
-[offers to connect to one](desktop/README.md) instead.
+**Desktop app**: open btmux. It starts its own server and connects, with no
+sign-in.
 
-**Browser / CLI**: run `btmux`. It opens `http://127.0.0.1:8004` and prints the
-path of its access token file. Sign in with username `btmux` and the file's
-contents as the password (see [Access tokens](docs/src/content/docs/start/installation.mdx#server-only)).
+**Server**: run `btmux`. It opens `http://127.0.0.1:8004` and prints the path
+of its access token file. Sign in with the username `btmux` and the file's
+contents as the password.
 
-Key bindings start with a prefix, as in tmux, by default `C-a` (Ctrl+A). Press
+Key bindings start with a prefix, as in tmux, by default `Ctrl+A`. Press
 `<prefix> + ?` to see them all, or `<prefix> + :` to open the command palette.
+Coming from tmux? See
+[btmux for tmux users](https://btmux-dev.github.io/btmux/start/tmux/).
 
-## Learn more
+## Contributing
 
-- [Installation](docs/src/content/docs/start/installation.mdx): Windows, services, tokens, remote access, and shell completions
-- [Remote access](docs/src/content/docs/features/remote-access.mdx): serving over HTTPS on your tailnet, QR sign-in, and touch screens
-- [In-place upgrades](docs/src/content/docs/internals/upgrade.md): how `btmux upgrade` keeps shells running across a new binary
-- [Configuration](docs/src/content/docs/configuration/index.md): `~/.config/btmux/config.toml` (`%APPDATA%\btmux\config.toml` on Windows), themes, and profiles
-- [Shader wallpapers](docs/src/content/docs/features/shaders.md): WebGPU generators, parameters, and randomization
-- [btmux for tmux users](docs/src/content/docs/start/tmux.md): where keys and behavior differ from tmux
-- [Comparison](docs/src/content/docs/project/competitors.md): feature matrix of btmux versus similar projects
-- [Editors](docs/src/content/docs/features/editors.md): choosing what `<prefix> + e` and the file browser open
-- [Native editor](docs/src/content/docs/features/native-editor.md): language servers, Git signs, quick open, and Vim mode
-- [Neovim GUI](docs/src/content/docs/features/neovim.md): the Neovim GUI, its plugin, and config tips
-- [VS Code](docs/src/content/docs/features/vscode.md): VS Code over a pane, its server, and sharing desktop settings and extensions
-- [Browser](docs/src/content/docs/features/browser.md): a server-side Chrome or Chromium over a pane
-- [Sandboxed sessions](docs/src/content/docs/features/sandbox.md): shells and agents in a shared Multipass VM
-- [Automation and AI agents](docs/src/content/docs/automation/index.md): tmux-style commands, agent skill, REST API, MCP, and agent notifications
-- [Development](docs/src/content/docs/project/development.md): building and running btmux from a checkout
+[Development](https://btmux-dev.github.io/btmux/project/development/) covers
+building and running btmux from a checkout.
 
 ## License
 
