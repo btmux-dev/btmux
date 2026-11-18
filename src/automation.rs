@@ -834,7 +834,9 @@ mod tests {
                 async move { send_prompt(&state, pane_id, prompt, wait, DEFAULT_WAIT).await },
             )
         };
-        let (left, right) = (send("echo LEFT", false), send("echo RIGHT", false));
+        // Quoted, so only the output ends a line with the word; the tty's echo
+        // of a typed-ahead prompt can precede it on that line.
+        let (left, right) = (send("echo L''EFT", false), send("echo R''IGHT", false));
         assert!(left.await.unwrap().ok().unwrap().is_none());
         assert!(right.await.unwrap().ok().unwrap().is_none());
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -843,7 +845,8 @@ mod tests {
                 .await
                 .ok()
                 .unwrap();
-            if screen.lines().any(|l| l == "LEFT") && screen.lines().any(|l| l == "RIGHT") {
+            let printed = |word| screen.lines().any(|l| l.trim_end().ends_with(word));
+            if printed("LEFT") && printed("RIGHT") {
                 break;
             }
             assert!(Instant::now() < deadline, "{screen}");
