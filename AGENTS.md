@@ -768,8 +768,8 @@ server (`POST /api/panes/{id}/open-editor`, `--kind` overriding the setting): wi
 and broadcasts `open_nvim` to show the surface; otherwise, or outside btmux, it
 execs `$EDITOR`.
 `ClientConfig.editors` lists the editors the server can run (`nvim::available`,
-`vscode::available`); the status bar shows a button for each, after the
-configured one, and the unbound `editor-native`/`editor-neovim`/`editor-vscode` actions toggle
+`vscode::available`); the status bar shows a button for the configured
+one, and the unbound `editor-native`/`editor-neovim`/`editor-vscode` actions toggle
 one regardless of `editor`. A built-in editor's button opens a menu to show or
 hide it or shut its server down (`shut_down_editor`, also the unbound
 `shut-down-neovim`/`shut-down-vscode` actions; Neovim refuses with unsaved

@@ -21,6 +21,10 @@ actions, saved state, and API types can change in any release.
 - The Homebrew tap moved to `btmux-dev/tap`: `brew install btmux-dev/tap/btmux`.
   Existing `buntec/btmux` taps keep updating.
   ([#164](https://github.com/btmux-dev/btmux/pull/164))
+- The status bar shows a button for the configured editor only, not one for
+  each editor the server can run; the palette's `editor-*` actions still
+  toggle the others.
+  ([#165](https://github.com/btmux-dev/btmux/pull/165))
 
 ### Fixed
 

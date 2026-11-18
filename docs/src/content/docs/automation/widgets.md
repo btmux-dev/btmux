@@ -7,10 +7,9 @@ sidebar:
 `btmux pick`, `confirm`, and `input` show a widget at the cursor of the pane
 they run in, for scripts and shell key bindings.
 
-A widget stays open until it is answered or its command is killed. Prefix
-bindings still work, so you can switch away and come back, and it survives a
-reload. When several clients show the pane, each shows the widget and the
-first answer counts.
+Widgets stay open across window switches and reloads until a client answers
+or the command ends. Prefix bindings still work. If several clients show a
+widget, the first answer counts.
 
 | Exit status | Meaning                                                      |
 | ----------- | ------------------------------------------------------------ |
@@ -27,11 +26,9 @@ first answer counts.
 git switch "$(git branch --format='%(refname:short)' | btmux pick --prompt Branch)"
 ```
 
-Items are stdin's lines. A tab character starts a description, which is shown
-and filtered on but not printed.
-
-Typing filters. Up, Down, Tab, `Ctrl+N`, and `Ctrl+P` move, and Enter or a
-click chooses.
+Each line of stdin supplies an item. Text after a tab is a searchable
+description and is omitted from the output. Type to filter, move with Up,
+Down, Tab, `Ctrl+N`, or `Ctrl+P`, and select with Enter or a click.
 
 | Flag                | Effect                                                                                  |
 | ------------------- | --------------------------------------------------------------------------------------- |
@@ -49,8 +46,8 @@ Status 2 lets a key binding fall back to the terminal, as the
 
 ## fzf
 
-`btmux fzf` takes fzf's arguments and shows the same menu whenever the menu
-can do what they ask. Otherwise it runs the real fzf, unchanged:
+`btmux fzf` shows a btmux menu for supported invocations and falls back to
+fzf for the rest.
 
 ```sh
 git switch "$(git branch --format='%(refname:short)' | btmux fzf --height=40% --query main)"
@@ -72,9 +69,8 @@ git switch "$(git branch --format='%(refname:short)' | btmux fzf --height=40% --
 the menu waits for stdin to end before it opens, so a producer that never
 finishes needs the real one.
 
-For programs that run `fzf` themselves, link btmux under that name, ahead of the real
-fzf on your `PATH`. It finds the real one further along, so this is safe outside
-btmux too:
+To use btmux for programs that call `fzf` by name, link it as `fzf` before
+the original on `PATH`. The wrapper finds the original later on `PATH`.
 
 ```sh
 ln -s "$(command -v btmux)" ~/.local/bin/fzf
@@ -93,8 +89,7 @@ btmux confirm "Delete $file?" && rm -- "$file"
 
 `y` and `n` answer at once. Left, Right, and Tab move between the buttons, and
 Enter answers with the selected one, which starts as No unless you pass
-`--default-yes`. A failure is nonzero too, so `&&` also skips the command
-then.
+`--default-yes`. `&&` runs the command only on a yes answer.
 
 ## Text
 

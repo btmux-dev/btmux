@@ -4,14 +4,11 @@ sidebar:
   order: 3
 ---
 
-The native editor is btmux's own editor and the default for `<prefix> + e`. It
-opens [over a pane](editors.md#over-a-pane), with that pane's open files as
-tabs, and any number of panes can have one.
-
-Every client shows the same files and edits the same text, live. Unsaved
-changes live on the server, so they survive a reload and a
-[`btmux upgrade`](../internals/upgrade.md). A file changed on disk reloads,
-unless you have unsaved changes, which get a warning instead.
+`<prefix> + e` opens the native editor by default. Each pane can have its
+own [editor tabs](editors.md#over-a-pane). Clients share files and edits live.
+Unsaved changes survive a client reload and
+[`btmux upgrade`](../internals/upgrade.md). The editor reloads files changed
+on disk or warns you if there are unsaved edits.
 
 <btmux-demo name="editor" label="Demo: opening a file from the shell, quick open, a completion from rust-analyzer, and saving"></btmux-demo>
 
@@ -25,9 +22,9 @@ unless you have unsaved changes, which get a warning instead.
 | `Alt-w`          | Closes the file, asking to save unsaved changes   |
 | Esc twice        | Hides the editor                                  |
 
-Mod is Cmd on macOS and Ctrl elsewhere. With nothing typed, quick open lists
-the pane's open files, then recent ones. A trailing `:42` opens the file on
-that line; `:42` alone moves in the current file.
+Mod is Cmd on macOS and Ctrl elsewhere. Quick open starts with open and
+recent files. Append `:42` to open a file at line 42, or enter `:42` alone
+to jump there in the current file.
 
 ![Quick open in the native editor, listing files that match what was typed](../../../assets/screenshots/editor-quick-open-dark.png)
 ![Quick open in the native editor, listing files that match what was typed](../../../assets/screenshots/editor-quick-open-light.png)
@@ -55,17 +52,17 @@ open editors at once.
 
 ## Language servers
 
-The editor starts a language server for each file it opens, one per server and
-project root: the nearest directory with one of the language's root markers,
-such as `Cargo.toml`, within the Git worktree. All clients share them, and the
-status line shows each one's state and progress.
+The editor shares one instance of each language server per project root across
+clients. The root is the outermost directory in the Git worktree with a marker
+for that language, such as `Cargo.toml`. The status line shows server state
+and progress.
 
-Servers are found on the btmux server's `PATH`, else your shell's. These are
-built in and used when found: rust-analyzer, typescript-language-server,
+btmux searches its own `PATH` and then your shell's `PATH`. Preconfigured
+servers include rust-analyzer, typescript-language-server,
 pyright, gopls, clangd, lua-language-server, nil (Nix), bash-language-server,
 taplo (TOML), just-lsp (justfiles), yaml-language-server, and
-vscode-langservers-extracted (JSON, CSS, HTML). The Health tab of the About dialog lists the configured servers
-and whether btmux finds them.
+vscode-langservers-extracted (JSON, CSS, HTML). The About dialog's Health tab
+lists each configured server and whether btmux found it.
 
 Add or replace languages and servers in `config.toml`:
 
@@ -113,13 +110,11 @@ unsaved, under "Other unsaved files".
 
 ## Git signs
 
-In a Git worktree, the editor marks lines that differ from the index, as
-[gitsigns.nvim](https://github.com/lewis6991/gitsigns.nvim) does: a green bar
-for added lines, blue for changed ones, and a red marker where lines were
-removed. The signs follow your edits and the index as either changes, and the
-status line counts the lines.
-
-Click a sign to preview its hunk inline, with buttons to stage or reset it.
+Git signs mark changes from the index. Following
+[gitsigns.nvim](https://github.com/lewis6991/gitsigns.nvim), green marks
+additions, blue marks edits, and red marks deletions. Signs and status line
+counts update as you edit or stage. Click a sign to preview, stage, or reset
+its hunk.
 
 | Action                                    | Keys                      | Vim           |
 | ----------------------------------------- | ------------------------- | ------------- |

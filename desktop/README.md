@@ -1,33 +1,82 @@
 # btmux desktop
 
-`just desktop-dev` builds the frontend and server, then opens the Tauri app. `just desktop-build` creates a bundle under `desktop/src-tauri/target/release/bundle/` (`macos/btmux.app` on macOS, an NSIS installer in `nsis/` on Windows). To create a macOS disk image as well, run `cd desktop && bun run build -- --bundles dmg` after building the sidecar.
+See the [desktop app guide](../docs/src/content/docs/start/desktop.md) for
+connecting to servers, keeping shells running, and installing the CLI.
 
-On Windows, `setup` and the desktop recipes are Windows PowerShell scripts, so they don't need `sh`. There the app is named "btmux Desktop", so the installer's default per-user location, `%LOCALAPPDATA%\btmux Desktop`, stays apart from btmux's state directory, `%LOCALAPPDATA%\btmux`.
+## Build and test
 
-On every startup, the desktop app looks for running local btmux servers and offers to connect to one. Connecting reuses that server's sessions, shells, and scrollback, including sessions opened in a browser. Closing the desktop app leaves the connected server running, so its PTY sessions survive desktop app restarts as long as that server stays running. If the connected server stops responding for several seconds, the app returns to the picker. The command palette's **desktop: switch server** also returns to it, as does **File → Switch Server…** (⇧⌘O) on macOS. **File → New Window** (⌘N) on macOS, or the palette's **desktop: new window**, opens another window on the picker, so windows can show the same server or different ones; each returns to the picker on its own. Launching the app again on Linux or Windows opens a window in the running app too (release builds only, so a dev build never hands off to an installed app). Windows share the desktop server, which stops when the last window closes unless it keeps running. Pages zoom as in a browser, with **View → Zoom In/Zoom Out/Actual Size** (⌘= or ⌘+, ⌘-, ⌘0) on macOS and Ctrl+=, Ctrl+-, Ctrl+0 elsewhere; the level applies to every window and is kept across restarts.
+| Command | Action |
+| --- | --- |
+| `just desktop-dev` | Build the frontend and server, then open the Tauri app |
+| `just desktop-build` | Create a bundle under `desktop/src-tauri/target/release/bundle/` |
+| `just desktop-check` | Compile the launcher and bundled server |
+| `cargo test --manifest-path desktop/src-tauri/Cargo.toml` | Test registration privacy and authenticated discovery |
+| `just test-desktop-launcher` | Test the startup picker in Playwright without starting a server |
 
-If no server is found, the app starts its bundled server on an available loopback port with the `desktop` profile. The picker also offers **Start desktop server** and **Refresh**. By default this private server stops when the desktop app quits: its session tree is saved, but running shells are not restored on the next launch. It does not publish a registration, so only the app that started it lists it.
+The macOS bundle is `macos/btmux.app`. To also build a disk image, run
+`cd desktop && bun run build -- --bundles dmg` after building the sidecar.
+Windows bundles an installer under `nsis/`. On Windows, `just setup` and the
+desktop recipes use Windows PowerShell. The app installs to
+`%LOCALAPPDATA%\btmux Desktop`, separate from the server's state directory.
 
-The picker shows the desktop server in its own card, either running (with **Connect** and **Stop**) or not running (with **Start desktop server**), and lists servers started with the `btmux` command below it by their command (`btmux`, `btmux --profile work`). Starting the desktop server offers **Stop it when btmux quits** or **Keep it running after btmux quits** (remembered, and used for automatic starts too). Kept running, the bundled server starts detached, in its own session with the profile's saved credential. It registers like a standalone server, so its shells keep running after the app quits, until you stop it or log out, and later launches list it. **Share it on my tailnet** (only for a server kept running) starts it with `--tailscale`, on a port saved in the app's settings folder (`tailnet-port`, chosen below the ports the OS assigns to outgoing connections) so the tailnet URL survives restarts (if another program holds that port, starting fails instead, including an automatic start; start without sharing, or delete the file to choose a new port); the card shows that URL or the last error, and updates while shown. **Stop** asks for confirmation because it closes the server's shells (`POST /api/server/shutdown`). A server that keeps running stays on the app version that started it; when the app is newer, its card shows **Upgrade**, which moves it to the bundled binary in place (`POST /api/server/upgrade`, as `btmux upgrade` does), keeping its shells (macOS and Linux). A server whose handoff version differs from the bundled binary's refuses, with the reason shown in the picker, and must be restarted, as on Windows. It doesn't start at login: for that, install the CLI's service (macOS and Linux) and choose it in the desktop app.
+After changing `app-icon.svg`, run
+`cd desktop && bunx tauri icon app-icon.svg` to regenerate the icons.
 
-Standalone servers publish an owner-only `state.server` registration beside their profile's `state.json` in `$XDG_STATE_HOME/btmux` (or `~/.local/state/btmux`, `%LOCALAPPDATA%\btmux` on Windows). The registration contains the local endpoint and access credential, including credentials supplied through `BTMUX_AUTH_TOKEN`, and is removed on normal shutdown. The app checks each candidate through the authenticated API and ignores stale or inaccessible registrations. Wildcard listeners are reached through loopback; listeners bound only to a non-loopback address are not discovered. Desktop and server launches must share the same state directory. Older servers (v0.0.106 or later) using the default profile and port 8004 can also be found through their owner-only `state.token`; restart older custom-port or named-profile servers with the updated binary to register them.
+## Server discovery
 
-**Remote servers** on other machines are added by address and access token (**Add server** in the picker), for example a server started with `btmux --tailscale` on another tailnet machine. An address without a scheme means HTTPS. The app checks the token through the server's `/api/info` before saving it, and saves addresses and tokens in an owner-only `remote-servers.json` in its settings folder (`~/Library/Application Support/com.btmux.desktop` on macOS). Each picker refresh checks them again in the background, so an unreachable server shows its error without delaying local servers. Saved remote servers keep a fresh launch from starting the desktop server automatically. The server must accept the address: start it with `--tailscale` or `--public-url <address>`.
+Standalone servers write an owner-only `state.server` beside the profile's
+`state.json`. It contains the local endpoint and credential, including a
+credential set through `BTMUX_AUTH_TOKEN`. Normal shutdown removes the file.
+The launcher checks entries through the authenticated API and skips stale or
+inaccessible entries.
 
-Credentials stay in Rust and are installed as HTTP-only cookies before opening the server UI. They are never passed to the picker or placed in URLs. Connecting to an existing server never starts or takes ownership of that server.
+The app and server must share a state directory. Wildcard listeners are
+reached through loopback. Discovery skips listeners bound only to a
+non-loopback address. It can also find servers from v0.0.106 onward running
+the default profile on port 8004 through `state.token`. Restart older
+named-profile or custom-port servers with the updated binary to register them.
 
-`just desktop-check` compiles the launcher and its bundled server. `cargo test --manifest-path desktop/src-tauri/Cargo.toml` checks registration privacy and authenticated discovery. `just test-desktop-launcher` exercises the startup picker with Playwright, including connection choices, refresh, and startup failures, without starting a server.
+The app's server uses the `desktop` profile on an available loopback port. It
+registers only when started with **Keep it running after btmux quits**. In
+that mode it starts detached and uses the profile's saved credential.
+**Share it on my tailnet** saves its port in `tailnet-port` in the app's
+settings folder, below the OS's ephemeral port range. If the port is taken,
+start without sharing or delete the file to pick a new port.
+**Upgrade** posts the bundled binary to `/api/server/upgrade`, as
+`btmux upgrade` does, after rechecking that the server is older, and waits
+for a new instance with the same pid (`src/upgrade_status.rs`, shared with the
+server).
 
-The desktop app and a server it connects to can be different versions. When they differ, the app shows a warning toast on connect, and **About btmux** lists the app version beside the server version and repeats the warning.
+The app validates remote credentials through `/api/info` and stores them in
+an owner-only `remote-servers.json` in the app's settings folder
+(`~/Library/Application Support/com.btmux.desktop` on macOS). The picker checks
+remote servers in the background. Rust installs the credentials as HttpOnly
+cookies before opening the server UI.
 
-While the window is hidden, attention and error notifications from connected servers, local or remote, appear as OS notifications. Clicking one focuses the app and its pane.
+On Linux and Windows, release builds open a new window in the running app
+when launched again. Development builds run separately.
 
-On macOS, the window is transparent with a theme-colored tint, defaulting to 95% opacity. Set `desktop-background-opacity = 0.95` in `config.toml` to adjust the tint from clear (`0`) to opaque (`1`); changes reload live. Linux and Windows windows remain opaque. macOS transparency requires Tauri's `macos-private-api` feature, so this build cannot be distributed through the Mac App Store.
+## Command-line tool
 
-The bundled server is the `btmux` command-line tool, which the app also installs. The Linux `.deb` installs it as `/usr/bin/btmux`. The Windows installer adds a hard link to it, `bin\btmux.exe` in the install folder, to the end of your user `PATH` (open a new terminal to use it), leaving an entry already there in place, and removes it on uninstall; a `btmux.exe` earlier in `PATH` still wins. Installing and uninstalling wait for `btmux` servers running from the install folder to stop, since Windows can't replace or delete a running program. On macOS, choose **btmux → Install Command-Line Tool…**: it links `/usr/local/bin/btmux` to the app's copy, asking for an administrator password since that folder belongs to root, and warns if your shell finds another `btmux` first. It asks before replacing anything there except a link whose target is gone, such as a moved app's. Choosing it again offers to remove the link. The link follows app updates, so it needs the app in a lasting location such as `/Applications`, not a disk image, and isn't offered for the Nix package, which moves on every update. After updating the app, `btmux upgrade` moves a running command-line server to the new version.
+The Windows installer puts a hard link to the bundled server at
+`bin\btmux.exe` and adds that directory to the end of the user's `PATH`,
+keeping an existing entry in place. Install and uninstall wait for running
+copies from the install folder to exit.
 
-Each target architecture needs its own bundled `btmux` binary. On macOS, sign and notarize the bundle before distributing it to other users (release CI does this with Tauri's `APPLE_*` variables).
+On macOS, **Install Command-Line Tool…** asks before replacing an existing
+entry at `/usr/local/bin/btmux` unless it is a stale symlink. The menu also
+warns if another binary comes first on the shell's `PATH`. Nix packages omit
+the menu item because each update moves the app to a new path.
 
-`app-icon.svg` is the desktop icon source. After editing it, run `cd desktop && bunx tauri icon app-icon.svg` to regenerate the bundled icons.
+## Release builds
 
-Release CI uploads a zipped macOS app, Linux `.deb` packages, and Windows NSIS installers (`-setup.exe`, x64 and ARM64) alongside the server binaries. The macOS app and server binary are signed with a Developer ID and notarized (`scripts/macos-sign.sh` for the binary, Tauri for the app, which it staples), using the secrets of the `release` environment listed in `release.yml`. The Windows installers are unsigned, so SmartScreen may ask users to choose **More info → Run anyway**. A failed Windows build doesn't hold back the other release artifacts.
+Bundle a matching server binary for each target architecture. Release CI
+uploads a zipped macOS app, Linux `.deb` packages, and Windows NSIS installers
+(`-setup.exe`, x64 and ARM64). A Windows build failure leaves the other
+artifacts available.
+
+CI signs the macOS app and server with a Developer ID, notarizes both, and
+staples the app. It uses `scripts/macos-sign.sh` for the server and Tauri's
+`APPLE_*` variables for the app. See `release.yml` for the secrets.
+The app uses Tauri's `macos-private-api` feature for transparency, which
+precludes Mac App Store distribution. Windows installers are unsigned.

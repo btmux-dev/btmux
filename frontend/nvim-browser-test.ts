@@ -1024,12 +1024,23 @@ try {
     };
     (window as any).restoreControlSend = () => delete (control as any).send;
   });
-  for (const label of ['Neovim', 'VS Code']) {
-    await page.getByRole('button', { name: label, exact: true }).click();
-    await page.getByRole('menuitem', { name: `Show ${label}` }).click();
-    const open = label === 'Neovim' ? 'nvimOpen' : 'vscodeOpen';
+  // Only the configured editor gets a status bar button; the palette opens the others.
+  const toolbar = page.getByRole('toolbar', { name: 'Terminal controls' });
+  await toolbar.getByRole('button', { name: 'Terminal editor', exact: true }).waitFor();
+  for (const name of ['Neovim', 'VS Code', 'Editor']) {
+    assert.equal(await toolbar.getByRole('button', { name, exact: true }).count(), 0, `no ${name} button`);
+  }
+  for (const [label, open] of [
+    ['Neovim', 'nvimOpen'],
+    ['VS Code', 'vscodeOpen'],
+  ]) {
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press(':');
+    await page.keyboard.type(`editor ${label}`);
+    await page.getByRole('option', { name: `Editor ${label}` }).waitFor();
+    await page.keyboard.press('Enter');
     await page.waitForFunction((open) => (window as any).nvimStore.getState()[open], open);
-    await page.getByRole('button', { name: 'Terminal editor', exact: true }).click();
+    await toolbar.getByRole('button', { name: 'Terminal editor', exact: true }).click();
     await page.waitForFunction((open) => !(window as any).nvimStore.getState()[open], open);
   }
   assert.deepEqual(
@@ -1045,7 +1056,7 @@ try {
     (window as any).nvimStore.setState({ config: (window as any).savedConfig });
   });
   await page.unroute('**/api/vscode');
-  console.log('PASS the pane editor hides a built-in editor over its pane');
+  console.log('PASS the status bar shows only the configured editor, which hides the others over its pane');
 
   // On touch screens, the key bar types into Neovim, not the pane beneath it.
   await rpc('nvim_command', ['only']);

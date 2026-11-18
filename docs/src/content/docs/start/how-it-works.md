@@ -4,35 +4,26 @@ sidebar:
   order: 3
 ---
 
-A few ideas explain most of what btmux does.
-
 ## A server and its clients
 
-Your shells run in a **server**: one background process on one machine. What
-you look at is a **client**: a desktop app window, a browser tab, or a phone.
-As long as the server is running, you can reconnect from any client and
-pick up where you left off.
+The **server** runs your shells. Each desktop window or browser tab is a
+**client**. Reconnect from any client while the server is running to resume
+your session.
 
-The desktop app starts a server for you, so you may never notice it. On a
-remote machine you run the server yourself and
-[connect to it](../features/remote-access.mdx).
+The desktop app can start its own server. You can also
+[connect to a server on another machine](../features/remote-access.mdx).
 
 ## Sessions, windows, panes
 
-The server holds **sessions**. A session has **windows**, like tabs, and a
-window is split into **panes**, each running a shell. One session per project
-is a common setup.
+A **session** groups **windows**, which work like tabs. Each window contains
+one or more **panes**, each with its own shell.
 
 ## What clients share
 
-Several clients can show the same session at once.
-
-- **Shared:** which window and pane are active, the color scheme, and
-  everything on screen. Type in one client and the others see it.
-- **Per client:** which session is shown. Two clients can look at different
-  sessions.
-- **Pane size** follows the client that last typed or clicked in the pane.
-  Others show that size.
+- Clients viewing the same session share its active window, active pane, and
+  terminal output. The color scheme is shared across all clients.
+- Each client chooses its own session.
+- Pane size follows the client that last typed, pasted, or clicked in the pane.
 
 ## What survives
 
@@ -44,18 +35,17 @@ Several clients can show the same session at once.
 | Close the last desktop window (its own server) | Kept   | Lost, unless you [keep it running](desktop.md#keeping-shells-running) | Lost, likewise |
 
 After a restart, each pane starts a fresh shell in the directory it was in.
-[How in-place upgrades work](../internals/upgrade.md) explains the second row.
+See [how in-place upgrades work](../internals/upgrade.md).
 
 ## Over a pane
 
 The [editors](../features/editors.md) and the
-[browser](../features/browser.md) open *over* the active pane: they cover that
-one pane and leave the rest of the window as it is. The
-[file browser](../features/files-and-git.md), the process viewer, and the
-agent view are dialogs over the whole window.
+[browser](../features/browser.md) cover the active pane. The
+[file browser](../features/files-and-git.md), process viewer, and agent view
+open as dialogs.
 
 ## Profiles and access
 
-Every server has an [access token](../configuration/access.md); browsers sign
-in with it, and the desktop app handles it for you. To run separate servers
-with separate sessions, use [profiles](../configuration/profiles.md).
+Browsers sign in with the server's [access token](../configuration/access.md).
+The desktop app handles sign-in for you. Use [profiles](../configuration/profiles.md)
+to run servers with separate sessions.

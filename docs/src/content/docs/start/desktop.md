@@ -4,22 +4,16 @@ sidebar:
   order: 4
 ---
 
-The desktop app is a window onto a btmux server. It can start its own, or
-connect to any server running on this machine or another one.
+The desktop app can start its own server or connect to a local or remote server.
 
 ## Choosing a server
 
-On startup the app looks for btmux servers running on this machine. If it
-finds none, it starts its own and connects. Otherwise it shows a picker:
+If there are no running local servers or saved remote servers, the app starts
+its own server and connects. Otherwise, the picker lists local servers by
+command line and shows your saved remote servers. Use **Start**, **Connect**,
+or **Stop** to manage the desktop server.
 
-- **The desktop server**, the app's own, with **Start**, **Connect**, or
-  **Stop**.
-- **Servers started with the `btmux` command**, listed by their command line
-  (`btmux`, `btmux --profile work`). Connecting shows the same sessions,
-  shells, and scrollback a browser would.
-- **Remote servers** you have added.
-
-Return to the picker with **File → Switch Server…** (⇧⌘O) on macOS, or
+Return to the picker with **File → Switch Server…** (Cmd+Shift+O) on macOS, or
 `desktop: switch server` in the command palette. The app also returns to it
 when the server stops responding.
 
@@ -30,24 +24,23 @@ Closing the app never stops a server it only connected to.
 By default the desktop server stops when the app quits. Its sessions and
 layout are saved, but running programs end.
 
-When starting it, choose **Keep it running after btmux quits** to keep shells
-alive until you stop the server or log out. The choice is remembered. Such a
-server stays on the app version that started it. After an app update, its card
-shows **Upgrade**, which moves it to the new version in place, keeping its
-shells (macOS and Linux). The server refuses if the two versions hand over
-their state differently, and says so; then, as on Windows, stop and start it,
-which closes its shells. It doesn't start at login. For that, install the
-[service](installation.mdx#run-it-as-a-service) and connect to it instead.
+Choose **Keep it running after btmux quits** at server startup to keep shells
+alive until you stop the server or log out. The app remembers your choice.
+The server keeps the app version it started with. When the app is newer, the
+server's card shows **Upgrade**, which moves it to the app's version in place
+and keeps its shells (macOS and Linux). If the two versions can't hand over in
+place, the server refuses and says why. Then stop and start it, which closes
+its shells, as on Windows. For automatic startup at login, connect to a
+[service](installation.mdx#run-it-as-a-service).
 
 **Stop** asks first, because it closes the server's shells.
 
 ## Other machines
 
-**Add server** in the picker takes an address and
-[access token](../configuration/access.md), for example of a server started
-with `btmux --tailscale` on another machine. An address without a scheme means
-HTTPS. The server must accept that address: start it with `--tailscale` or
-`--public-url <address>`.
+In the picker, choose **Add server** and enter its address and
+[access token](../configuration/access.md). The app assumes HTTPS if you omit
+the scheme. Start the remote server with `--tailscale` or `--public-url <address>`
+to allow that address.
 
 To share the desktop server itself, check **Share it on my tailnet** before
 starting it (only for a server kept running). It keeps its port, so its
@@ -58,13 +51,12 @@ appear in URLs.
 
 ## Windows and zoom
 
-**File → New Window** (⌘N) on macOS, or `desktop: new window` in the command
-palette, opens another window on the picker, so windows can show the same
-server or different ones. On Linux and Windows, launching the app again does
-the same.
+**File → New Window** (Cmd+N) on macOS, or `desktop: new window` in the command
+palette, opens the picker in a new window. On Linux and Windows, launch the
+app again to open another window.
 
-Pages zoom as in a browser: ⌘=, ⌘-, and ⌘0 on macOS, Ctrl elsewhere. The
-level applies to every window and is kept across restarts.
+Zoom with Cmd+=, Cmd+-, and Cmd+0 on macOS, or Ctrl elsewhere. All windows
+share the saved zoom level.
 
 ## Notifications
 
@@ -90,8 +82,8 @@ moves a running command-line server to the new version.
 
 ## Versions
 
-The app and a server it connects to can be different versions. When they
-differ, the app warns on connect, and **About btmux** lists both.
+The app warns on connect if its version differs from the server's.
+**About btmux** lists both versions.
 
 ## Transparency
 

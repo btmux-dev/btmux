@@ -5,17 +5,15 @@ sidebar:
   label: "Overview"
 ---
 
-btmux notices Claude Code, Codex, and Gemini CLI running in a pane and tracks
-what each is doing, so you can run several and see at a glance which one needs
-you.
+btmux tracks Claude Code, Codex, and Gemini CLI in your panes so you can see
+which agents need attention.
 
 <btmux-demo name="agents" label="Demo: three agents in split panes, approving a permission request from the agent view, and jumping to a finished agent"></btmux-demo>
 
 ## Setup
 
-Detection works out of the box: btmux finds the agent's process and reads its
-screen. Hooks make it more reliable, and add notifications and completion
-messages. Install them once per agent:
+btmux detects agents by process and screen. Install hooks once per agent for
+more reliable status, notifications, and completion messages.
 
 ```sh
 btmux install-claude-code-hooks
@@ -23,9 +21,9 @@ btmux install-codex-hooks
 btmux install-gemini-cli-hooks
 ```
 
-Each merges into the agent's own settings file and keeps your other settings.
-To see what would be added, use `btmux generate-claude-code-hooks` (or
-`-codex-`, `-gemini-cli-`), which prints the JSON instead.
+The installers merge hooks into the agent's settings. To print the JSON, run
+the corresponding `generate-*-hooks` command, such as
+`btmux generate-claude-code-hooks`.
 
 :::note
 Codex runs hooks in a shared background daemon, which reports every turn to the
@@ -53,14 +51,9 @@ is shown beside the state: `idle · 2 shells, 1 monitor`.
 urgent first: **blocked**, then **done**, **working**, and **idle**. Within a
 group, the agent that has waited longest comes first.
 
-Each agent shows its pane title, what it is asking or reported when it
-finished, how long it has been in its state, and its session, window, and Git
-branch. Click one to go straight to its pane.
-
-To watch agents without leaving the view, click an agent's eye button: its pane
-appears as a live tile beside the list, with its GitHub status and reported
-cost. Tiles are hidden until you show them, and each client remembers which
-ones you chose.
+Each row shows the pane title, agent message, time in state, session, window,
+and Git branch. Click a row to go to its pane. The eye button opens a live
+tile with GitHub status and reported cost. Each client remembers its tiles.
 
 ![The agent view with three agents: working, blocked, and done](../../../assets/screenshots/agent-view-dark.png)
 ![The agent view with three agents: working, blocked, and done](../../../assets/screenshots/agent-view-light.png)
@@ -80,8 +73,7 @@ ones you chose.
 
 ## Notifications
 
-When an agent gets blocked, fails, or finishes, btmux tells you wherever you
-are:
+btmux notifies you when an agent gets blocked, fails, or finishes.
 
 - **A dot** on the pane and its window, in every connected client. Viewing the
   pane clears it everywhere.
@@ -102,10 +94,7 @@ Your own scripts can notify too, with
 
 ## More
 
-- [Usage](usage.md): tokens, cost, and plan limits per agent.
-- [Orchestrating agents](orchestrating.md): prompt agents and wait for them
-  from scripts or other agents.
-- [Sandboxed sessions](../features/sandbox.md): run agents in a VM that sees
-  only one directory.
-- [Status detection](detection.md): how states are decided, and how to report
-  them yourself.
+- [Track tokens, cost, and plan limits](usage.md)
+- [Prompt agents from scripts](orchestrating.md)
+- [Run agents in a sandbox](../features/sandbox.md)
+- [Inspect or report agent state](detection.md)

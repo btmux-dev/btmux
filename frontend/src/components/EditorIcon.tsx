@@ -49,9 +49,3 @@ export function editorButton(editor: Editor | undefined) {
   if (editor === 'pane') return { label: 'Terminal editor', icon: <SquarePen /> };
   return { label: 'Neovim', icon: <NeovimGlyph /> };
 }
-
-/** The toolbar's editors: the configured one, then the others the server can run. */
-export function toolbarEditors(editor: Editor | undefined, available: Editor[] | undefined): Editor[] {
-  const first = editor ?? 'native';
-  return [first, ...(available ?? []).filter((other) => other !== first)];
-}
