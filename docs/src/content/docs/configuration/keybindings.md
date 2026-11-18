@@ -103,3 +103,17 @@ On macOS, panes translate Cmd editing chords as Ghostty does:
 | Option+Left/Right, Option+Backspace | Move and delete by word         |
 
 Set `[terminal] macos-edit-keys = false` to leave Cmd chords to the browser.
+
+## Key repeat on macOS
+
+Holding a letter key on macOS opens the accent menu instead of repeating the
+key, so holding `l` in Vim or `less` stops after one step. A web page can't
+turn this off. The desktop app turns it off for itself; in a browser, turn it
+off for that browser and restart it:
+
+```sh
+defaults write com.google.Chrome ApplePressAndHoldEnabled -bool false
+```
+
+Use `com.apple.Safari` for Safari. If that has no effect, turn it off for
+every app with `defaults write -g ApplePressAndHoldEnabled -bool false`.
