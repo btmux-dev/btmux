@@ -130,7 +130,7 @@ fn rpc_request(method: &str, first: &str, arg: &str) -> Vec<u8> {
 }
 
 /// Atomic creation rejects existing directories and symlinks.
-fn create_private_dir(path: &Path) -> Result<(), String> {
+pub(crate) fn create_private_dir(path: &Path) -> Result<(), String> {
     #[cfg_attr(windows, allow(unused_mut))]
     let mut builder = std::fs::DirBuilder::new();
     #[cfg(unix)]

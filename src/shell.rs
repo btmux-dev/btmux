@@ -157,15 +157,19 @@ impl Dialect {
         format!(" {}{ENTER}", words.join(" "))
     }
 
-    /// Text that opens `path` in `editor`, or under WSL in the shell's
-    /// `$EDITOR`. It ends in `\r`, the byte the Enter key sends.
-    pub fn edit(self, editor: &str, path: &str) -> String {
-        let editor = if self == Self::Wsl {
-            LINUX_EDITOR
-        } else {
-            editor
-        };
-        format!(" {editor} {}\r", self.quote(&self.path(path)))
+    /// A command line that opens `path` in the user's editor.
+    pub fn edit(self, path: &str) -> String {
+        let quoted = self.quote(&self.path(path));
+        match self {
+            Self::Posix | Self::Wsl => format!("{LINUX_EDITOR} {quoted}"),
+            Self::PowerShell | Self::Cmd => {
+                let editor = ["VISUAL", "EDITOR"]
+                    .into_iter()
+                    .find_map(|name| std::env::var(name).ok().filter(|s| !s.is_empty()))
+                    .unwrap_or_else(|| "notepad".into());
+                format!("{editor} {quoted}")
+            }
+        }
     }
 }
 
@@ -379,6 +383,19 @@ mod tests {
         assert_eq!(wsl_path(r"\\wsl.localhost\Ubuntu\home\me"), "/home/me");
         assert_eq!(wsl_path(r"\\WSL$\Ubuntu"), "/");
         assert_eq!(wsl_path("/home/me"), "/home/me");
+    }
+
+    #[test]
+    fn edits_per_dialect() {
+        assert_eq!(
+            Dialect::Posix.edit("/t/a b"),
+            format!("{LINUX_EDITOR} '/t/a b'")
+        );
+        assert_eq!(
+            Dialect::Wsl.edit(r"C:\t\a"),
+            format!("{LINUX_EDITOR} '/mnt/c/t/a'")
+        );
+        assert!(Dialect::PowerShell.edit(r"C:\t\a").ends_with(r" 'C:\t\a'"));
     }
 
     #[test]

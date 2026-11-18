@@ -1,5 +1,5 @@
-// handoff version 20
-type Header = { version: number, listener: number, lock: number | null, sessions: Array<SessionSnapshot>, popups: PopupsHandoff, panes: Array<PaneHeader>, telemetry: TelemetryStore, editor: EditorHandoff, };
+// handoff version 21
+type Header = { version: number, listener: number, lock: number | null, sessions: Array<SessionSnapshot>, popups: PopupsHandoff, panes: Array<PaneHeader>, telemetry: TelemetryStore, editor: EditorHandoff, captures: Captures, };
 type PaneHeader = { id: string, fd: number, pid: number, cols: number, rows: number,
 journal: Array<Event>, title: string | null, cwd: string | null, cwd_remote: boolean, spawn_cwd: string | null, color_reports: boolean, colors: Array<[number, number, number] | null>, kitty: KittyKeyboard,
 pending: number,
@@ -62,3 +62,9 @@ type Disk = { stamp: Stamp | null, hash: bigint | null, };
 type Stamp = { mtime: [number, number] | null, len: bigint, };
 type LineEnding = "lf" | "crlf";
 type DiskStatus = "same" | "changed" | "deleted";
+type Captures = {
+dirs: Array<string>,
+files: Array<string>,
+popups: Array<PopupCapture>, };
+type PopupCapture = { popup: string,
+guest: string | null, path: string, };

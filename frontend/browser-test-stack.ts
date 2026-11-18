@@ -105,6 +105,9 @@ function baseEnv() {
   for (const key of Object.keys(env)) if (key.startsWith('BTMUX_') && key !== 'BTMUX_TEST_BROWSER') delete env[key];
   delete env.ENV;
   delete env.BASH_ENV;
+  // `test-editor` (`test-bin`) is the server's `$EDITOR`.
+  delete env.VISUAL;
+  env.EDITOR = 'test-editor';
   return env;
 }
 

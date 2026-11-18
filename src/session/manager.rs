@@ -801,6 +801,19 @@ impl SessionManager {
         .with_guest(self.guest(runtime))
     }
 
+    /// Where `new_popup_pty` runs a popup over `pane_id`.
+    pub fn popup_target(&self, pane_id: Uuid) -> crate::popup::Target {
+        let guest = self.guest(&self.pane_runtime(pane_id));
+        crate::popup::Target {
+            // As `PtyHandle` decides.
+            dialect: match guest {
+                Some(_) => crate::shell::Dialect::Posix,
+                None => crate::shell::Dialect::of(&self.shell),
+            },
+            guest: guest.map(|guest| guest.instance.clone()),
+        }
+    }
+
     /// A popup's PTY over `pane_id`, in the pane's runtime.
     pub fn new_popup_pty(
         &self,
@@ -1356,72 +1369,6 @@ impl SessionManager {
             session.active_window = session.windows.len() - 1;
         }
         Some(pane_id)
-    }
-
-    /// Write a pane's captured scrollback (clean text supplied by the frontend,
-    /// read from the browser emulator) to a temp file, then open it in the
-    /// user's editor *inside the captured pane's own shell* by injecting the
-    /// command into its PTY input — like `tmux send-keys`. Reusing the live PTY
-    /// (and the already-mounted browser terminal) avoids spinning up a new
-    /// pane/terminal just to view the capture.
-    ///
-    /// The editor is resolved on the backend (`$VISUAL`/`$EDITOR`, else `vi`)
-    /// rather than via shell expansion, because the line is fed to whatever shell
-    /// the pane runs and `${VISUAL:-…}` isn't portable (e.g. fish); under WSL,
-    /// `sh` resolves the Linux one. This assumes
-    /// the pane is sitting at a shell prompt; if a full-screen app is running the
-    /// keystrokes go to that app instead, same caveat as `send-keys`.
-    pub fn capture_pane_to_editor(&self, pane_id: Uuid, content: String) {
-        let Some(pane) = self.find_pane(pane_id) else {
-            return;
-        };
-        // input_tx only has a live receiver once the shell is spawned; the active
-        // pane the user captured always is, but guard so a stray id is a no-op.
-        if !pane.pty.is_spawned() {
-            return;
-        }
-
-        // Unique-ish temp filename: pane id + millis since the epoch.
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0);
-        let path = std::env::temp_dir().join(format!("btmux-capture-{pane_id}-{stamp}.txt"));
-        if let Err(e) = std::fs::write(&path, content.as_bytes()) {
-            tracing::warn!("failed to write capture file {}: {}", path.display(), e);
-            return;
-        }
-
-        // The guest can't see the host's temp dir.
-        if let Some(instance) = pane.pty.guest_instance().map(str::to_string) {
-            let input = pane.pty.input_tx.clone();
-            std::thread::spawn(move || {
-                let guest_path = format!("/tmp/btmux-capture-{pane_id}-{stamp}.txt");
-                match crate::multipass::copy_in(&instance, &path, &guest_path) {
-                    Ok(()) => {
-                        let line = crate::shell::Dialect::Posix
-                            .edit(crate::shell::LINUX_EDITOR, &guest_path);
-                        let _ = input.send(line.into_bytes());
-                    }
-                    Err(error) => {
-                        tracing::warn!("cannot copy the capture into {instance}: {error}")
-                    }
-                }
-                let _ = std::fs::remove_file(&path);
-            });
-            return;
-        }
-
-        let editor = std::env::var("VISUAL")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .or_else(|| std::env::var("EDITOR").ok().filter(|s| !s.is_empty()))
-            .unwrap_or_else(|| if cfg!(windows) { "notepad" } else { "vi" }.to_string());
-
-        // Leading space keeps it out of history in shells honouring that (bash
-        // HISTCONTROL, zsh HIST_IGNORE_SPACE, fish).
-        let line = pane.pty.dialect().edit(&editor, &path.to_string_lossy());
-        let _ = pane.pty.input_tx.send(line.into_bytes());
     }
 
     pub fn switch_window(&mut self, session_id: Uuid, index: i32) {

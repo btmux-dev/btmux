@@ -31,6 +31,18 @@ The editors and the [browser](browser.md) all behave the same way:
   one browser per server; the native editor can be open over any number of
   panes, each with its own files.
 
+## Capturing a pane
+
+`<prefix> + [` (`capture-pane`) saves the active pane's scrollback and screen
+to a temporary file and opens it in the `editor` setting's editor over the
+pane, to search or copy from. Nothing is typed into the pane, so it works
+while an agent or another program runs there. With `"pane"`, `$EDITOR`
+(falling back to `vi`) runs in a [popup](../automation/popups.md) over the
+pane, as it does for captures over the native editor's 16 MiB limit.
+
+A capture is deleted when you close its tab in the native editor, when its
+popup closes, or when the server stops.
+
 ## Opening files from a shell
 
 ```sh

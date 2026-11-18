@@ -31,7 +31,7 @@ use crate::ws::control::ServerMessage;
 use crate::AppState;
 
 /// Bump on any change to the handoff file.
-pub const VERSION: u32 = 20;
+pub const VERSION: u32 = 21;
 const ENV: &str = "BTMUX_HANDOFF";
 
 struct Context {
@@ -64,6 +64,7 @@ struct Header {
     panes: Vec<PaneHeader>,
     telemetry: TelemetryStore,
     editor: EditorHandoff,
+    captures: crate::capture::Captures,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -109,6 +110,7 @@ pub struct Inherited {
     pub panes: Vec<(Uuid, OwnedFd, Handoff)>,
     pub telemetry: TelemetryStore,
     pub editor: EditorHandoff,
+    pub captures: crate::capture::Captures,
 }
 
 impl Inherited {
@@ -122,6 +124,7 @@ impl Inherited {
         let mut mgr = state.write().await;
         let restored = mgr.restore_handoff(self.sessions, self.popups, self.panes);
         mgr.telemetry = self.telemetry;
+        crate::capture::restore(self.captures);
         tracing::info!("upgraded in place with {} session(s)", restored);
         (self.listener, Editor(self.editor))
     }
@@ -222,6 +225,7 @@ pub fn take() -> Result<Option<Inherited>, String> {
         panes,
         telemetry: header.telemetry.restored(),
         editor: header.editor,
+        captures: header.captures,
     }))
 }
 
@@ -489,6 +493,7 @@ fn write(
             .collect(),
         telemetry,
         editor,
+        captures: crate::capture::export(),
     };
     let header = serde_json::to_vec(&header)?;
     let mut out = std::io::BufWriter::new(&mut file);
@@ -652,6 +657,8 @@ mod tests {
             crate::native_editor::buffer::Stamp::decl(&config),
             crate::native_editor::buffer::LineEnding::decl(&config),
             crate::native_editor::buffer::DiskStatus::decl(&config),
+            crate::capture::Captures::decl(&config),
+            crate::capture::PopupCapture::decl(&config),
         ]
         .join("\n");
         // Without doc comments.

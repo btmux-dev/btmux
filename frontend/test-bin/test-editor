@@ -1,0 +1,5 @@
+#!/bin/sh
+# $EDITOR for browser tests: shows the file and exits on Enter.
+cat "$1"
+echo '[test-editor]'
+read -r _

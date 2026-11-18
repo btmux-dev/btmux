@@ -264,6 +264,20 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
             .map_err(|e| e.to_string());
     }
 
+    // Saving the file and opening an editor run off the lock.
+    if let ClientMessage::CapturePane {
+        pane_id,
+        content,
+        editor,
+        folder,
+    } = cmd
+    {
+        if state.read().await.find_pane(pane_id).is_none() {
+            return Err("Pane no longer exists".into());
+        }
+        return crate::capture::open(state, pane_id, content, editor, folder).await;
+    }
+
     if let ClientMessage::KillAgent { pane_id, agent_id } = &cmd {
         return crate::automation::kill_agent(state, *pane_id, *agent_id)
             .await
@@ -519,9 +533,6 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
             split_id,
             ratio,
         } => mgr.resize_split(session_id, split_id, ratio),
-        ClientMessage::CapturePane { pane_id, content } => {
-            mgr.capture_pane_to_editor(pane_id, content)
-        }
         // Handled (and returned) above, before this write lock.
         ClientMessage::RunCommand { .. }
         | ClientMessage::CreateWorktree { .. }
@@ -530,6 +541,7 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         | ClientMessage::SaveConfig { .. }
         | ClientMessage::ResetConfig
         | ClientMessage::WritePaneInput { .. }
+        | ClientMessage::CapturePane { .. }
         | ClientMessage::OpenPopup { .. }
         | ClientMessage::ClosePopup { .. }
         | ClientMessage::KillAgent { .. }
@@ -615,9 +627,6 @@ fn validate_command(
                 .any(|s| s.windows.iter().any(|w| w.id == *window_id)) =>
         {
             return Err("Window no longer exists".into())
-        }
-        CapturePane { pane_id, .. } if mgr.find_pane(*pane_id).is_none() => {
-            return Err("Pane no longer exists".into())
         }
         AcknowledgePane { pane_id } | ResetAgent { pane_id }
             if mgr.find_pane(*pane_id).is_none() =>
@@ -1063,13 +1072,15 @@ pub(crate) enum ClientMessage {
         split_id: Uuid,
         ratio: f32,
     },
-    /// Open a pane's scrollback (clean text read from the browser's terminal
-    /// buffer) in `$EDITOR` inside that pane's own shell. Content is captured
-    /// client-side because only the emulator holds the de-escaped, wrapped
-    /// scrollback.
+    /// Open a pane's text, read from the tab's emulator, over the pane in
+    /// `editor`, the tab's (`pane`: a popup running `$EDITOR`).
     CapturePane {
         pane_id: Uuid,
         content: String,
+        editor: Editor,
+        /// The VS Code workspace to open it in, as for `vscode_open`.
+        #[serde(default)]
+        folder: Option<String>,
     },
     /// Exits the agent with two Ctrl-Cs, unless `agent_id` no longer runs in the pane.
     KillAgent {

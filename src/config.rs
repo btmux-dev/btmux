@@ -574,15 +574,16 @@ impl Appearance {
     }
 }
 
-/// The editor `prefix + e`, the file browser, Git mode, and `btmux open-editor`
-/// open. Unset, it is the native editor.
+/// The editor `prefix + e`, `prefix + [`, the file browser, Git mode, and
+/// `btmux open-editor` open. Unset, it is the native editor.
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub enum Editor {
     /// btmux's own editor.
     Native,
-    /// The pane's foreground Neovim, or `$EDITOR` in its shell.
+    /// The pane's foreground Neovim, or `$EDITOR` in its shell (for
+    /// `prefix + [`, in a popup).
     Pane,
     /// The built-in Neovim.
     #[value(alias = "nvim")]
@@ -888,7 +889,7 @@ pub struct FileConfig {
     /// Sort order for the window list (status bar, choose-tree, switcher).
     #[serde(rename = "window-sort", default)]
     pub window_sort: WindowSort,
-    /// The editor `prefix + e`, the file browser, and Git mode open.
+    /// The editor `prefix + e`, `prefix + [`, the file browser, and Git mode open.
     pub editor: Option<Editor>,
     /// VS Code's server and what it shares with desktop VS Code.
     pub vscode: VscodeConfig,
@@ -1934,11 +1935,12 @@ pub fn generate_config_toml() -> String {
 # "alphabetical" = sorted by name (default).
 # window-sort = "alphabetical"
 
-# The editor prefix + e, the file browser, and Git mode open.
+# The editor prefix + e, prefix + [, the file browser, and Git mode open.
 # "native" = btmux's own editor (default),
 # "neovim" = your Neovim in btmux's GUI (needs Neovim 0.12+),
 # "vscode" = VS Code in the browser,
-# "pane" = the terminal: the pane's running Neovim, else $EDITOR in its shell.
+# "pane" = the terminal: the pane's running Neovim, else $EDITOR in its shell
+#   (prefix + [ runs $EDITOR in a popup).
 # editor = "native"
 
 # How many recently-viewed windows the window-grid (prefix + w) shows as live

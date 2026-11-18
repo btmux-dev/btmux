@@ -437,10 +437,24 @@ pub async fn view(
         }),
         _ => None,
     };
+    let closed = match &op {
+        EditorViewOp::Close { path } => Some(path.clone()),
+        _ => None,
+    };
     let mut mgr = state.write().await;
     let pane = mgr.find_pane_mut(pane_id).ok_or("Pane no longer exists")?;
     pane.editor.apply(op);
     crate::ws::control::broadcast_state(&mgr);
+    if let Some(path) = closed.filter(|path| crate::capture::is_capture(path)) {
+        let shown = mgr.sessions.iter().any(|s| {
+            s.windows
+                .iter()
+                .any(|w| w.panes.iter().any(|p| p.editor.files.contains(&path)))
+        });
+        if !shown {
+            crate::capture::discard(&path);
+        }
+    }
     if let Some(reveal) = reveal {
         let _ = mgr.events().send(serde_json::to_string(&reveal).unwrap());
     }

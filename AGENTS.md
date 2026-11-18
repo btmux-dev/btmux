@@ -41,7 +41,8 @@ split into four `--shard I/N` jobs instead), with Vite's dependency cache built
 first (`vite optimize`) so concurrent stacks don't race to build it, and output
 printed per file as it ends. Stacks put a fake
 `multipass` (`frontend/test-bin`) first on the server's `PATH`, logging its calls
-to the stack's `multipass` dir (`sandbox-browser-test.ts`), so no test starts a VM. Async page predicates must
+to the stack's `multipass` dir (`sandbox-browser-test.ts`), so no test starts a VM;
+its `test-editor` is the server's `$EDITOR`. Async page predicates must
 use `waitForAsync` (`browser-test-utils.ts`): `page.waitForFunction` treats a
 returned Promise as truthy and doesn't wait.
 `just test-browser-surface`, also on demand, covers the browser surface and needs Chrome or Chromium.
