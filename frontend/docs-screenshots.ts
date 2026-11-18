@@ -281,14 +281,15 @@ const below = btmux('split-window', '-t', side, '-v', '-d', '-c', repo);
 const server = btmux('new-window', '-t', 'acme-api', '-n', 'server', '-d', '-c', router);
 const web = btmux('new-session', '-s', 'website', '-n', 'site', '-c', site);
 const agents = [
-  ['orders-api', 'claude', 'working', 'Add pagination to GET /orders'],
-  ['flaky-tests', 'codex', 'blocked', 'Fix the race in tests/server.test.ts'],
-  ['docs', 'claude', 'done', 'Document the PORT variable'],
-].map(([name, agent, state, text]) => ({
+  ['orders-api', 'claude', 'working', 'Add pagination to GET /orders', null],
+  ['flaky-tests', 'codex', 'blocked', 'Fix the race in tests/server.test.ts', 'Approve running cargo test?'],
+  ['docs', 'claude', 'done', 'Document the PORT variable', 'Documented PORT in the README.'],
+].map(([name, agent, state, text, message]) => ({
   name,
   agent,
   state,
   text,
+  message,
   pane: btmux('new-session', '-s', name, '-n', agent, '-c', repo),
 }));
 // The stack's default session.
@@ -315,7 +316,7 @@ for (const agent of agents) {
   const report = await fetch(`${url}/api/panes/${agent.pane}/agent-status`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ state: agent.state, agent: agent.agent, source: 'hook' }),
+    body: JSON.stringify({ state: agent.state, agent: agent.agent, source: 'hook', message: agent.message }),
   });
   assert(report.ok, `agent status: ${report.status}`);
 }
@@ -444,7 +445,13 @@ try {
     );
     await shot(
       'agent-view',
-      () => store('setAgentGridOpen(true)'),
+      async () => {
+        await store('setAgentGridOpen(true)');
+        // Live panes are hidden until shown; the choice persists across schemes.
+        await page.locator('[data-agent-row]').first().waitFor();
+        const showAll = page.getByRole('button', { name: 'Show all', exact: true });
+        if (await showAll.isVisible()) await showAll.click();
+      },
       () => store('setAgentGridOpen(false)'),
       3000,
     );

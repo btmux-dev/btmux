@@ -330,6 +330,10 @@ pub struct PaneSnapshot {
     #[serde(default)]
     #[cfg_attr(test, ts(type = "number | null"))]
     pub agent_id: Option<u64>,
+    /// When the agent entered its current state, in Unix seconds.
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "number | null"))]
+    pub agent_since: Option<u64>,
     #[serde(default)]
     pub unread: Option<PaneAlert>,
     #[serde(default)]

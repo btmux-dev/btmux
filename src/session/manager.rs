@@ -62,6 +62,9 @@ pub struct SessionManager {
     statuses: broadcast::Sender<PaneStatuses>,
     /// Live agent state is runtime-only and is never included in persistence.
     agents: HashMap<Uuid, AgentLifecycle>,
+    /// Each agent pane's shown state and when snapshots first showed it.
+    /// Every state change is broadcast, so that is when it changed.
+    agent_since: std::sync::Mutex<HashMap<Uuid, (AgentState, u64)>>,
     /// The detector's current rules, for automation's own screen checks.
     detector: Option<super::detection::Detector>,
     /// When the detector last scanned screens.
@@ -134,6 +137,7 @@ impl SessionManager {
             events,
             statuses,
             agents: HashMap::new(),
+            agent_since: Default::default(),
             detector: None,
             detection_tick: None,
             next_client: 0,
@@ -1759,10 +1763,33 @@ impl SessionManager {
     }
 
     pub fn all_snapshots(&self) -> Vec<SessionSnapshot> {
-        self.sessions
+        let snapshots = self
+            .sessions
             .iter()
             .map(|s| self.session_snapshot(s))
-            .collect()
+            .collect();
+        // Forget agents that ended or panes that closed.
+        self.agent_since
+            .lock()
+            .unwrap()
+            .retain(|pane_id, _| self.agent_status(*pane_id).is_some());
+        snapshots
+    }
+
+    /// When the pane's agent entered its current state.
+    fn agent_since(&self, pane_id: Uuid) -> Option<u64> {
+        let state = &self.agent_status(pane_id)?.state;
+        let mut since = self.agent_since.lock().unwrap();
+        match since.get(&pane_id) {
+            Some((shown, at)) if shown == state => Some(*at),
+            _ => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs());
+                since.insert(pane_id, (state.clone(), now));
+                Some(now)
+            }
+        }
     }
 
     /// Rebuild the session tree from saved snapshots. Process state is *not*
@@ -2046,6 +2073,7 @@ impl SessionManager {
                                 && p.pty.local_cwd().is_none(),
                             agent_status: self.agent_status(p.id).cloned().unwrap_or_default(),
                             agent_id: self.agent_id(p.id),
+                            agent_since: self.agent_since(p.id),
                             unread: p.unread.clone(),
                             git: p.pty.local_cwd().and_then(|cwd| self.git.lookup(&cwd)),
                             editor: p.editor.clone(),
@@ -2627,6 +2655,45 @@ mod agent_tests {
         assert_eq!(mgr.running_agent_panes(), vec![pane_id]);
         mgr.set_agent_status(pane_id, AgentStatus::default());
         assert!(mgr.running_agent_panes().is_empty());
+    }
+
+    #[tokio::test]
+    async fn agent_since_changes_only_with_the_state() {
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        let mut mgr = SessionManager::new(
+            "/bin/sh".into(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        let session = mgr.create_session(None).await;
+        let pane_id = mgr.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        let since = |mgr: &SessionManager| mgr.all_snapshots()[0].windows[0].panes[0].agent_since;
+        let status = |state, message: &str| AgentStatus {
+            state,
+            agent: Some("custom".into()),
+            source: Some("api".into()),
+            message: Some(message.into()),
+            background: None,
+        };
+        assert_eq!(since(&mgr), None);
+        mgr.set_agent_status(pane_id, status(AgentState::Working, "a"));
+        assert!(since(&mgr).is_some());
+        // Backdate it, as if it had worked a while.
+        mgr.agent_since
+            .lock()
+            .unwrap()
+            .insert(pane_id, (AgentState::Working, 1));
+        mgr.set_agent_status(pane_id, status(AgentState::Working, "b"));
+        assert_eq!(since(&mgr), Some(1));
+        mgr.set_agent_status(pane_id, status(AgentState::Blocked, "b"));
+        assert!(since(&mgr).unwrap() > 1);
+        mgr.set_agent_status(pane_id, AgentStatus::default());
+        assert_eq!(since(&mgr), None);
+        assert!(mgr.agent_since.lock().unwrap().is_empty());
     }
 
     #[cfg(unix)]
