@@ -4,16 +4,13 @@ sidebar:
   order: 7
 ---
 
-`<prefix> + t` shows what is running on the server and what it costs: every
-process and listening port, and how much CPU, memory, and disk each session,
-window, and pane is using. Use it to find the dev server holding a port, or
-the pane whose build is eating the machine.
+`<prefix> + t` opens the process viewer. Use it to find the process holding a
+port or check CPU, memory, and disk usage by session, window, or pane.
 
 ![The process viewer scoped to one session: its processes on the left, and per-pane usage with a listening port on the right](../../../assets/screenshots/process-viewer-dark.png)
 ![The process viewer scoped to one session: its processes on the left, and per-pane usage with a listening port on the right](../../../assets/screenshots/process-viewer-light.png)
 
-It has two sides: a list of processes or ports, and usage per pane. It
-refreshes once a second.
+Processes and usage refresh every second, ports every 3 seconds.
 
 | Key                     | Action                                              |
 | ----------------------- | --------------------------------------------------- |
@@ -48,8 +45,8 @@ The usage side groups processes by session, window, and pane, and sums their
 CPU (100% is one core), memory, disk reads and writes, and listening ports.
 Sessions start folded.
 
-Focus a row there and the list shows only that row's processes and ports,
-until Esc clears it.
+Focus a usage row to filter the list to its processes and ports. Press Esc
+to clear the filter.
 
 A process counts for the pane whose shell started it. A daemon that detaches
 from its shell counts for no pane, as do the built-in editors and browser.

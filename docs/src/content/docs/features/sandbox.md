@@ -4,21 +4,18 @@ sidebar:
   order: 9
 ---
 
-A session can run its shells in a [Multipass](https://multipass.run) Ubuntu VM
-instead of on the server, so coding agents in it see only the directory you
-give them. In the new-session dialog (`<prefix> + C`), choose **Runs on:
-Multipass sandbox**, then a directory to mount (the active pane's worktree by
-default) and a shell (bash, zsh, or fish).
-
-Requires macOS or Linux, and Multipass installed on the server.
+Run shells and coding agents in a [Multipass](https://multipass.run) Ubuntu
+VM with access to mounted host directories. On macOS or Linux, install
+Multipass on the server. Open the new-session dialog (`<prefix> + C`) and
+choose **Multipass sandbox** under **Runs on**. Pick a shell (bash, zsh, or
+fish) and a directory to mount. The active pane's worktree is the default.
 
 ## How it works
 
-All sandboxed sessions share one instance, `btmux-sandbox` (other profiles add
-`-<profile>`). The first sandboxed pane creates it, which downloads an Ubuntu
-image and installs build tools, the three shells, Claude Code, and Codex; this
-takes a few minutes and shows its progress in the pane. Later panes start in
-a second or two, and a stopped instance is started again.
+Sandboxed sessions share one VM per profile, `btmux-sandbox` by default.
+The first pane shows progress while Multipass downloads Ubuntu and installs
+build tools, shells, Claude Code, and Codex. Later panes reuse the VM and
+start it if needed.
 
 The mounted directory appears at the **same path** in the instance, so the
 file browser, Git mode, and the editors work on a sandboxed pane's directory as
@@ -36,8 +33,8 @@ reaches the server on the Multipass network with a token that can only report
 for sandboxed panes: it can't type into panes, read their output, or create
 sessions.
 
-Log in to Claude Code or Codex once in a sandboxed pane. The login stays in
-the instance, so every sandboxed session uses it.
+Log in to Claude Code or Codex once in the VM. Sandboxed sessions share
+that login.
 
 The status bar's box button shows the instance's state, CPUs, memory, and
 disk, and starts, stops, restarts, or deletes it (`multipass delete --purge`),

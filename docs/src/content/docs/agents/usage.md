@@ -4,13 +4,12 @@ sidebar:
   order: 2
 ---
 
-The agent view's **Usage** tab (`<prefix> + a`, then `Tab`) shows what your
-agents consume: your plan's limits on top, and below them tokens, completed
-requests, tool calls, and reported cost over time, per model.
+Open **Usage** in the agent view (`<prefix> + a`, then Tab) to see plan limits
+and per-model totals for tokens, completed requests, tool calls, and reported cost.
 
 ## Collecting usage
 
-Start agents through btmux, and their usage is collected for that pane:
+Launch agents through btmux to track usage by pane.
 
 ```sh
 btmux claude --resume
@@ -18,8 +17,7 @@ btmux codex
 btmux codex exec "Explain this project"
 ```
 
-Every argument after `claude` or `codex` goes to the agent. The wrappers set
-telemetry options for that one run and never edit the agent's config files.
+The wrappers forward arguments and set telemetry options for that run.
 Outside a btmux pane they run the agent unchanged.
 
 ## Reading the charts
@@ -39,12 +37,12 @@ memory: `btmux upgrade` keeps it, and restarting the server clears it.
 
 ## Plan limits
 
-For Claude Code and Codex accounts logged in on the server, the tab shows each
-subscription limit with the percentage used and its reset time. This includes
-use outside btmux. An agent using an API key, or not logged in, isn't listed.
+For Claude Code and Codex accounts logged in on the server, Usage shows the
+percentage used and reset time for each subscription limit, including use outside
+btmux. Agents using an API key, or not logged in, aren't listed.
 
-btmux asks each CLI for the limits, without sending a prompt, and never reads
-a credential. `GET /api/agent-limits` returns the same data.
+btmux reads limits through the CLI without sending a prompt or reading
+credentials. `GET /api/agent-limits` returns the same data.
 
 :::caution
 Both CLI interfaces are undocumented or experimental, so a CLI update can make
@@ -109,8 +107,6 @@ from `codex.tool_result`. Codex's token metrics are ignored. See
 [Codex telemetry configuration](https://learn.chatgpt.com/docs/config-file/config-advanced#observability-and-telemetry).
 
 ### How the wrappers differ
-
-`btmux claude` and `btmux codex` do the same as above, with these details:
 
 - They use the agent executable on `PATH`. On Unix the agent replaces the
   wrapper, keeping its PID, signals, and exit status; Windows runs the agent,

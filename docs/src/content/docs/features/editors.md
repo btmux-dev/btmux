@@ -4,9 +4,9 @@ sidebar:
   order: 2
 ---
 
-`<prefix> + e` opens an editor over the active pane, and the
-[file browser and Git mode](files-and-git.md) open files there. `editor` in
-[`config.toml`](../configuration/index.md) chooses which:
+`<prefix> + e` opens the editor over the active pane. The
+[file browser and Git mode](files-and-git.md) open files in the same editor.
+Choose it with `editor` in [`config.toml`](../configuration/index.md).
 
 | `editor`   | Opens                                                             |
 | ---------- | ----------------------------------------------------------------- |
@@ -15,30 +15,26 @@ sidebar:
 | `"vscode"` | [VS Code](vscode.md) in btmux, with its color scheme and font     |
 | `"pane"`   | The terminal: the pane's running Neovim, else `$EDITOR` in its shell |
 
-With `"pane"`, btmux types into the terminal only when that is safe: if a
-program other than Neovim or the shell is in the foreground, opening a file
-shows an error and leaves that program alone.
+With `"pane"`, opening a file requires Neovim or the shell in the foreground.
+Otherwise, btmux shows an error.
 
 ## Over a pane
 
-The editors and the [browser](browser.md) all behave the same way:
+Editors and the [browser](browser.md) share these controls.
 
 - They cover the active pane; other panes stay visible and usable.
 - Zooming the pane (`<prefix> + z`) makes them fill the window.
 - The same key, or Esc twice quickly, hides them. Pressed from another pane,
   the key moves them there.
-- Every client sees the same editor. There is one Neovim, one VS Code, and
-  one browser per server; the native editor can be open over any number of
-  panes, each with its own files.
+- Clients share one Neovim, one VS Code, and one browser per server. Each
+  pane can have its own native editor, with files shared across clients.
 
 ## Capturing a pane
 
-`<prefix> + [` (`capture-pane`) saves the active pane's scrollback and screen
-to a temporary file and opens it in the `editor` setting's editor over the
-pane, to search or copy from. Nothing is typed into the pane, so it works
-while an agent or another program runs there. With `"pane"`, `$EDITOR`
-(falling back to `vi`) runs in a [popup](../automation/popups.md) over the
-pane, as it does for captures over the native editor's 16 MiB limit.
+`<prefix> + [` (`capture-pane`) opens the pane's screen and scrollback in a
+temporary file using the configured editor. The pane's program keeps running.
+With `editor = "pane"` or a capture over the native editor's 16 MiB limit,
+`$EDITOR` (or `vi`) opens in a [popup](../automation/popups.md).
 
 A capture is deleted when you close its tab in the native editor, when its
 popup closes, or when the server stops.
@@ -55,10 +51,9 @@ and `--kind native|neovim|vscode|pane` overrides it. Outside btmux it runs `$EDI
 
 ## Using both
 
-The status bar has a button for the configured editor. The `editor-native`,
-`editor-neovim`, and `editor-vscode` actions toggle any editor the server can
-run, from the command palette or a
-[`[keys]`](../configuration/keybindings.md) binding.
+The status bar shows a button for the configured editor.
+Use `editor-native`, `editor-neovim`, or `editor-vscode` to toggle one from
+the command palette or a [`[keys]`](../configuration/keybindings.md) binding.
 
-Neovim and VS Code are found on the server's `PATH`, else your shell's (a service's `PATH`
-may be shorter), or for VS Code on macOS in `/Applications`.
+Put `nvim` on the server's `PATH`. See [VS Code server options](vscode.md#server)
+for its executable locations.

@@ -4,13 +4,12 @@ sidebar:
   order: 3
 ---
 
-btmux knows when each agent is working, blocked, done, or idle
-([States](index.md#states)). Scripts, and other agents, can use that to hand
-out work and wait for it, instead of scraping the screen or sleeping.
+Scripts and agents can submit prompts and wait for an agent to reach a
+[reported state](index.md#states).
 
 ## An example
 
-Start an agent on its own branch, give it a task, and wait for the result:
+Start an agent in a worktree, wait for it to go idle, then submit a task.
 
 ```sh
 pane=$(btmux new-worktree fix-flaky-tests)   # a worktree and a window; prints the pane
@@ -45,7 +44,7 @@ btmux wait <pane-id> --state done --state blocked --timeout 1800
 - It returns at once if the agent is already in such a state.
 - It returns `{status, timed_out}`. `status` is null once the agent has
   exited. The command exits 2 on a timeout.
-- A pane with no agent yet is waited on, so a wait can follow launching one.
+- You can start waiting before an agent appears in the pane.
 
 ## Prompting
 
@@ -55,9 +54,8 @@ git diff | btmux prompt <pane-id>            # the prompt from stdin
 btmux prompt --no-wait <pane-id> 'Continue.' # submit and return
 ```
 
-`prompt` pastes the text, which may span lines, pauses briefly, and presses
-Enter. The pause is there because agent input boxes can drop an Enter that
-arrives with the text.
+`prompt` pastes multiline text and pauses before sending Enter so the agent's
+input box has time to process the paste.
 
 By default it then waits for the turn to start (up to 15 s) and to finish, and
 returns `{status, started, timed_out, screen}`. `screen` is the rendered screen
@@ -68,8 +66,8 @@ once output has paused, or null if the pane closed. With `--no-wait`
 
 - **The agent is blocked.** Typed text would answer its dialog. To answer one
   on purpose, use `send-keys`.
-- **The agent is working**, when waiting. The turn that ends next would not be
-  this prompt's.
+- **The agent is working** and the caller requested a wait. The running
+  turn would finish first.
 - **A dialog is visible, or the state is unknown.** For agents tracked by
   their screen, btmux checks the screen again right before pasting and before
   Enter. Gemini CLI and OpenCode are exempt from the unknown-state rule, since

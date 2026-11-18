@@ -13,10 +13,10 @@ directory to a state file:
 ~/.local/state/btmux/state.json
 ```
 
-It follows `$XDG_STATE_HOME`. Running programs and scrollback are not saved:
-after a restart, each pane starts a fresh shell in its saved directory.
-[`btmux upgrade`](../internals/upgrade.md) keeps both, by moving the running
-server to a new binary without a restart.
+The state file follows `$XDG_STATE_HOME`. After a restart, panes start fresh
+shells in their saved directories.
+[`btmux upgrade`](../internals/upgrade.md) preserves running programs and
+scrollback.
 
 ## Profiles
 

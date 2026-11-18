@@ -6,10 +6,8 @@ sidebar:
 
 import { Steps } from "@astrojs/starlight/components";
 
-Your sessions live on the server, so any browser that can reach it can use
-them: another computer, a tablet, a phone. The easiest way to reach it is
-[Tailscale](https://tailscale.com), which gives the server a private HTTPS
-address on your own devices.
+Use [Tailscale](https://tailscale.com) to give your server a private HTTPS
+address you can open from another computer, tablet, or phone.
 
 ## With Tailscale
 
@@ -31,14 +29,13 @@ address on your own devices.
    In the desktop app, check **Share it on my tailnet** when starting a
    [desktop server that keeps running](../start/desktop.md#other-machines).
 
-3. Open the URL it prints, also shown by the status bar's tailnet button, and
-   sign in with the username `btmux` and the
-   [access token](../start/installation.mdx#server-only). Browsers keep the
-   login for 400 days.
+3. Open the URL printed at startup or shown by the status bar's tailnet
+   button. Sign in as `btmux` with the
+   [access token](../start/installation.mdx#server-only). The browser keeps
+   the login for 400 days.
 
-4. To sign in a phone or tablet, open the tailnet button's popover and scan
-   its QR code. It signs that browser in without the token. Each code works
-   once and expires after two minutes.
+4. On a phone or tablet, scan the QR code from the tailnet button to sign in.
+   Each code works once and expires after two minutes.
 
 </Steps>
 
@@ -47,9 +44,8 @@ connect to that URL too.
 
 ### What `--tailscale` does
 
-btmux runs `tailscale serve`, which serves the machine's tailnet name over
-HTTPS with a Tailscale certificate and forwards to btmux. btmux itself stays
-on `127.0.0.1`.
+`tailscale serve` forwards HTTPS requests for the machine's tailnet name to
+btmux on `127.0.0.1`.
 
 - It never replaces another route on that port. If one exists, btmux serves
   locally and says so: remove that route or choose another `--port`.

@@ -4,9 +4,8 @@ sidebar:
   order: 6
 ---
 
-`btmux popup` (alias `display-popup`) runs a program in a terminal over the
-pane, the size of the file browser, and closes it when the program exits. It
-exits with the program's status:
+`btmux popup` (alias `display-popup`) runs a program in a terminal over a
+pane. The popup closes when the program exits and returns its exit status.
 
 ```sh
 btmux popup lazygit
@@ -30,10 +29,9 @@ tmux's size, position, and style flags (`-w`, `-h`, `-x`, `-y`, `-b`, `-B`,
 
 ## On a key
 
-Add a `[[popup]]` table to `config.toml`. Its `key` follows the prefix, as
-under [`[keys]`](../configuration/keybindings.md), and takes the key from any
-action bound to it. The `command` runs through an interactive shell, for the
-`PATH` panes have, in the active pane's directory:
+Add a `[[popup]]` table to `config.toml`. The key follows the prefix and
+replaces any existing binding. The command runs in the pane's directory
+through an interactive shell with the pane's `PATH`.
 
 ```toml
 [[popup]]
@@ -52,14 +50,13 @@ title = "Git" # optional; the command by default
   closes it. A pane has one popup at a time.
 - The close button in its title bar hangs the program up (status 129).
 - [`btmux pick`, `confirm`, and `input`](widgets.md) run in a popup show in
-  it, and pane search (`<prefix> /`) and clipboard pastes go to it.
+  it, and pane search (`<prefix> + /`) and clipboard pastes go to it.
 - Popups of [sandboxed](../features/sandbox.md) panes run in the sandbox, in
   its login shell's environment.
 - A popup opened while a dialog such as Settings or the file browser is open
   waits for it to close.
-- Outside btmux, or if no client shows the pane within 3 s (over ssh, say), the
-  program runs in place instead, so `btmux popup` works in scripts anywhere. A
-  program that can't start exits 127.
+- The program runs in the current terminal outside btmux or if no client
+  shows the pane within 3 s. If it can't start, the command exits 127.
 
 ## API
 

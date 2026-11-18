@@ -4,29 +4,15 @@ sidebar:
   order: 1
 ---
 
-`btmux upgrade` swaps in a new btmux binary without killing your shells. The
-server process turns itself into the new program but keeps the same process ID,
-and passes everything still running over to it.
+`btmux upgrade` replaces the running server binary while keeping shells
+and scrollback.
 
 ## The key trick: `execve`
 
-On Unix, `execve` replaces the program running inside a process without
-creating a new process. The process ID stays the same, and so do any open file
-descriptors that aren't marked close-on-exec. So if btmux execs its own new
-binary:
-
-- **Your shells stay alive.** They're child processes of btmux, and since the
-  process ID doesn't change, they're still its children afterwards.
-- **The PTY connections stay open.** Each pane talks to its shell through a PTY
-  master file descriptor. btmux clears the close-on-exec flag on these, so the
-  new program inherits them.
-- **The listening socket stays open.** Clients can reconnect to the same port
-  right away. No other process can grab the port in between.
-- **The profile lock stays held,** so no other btmux server can take the
-  profile in the meantime.
-
-Open descriptors aren't enough on their own, though. The new program also needs
-the server's in-memory state, which is what the handoff file is for.
+On Unix, `execve` replaces the program in the existing process. The PID
+stays the same, and shells remain children of btmux. btmux clears
+close-on-exec on the PTY masters, listening socket, and profile lock so the
+new binary inherits them. The handoff file carries the server's in-memory state.
 
 ## Step by step
 
@@ -34,7 +20,7 @@ the server's in-memory state, which is what the handoff file is for.
    server through its `state.server` record and sends
    `POST /api/server/upgrade` with its own executable path.
 
-2. **The server checks whether the upgrade is safe:**
+2. **The server checks compatibility.**
    - It runs `<new binary> <server arguments> handoff-version` and compares
      the handoff format number. If the formats differ, or the new binary
      rejects the arguments the server was started with (which the exec passes
@@ -43,7 +29,7 @@ the server's in-memory state, which is what the handoff file is for.
 
 3. **It tells the clients.** Each shows a toast: "Upgrading btmux to X…"
 
-4. **It freezes everything:**
+4. **It pauses the server.**
    - It takes the session-manager write lock and holds it until the exec, so
      nothing can change in the meantime.
    - It quits Neovim with `:qall` and stops VS Code. Those don't survive the
@@ -73,9 +59,8 @@ the server's in-memory state, which is what the handoff file is for.
    file. It then rebuilds sessions and panes and attaches each pane to its
    existing PTY and shell. It never spawns new shells.
 
-8. **Clients reconnect.** Their WebSockets dropped during the exec, so they
-   reconnect as usual, get the replayed journal, and show their terminals
-   exactly as before, with a toast for the new version.
+8. **Clients reconnect.** The exec drops their WebSockets. They reconnect,
+   replay the journal, and show a toast for the new version.
 
 9. **The CLI confirms the result.** It polls `/api/info` until the server
    instance ID changes, then checks that the process ID did _not_ change. A
@@ -100,10 +85,7 @@ the server's in-memory state, which is what the handoff file is for.
 
 ## Keeping the two versions compatible
 
-The old binary writes the handoff file and the new binary reads it, so both
-must agree on its format. `handoff::VERSION` is that agreement. A test records
-the file's exact shape in `src/handoff.schema` and fails if the shape changes
-without a version bump. That stops a new binary from misreading an old server's
-handoff.
+Both binaries must agree on the handoff format. A test compares it against
+`src/handoff.schema` and requires a `handoff::VERSION` bump when it changes.
 
 The implementation lives in [`src/handoff.rs`](../../../../../src/handoff.rs).

@@ -4,15 +4,13 @@ sidebar:
   order: 6
 ---
 
-Every request to a btmux server needs its access token, even on localhost.
-Browsers ask for it once as a password; the desktop app and the `btmux`
-commands handle it for you.
+btmux requires an access token even on localhost. Enter it as the browser
+password. The desktop app and CLI handle it automatically.
 
 ## Token files
 
-Unless
-`BTMUX_AUTH_TOKEN` is set, btmux creates an owner-only `state.token` beside the
-profile's `state.json` and prints its path on startup.
+Unless `BTMUX_AUTH_TOKEN` is set, btmux creates an owner-only `state.token`
+beside the profile's `state.json` and prints its path at startup.
 
 | Server                 | Default token file                      |
 | ---------------------- | --------------------------------------- |
@@ -40,17 +38,15 @@ for API, MCP, and agent-hook clients.
 
 ## Reverse proxies
 
-To serve btmux at a public address, put it behind a reverse proxy that
-terminates HTTPS, and tell btmux that address:
+Terminate HTTPS at the reverse proxy and give btmux the public address.
 
 ```sh
 btmux --public-url https://terminal.example.com
 ```
 
-The proxy must pass the public `Host` header through and forward WebSocket
-upgrades. btmux trusts only the addresses you name: `X-Forwarded-*` headers
-grant nothing. Don't serve it over plain HTTP, which encrypts neither the
-token nor your terminals.
+Preserve the public `Host` header and forward WebSocket upgrades. btmux
+trusts the configured addresses and ignores `X-Forwarded-*` headers for
+that check. Use HTTPS to encrypt the token and terminal traffic.
 
 To reach btmux from your other devices without a proxy, see
 [Remote access](../features/remote-access.mdx).

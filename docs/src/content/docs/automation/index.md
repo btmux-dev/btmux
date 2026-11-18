@@ -5,9 +5,8 @@ sidebar:
   label: "Overview"
 ---
 
-Scripts and agents can drive btmux the same ways you do. Everything here is
-served by the btmux server itself, on the port the UI uses (`127.0.0.1:8004`
-by default).
+The CLI, REST API, and MCP server use the same btmux server as the UI, at
+`127.0.0.1:8004` by default.
 
 | To                                         | Use                                   |
 | ------------------------------------------ | ------------------------------------- |
