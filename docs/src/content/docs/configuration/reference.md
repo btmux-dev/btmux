@@ -242,7 +242,7 @@ Every option with its default, as `btmux generate-config` prints it. Uncomment a
 
 # Language servers for the native editor. Built in: rust-analyzer,
 # typescript-language-server, pyright, gopls, clangd, lua-language-server, nil,
-# bash-language-server, taplo, yaml-language-server, and the
+# bash-language-server, taplo, just-lsp, yaml-language-server, and the
 # vscode-langservers-extracted servers (JSON, CSS, HTML), each used when found
 # on PATH. A table of the same name replaces a built-in one.
 # [native-editor]

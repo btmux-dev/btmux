@@ -722,8 +722,10 @@ pub struct LanguageConfig {
     pub name: String,
     /// The LSP language id; `name` if unset.
     pub language_id: Option<String>,
-    /// File extensions (`rs`) or whole file names (`Makefile`).
+    /// File extensions (`rs`).
     pub file_types: Vec<String>,
+    /// Whole file names (`Makefile`), matched ignoring case.
+    pub file_names: Vec<String>,
     /// Files or directories marking a project root, such as `Cargo.toml`.
     pub roots: Vec<String>,
     pub language_servers: Vec<String>,
@@ -2075,7 +2077,7 @@ pub fn generate_config_toml() -> String {
 
 # Language servers for the native editor. Built in: rust-analyzer,
 # typescript-language-server, pyright, gopls, clangd, lua-language-server, nil,
-# bash-language-server, taplo, yaml-language-server, and the
+# bash-language-server, taplo, just-lsp, yaml-language-server, and the
 # vscode-langservers-extracted servers (JSON, CSS, HTML), each used when found
 # on PATH. A table of the same name replaces a built-in one.
 # [native-editor]

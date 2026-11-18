@@ -63,8 +63,8 @@ status line shows each one's state and progress.
 Servers are found on the btmux server's `PATH`, else your shell's. These are
 built in and used when found: rust-analyzer, typescript-language-server,
 pyright, gopls, clangd, lua-language-server, nil (Nix), bash-language-server,
-taplo (TOML), yaml-language-server, and vscode-langservers-extracted (JSON,
-CSS, HTML). The Health tab of the About dialog lists the configured servers
+taplo (TOML), just-lsp (justfiles), yaml-language-server, and
+vscode-langservers-extracted (JSON, CSS, HTML). The Health tab of the About dialog lists the configured servers
 and whether btmux finds them.
 
 Add or replace languages and servers in `config.toml`:
@@ -82,7 +82,9 @@ args = ["--stdio"]
 config = { basedpyright = { analysis = { typeCheckingMode = "strict" } } }
 ```
 
-`config` answers the server's `workspace/configuration` requests. Changes
+`file-types` are extensions; `file-names` are whole names, such as
+`Makefile`, matched ignoring case. `config` answers the server's
+`workspace/configuration` requests. Changes
 apply to servers started afterward. nil releases since 2025-06-13 format with
 nixfmt by default (Nixpkgs builds in its own); for older ones, or another
 formatter, set `config = { nil = { formatting = { command = ["alejandra"] } } }`
