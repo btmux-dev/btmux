@@ -286,6 +286,7 @@ impl Popups {
             return false;
         };
         let popup = self.open.remove(index);
+        crate::capture::popup_ended(id);
         let now = Instant::now();
         while self
             .ended
@@ -437,6 +438,15 @@ impl std::fmt::Display for OpenError {
             Self::Invalid(error) => f.write_str(error),
         }
     }
+}
+
+/// Where a popup over a pane runs, as its PTY is made.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Target {
+    /// How its shell reads command lines and paths.
+    pub dialect: crate::shell::Dialect,
+    /// Its guest instance; `None` on the host.
+    pub guest: Option<String>,
 }
 
 /// Open a popup over `pane_id`, in `cwd` or else the pane's directory, and

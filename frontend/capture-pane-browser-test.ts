@@ -87,28 +87,42 @@ try {
   assert.deepEqual(await editorFiles(), []);
   console.log('PASS closing a capture deletes it');
 
-  // With `editor = "pane"`, `$EDITOR` runs in a popup, which removes the file after.
+  // With `editor = "pane"`, `$EDITOR` (the stack's `test-editor`) runs in a
+  // popup, and the capture is removed when it ends, however it ends.
   writeFileSync(join(configHome, 'btmux', 'config.toml'), 'editor = "pane"\n');
   await waitForAsync(page, async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     return useStore.getState().config?.editor === 'pane';
   });
+  const dir = dirname(path);
+  const popupShows = (text: string) =>
+    page.waitForFunction(
+      ([sel, text]) => document.querySelector<HTMLElement>(sel)?.innerText.includes(text),
+      [POPUP, text] as const,
+      { timeout: 15_000 },
+    );
+  const captureRemoved = async () => {
+    for (let i = 0; i < 100 && readdirSync(dir).length > 0; i++) await page.waitForTimeout(50);
+    assert.deepEqual(readdirSync(dir), [], 'the popup removed its capture');
+  };
   await capture();
-  await page.waitForFunction(
-    (sel) => document.querySelector<HTMLElement>(sel)?.innerText.includes('capture-marker'),
-    POPUP,
-    { timeout: 15_000 },
-  );
-  assert((await page.locator(POPUP).innerText()).includes('Pane capture'));
+  await popupShows('[test-editor]');
+  const text = await page.locator(POPUP).innerText();
+  assert(text.includes('capture-marker') && text.includes('Pane capture'));
+  assert.equal(readdirSync(dir).length, 1);
   await page.waitForFunction(() => document.activeElement?.closest('[data-popup] [data-pane-terminal]') != null);
-  await page.keyboard.type(':q!');
   await page.keyboard.press('Enter');
   await page.waitForSelector(POPUP, { state: 'detached', timeout: 15_000 });
-  const dir = dirname(path);
-  for (let i = 0; i < 100 && readdirSync(dir).length > 0; i++) await page.waitForTimeout(50);
-  assert.deepEqual(readdirSync(dir), [], 'the popup removed its capture');
-  assert(!(await screen()).includes('capture-2'), 'nothing was typed into the pane');
+  await captureRemoved();
   console.log('PASS capture-pane with editor = "pane" runs $EDITOR in a popup');
+
+  await capture();
+  await popupShows('[test-editor]');
+  await page.locator(POPUP).getByRole('button', { name: 'Close popup' }).click();
+  await page.waitForSelector(POPUP, { state: 'detached', timeout: 15_000 });
+  await captureRemoved();
+  assert(!(await screen()).includes('btmux-capture'), 'nothing was typed into the pane');
+  console.log('PASS closing the popup removes its capture');
 
   assert.deepEqual(errors, []);
 } finally {

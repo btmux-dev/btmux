@@ -786,7 +786,11 @@ export type ClientMessage = { "type": "split", session_id: string, pane_id: stri
 /**
  * Local when absent.
  */
-runtime: Runtime | null, } | { "type": "rename_session", session_id: string, name: string, } | { "type": "kill_session", id: string, } | { "type": "resize_split", session_id: string, split_id: string, ratio: number, } | { "type": "capture_pane", pane_id: string, content: string, editor: Editor, } | { "type": "kill_agent", pane_id: string, agent_id: number, } | { "type": "write_pane_input", session_id: string, pane_id: string, text: string, } | { "type": "open_popup", pane_id: string, command: string, title: string | null, } | { "type": "close_popup", id: string, } | { "type": "open_file", pane_id: string, path: string | null, line: number | null, } | { "type": "change_directory", pane_id: string, path: string, } | { "type": "nvim_open", path: string, line: number | null, } | { "type": "vscode_open", path: string, line: number | null,
+runtime: Runtime | null, } | { "type": "rename_session", session_id: string, name: string, } | { "type": "kill_session", id: string, } | { "type": "resize_split", session_id: string, split_id: string, ratio: number, } | { "type": "capture_pane", pane_id: string, content: string, editor: Editor,
+/**
+ * The VS Code workspace to open it in, as for `vscode_open`.
+ */
+folder: string | null, } | { "type": "kill_agent", pane_id: string, agent_id: number, } | { "type": "write_pane_input", session_id: string, pane_id: string, text: string, } | { "type": "open_popup", pane_id: string, command: string, title: string | null, } | { "type": "close_popup", id: string, } | { "type": "open_file", pane_id: string, path: string | null, line: number | null, } | { "type": "change_directory", pane_id: string, path: string, } | { "type": "nvim_open", path: string, line: number | null, } | { "type": "vscode_open", path: string, line: number | null,
 /**
  * The workspace of the window to open it in; all windows without one.
  */

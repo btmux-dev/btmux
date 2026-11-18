@@ -130,7 +130,7 @@ fn rpc_request(method: &str, first: &str, arg: &str) -> Vec<u8> {
 }
 
 /// Atomic creation rejects existing directories and symlinks.
-fn create_private_dir(path: &Path) -> Result<(), String> {
+pub(crate) fn create_private_dir(path: &Path) -> Result<(), String> {
     #[cfg_attr(windows, allow(unused_mut))]
     let mut builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
@@ -144,18 +144,7 @@ pub(crate) struct PrivateDir(PathBuf);
 
 impl PrivateDir {
     pub(crate) fn new() -> Result<Self, String> {
-        Self::named("btmux-")
-    }
-
-    /// A new directory in the temp dir whose name starts with `prefix`.
-    pub(crate) fn named(prefix: &str) -> Result<Self, String> {
-        let name = format!("{prefix}{}", uuid::Uuid::new_v4().simple());
-        Self::create(std::env::temp_dir().join(name))
-    }
-
-    /// Take over removing an existing directory.
-    pub(crate) fn adopt(path: PathBuf) -> Self {
-        Self(path)
+        Self::create(std::env::temp_dir().join(format!("btmux-{}", uuid::Uuid::new_v4().simple())))
     }
 
     fn create(path: PathBuf) -> Result<Self, String> {

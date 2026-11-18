@@ -765,6 +765,19 @@ impl SessionManager {
         .with_guest(self.guest(runtime))
     }
 
+    /// Where `new_popup_pty` runs a popup over `pane_id`.
+    pub fn popup_target(&self, pane_id: Uuid) -> crate::popup::Target {
+        let guest = self.guest(&self.pane_runtime(pane_id));
+        crate::popup::Target {
+            // As `PtyHandle` decides.
+            dialect: match guest {
+                Some(_) => crate::shell::Dialect::Posix,
+                None => crate::shell::Dialect::of(&self.shell),
+            },
+            guest: guest.map(|guest| guest.instance.clone()),
+        }
+    }
+
     /// A popup's PTY over `pane_id`, in the pane's runtime.
     pub fn new_popup_pty(
         &self,
@@ -1758,8 +1771,6 @@ impl SessionManager {
                 )
                 .with_guest(self.guest(runtime));
                 let mut pane = Pane::new(p.id, pty);
-                // Captures survive an upgrade, not a restart.
-                crate::capture::adopt(&p.editor.files);
                 pane.editor = p.editor;
                 pane
             })

@@ -269,12 +269,13 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         pane_id,
         content,
         editor,
+        folder,
     } = cmd
     {
         if state.read().await.find_pane(pane_id).is_none() {
             return Err("Pane no longer exists".into());
         }
-        return crate::capture::open(state, pane_id, content, editor).await;
+        return crate::capture::open(state, pane_id, content, editor, folder).await;
     }
 
     if let ClientMessage::KillAgent { pane_id, agent_id } = &cmd {
@@ -1077,6 +1078,9 @@ pub(crate) enum ClientMessage {
         pane_id: Uuid,
         content: String,
         editor: Editor,
+        /// The VS Code workspace to open it in, as for `vscode_open`.
+        #[serde(default)]
+        folder: Option<String>,
     },
     /// Exits the agent with two Ctrl-Cs, unless `agent_id` no longer runs in the pane.
     KillAgent {

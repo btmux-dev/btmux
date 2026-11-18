@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { editorShown, findPaneState, nativeEditorInput, nativeEditorOver, useStore } from '../state/store';
 import { dispatchKey } from '../lib/paneTerminal';
 import { QUICK_OPEN_NEEDS_FOLDER, runEditorCommand, runEditorCommandWhenShown } from '../lib/nativeEditor/registry';
-import { workspaceFolder } from '../lib/vscodeFolder';
+import { findPane, vscodeFolderFor, workspaceFolder } from '../lib/vscodeFolder';
 import { ClientMessage } from '../protocol/messages';
 import type { Appearance } from '../state/types';
 import { Overlay, PickerItem } from '../state/types';
@@ -335,7 +335,10 @@ export function runAction(
       if (!term) break;
       const content = term.readLines().join('\n').replace(/\n+$/, '') + '\n';
       const editor = store.config?.editor ?? 'native';
-      send({ type: 'capture_pane', pane_id: paneId, content, editor });
+      // VS Code's window, as `openInEditor` picks it.
+      const folder =
+        editor === 'vscode' ? vscodeFolderFor(findPane(store.allSessions, paneId), store.vscodeFolder) : null;
+      send({ type: 'capture_pane', pane_id: paneId, content, editor, folder });
       if (editor === 'native') store.hideEditorSurfaces(paneId);
       else if (editor === 'neovim') store.setNvimOpen(true, paneId);
       else if (editor === 'vscode') store.setVscodeOpen(true, paneId);

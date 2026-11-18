@@ -148,11 +148,14 @@ mod agent_status_tests {
 
     #[test]
     fn drops_pane_captures_from_saved_editors() {
+        let _lock = crate::capture::TEST_LOCK.lock().unwrap();
         let pane_id = Uuid::new_v4();
-        let temp = crate::fs_ops::client_path(
-            &crate::native_editor::file_ops::resolve_new(&std::env::temp_dir()).unwrap(),
-        );
-        let capture = format!("{temp}/btmux-capture-1/capture-1.txt");
+        let capture = crate::capture::save_for_test("text\n");
+        // Named like one, but not made by this server.
+        let lookalike = std::path::Path::new(&capture)
+            .with_file_name("capture-0.txt")
+            .to_string_lossy()
+            .into_owned();
         let snapshots = vec![SessionSnapshot {
             id: Uuid::new_v4(),
             name: "test".to_string(),
@@ -171,8 +174,8 @@ mod agent_status_tests {
                     git: None,
                     editor: crate::session::PaneEditor {
                         shown: true,
-                        files: vec!["/src/a.rs".into(), capture.clone()],
-                        active: Some(capture),
+                        files: vec!["/src/a.rs".into(), lookalike.clone(), capture.clone()],
+                        active: Some(capture.clone()),
                     },
                 }],
                 active_pane: 0,
@@ -184,9 +187,9 @@ mod agent_status_tests {
         let restored: Vec<SessionSnapshot> =
             serde_json::from_str(&serialize_snapshots(&snapshots).unwrap()).unwrap();
         let editor = &restored[0].windows[0].panes[0].editor;
-        assert_eq!(editor.files, ["/src/a.rs"]);
-        assert_eq!(editor.active.as_deref(), Some("/src/a.rs"));
+        assert_eq!(editor.files, ["/src/a.rs".to_string(), lookalike]);
         assert!(editor.shown);
+        crate::capture::discard(&capture);
     }
 
     #[test]

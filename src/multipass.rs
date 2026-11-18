@@ -436,6 +436,11 @@ fn parse_cloud_init_status(output: &str) -> Option<String> {
 
 /// Copy a host file into the instance, owner-only. Streamed, since snap
 /// Multipass can't read the host's /tmp or hidden directories.
+/// Remove the guest file `path`.
+pub fn remove_in(instance: &str, path: &str) -> Result<(), String> {
+    run(&["exec", instance, "--", "rm", "-f", "--", path]).map(|_| ())
+}
+
 pub fn copy_in(instance: &str, host: &Path, guest: &str) -> Result<(), String> {
     let file = std::fs::File::open(host).map_err(|e| format!("{}: {e}", host.display()))?;
     write_in(instance, guest, file.into())

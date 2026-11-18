@@ -157,14 +157,11 @@ impl Dialect {
         format!(" {}{ENTER}", words.join(" "))
     }
 
-    /// A command line that opens `path` in the user's editor and, but on
-    /// Windows, removes it after.
+    /// A command line that opens `path` in the user's editor.
     pub fn edit(self, path: &str) -> String {
         let quoted = self.quote(&self.path(path));
         match self {
-            Self::Posix | Self::Wsl => {
-                format!(r#"sh -c '${{VISUAL:-${{EDITOR:-vi}}}} "$1"; rm -f "$1"' sh {quoted}"#)
-            }
+            Self::Posix | Self::Wsl => format!("{LINUX_EDITOR} {quoted}"),
             Self::PowerShell | Self::Cmd => {
                 let editor = ["VISUAL", "EDITOR"]
                     .into_iter()
@@ -389,12 +386,15 @@ mod tests {
     }
 
     #[test]
-    fn edits_and_removes_captures() {
+    fn edits_per_dialect() {
         assert_eq!(
             Dialect::Posix.edit("/t/a b"),
-            r#"sh -c '${VISUAL:-${EDITOR:-vi}} "$1"; rm -f "$1"' sh '/t/a b'"#
+            format!("{LINUX_EDITOR} '/t/a b'")
         );
-        assert!(Dialect::Wsl.edit(r"C:\t\a").ends_with(" sh '/mnt/c/t/a'"));
+        assert_eq!(
+            Dialect::Wsl.edit(r"C:\t\a"),
+            format!("{LINUX_EDITOR} '/mnt/c/t/a'")
+        );
         assert!(Dialect::PowerShell.edit(r"C:\t\a").ends_with(r" 'C:\t\a'"));
     }
 
