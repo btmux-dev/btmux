@@ -47,6 +47,7 @@ actions, saved state, and API types can change in any release.
 
 ### Fixed
 
+- An agent notification's **View pane** button closes its toast.
 - Option chords in the native editor on macOS, such as `Shift+Option+F` to
   format.
   ([#169](https://github.com/btmux-dev/btmux/pull/169))
