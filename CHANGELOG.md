@@ -8,6 +8,8 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+## [0.0.208] - 2026-11-18
+
 ### Added
 
 - A documentation site with a desktop walkthrough and references for commands
