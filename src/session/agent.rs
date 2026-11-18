@@ -20,6 +20,13 @@ fn next_incarnation() -> u64 {
     NEXT_INCARNATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Wall-clock seconds, which clients compare with their own clocks.
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
 /// Names a tool call across its permission and completion hooks.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ToolCall {
@@ -268,6 +275,8 @@ pub struct AgentLifecycle {
     blocked_tool: Option<ToolCall>,
     /// Changes whenever another agent instance takes over this lifecycle.
     incarnation: u64,
+    /// When this instance entered its state, in Unix seconds.
+    pub(super) since: u64,
     /// Identity reported by hooks (may be a wrapper's child).
     process: Option<AgentProcess>,
     /// Identity selected by the process scan; also keys the manifest.
@@ -317,9 +326,18 @@ impl AgentLifecycle {
     /// Keeps the observed agent of an active `previous` lifecycle, so its
     /// background work stays shown.
     pub fn explicit(mut status: AgentStatus, previous: Option<&Self>, now: Instant) -> Self {
+        // A repeated report keeps the state's age.
+        let since = previous
+            .filter(|previous| {
+                !previous.ended
+                    && previous.status.state == status.state
+                    && previous.status.agent == status.agent
+            })
+            .map(|previous| previous.since);
         let previous = previous.filter(|previous| previous.scans_screen());
         status.background = previous.and_then(|previous| previous.status.background.clone());
         let mut lifecycle = Self::new(status, Authority::Explicit, now);
+        lifecycle.since = since.unwrap_or(lifecycle.since);
         if let Some(previous) = previous {
             lifecycle.observed = previous.observed;
             lifecycle.observed_name = previous.observed_name.clone();
@@ -366,6 +384,7 @@ impl AgentLifecycle {
             turn_complete: false,
             blocked_tool: None,
             incarnation: next_incarnation(),
+            since: unix_now(),
             process: None,
             observed: None,
             observed_name: None,
@@ -449,6 +468,14 @@ impl AgentLifecycle {
             .filter(|_| self.reads_screen())
     }
 
+    /// Starts a new age when the state changes.
+    pub fn set_state(&mut self, state: AgentState) {
+        if self.status.state != state {
+            self.status.state = state;
+            self.since = unix_now();
+        }
+    }
+
     pub fn blocked_tool(&self) -> Option<&ToolCall> {
         self.blocked_tool.as_ref()
     }
@@ -497,7 +524,7 @@ impl AgentLifecycle {
         self.status.background = None;
         self.program_suspended |= self.authority == Authority::Program;
         if self.authority != Authority::Explicit {
-            self.status.state = AgentState::Unknown;
+            self.set_state(AgentState::Unknown);
             self.status.source = Some("process".into());
             self.status.message = None;
             self.authority = Authority::Process;
@@ -543,7 +570,7 @@ impl AgentLifecycle {
             }
         }
         self.pending_screen = None;
-        self.status.state = state;
+        self.set_state(state);
         self.status.source = Some("screen".into());
         self.status.message = None;
         self.authority = Authority::Screen;
@@ -629,7 +656,7 @@ impl AgentLifecycle {
                 let (state, message) = program_state(summary);
                 // Idle does not acknowledge an unread completion.
                 if !(previous.state == AgentState::Done && state == AgentState::Idle) {
-                    self.status.state = state;
+                    self.set_state(state);
                     self.status.message = message;
                 }
                 self.status.source = Some(PROGRAM_SOURCE.into());
@@ -642,7 +669,7 @@ impl AgentLifecycle {
                 self.last_seen = now;
             }
             None if self.authority == Authority::Program => {
-                self.status.state = AgentState::Unknown;
+                self.set_state(AgentState::Unknown);
                 self.status.message = None;
                 self.status.source = self.observed.is_some().then(|| "process".into());
                 self.authority = Authority::Process;
@@ -816,6 +843,7 @@ impl AgentLifecycle {
         }
 
         let previous = self.status.clone();
+        let incarnation = self.incarnation;
         self.last_seen = now;
         self.ended = false;
         if different_session || restarted {
@@ -825,6 +853,7 @@ impl AgentLifecycle {
             };
             self.process = report.process;
             self.incarnation = next_incarnation();
+            self.since = unix_now();
             self.turn_id = None;
             self.turn_complete = false;
             self.blocked_tool = None;
@@ -900,7 +929,7 @@ impl AgentLifecycle {
         let asserted = asserted
             .filter(|_| self.authority != Authority::Program || different_session || restarted);
         if let Some((state, message)) = asserted {
-            self.status.state = state;
+            self.set_state(state);
             self.status.message = message;
             self.status.source = report.source;
             self.authority = Authority::Hook;
@@ -908,7 +937,8 @@ impl AgentLifecycle {
             // A new instance takes over from a suspended program too.
             self.program_suspended &= !(different_session || restarted);
         }
-        Some(self.status != previous)
+        // A replacement is news even in the same state: it starts a new age.
+        Some(self.status != previous || self.incarnation != incarnation)
     }
 
     fn retire_turn(&mut self) {
@@ -937,6 +967,7 @@ impl AgentLifecycle {
     pub fn end(&mut self, now: Instant) {
         self.ended_process = self.observed.or(self.process);
         self.status = AgentStatus::default();
+        self.since = unix_now();
         self.authority = Authority::Process;
         self.named_by_report = false;
         self.named_by_program = false;
@@ -1310,7 +1341,8 @@ mod tests {
         let mut clear = report(AgentEvent::SessionStart, "cleared", None);
         clear.process = Some(wrapped);
         clear.ancestors = vec![wrapper];
-        assert_eq!(agent.apply(clear, 1, now), Some(false));
+        // A new instance, so clients learn its id and age.
+        assert_eq!(agent.apply(clear, 1, now), Some(true));
         assert!(agent.matches_session(Some("cleared")));
     }
 

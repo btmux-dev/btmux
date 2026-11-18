@@ -397,20 +397,38 @@ try {
   await replaysShown(page, 4);
   await pressAndExpect('1', rowIds[0]);
 
-  // Clicking a row goes to its pane, shown or not.
-  const target = agents.find((agent) => agent.id === rowIds[3])!;
-  const session = await page.evaluate(async (pane) => {
-    const { useStore } = await import('/src/state/store.tsx' as string);
-    return useStore
-      .getState()
-      .allSessions.find((s: any) => s.windows.some((w: any) => w.panes.some((p: any) => p.id === pane))).name as string;
-  }, target.id);
-  await page.locator(`[data-agent-row="${target.id}"]`).click({ position: { x: 60, y: 12 } });
-  await page.waitForURL(new RegExp(`/s/${session}\\b`), { timeout: 5000 });
-  await page.locator('dialog[open]').waitFor({ state: 'detached', timeout: 5000 });
-  await setOpen(page, true);
-  await replaysShown(page, 4);
-  await pressAndExpect('1', rowIds[0]);
+  // Clicking a row goes to its pane, shown or not; so does Enter on a focused row,
+  // which arrows keep on the selected one.
+  const sessionOf = (pane: string) =>
+    page.evaluate(async (pane) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      return useStore
+        .getState()
+        .allSessions.find((s: any) => s.windows.some((w: any) => w.panes.some((p: any) => p.id === pane)))
+        .name as string;
+    }, pane);
+  const leavesFor = async (pane: string, go: () => Promise<unknown>) => {
+    const session = await sessionOf(pane);
+    await go();
+    await page.waitForURL(new RegExp(`/s/${session}\\b`), { timeout: 5000 });
+    await page.locator('dialog[open]').waitFor({ state: 'detached', timeout: 5000 });
+    await setOpen(page, true);
+    await replaysShown(page, 4);
+    await pressAndExpect('1', rowIds[0]);
+  };
+  await leavesFor(rowIds[3], () =>
+    page.locator(`[data-agent-row="${rowIds[3]}"]`).click({ position: { x: 60, y: 12 } }),
+  );
+  await leavesFor(rowIds[1], async () => {
+    await page.locator(`[data-agent-row="${rowIds[0]}"] button:not([aria-pressed])`).focus();
+    await pressAndExpect('ArrowDown', rowIds[1]);
+    await waitForAsync(
+      page,
+      (id) => document.activeElement?.closest('[data-agent-row]')?.getAttribute('data-agent-row') === id,
+      rowIds[1],
+    );
+    await page.keyboard.press('Enter');
+  });
 
   // Reconnecting mirrors replay old sizes without moving tiles.
   await watchLayouts(page);

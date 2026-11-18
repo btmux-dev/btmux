@@ -140,6 +140,13 @@ export function paneModelNames(pane: AgentTelemetry): { agent: string; models: s
 
 export const usageTotal = (buckets: UsageBucket[]) =>
   buckets.reduce((total, bucket) => addUsage(total, bucket.usage), emptyUsage());
+/** A pane's usage in minutes the server still retains at `now`, which `totals` lags until its next update. */
+export const recentUsage = (pane: AgentTelemetry, now: number) =>
+  usageTotal(
+    pane.models.flatMap((model) =>
+      model.buckets.filter((bucket) => bucket.timestamp + 60 > now - USAGE_HISTORY_SECONDS),
+    ),
+  );
 export const formatTokens = (value: number) =>
   new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(value);
 export const formatCost = (value: number | null) =>

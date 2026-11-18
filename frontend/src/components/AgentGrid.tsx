@@ -32,7 +32,7 @@ import { AGENTS } from './AgentIcon';
 import { AGENT_DOT_VARIANT } from './AgentNavItem';
 import { GithubBadge } from './GithubBadge';
 import { AGENT_GROUP_LABELS, formatSince, groupAgents } from '../lib/agentGroups';
-import { formatTokens } from '../lib/agentUsage';
+import { formatTokens, recentUsage } from '../lib/agentUsage';
 import { MirrorPane } from './MirrorPane';
 import { KeyHint } from './KeyHint';
 import { usePressHint } from '../hooks/usePressHint';
@@ -96,7 +96,7 @@ function buildEntries(
 
 const paneLabel = (entry: AgentPaneEntry) =>
   entry.paneTitle ||
-  (entry.agentStatus.agent && AGENTS.get(entry.agentStatus.agent)?.name) ||
+  (entry.agentStatus.agent && (AGENTS.get(entry.agentStatus.agent)?.name ?? entry.agentStatus.agent)) ||
   `pane ${entry.paneIndex + 1}`;
 
 /** What the agent says it is doing or waiting on. */
@@ -352,6 +352,18 @@ export function AgentGrid({ send }: Props) {
   );
   const selected = ordered[selectedIdx];
 
+  // Keeps the selection in view, and focus on its row when a row has focus, so Enter opens it.
+  // By id: updates rebuild entries, and must not scroll the list back.
+  const selectedPane = selected?.paneId;
+  useEffect(() => {
+    if (!open || !selectedPane) return;
+    const row = dialogRef.current?.querySelector<HTMLElement>(`[data-agent-row="${selectedPane}"]`);
+    if (!row) return;
+    row.scrollIntoView({ block: 'nearest' });
+    const focused = document.activeElement?.closest('[data-agent-row]');
+    if (focused && focused !== row) row.querySelector<HTMLElement>('button:not([aria-pressed])')?.focus();
+  }, [open, selectedPane]);
+
   // SessionPane refocuses the active pane on close.
   const cancel = () => setOpen(false);
 
@@ -469,8 +481,9 @@ export function AgentGrid({ send }: Props) {
   const allShown = shown.length === entries.length;
   const number = (entry: AgentPaneEntry) => ordered.indexOf(entry);
   const usage = (entry: AgentPaneEntry) => {
-    const totals = telemetry[entry.paneId]?.totals;
-    if (!totals) return null;
+    const pane = telemetry[entry.paneId];
+    if (!pane) return null;
+    const totals = recentUsage(pane, now);
     const tokens = totals.input_tokens + totals.output_tokens;
     const parts = [
       totals.cost_usd != null && formatCost(totals.cost_usd),
@@ -707,7 +720,7 @@ export function AgentGrid({ send }: Props) {
                       <GithubBadge status={status} size="sm" />
                     ) : (
                       entry.git?.branch && (
-                        <Text type="supporting" color="secondary" maxLines={1} className="btm-mono shrink-0">
+                        <Text type="supporting" color="secondary" maxLines={1} className="btm-mono max-w-1/3 min-w-0">
                           {entry.git.branch}
                         </Text>
                       )
