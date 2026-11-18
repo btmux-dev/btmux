@@ -63,7 +63,14 @@ export function NotificationToasts() {
           endContent: action ? (
             <Button label={action.label} variant="ghost" onClick={() => action.run(dismiss)} />
           ) : paneId ? (
-            <Button label="View pane" variant="ghost" onClick={() => useStore.getState().navigateToPane(paneId)} />
+            <Button
+              label="View pane"
+              variant="ghost"
+              onClick={() => {
+                dismiss();
+                useStore.getState().navigateToPane(paneId);
+              }}
+            />
           ) : undefined,
         });
         if (id) byId.set(id, dismiss);
