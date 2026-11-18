@@ -335,10 +335,13 @@ const scripts: Record<Demo, () => Promise<void>> = {
     await waitFor('claude-blocked', 30);
     await waitFor('codex-done', 30);
     await pace(2.5);
-    // Jump to Claude and approve.
+    // The agent view, with every live pane shown (o shows one, again all);
+    // then jump to Claude and approve.
     await prefix('a');
-    await pace(2.5);
-    await press('1', 1, 1);
+    await pace(2);
+    await press('o', 2, 1);
+    await pace(1.5);
+    await press(await agentKey('Claude'), 1, 1);
     await page.keyboard.press('Enter');
     await pace(1.5);
     await page.keyboard.press('y');
@@ -349,7 +352,7 @@ const scripts: Record<Demo, () => Promise<void>> = {
     // Everyone is done; jump to Gemini's answer.
     await prefix('a');
     await pace(2.5);
-    await press('3', 1, 1);
+    await press(await agentKey('Gemini'), 1, 1);
     await page.keyboard.press('Enter');
     await pace(2.5);
   },
@@ -376,6 +379,14 @@ const scripts: Record<Demo, () => Promise<void>> = {
     await pace(1.5);
   },
 };
+
+// The agent view's number key for an agent: rows are grouped by state.
+async function agentKey(name: string) {
+  const rows = await page.locator('[data-agent-row]').allTextContents();
+  const index = rows.findIndex((text) => text.includes(name));
+  assert(index >= 0 && index < 9, `no ${name} row in the agent view`);
+  return String(index + 1);
+}
 
 // Picks the completion whose label starts with `label`, asking again until
 // rust-analyzer answers.
