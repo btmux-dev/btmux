@@ -11,22 +11,22 @@ actions, saved state, and API types can change in any release.
 ### Added
 
 - Vim mode in the native editor has Neovim's language server mappings (`grn`,
-  `gra`, `grr`, `gri`, `grt`, `grx`, `gO`, `K`, `]d`, insert-mode `Ctrl-s`),
+  `gra`, `grr`, `gri`, `grt`, `grx`, `gO`, `K`, `]d`),
   `gd`, `gD`, `gW`, `gq` formatting through the server, and `<leader>f`.
   ([#169](https://github.com/btmux-dev/btmux/pull/169))
 - A `<leader>` (Space by default) and your own Vim mappings to any action or
   keys, in `[native-editor.vim-keys]`.
   ([#169](https://github.com/btmux-dev/btmux/pull/169))
 - A which-key popup lists the keys that can follow a pending prefix, in Vim
-  mode and after VS Code's `Mod-k` chords. The status line shows pending keys.
+  mode and after VS Code's `Mod+K` chords. The status line shows pending keys.
   ([#169](https://github.com/btmux-dev/btmux/pull/169))
-- Go back and forward across files: `Ctrl-o` / `Ctrl-i` in Vim mode, VS Code's
+- Go back and forward across files: `Ctrl+O` / `Ctrl+I` in Vim mode, VS Code's
   keys otherwise.
   ([#169](https://github.com/btmux-dev/btmux/pull/169))
-- More of VS Code's keys in the native editor: `Mod-k` chords for hover,
-  formatting, and folding, `Shift-F8`, expand and shrink selection,
-  `Ctrl-g`, `Mod-Shift-Enter`, `Mod-F2`, and, in the desktop app, `Mod-t` and
-  `Mod-w`.
+- More of VS Code's keys in the native editor: `Mod+K` chords for hover,
+  formatting, and folding, `Shift+F8`, expand and shrink selection,
+  `Ctrl+G`, `Mod+Shift+Enter`, `Mod+F2`, and, in the desktop app, `Mod+T` and
+  `Mod+W`.
   ([#169](https://github.com/btmux-dev/btmux/pull/169))
 - `editor-*` actions for definitions, references, rename, hover, formatting,
   code lenses, diagnostics, folding, and going back and forward.
@@ -37,7 +37,7 @@ actions, saved state, and API types can change in any release.
 - The native editor's Vim hunk mappings start with the leader, Space, instead
   of `\`.
   ([#169](https://github.com/btmux-dev/btmux/pull/169))
-- In the macOS desktop app, Close Window is `Cmd-Shift-W`: `Cmd-W` closes the
+- In the macOS desktop app, Close Window is `Cmd+Shift+W`: `Cmd+W` closes the
   native editor's file, and the window elsewhere.
   ([#169](https://github.com/btmux-dev/btmux/pull/169))
 - Language servers' output, starts, and exits go to `lsp.log.YYYY-MM-DD`
@@ -47,7 +47,7 @@ actions, saved state, and API types can change in any release.
 
 ### Fixed
 
-- Option chords in the native editor on macOS, such as `Shift-Option-F` to
+- Option chords in the native editor on macOS, such as `Shift+Option+F` to
   format.
   ([#169](https://github.com/btmux-dev/btmux/pull/169))
 - Vim's `gg` and `G` after switching files in the native editor.

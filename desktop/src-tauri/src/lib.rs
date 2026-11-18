@@ -910,8 +910,8 @@ fn set_color_scheme(window: WebviewWindow, state: State<'_, Server>, scheme: Sch
         .insert(window.label().into(), scheme);
 }
 
-// Closes the page's window: Cmd+W outside the native editor, which takes it
-// to close a file, as VS Code does (Cmd+Shift+W closes the window from the menu).
+// Closes the page's window: Cmd+W the page didn't take (close.js). The native
+// editor takes it to close a file, as VS Code does; the menu has Cmd+Shift+W.
 #[tauri::command]
 fn close_window(window: WebviewWindow) {
     let _ = window.close();
@@ -974,6 +974,7 @@ fn open_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .min_inner_size(640.0, 400.0)
         .initialization_script(include_str!("notification.js"))
         .initialization_script(include_str!("zoom.js"))
+        .initialization_script(include_str!("close.js"))
         // Tauri's handler takes every drop, so pages (VS Code) never get one.
         .disable_drag_drop_handler()
         .initialization_script(include_str!("drop.js"))
@@ -1136,8 +1137,8 @@ pub fn run() {
                     file.insert(&PredefinedMenuItem::separator(app)?, 2)?;
                 }
                 // The File and Window menus' Close Window take Cmd+W before the
-                // page sees it; the page closes the window itself, unless the
-                // native editor takes it to close a file (`installDesktopCloseKey`).
+                // page sees it; close.js closes the window unless the page takes
+                // it (the native editor, to close a file).
                 for (name, key) in [("File", Some("CmdOrCtrl+Shift+W")), ("Window", None)] {
                     let Some(sub) = submenu(name) else { continue };
                     for (position, item) in sub.items()?.into_iter().enumerate() {

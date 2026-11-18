@@ -58,7 +58,6 @@ import '@fontsource/cascadia-code/500-italic.css';
 import '@fontsource/cascadia-code/600-italic.css';
 import '@fontsource/cascadia-code/700-italic.css';
 import { setPageBackground } from './lib/desktopTransparency';
-import { installDesktopCloseKey } from './lib/desktopApp';
 
 // Set the same typography defaults used by terminal and chrome components
 // before React mounts, so CSS custom-property fallbacks do not become a second
@@ -67,7 +66,6 @@ document.documentElement.style.setProperty('--btmux-font', `"${CONFIG_DEFAULTS.t
 document.documentElement.style.setProperty('--btmux-font-weight', String(CONFIG_DEFAULTS.terminal.fontWeight));
 
 setPageBackground(STARTUP_THEME.background, CONFIG_DEFAULTS.desktopBackgroundOpacity);
-installDesktopCloseKey();
 
 function main() {
   const root = createRoot(document.getElementById('root')!);

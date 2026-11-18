@@ -187,6 +187,9 @@ export class Sequences {
 
   /** A key vim gets: once it has handled it, see what it still waits for. */
   private noteTyped(key: string) {
+    // Without vim, or typing text, nothing is pending of a command.
+    const mode = this.host.mode();
+    if (!this.typed.length && (mode === 'plain' || mode === 'insert')) return;
     this.typed.push(key);
     this.generation++;
     clearTimeout(this.refreshTimer);

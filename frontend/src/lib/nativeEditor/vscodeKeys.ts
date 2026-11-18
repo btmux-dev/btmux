@@ -28,10 +28,10 @@ function selectAllOccurrences(view: EditorView) {
 
 /**
  * Ahead of the search keymap, whose `Mod-g` is find next off macOS (F3 and
- * Enter still are). Keys the browser keeps, `Mod-t` and `Mod-w`, only in
- * the desktop app.
+ * Enter still are). `Mod-t`, which the browser keeps, only in the desktop
+ * app (`Mod-w` is the editor's, `PaneEditor.common`).
  */
-export function vscodeKeys(desktop: { workspaceSymbols: (view: EditorView) => boolean; close: () => boolean } | null) {
+export function vscodeKeys(desktop: { workspaceSymbols: (view: EditorView) => boolean } | null) {
   const keys: KeyBinding[] = [
     { key: 'Ctrl-g', run: gotoLine, preventDefault: true },
     { key: 'Mod-Shift-Enter', run: insertLineAbove, preventDefault: true },
@@ -39,10 +39,6 @@ export function vscodeKeys(desktop: { workspaceSymbols: (view: EditorView) => bo
     // CodeMirror's is Ctrl-Shift-a on macOS.
     { mac: 'Shift-Alt-a', run: toggleBlockComment, preventDefault: true },
   ];
-  if (desktop)
-    keys.push(
-      { key: 'Mod-t', run: desktop.workspaceSymbols, preventDefault: true },
-      { key: 'Mod-w', run: desktop.close, preventDefault: true },
-    );
+  if (desktop) keys.push({ key: 'Mod-t', run: desktop.workspaceSymbols, preventDefault: true });
   return keys;
 }

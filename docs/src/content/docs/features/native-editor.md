@@ -79,7 +79,6 @@ Space.
 | `gri` / `grt`                 | Goes to the implementation / type definition |
 | `grx`                         | Runs the code lens on the line               |
 | `gO` / `gW`                   | Symbols in the file / workspace              |
-| `Ctrl-s` in insert mode       | Signature help                               |
 | `an` / `in` in visual mode    | Grows / shrinks the selection                |
 | `gq` with a motion            | Formats, or wraps lines without a server     |
 | `<leader>f`                   | Formats the file, or the visual selection    |
@@ -87,7 +86,9 @@ Space.
 | `<C-w>d`                      | Shows the diagnostics on the line            |
 | `Ctrl-o` / `Ctrl-i`           | Goes back / forward, across files            |
 
-The [Git signs](#git-signs) mappings start with `<leader>h`.
+The [Git signs](#git-signs) mappings start with `<leader>h`. Neovim's
+insert-mode `Ctrl-s` (signature help) isn't mapped, as `Ctrl+S` saves outside
+macOS; signature help shows as you type a call, or with `Mod-Shift-Space`.
 
 ### Which keys come next
 

@@ -180,8 +180,7 @@ try {
   // A move off the screen is a jump too.
   await open(long);
   await until('the long file', async () => (await lines(page, paneId))?.startsWith('line 1\n') ?? false);
-  await content.click();
-  await page.keyboard.type('gg');
+  // The first jump in a file just opened counts too.
   await at('Ln 1, Col 1');
   await page.keyboard.type('G');
   await at('Ln 300, Col 1');
@@ -250,6 +249,9 @@ try {
   await page.keyboard.type('ijx');
   await mode('INSERT');
   await until('jx typed', async () => (await lines(page, paneId))!.split('\n')[1].startsWith('jx'));
+  // Ctrl+S (Cmd+S) saves in insert mode too.
+  await page.keyboard.press('ControlOrMeta+s');
+  await until('saved', () => readFileSync(main, 'utf8').split('\n')[1].startsWith('jx'));
   await page.keyboard.type('jk');
   await mode('NORMAL');
   await until('jk not typed', async () => (await lines(page, paneId))!.split('\n')[1].startsWith('jxuse'));
@@ -288,6 +290,11 @@ try {
   await page.keyboard.type('q');
   await popup.waitFor({ state: 'detached' });
   await until('q typed', async () => (await lines(page, paneId))!.startsWith('let thing = qbad;'));
+  // Shift-Alt-W isn't Alt-W, which closes the file.
+  await page.keyboard.press('Shift+Alt+KeyW');
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(await page.getByRole('dialog', { name: /^Save changes/ }).count(), 0);
+  assert.equal(await pane.getByRole('tab', { name: 'main.fake' }).count(), 1);
   console.log('PASS VS Code chords, F8, and Go Back without vim');
 } finally {
   await browser.close();

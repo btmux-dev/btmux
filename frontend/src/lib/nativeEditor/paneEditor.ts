@@ -32,7 +32,7 @@ import { EDITOR_COMMANDS, LSP_COMMANDS, QUICK_OPEN_NEEDS_FOLDER } from './regist
 import { Sequences } from './sequences';
 import { JumpList, type Jump } from './jumps';
 import { vscodeKeys } from './vscodeKeys';
-import { closeDesktopWindow, isDesktopApp } from '../desktopApp';
+import { isDesktopApp } from '../desktopApp';
 import type { KeyEntry, KeyMode } from './keyLayer';
 import type { VimBind, VimGroup } from '../../generated/protocol';
 import { findPaneState, useStore } from '../../state/store';
@@ -226,6 +226,9 @@ export class PaneEditor {
         { key: 'Mod-p', run: () => this.quickOpen(), preventDefault: true, scope: EARLY_SCOPE },
         // Mod-W closes the browser tab.
         { key: 'Alt-w', run: () => this.close(false), preventDefault: true, scope: EARLY_SCOPE },
+        // In the desktop app, Mod-W closes the file; with none, the window
+        // closes as elsewhere (`close.js`), as the key goes unhandled.
+        ...(isDesktopApp() ? [{ key: 'Mod-w', run: () => this.close(false) }] : []),
       ]),
     ];
   }
@@ -293,13 +296,7 @@ export class PaneEditor {
         { key: NAVIGATION_KEYS.back, run: () => this.navigate(true), preventDefault: true },
         { key: NAVIGATION_KEYS.forward, run: () => this.navigate(false), preventDefault: true },
         ...vscodeKeys(
-          isDesktopApp()
-            ? {
-                workspaceSymbols: (view) => !!editorCommands['editor-workspace-symbols'](view),
-                // With no file to close, the window, as elsewhere in the app.
-                close: () => this.close(false) || (IS_MAC && (closeDesktopWindow(), true)),
-              }
-            : null,
+          isDesktopApp() ? { workspaceSymbols: (view) => !!editorCommands['editor-workspace-symbols'](view) } : null,
         ),
         ...closeBracketsKeymap,
         ...defaultKeymap,
@@ -330,6 +327,8 @@ export class PaneEditor {
   }
 
   private keydown(e: KeyboardEvent, view: EditorView): boolean {
+    // Moves after a key are the user's, even if nothing moved since a switch.
+    this.landed = false;
     const plainEsc = e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey;
     // Esc drops keys held for a mapping, and nothing else.
     if (plainEsc && this.keys.cancel()) {
@@ -362,7 +361,11 @@ export class PaneEditor {
       return true;
     }
     const option = optionChord(e);
-    if (option) return runScopeHandlers(view, option, EARLY_SCOPE) || runScopeHandlers(view, option, 'editor');
+    // CodeMirror tries a shifted chord unshifted first: Shift-Option-W isn't Alt-w.
+    if (option)
+      return (
+        (!option.shiftKey && runScopeHandlers(view, option, EARLY_SCOPE)) || runScopeHandlers(view, option, 'editor')
+      );
     return runScopeHandlers(view, e, EARLY_SCOPE);
   }
 

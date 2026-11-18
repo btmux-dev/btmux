@@ -35,14 +35,18 @@ const MODIFIER_KEYS = new Set(['Shift', 'Alt', 'Control', 'Meta', 'CapsLock', 'A
 
 /** The key's name, as codemirror-vim names it; null for modifiers alone. */
 export function eventToken(e: KeyInit, mac: boolean): string | null {
-  if (MODIFIER_KEYS.has(e.key)) return null;
+  // Option chords on macOS: by their physical key when Option doesn't type
+  // ASCII text here, including dead keys (Option-E, Option-N on US).
+  const option = mac && e.altKey && !e.ctrlKey && !e.metaKey;
+  const dead = option && e.key === 'Dead';
+  if (MODIFIER_KEYS.has(e.key) && !dead) return null;
   let key = SPECIAL[e.key] ?? e.key;
   let alt = e.altKey;
-  // Option types text on macOS: a chord only when it isn't ASCII text here.
-  if (mac && alt && !e.ctrlKey && !e.metaKey && key.length === 1) {
+  if (option && (key.length === 1 || dead)) {
     const text = macOptionText(e);
     const chord = text === null ? optionChordKey(e) : null;
     if (chord !== null) key = e.shiftKey ? chord.toUpperCase() : chord;
+    else if (dead) return null;
     else {
       if (text !== null) key = text;
       alt = false;

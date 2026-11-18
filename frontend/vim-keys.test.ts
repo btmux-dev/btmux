@@ -41,6 +41,9 @@ test('Option chords on macOS are named by their physical key, unless Option type
   // Option-L types @ on a German layout: text, not a chord.
   expect(eventToken(key('@', { alt: true, code: 'KeyL' }), true)).toBe('@');
   expect(eventToken(key('“', { alt: true, code: 'BracketLeft' }), true)).toBe('<A-[>');
+  // Option-N is a dead key on a US layout.
+  expect(eventToken(key('Dead', { alt: true, code: 'KeyN' }), true)).toBe('<A-n>');
+  expect(eventToken(key('Dead', { code: 'Quote' }), true)).toBeNull();
   expect(optionChordKey(key('Ï', { alt: true, shift: true, code: 'KeyF' }))).toBe('f');
   expect(optionChordKey(key('@', { alt: true, code: 'KeyL' }))).toBeNull();
   expect(optionChordKey(key('f', { code: 'KeyF' }))).toBeNull();

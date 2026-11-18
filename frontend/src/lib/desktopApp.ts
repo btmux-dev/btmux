@@ -50,27 +50,3 @@ export function setDesktopColorScheme(scheme: ColorMode): void {
 export function openDesktopWindow(): void {
   (window as TauriWindow).__TAURI_INTERNALS__?.invoke('new_window').catch(() => {});
 }
-
-/** Closes this desktop app window. */
-export function closeDesktopWindow(): void {
-  invokeDesktop('close_window')?.catch(() => {});
-}
-
-/**
- * Cmd+W closes the window on macOS, as the menu's Close Window did before
- * it moved to Cmd+Shift+W, unless the native editor has focus: it closes a
- * file with it, as VS Code does.
- */
-export function installDesktopCloseKey(): void {
-  if (!isDesktopApp() || !/Mac/.test(navigator.platform)) return;
-  window.addEventListener(
-    'keydown',
-    (e) => {
-      if (!e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'w') return;
-      if (e.target instanceof Element && e.target.closest('[data-native-editor]')) return;
-      e.preventDefault();
-      closeDesktopWindow();
-    },
-    true,
-  );
-}

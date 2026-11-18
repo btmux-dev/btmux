@@ -26,11 +26,11 @@ pub enum VimMode {
 
 const N: &[VimMode] = &[VimMode::Normal];
 const V: &[VimMode] = &[VimMode::Visual];
-const I: &[VimMode] = &[VimMode::Insert];
 const NV: &[VimMode] = &[VimMode::Normal, VimMode::Visual];
 
 /// Default mappings: Neovim's own (LSP, diagnostics), common community ones
-/// (`gd`, `gD`, `gW`, `<leader>f`), and gitsigns.nvim's suggested ones.
+/// (`gd`, `gD`, `gW`, `<leader>f`), and gitsigns.nvim's suggested ones. Not
+/// Neovim's insert-mode `<C-s>` (signature help): Ctrl+S saves off macOS.
 const DEFAULT_VIM_KEYS: &[(&str, &str, &[VimMode])] = &[
     ("gd", "editor-go-to-definition", N),
     ("<C-]>", "editor-go-to-definition", N),
@@ -44,7 +44,6 @@ const DEFAULT_VIM_KEYS: &[(&str, &str, &[VimMode])] = &[
     ("grx", "editor-run-code-lens", N),
     ("gO", "editor-document-symbols", N),
     ("gW", "editor-workspace-symbols", N),
-    ("<C-s>", "editor-signature-help", I),
     ("an", "editor-expand-selection", V),
     ("in", "editor-shrink-selection", V),
     ("]d", "editor-next-diagnostic", N),
