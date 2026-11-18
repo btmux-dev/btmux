@@ -5,6 +5,7 @@ fn main() {
             "connect_server",
             "start_server",
             "stop_server",
+            "upgrade_server",
             "switch_server",
             "list_remote_servers",
             "add_remote_server",

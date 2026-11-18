@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use reqwest::blocking::Client;
 use serde::Deserialize;
@@ -79,8 +79,93 @@ pub fn shutdown(server: &RunningServer) -> Result<(), String> {
     }
 }
 
-/// A running server, with its tailnet status if it has one.
-pub type Discovered = (RunningServer, Option<Tailnet>);
+/// Moves `server` to `exe` in place, as `btmux upgrade` does.
+pub fn upgrade(server: &RunningServer, exe: &Path) -> Result<(), String> {
+    // The server first runs `exe` to check it, for up to 10 s.
+    let client = Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(15))
+        .build()
+        .map_err(|_| "Could not upgrade the desktop server.".to_string())?;
+    let info = || -> Option<serde_json::Value> {
+        client
+            .get(format!("http://{}/api/info", server.address))
+            .bearer_auth(&server.token)
+            .send()
+            .ok()?
+            .json()
+            .ok()
+    };
+    let before = info().ok_or("The desktop server is no longer available.")?;
+    let response = client
+        .post(format!("http://{}/api/server/upgrade", server.address))
+        .bearer_auth(&server.token)
+        .json(&serde_json::json!({ "executable": exe }))
+        .send()
+        .map_err(|_| "Could not upgrade the desktop server.".to_string())?;
+    let failed = |reason: &str| {
+        let reason = reason.trim().trim_end_matches('.');
+        if reason.is_empty() {
+            "Could not upgrade the desktop server.".to_string()
+        } else {
+            format!("Could not upgrade the desktop server: {reason}.")
+        }
+    };
+    if !response.status().is_success() {
+        return Err(failed(&response.text().unwrap_or_default()));
+    }
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(250));
+        let Some(info) = info() else { continue };
+        if info["instance"] != before["instance"] {
+            // An exec keeps the pid; a service manager's restart doesn't.
+            if info["pid"] != before["pid"] {
+                return Err(
+                    "The desktop server restarted instead of upgrading, closing its shells.".into(),
+                );
+            }
+            return Ok(());
+        }
+        if let Some(error) = info["upgrade_error"].as_str() {
+            return Err(failed(error));
+        }
+    }
+    Err("Timed out waiting for the upgraded desktop server.".into())
+}
+
+/// Whether release `a` is newer than `b` (`x.y.z`, ignoring any suffix).
+pub fn newer(a: &str, b: &str) -> bool {
+    let parse = |version: &str| -> Option<Vec<u64>> {
+        let release = version.split(['-', '+']).next()?;
+        release.split('.').map(|part| part.parse().ok()).collect()
+    };
+    matches!((parse(a), parse(b)), (Some(a), Some(b)) if a.len() == b.len() && a > b)
+}
+
+/// A running server, with its version and tailnet status.
+pub struct Discovered {
+    pub server: RunningServer,
+    pub version: String,
+    pub tailnet: Option<Tailnet>,
+}
+
+/// `server`, if it answers as itself.
+pub fn check(server: RunningServer) -> Option<Discovered> {
+    let info = probe(&client().ok()?, &server).filter(|info| info.profile == server.profile)?;
+    Some(Discovered::new(server, info))
+}
+
+impl Discovered {
+    fn new(server: RunningServer, info: ServerInfo) -> Self {
+        Self {
+            server,
+            version: info.version.clone(),
+            tailnet: info.tailnet(),
+        }
+    }
+}
 
 fn discover_in(dir: &Path, client: &Client) -> Vec<Discovered> {
     let mut servers = Vec::new();
@@ -91,14 +176,14 @@ fn discover_in(dir: &Path, client: &Client) -> Vec<Discovered> {
             && info.profile == server.profile
             && addresses.insert(server.address)
         {
-            servers.push((server, info.tailnet()));
+            servers.push(Discovered::new(server, info));
         }
     }
 
     // Older default-profile servers do not publish a registration.
     if !servers
         .iter()
-        .any(|(server, _)| server.profile.is_none() && server.address.port() == 8004)
+        .any(|found| found.server.profile.is_none() && found.server.address.port() == 8004)
         && let Ok(token) =
             discovery::read_private_file(&dir.join("state.token"), discovery::SMALL_FILE)
     {
@@ -115,13 +200,15 @@ fn discover_in(dir: &Path, client: &Client) -> Vec<Discovered> {
                     && let Some(info) = probe(client, &server)
                     && info.profile.is_none()
                 {
-                    servers.push((server, info.tailnet()));
+                    servers.push(Discovered::new(server, info));
                     break;
                 }
             }
         }
     }
-    servers.sort_by(|(a, _), (b, _)| a.profile.cmp(&b.profile).then(a.address.cmp(&b.address)));
+    servers.sort_by(|a, b| {
+        (a.server.profile.cmp(&b.server.profile)).then(a.server.address.cmp(&b.server.address))
+    });
     servers
 }
 
@@ -138,6 +225,17 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+
+    #[test]
+    fn compares_release_versions() {
+        assert!(newer("0.0.210", "0.0.209"));
+        assert!(newer("0.1.0", "0.0.209"));
+        assert!(newer("0.0.210", "0.0.209-dev"));
+        assert!(!newer("0.0.209", "0.0.209"));
+        assert!(!newer("0.0.208", "0.0.209"));
+        assert!(!newer("0.0.210", "test"));
+        assert!(!newer("1.0", "0.0.1"));
+    }
 
     #[test]
     fn rejects_auth_failures_redirects_and_non_btmux_responses() {
@@ -209,11 +307,12 @@ mod tests {
         let client = client().unwrap();
         let servers = discover_in(&dir, &client);
         assert_eq!(servers.len(), 1);
-        assert_eq!(servers[0].0.address, address);
+        assert_eq!(servers[0].server.address, address);
+        assert_eq!(servers[0].version, "test");
         assert!(
-            matches!(&servers[0].1, Some(Tailnet::Serving { url }) if url == "https://box.ts.net:8004")
+            matches!(&servers[0].tailnet, Some(Tailnet::Serving { url }) if url == "https://box.ts.net:8004")
         );
-        let mut mismatched = servers[0].0.clone();
+        let mut mismatched = servers[0].server.clone();
         mismatched.profile = Some("wrong-profile".into());
         assert!(!ready(&mismatched));
         responder.join().unwrap();

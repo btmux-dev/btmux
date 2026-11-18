@@ -40,6 +40,7 @@ const ACTUAL_SIZE: &str = "actual-size";
 #[cfg(target_os = "macos")]
 const INSTALL_CLI: &str = "install-cli";
 const DESKTOP_PROFILE: &str = "desktop";
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // A page's light or dark appearance.
 #[derive(Clone, Copy, serde::Deserialize)]
@@ -133,6 +134,9 @@ struct ServerChoice {
     bundled: bool,
     // A desktop-profile server the app may stop.
     desktop: bool,
+    version: String,
+    // The app's version, if this kept desktop server can upgrade to it.
+    upgrade: Option<String>,
     tailnet: Option<servers::Tailnet>,
 }
 
@@ -145,22 +149,29 @@ async fn discover_servers(
     let bundled = private.as_ref().map(|server| server.address);
     let discovered = tauri::async_runtime::spawn_blocking(move || {
         let mut servers = servers::discover()?;
-        // Started without `--tailscale`.
-        servers.extend(private.filter(servers::ready).map(|server| (server, None)));
+        servers.extend(private.and_then(servers::check));
         Ok::<_, String>(servers)
     })
     .await
     .map_err(|_| "Could not look for running btmux servers.".to_string())??;
     let (servers, choices): (Vec<_>, Vec<_>) = discovered
         .into_iter()
-        .map(|(server, tailnet)| {
+        .map(|found| {
+            let server = found.server;
+            let bundled = Some(server.address) == bundled;
+            let desktop = server.profile.as_deref() == Some(DESKTOP_PROFILE);
+            // Windows can't upgrade in place.
+            let upgrade =
+                cfg!(unix) && desktop && !bundled && servers::newer(APP_VERSION, &found.version);
             let choice = ServerChoice {
                 address: server.address.to_string(),
                 profile: server.profile.clone().unwrap_or_else(|| "default".into()),
                 url: format!("http://{}/", server.address),
-                bundled: Some(server.address) == bundled,
-                desktop: server.profile.as_deref() == Some(DESKTOP_PROFILE),
-                tailnet,
+                bundled,
+                desktop,
+                version: found.version,
+                upgrade: upgrade.then(|| APP_VERSION.to_string()),
+                tailnet: found.tailnet,
             };
             (server, choice)
         })
@@ -527,11 +538,11 @@ fn start_desktop_server(
         return open_server(&window, &server);
     }
     // A server that kept running owns the desktop profile.
-    if let Some((server, _)) = servers::discover()?
+    if let Some(found) = servers::discover()?
         .into_iter()
-        .find(|(server, _)| server.profile.as_deref() == Some(DESKTOP_PROFILE))
+        .find(|found| found.server.profile.as_deref() == Some(DESKTOP_PROFILE))
     {
-        return open_server(&window, &server);
+        return open_server(&window, &found.server);
     }
     let (port, in_use) = if tailscale {
         tailnet_port(&app)?
@@ -760,6 +771,28 @@ async fn stop_server(
     .map_err(|_| "Could not stop btmux.".to_string())?
 }
 
+// Moves a kept desktop server to the bundled binary, keeping its shells.
+#[tauri::command]
+async fn upgrade_server(
+    app: AppHandle,
+    window: WebviewWindow,
+    state: State<'_, Server>,
+    address: String,
+) -> Result<(), String> {
+    let server = state.choice(window.label(), &address)?;
+    if server.profile.as_deref() != Some(DESKTOP_PROFILE) {
+        return Err("Only desktop servers can be upgraded here.".into());
+    }
+    let sidecar = app
+        .shell()
+        .sidecar("btmux")
+        .map_err(|_| "Could not find the bundled btmux server.".to_string())?;
+    let exe = PathBuf::from(std::process::Command::from(sidecar).get_program());
+    tauri::async_runtime::spawn_blocking(move || servers::upgrade(&server, &exe))
+        .await
+        .map_err(|_| "Could not upgrade btmux.".to_string())?
+}
+
 // Cleared by the exit handler once the private server stops.
 fn owns_child(state: &Server, pid: u32) -> bool {
     let child = state.child.lock().unwrap();
@@ -872,7 +905,7 @@ fn set_color_scheme(window: WebviewWindow, state: State<'_, Server>, scheme: Sch
 // The desktop app's own version, which may differ from the connected server's.
 #[tauri::command]
 fn desktop_info() -> &'static str {
-    env!("CARGO_PKG_VERSION")
+    APP_VERSION
 }
 
 // Zooms the page in, out, or to actual size ("reset").
@@ -999,6 +1032,7 @@ pub fn run() {
             connect_server,
             start_server,
             stop_server,
+            upgrade_server,
             switch_server,
             list_remote_servers,
             add_remote_server,
