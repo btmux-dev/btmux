@@ -153,6 +153,7 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
         />
       ) : (
         <EditorMenu
+          key={editor}
           editor={editor}
           paneId={activeWindow?.zoomed_pane ?? pane?.id}
           onToggle={toggleEditor}
