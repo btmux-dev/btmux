@@ -203,8 +203,9 @@ Every option with its default, as `btmux generate-config` prints it. Uncomment a
 # "error", "warn", "info", "debug", "trace", or full EnvFilter syntax like
 # "btmux=debug,tower_http=info".
 # BTMUX_CONSOLE_LOG and BTMUX_FILE_LOG override these values when set.
-# Language servers' output goes to lsp.log.YYYY-MM-DD beside btmux's log,
-# unless file-level is "off".
+# Language servers' output goes to lsp.log.YYYY-MM-DD beside btmux's log (the
+# last 14 are kept), unless file-level is "off"; a level naming the lsp target,
+# like "warn,lsp=info", sends it there too.
 # [log]
 # console-level = "warn"    # stderr output (keep the terminal quiet)
 # file-level = "info"       # file output ($XDG_STATE_HOME/btmux/log/btmux.log.YYYY-MM-DD, falling back to ~/.local/state/btmux/)
