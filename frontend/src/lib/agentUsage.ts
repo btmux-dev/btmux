@@ -149,10 +149,13 @@ export const recentUsage = (pane: AgentTelemetry, now: number) =>
   );
 export const formatTokens = (value: number) =>
   new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(value);
-export const formatCost = (value: number | null) =>
+/** Fewer `digits` for summaries; the Usage tab shows small costs in full. */
+export const formatCost = (value: number | null, digits = 4) =>
   value === null
     ? 'Unavailable'
-    : new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 4 }).format(value);
+    : new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: digits }).format(
+        value,
+      );
 
 /** Past two missed polls, the server is keeping these limits through failed reads. */
 const LIMITS_STALE_SECONDS = 180;

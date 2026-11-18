@@ -32,7 +32,7 @@ import { AGENTS } from './AgentIcon';
 import { AGENT_DOT_VARIANT } from './AgentNavItem';
 import { GithubBadge } from './GithubBadge';
 import { AGENT_GROUP_LABELS, formatSince, groupAgents } from '../lib/agentGroups';
-import { formatTokens, recentUsage } from '../lib/agentUsage';
+import { formatCost, formatTokens, recentUsage } from '../lib/agentUsage';
 import { MirrorPane } from './MirrorPane';
 import { KeyHint } from './KeyHint';
 import { usePressHint } from '../hooks/usePressHint';
@@ -121,8 +121,6 @@ function saveShown(ids: ReadonlySet<string>) {
     // Storage may be unavailable; showing still works for this page.
   }
 }
-
-const formatCost = new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format;
 
 /** Unix seconds, ticking while `active`. */
 function useNow(active: boolean) {
@@ -434,8 +432,17 @@ export function AgentGrid({ send }: Props) {
     if (TAB_KEYS.has(e.key) && (e.target as Element).closest('[role="tablist"]')) return;
     if (n === 0 || !selected) return;
     if (e.key === 'Enter' || e.key === ' ') {
+      const target = e.target as Element;
+      // Space on a focused row shows or hides it; the row's button would go to the pane.
+      const row = e.key === ' ' && !target.closest('[aria-pressed]') && target.closest('[data-agent-row]');
+      const rowEntry = row && ordered.find((entry) => entry.paneId === row.getAttribute('data-agent-row'));
+      if (rowEntry) {
+        e.preventDefault();
+        toggleShown(rowEntry);
+        return;
+      }
       // A focused control activates itself.
-      if ((e.target as Element).closest('button, a[href], input')) return;
+      if (target.closest('button, a[href], input')) return;
       e.preventDefault();
       if (e.key === ' ') toggleShown(selected);
       else select(selected);
@@ -486,7 +493,7 @@ export function AgentGrid({ send }: Props) {
     const totals = recentUsage(pane, now);
     const tokens = totals.input_tokens + totals.output_tokens;
     const parts = [
-      totals.cost_usd != null && formatCost(totals.cost_usd),
+      totals.cost_usd != null && formatCost(totals.cost_usd, 2),
       tokens > 0 && `${formatTokens(tokens)} tokens`,
     ];
     return parts.filter(Boolean).join(' · ') || null;
@@ -850,13 +857,15 @@ export function AgentGrid({ send }: Props) {
                 </VStack>
               ) : (
                 <>
-                  {/* Narrow screens stack the list above the tiles. */}
+                  {/* Narrow screens stack the list above the tiles; without tiles, it takes the height. */}
                   {isNarrow && (
-                    <VStack className={shown.length ? 'max-h-1/3 shrink-0 overflow-auto' : 'shrink-0'}>
+                    <VStack
+                      className={shown.length ? 'max-h-1/3 shrink-0 overflow-auto' : 'min-h-0 flex-1 overflow-auto'}
+                    >
                       {sidebar}
                     </VStack>
                   )}
-                  {tiles}
+                  {(shown.length > 0 || !isNarrow) && tiles}
                 </>
               )}
             </VStack>

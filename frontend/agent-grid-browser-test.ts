@@ -242,6 +242,13 @@ try {
   assert.equal(first.length, 1, `showing all moved tiles: ${JSON.stringify(first)}`);
   const settled = first[0];
   assert.equal(settled.length, 4);
+  // The card rows take exactly the height packing reserves (CHROME_H in AgentGrid.tsx), so terminals aren't clipped.
+  assert.deepEqual(
+    await page.$$eval('[data-agent-tile]', (tiles) =>
+      tiles.map((tile) => tile.clientHeight - tile.querySelector<HTMLElement>('[data-agent-mirror]')!.offsetHeight),
+    ),
+    [84, 84, 84, 84],
+  );
   // Tile widths follow the panes' current columns, not the fallback.
   const widths = settled.map((tile) => tile.w).sort((a, b) => b - a);
   const perColumn = [200, 160, 120, 90].map((cols, i) => widths[i] / cols);
@@ -396,6 +403,15 @@ try {
   await page.keyboard.press('Enter');
   await replaysShown(page, 4);
   await pressAndExpect('1', rowIds[0]);
+
+  // Space on a focused row shows or hides it rather than going to the pane.
+  await page.locator(`[data-agent-row="${rowIds[2]}"] button:not([aria-pressed])`).focus();
+  await page.keyboard.press(' ');
+  await tilesAre(3);
+  assert.equal(await page.locator('dialog[open]').count(), 1, 'Space on a row must not leave the grid');
+  await page.keyboard.press(' ');
+  await replaysShown(page, 4);
+  await page.locator('dialog[open]').focus();
 
   // Clicking a row goes to its pane, shown or not; so does Enter on a focused row,
   // which arrows keep on the selected one.
