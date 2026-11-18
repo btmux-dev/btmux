@@ -14,6 +14,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::session::manager::SessionSnapshot;
+use crate::session::{EditorViewOp, PaneEditor};
 
 /// Resolve the XDG state base dir: `$XDG_STATE_HOME/btmux/`, falling back to
 /// `$HOME/.local/state/btmux/`. Returns `None` when neither env var is set.
@@ -115,6 +116,21 @@ fn serialize_snapshots(snapshots: &[SessionSnapshot]) -> Result<String, String> 
                 pane.remove("unread");
                 pane.remove("git");
                 pane.remove("cwd_remote");
+                // Their files are removed on shutdown.
+                if let Some(editor) = pane.get_mut("editor") {
+                    let mut parsed: PaneEditor =
+                        serde_json::from_value(editor.take()).expect("pane editors deserialize");
+                    let captures: Vec<String> = parsed
+                        .files
+                        .iter()
+                        .filter(|path| crate::capture::is_capture(path))
+                        .cloned()
+                        .collect();
+                    for path in captures {
+                        parsed.apply(EditorViewOp::Close { path });
+                    }
+                    *editor = serde_json::to_value(parsed).map_err(|e| e.to_string())?;
+                }
             }
         }
     }
@@ -129,6 +145,49 @@ mod agent_status_tests {
         PaneAlert, PaneSnapshot,
     };
     use uuid::Uuid;
+
+    #[test]
+    fn drops_pane_captures_from_saved_editors() {
+        let pane_id = Uuid::new_v4();
+        let temp = crate::fs_ops::client_path(
+            &crate::native_editor::file_ops::resolve_new(&std::env::temp_dir()).unwrap(),
+        );
+        let capture = format!("{temp}/btmux-capture-1/capture-1.txt");
+        let snapshots = vec![SessionSnapshot {
+            id: Uuid::new_v4(),
+            name: "test".to_string(),
+            runtime: Default::default(),
+            windows: vec![WindowSnapshot {
+                id: Uuid::new_v4(),
+                name: "shell".to_string(),
+                panes: vec![PaneSnapshot {
+                    id: pane_id,
+                    title: None,
+                    cwd: None,
+                    cwd_remote: false,
+                    agent_status: Default::default(),
+                    agent_id: None,
+                    unread: None,
+                    git: None,
+                    editor: crate::session::PaneEditor {
+                        shown: true,
+                        files: vec!["/src/a.rs".into(), capture.clone()],
+                        active: Some(capture),
+                    },
+                }],
+                active_pane: 0,
+                layout: Layout::Leaf { pane_id },
+                zoomed_pane: None,
+            }],
+            active_window: 0,
+        }];
+        let restored: Vec<SessionSnapshot> =
+            serde_json::from_str(&serialize_snapshots(&snapshots).unwrap()).unwrap();
+        let editor = &restored[0].windows[0].panes[0].editor;
+        assert_eq!(editor.files, ["/src/a.rs"]);
+        assert_eq!(editor.active.as_deref(), Some("/src/a.rs"));
+        assert!(editor.shown);
+    }
 
     #[test]
     fn excludes_live_agent_status_and_notifications_from_saved_state() {

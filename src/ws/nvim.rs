@@ -144,7 +144,18 @@ pub(crate) struct PrivateDir(PathBuf);
 
 impl PrivateDir {
     pub(crate) fn new() -> Result<Self, String> {
-        Self::create(std::env::temp_dir().join(format!("btmux-{}", uuid::Uuid::new_v4().simple())))
+        Self::named("btmux-")
+    }
+
+    /// A new directory in the temp dir whose name starts with `prefix`.
+    pub(crate) fn named(prefix: &str) -> Result<Self, String> {
+        let name = format!("{prefix}{}", uuid::Uuid::new_v4().simple());
+        Self::create(std::env::temp_dir().join(name))
+    }
+
+    /// Take over removing an existing directory.
+    pub(crate) fn adopt(path: PathBuf) -> Self {
+        Self(path)
     }
 
     fn create(path: PathBuf) -> Result<Self, String> {

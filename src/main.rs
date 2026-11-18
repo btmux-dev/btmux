@@ -7,6 +7,7 @@ mod api_client;
 mod auth;
 mod automation;
 mod browser;
+mod capture;
 mod config;
 mod connect;
 // The desktop launcher also compiles this shared module.
@@ -612,6 +613,7 @@ async fn main() {
     browser::shutdown().await;
     tailscale::shutdown().await;
     paste_image::shutdown();
+    capture::shutdown();
     if let Some(path) = state_file {
         let snapshots = state.read().await.all_snapshots();
         if let Err(error) = persistence::save(&path, &snapshots) {

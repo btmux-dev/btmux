@@ -15,6 +15,10 @@ actions, saved state, and API types can change in any release.
 
 ### Fixed
 
+- `<prefix> + [` opens the pane's capture in the `editor` setting's editor
+  over the pane, or `$EDITOR` in a popup with `editor = "pane"`, rather than
+  typing a command into the pane, so it works in agent panes and other
+  programs.
 - GitHub status finds pull requests for branches pushed to a URL and for
   renamed fork checkouts. ([#149](https://github.com/btmux-dev/btmux/pull/149))
 

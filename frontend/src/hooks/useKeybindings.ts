@@ -327,17 +327,18 @@ export function runAction(
       if (paneId) send({ type: 'zoom_pane', session_id: sessionId, pane_id: paneId });
       break;
     case 'capture-pane': {
-      // Read the active pane's scrollback straight from its emulator buffer
-      // (the only place de-escaped, wrapped text exists) and hand it to the
-      // backend, which writes it to a temp file and opens it in $EDITOR *inside
-      // this pane's own shell* — reusing the live terminal rather than mounting
-      // a new one. The screen is the alternate one when a full-screen app is
-      // running, matching `tmux capture-pane` without `-a`.
+      // The emulator holds the de-escaped, wrapped text; the server saves it
+      // and opens it over the pane, never typing into it. The screen is the
+      // alternate one when a full-screen app runs, as in `tmux capture-pane`.
       if (!paneId) break;
       const term = store.terminals.get(paneId);
       if (!term) break;
       const content = term.readLines().join('\n').replace(/\n+$/, '') + '\n';
-      send({ type: 'capture_pane', pane_id: paneId, content });
+      const editor = store.config?.editor ?? 'native';
+      send({ type: 'capture_pane', pane_id: paneId, content, editor });
+      if (editor === 'native') store.hideEditorSurfaces(paneId);
+      else if (editor === 'neovim') store.setNvimOpen(true, paneId);
+      else if (editor === 'vscode') store.setVscodeOpen(true, paneId);
       break;
     }
     case 'scroll-page-up':

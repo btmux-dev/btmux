@@ -94,11 +94,12 @@ Every option with its default, as `btmux generate-config` prints it. Uncomment a
 # "alphabetical" = sorted by name (default).
 # window-sort = "alphabetical"
 
-# The editor prefix + e, the file browser, and Git mode open.
+# The editor prefix + e, prefix + [, the file browser, and Git mode open.
 # "native" = btmux's own editor (default),
 # "neovim" = your Neovim in btmux's GUI (needs Neovim 0.12+),
 # "vscode" = VS Code in the browser,
-# "pane" = the terminal: the pane's running Neovim, else $EDITOR in its shell.
+# "pane" = the terminal: the pane's running Neovim, else $EDITOR in its shell
+#   (prefix + [ runs $EDITOR in a popup).
 # editor = "native"
 
 # How many recently-viewed windows the window-grid (prefix + w) shows as live
