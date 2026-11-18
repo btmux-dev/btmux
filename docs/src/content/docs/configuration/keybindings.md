@@ -47,7 +47,8 @@ key.
 | `m`                     | `toggle-latex`                         |
 | `?` `:`                 | `list-keys`, `command-palette`         |
 
-`editor-native`, `editor-neovim`, and `editor-vscode` are unbound, as are the
+`editor-native`, `editor-neovim`, `editor-vscode`, and `toggle-key-overlay`
+(the [key overlay](../features/key-overlay.md)) are unbound, as are the
 [native editor](../features/native-editor.md#actions)'s `editor-*` actions.
 Every action is also in the command palette.
 

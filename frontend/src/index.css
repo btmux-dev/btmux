@@ -461,3 +461,17 @@ dialog.btm-side-nav > div {
   --term-cursor: transparent;
   --term-app-cursor: transparent;
 }
+
+/* Key overlay entries (KeyOverlay.tsx) fade out over their last fifth; ENTRY_MS in keyCast.ts. */
+.btm-key-overlay-fade {
+  animation: btm-key-overlay-fade 2500ms linear forwards;
+}
+@keyframes btm-key-overlay-fade {
+  0%,
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}

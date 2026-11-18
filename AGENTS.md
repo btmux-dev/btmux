@@ -1100,6 +1100,17 @@ both animated shader and border effects.
 `--btm-backdrop-dim` on `:root`, from the effective config so Settings previews
 them. There is deliberately no pane shader behind modals.
 
+**Key overlay:** `KeyOverlay.tsx` shows pressed keys (status bar button,
+`toggle-key-overlay`, `?keys`; per tab, in `localStorage`). Its window capture
+listener runs before every surface's; `useKeybindings` calls `keyCaster.note`
+for the prefix, bindings, and repeats in the same dispatch, and the key is
+committed after it (`lib/keyCast.ts`; a synthetic copy right after a real key
+replaces it, as `MobileKeyBar`'s do). It is a manual popover shown again when a
+modal dialog opens, so it stays above the top layer. Keys to a pane or popup in
+`State.hidden_input` are hidden: `PtyHandle::hidden_input` is canonical mode
+without echo (a password prompt, not a raw-mode program), checked after each
+output chunk and write. `[key-overlay]` sets `mode` and `position`.
+
 **LaTeX overlay:** frontend-only. `lib/latexDetect.ts` is a pure, tiered
 heuristic detector (explicit delimiters → bare `[`/`]` blocks → `$…$` → bare
 `( … )`) tested by `frontend/latex-detect.test.ts`; add fixtures there when

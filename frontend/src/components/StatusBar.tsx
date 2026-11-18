@@ -7,7 +7,7 @@ import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { Spinner } from './Spinner';
 import { KeyCap } from './KeyHint';
 import { HStack } from '@astryxdesign/core/Layout';
-import { Activity, Box, FolderOpen, GitBranch, Globe } from 'lucide-react';
+import { Activity, Box, FolderOpen, GitBranch, Globe, Keyboard } from 'lucide-react';
 import { useStore, type FileBrowserMode } from '../state/store';
 import { chromePalette } from '../lib/chrome-colors';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
@@ -28,6 +28,7 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
   const sessions = useStore((state) => state.allSessions);
   const config = useStore((state) => state.config);
   const prefixActive = useStore((state) => state.prefixActive);
+  const keyOverlay = useStore((state) => state.keyOverlay);
   const navigate = useNavigate();
   useSyncExternalStore(
     (callback) => {
@@ -200,6 +201,14 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
         size="sm"
         icon={<Activity />}
         onClick={() => openFiles('process')}
+      />
+      <IconButton
+        label={keyOverlay ? 'Hide pressed keys' : 'Show pressed keys'}
+        tooltip={keyOverlay ? 'Hide pressed keys' : 'Show pressed keys'}
+        variant={keyOverlay ? 'secondary' : 'ghost'}
+        size="sm"
+        icon={<Keyboard />}
+        onClick={() => state().setKeyOverlay(!keyOverlay)}
       />
       <TailscaleButton />
     </HStack>

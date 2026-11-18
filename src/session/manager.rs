@@ -206,6 +206,21 @@ impl SessionManager {
             .collect()
     }
 
+    /// Panes and popups reading input without echo (`PtyHandle::hidden_input`).
+    pub fn hidden_input(&self) -> Vec<Uuid> {
+        let panes = self
+            .sessions
+            .iter()
+            .flat_map(|session| &session.windows)
+            .flat_map(|window| &window.panes)
+            .map(|pane| (pane.id, &pane.pty));
+        let popups = self.popups.iter().map(|popup| (popup.id, &popup.pty));
+        panes
+            .chain(popups)
+            .filter_map(|(id, pty)| pty.hidden_input().then_some(id))
+            .collect()
+    }
+
     /// Panes running an agent, for automation.
     pub fn agent_panes(&self) -> Vec<AgentPane> {
         let mut panes = Vec::new();

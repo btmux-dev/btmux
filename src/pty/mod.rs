@@ -200,6 +200,8 @@ pub struct PtyHandle {
     pub cwd: Arc<Mutex<Option<String>>>,
     /// The last OSC 7 named another host (an ssh session).
     pub cwd_remote: Arc<AtomicBool>,
+    /// The terminal is canonical without echo, as at a password prompt.
+    hidden_input: Arc<AtomicBool>,
     /// Server port, injected as BTMUX_API_URL into the shell environment.
     port: u16,
     /// Maximum backend replay buffer size in bytes, derived from the config's
@@ -265,6 +267,7 @@ impl PtyHandle {
             title: Arc::new(Mutex::new(None)),
             cwd: Arc::new(Mutex::new(None)),
             cwd_remote: Arc::default(),
+            hidden_input: Arc::default(),
             port: env.port,
             scrollback_bytes: scrollback_lines as usize * 1000,
             palette: env.palette.clone(),
@@ -291,6 +294,13 @@ impl PtyHandle {
     /// The exit status, once the shell was reaped.
     pub fn exit_status(&self) -> Option<i32> {
         *self.exit_status.lock().unwrap()
+    }
+
+    /// Whether the program reads a line without echoing it, as `sudo`,
+    /// `ssh`, and `read -s` do for passwords; raw-mode programs (editors,
+    /// `ssh` sessions) don't count. Checked after each output chunk.
+    pub fn hidden_input(&self) -> bool {
+        self.hidden_input.load(Ordering::Relaxed)
     }
 
     /// Whether the shell runs and hasn't been reaped.
@@ -723,6 +733,8 @@ struct OutputPipeline {
     probe: Arc<Mutex<Option<Probe>>>,
     title: Arc<Mutex<Option<String>>>,
     cwd: Arc<Mutex<Option<String>>>,
+    #[cfg(unix)]
+    hidden_input: Arc<AtomicBool>,
     program_status: Arc<Mutex<program_status::ProgramStatus>>,
     scrollback: Arc<Mutex<Replay>>,
     output_tx: broadcast::Sender<Output>,
@@ -754,6 +766,8 @@ impl PtyHandle {
             probe: self.probe.clone(),
             title: self.title.clone(),
             cwd: self.cwd.clone(),
+            #[cfg(unix)]
+            hidden_input: self.hidden_input.clone(),
             program_status: self.program_status.clone(),
             scrollback: self.scrollback.clone(),
             output_tx: self.output_tx.clone(),
@@ -802,6 +816,8 @@ impl OutputPipeline {
         self.apply_program_status();
         #[cfg(unix)]
         self.poll_cwd();
+        #[cfg(unix)]
+        self.poll_hidden_input();
         let mut sb = self.scrollback.lock().unwrap();
         if !result.scrollback.is_empty() {
             sb.push(Output::Data(exact_bytes(result.scrollback)));

@@ -577,6 +577,8 @@ impl PtyHandle {
             let mut stopped = false;
             // Replies the input queue no longer took.
             let mut unsent = None;
+            // After an upgrade, a prompt may be waiting without output.
+            output.poll_hidden_input();
             if let Err(replies) = output.feed(&pending) {
                 unsent = Some(replies);
             } else {
@@ -624,6 +626,8 @@ impl PtyHandle {
         // filtering stale CPR responses from emulator input.
         let pending_cpr_pgrps_writer = self.pending_cpr_pgrps.clone();
         let probe_writer = self.probe.clone();
+        let hidden_input = self.hidden_input.clone();
+        let meta_tx = self.meta_tx.clone();
         std::thread::spawn(move || {
             let filter = |data: &[u8]| {
                 Self::filter_stale_cpr(data, &pending_cpr_pgrps_writer, &probe_writer)
@@ -644,6 +648,8 @@ impl PtyHandle {
                 if let Some(reply) = reply.take() {
                     let _ = reply.send(Ok(()));
                 }
+                // For prompts that turn echo off after writing themselves.
+                poll_hidden_input(&probe_writer, &hidden_input, &meta_tx);
                 // `stop_io` can't queue `Stop` while the queue is full.
                 if is_readable(writer_stop.as_raw_fd()) {
                     break;
@@ -748,6 +754,38 @@ impl OutputPipeline {
     }
 }
 
+impl OutputPipeline {
+    /// Track whether the terminal reads lines without echo. Password prompts
+    /// turn echo off before writing the prompt, so its output finds it off.
+    pub(super) fn poll_hidden_input(&mut self) {
+        poll_hidden_input(&self.probe, &self.hidden_input, &self.osc_parser.meta_tx);
+    }
+}
+
+/// Update `hidden` from the terminal's modes, signaling `meta_tx` on a change.
+fn poll_hidden_input(
+    probe: &Mutex<Option<Probe>>,
+    hidden: &AtomicBool,
+    meta_tx: &mpsc::UnboundedSender<()>,
+) {
+    let now = {
+        let probe = probe.lock().unwrap();
+        let Some(probe) = probe.as_ref() else { return };
+        // The fd stays open while the probe is held.
+        let fd = unsafe { BorrowedFd::borrow_raw(probe.fd) };
+        nix::sys::termios::tcgetattr(fd).is_ok_and(|attrs| hides_input(attrs.local_flags))
+    };
+    if hidden.swap(now, Ordering::Relaxed) != now {
+        let _ = meta_tx.send(());
+    }
+}
+
+/// Canonical input without echo: a password prompt, not a raw-mode program.
+fn hides_input(flags: nix::sys::termios::LocalFlags) -> bool {
+    use nix::sys::termios::LocalFlags;
+    flags.contains(LocalFlags::ICANON) && !flags.contains(LocalFlags::ECHO)
+}
+
 /// Whether `name` is a shell's executable; login shells start with `-`, Nix
 /// wrappers with `.` and end in `-wrapped`.
 pub(super) fn is_shell(name: &str) -> bool {
@@ -802,4 +840,34 @@ fn set_size(fd: RawFd, cols: u16, rows: u16) {
         ws_ypixel: 0,
     };
     unsafe { libc::ioctl(fd, libc::TIOCSWINSZ, &size) };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hides_input;
+    use nix::sys::termios::{tcgetattr, tcsetattr, LocalFlags, SetArg};
+
+    /// The master reports the terminal's modes, as a program sets them on its side.
+    #[test]
+    fn master_sees_hidden_input() {
+        let pty = nix::pty::openpty(None, None).unwrap();
+        let set = |on: LocalFlags, off: LocalFlags| {
+            let mut attrs = tcgetattr(&pty.slave).unwrap();
+            attrs.local_flags.insert(on);
+            attrs.local_flags.remove(off);
+            tcsetattr(&pty.slave, SetArg::TCSANOW, &attrs).unwrap();
+            hides_input(tcgetattr(&pty.master).unwrap().local_flags)
+        };
+        assert!(!set(
+            LocalFlags::ICANON | LocalFlags::ECHO,
+            LocalFlags::empty()
+        ));
+        // `sudo`'s password prompt.
+        assert!(set(LocalFlags::ICANON, LocalFlags::ECHO));
+        // Raw mode, as editors and `ssh` sessions set it.
+        assert!(!set(
+            LocalFlags::empty(),
+            LocalFlags::ICANON | LocalFlags::ECHO
+        ));
+    }
 }

@@ -33,7 +33,8 @@ import { sendPrefixToVscode } from '../components/VscodeSurface';
 import { colorSchemeLabel, DEFAULT_COLOR_SCHEMES } from '../lib/colorSchemeLabel';
 import { APPEARANCES } from '../lib/appearance';
 import { worktreeLabel } from '../lib/gitIdentity';
-import { popupIndex } from '../lib/actionLabel';
+import { actionLabel, popupIndex } from '../lib/actionLabel';
+import { keyCaster } from '../lib/keyCast';
 
 /** How long the display-panes (prefix + q) number overlay stays up, in ms. */
 const DISPLAY_PANES_MS = 1500;
@@ -181,6 +182,7 @@ export function useKeybindings(
         e.stopPropagation();
         hidePaneNumbers();
         if (e.key >= '0' && e.key <= '9') {
+          keyCaster.note(e, { kind: 'binding', label: `Select pane ${e.key}` });
           selectPaneByIndex(sessionIdRef.current, parseInt(e.key, 10), sendRef.current);
         }
         return;
@@ -190,6 +192,7 @@ export function useKeybindings(
         endRepeat();
         e.preventDefault();
         e.stopPropagation();
+        keyCaster.note(e, { kind: 'prefix' });
         setPrefixActive(true);
         prefixActiveRef.current = true;
         clearTimeout(timeoutRef.current);
@@ -208,6 +211,7 @@ export function useKeybindings(
         if (action && isRepeatable(action)) {
           e.preventDefault();
           e.stopPropagation();
+          keyCaster.note(e, { kind: 'repeat', label: castLabel(action) });
           runAction(action, sessionIdRef.current, sendRef.current, onSwitchToSessionRef.current);
           armRepeat();
           return;
@@ -228,9 +232,11 @@ export function useKeybindings(
         prefixActiveRef.current = false;
         // prefix prefix → send the prefix key itself to the pane (tmux send-prefix).
         if (matchesPrefix(e, prefixRef.current)) {
+          keyCaster.note(e, { kind: 'binding', label: 'Send prefix' });
           sendPrefix(sessionIdRef.current, prefixRef.current, sendRef.current);
           return;
         }
+        keyCaster.note(e, { kind: 'binding', label: bindingLabel(e, bindsRef.current) });
         const action = dispatch(
           e,
           sessionIdRef.current,
@@ -251,6 +257,17 @@ export function useKeybindings(
     // Register once — all mutable values are read via refs above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setPrefixActive]);
+}
+
+function castLabel(action: string): string {
+  return actionLabel(action, useStore.getState().config?.popups);
+}
+
+/** What a key after the prefix does, for the key overlay. */
+function bindingLabel(e: KeyboardEvent, binds: Map<string, string>): string | null {
+  if (!binds.has(e.key) && e.key >= '0' && e.key <= '9') return `Select window ${e.key}`;
+  const action = bindFor(e, binds);
+  return action ? castLabel(action) : null;
 }
 
 function dispatch(
@@ -382,6 +399,9 @@ export function runAction(
       break;
     case 'toggle-latex':
       if (paneId) store.toggleLatex(paneId);
+      break;
+    case 'toggle-key-overlay':
+      store.setKeyOverlay(!store.keyOverlay);
       break;
     case 'new-window':
       send({ type: 'create_window', session_id: sessionId });
