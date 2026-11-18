@@ -12,6 +12,7 @@ import {
   modelKey,
   modelSlots,
   paneModelNames,
+  recentUsage,
   USAGE_HISTORY_SECONDS,
   usageTimeline,
   usageTotal,
@@ -49,11 +50,7 @@ const pointsOf = (...panes: AgentTelemetry[]) => panes.flatMap((item) => item.mo
 
 describe('agent usage timelines', () => {
   test('adds matching minutes across models without adding cached tokens twice', () => {
-    const buckets = usageTimeline(
-      [series('a', 6000, 1000, 800, 100), series('b', 6000, 500, 200, 50, 0.01)],
-      6030,
-      15,
-    );
+    const buckets = usageTimeline([series('a', 6000, 1000, 800, 100), series('b', 6000, 500, 200, 50, 0.01)], 6030, 15);
     expect(buckets).toHaveLength(15);
     const total = usageTotal(buckets);
     expect(total.input_tokens + total.output_tokens).toBe(1650);
@@ -133,7 +130,11 @@ describe('agent usage timelines', () => {
   test('running totals never fall and end at the range total', () => {
     const minute = 6000;
     const buckets = usageTimeline(
-      [series('a', minute - 120, 50, 0, 5), series('a', minute - 60, 0, 0, 0, 0.5), series('a', minute, 10, 0, 1, 0.25)],
+      [
+        series('a', minute - 120, 50, 0, 5),
+        series('a', minute - 60, 0, 0, 0, 0.5),
+        series('a', minute, 10, 0, 1, 0.25),
+      ],
       minute + 30,
       15,
     );
@@ -152,9 +153,23 @@ describe('agent usage timelines', () => {
   });
 });
 
+describe('recent usage', () => {
+  test('drops minutes past the retained history', () => {
+    const now = 100 * 86400;
+    const usage = pane(now, series('a', now - USAGE_HISTORY_SECONDS, 42), series('b', now - 120, 8, 0, 2, 0.5));
+    expect(recentUsage(usage, now).input_tokens).toBe(50);
+    const later = recentUsage(usage, now + 120);
+    expect(later.input_tokens + later.output_tokens).toBe(10);
+    expect(later.cost_usd).toBe(0.5);
+  });
+});
+
 describe('model groups and colors', () => {
   test('groups a model across panes', () => {
-    const groups = groupByModel([pane(6000, series('a', 6000, 1)), pane(6000, series('a', 6060, 2), series('b', 6000, 3))]);
+    const groups = groupByModel([
+      pane(6000, series('a', 6000, 1)),
+      pane(6000, series('a', 6060, 2), series('b', 6000, 3)),
+    ]);
     expect(groups.map((group) => [group.model, group.series.length])).toEqual([
       ['a', 2],
       ['b', 1],

@@ -277,7 +277,7 @@
 }
 
 /* ── Agents nav indicators (components/AgentNavItem.tsx) ──────────────────── */
-[data-agent-state='waiting'] {
+[data-agent-state='blocked'] {
   --btm-agent: var(--color-warning);
 }
 [data-agent-state='working'] {
@@ -319,7 +319,7 @@
 .btm-agent-dot[data-agent-animate][data-agent-state='working']:nth-child(4n + 4) {
   animation-delay: 0ms, 1220ms;
 }
-.btm-agent-dot[data-agent-animate][data-agent-state='waiting']::after {
+.btm-agent-dot[data-agent-animate][data-agent-state='blocked']::after {
   animation: btm-agent-halo 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
 }
 @keyframes btm-agent-breathe {

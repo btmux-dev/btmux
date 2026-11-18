@@ -35,6 +35,24 @@ pub type HandoffExport = (
     Vec<HandoffPane>,
 );
 
+/// How long after an upgrade a pane's next agent can take its handed-off age.
+#[cfg_attr(not(unix), allow(dead_code))]
+const HANDED_SINCE_WAIT: Duration = Duration::from_secs(60);
+
+/// Gives a pane's new agent the age an upgrade handed off for it.
+fn hand_off(
+    handed: &mut HashMap<Uuid, (AgentState, u64)>,
+    until: Option<Instant>,
+    pane_id: Uuid,
+    agent: &mut AgentLifecycle,
+) {
+    if until.is_some_and(|until| Instant::now() <= until) {
+        if let Some((state, since)) = handed.remove(&pane_id) {
+            agent.hand_off(state, since);
+        }
+    }
+}
+
 pub struct SessionManager {
     pub sessions: Vec<Session>,
     pub telemetry: crate::telemetry::TelemetryStore,
@@ -62,6 +80,10 @@ pub struct SessionManager {
     statuses: broadcast::Sender<PaneStatuses>,
     /// Live agent state is runtime-only and is never included in persistence.
     agents: HashMap<Uuid, AgentLifecycle>,
+    /// Agent states and ages from before an upgrade, for each pane's next
+    /// agent, until the deadline.
+    handed_since: HashMap<Uuid, (AgentState, u64)>,
+    handed_until: Option<Instant>,
     /// The detector's current rules, for automation's own screen checks.
     detector: Option<super::detection::Detector>,
     /// When the detector last scanned screens.
@@ -134,6 +156,8 @@ impl SessionManager {
             events,
             statuses,
             agents: HashMap::new(),
+            handed_since: HashMap::new(),
+            handed_until: None,
             detector: None,
             detection_tick: None,
             next_client: 0,
@@ -332,7 +356,7 @@ impl SessionManager {
             }
             let mut agent = AgentLifecycle::detected(*process, name.clone(), Instant::now());
             agent.suppress_old_signals(revision);
-            self.agents.insert(*pane_id, agent);
+            self.insert_agent(*pane_id, agent);
             changed = true;
         }
         let active: std::collections::HashSet<_> = detected.iter().map(|(id, _, _)| *id).collect();
@@ -418,8 +442,14 @@ impl SessionManager {
                 (Some(_), None) => {}
                 (None, Some(change)) if change.reported => {
                     if let Some(summary) = change.summary {
-                        self.agents
-                            .insert(pane.id, AgentLifecycle::program(&summary, now));
+                        let mut agent = AgentLifecycle::program(&summary, now);
+                        hand_off(
+                            &mut self.handed_since,
+                            self.handed_until,
+                            pane.id,
+                            &mut agent,
+                        );
+                        self.agents.insert(pane.id, agent);
                         changed = true;
                     }
                 }
@@ -540,11 +570,17 @@ impl SessionManager {
             return Some(true);
         }
         let was_active = self.agent_status(pane_id).is_some();
+        let new = !self.agents.contains_key(&pane_id);
         let agent = self
             .agents
             .entry(pane_id)
             .or_insert_with(|| AgentLifecycle::reported(now));
-        let changed = agent.apply(report, revision, now)?;
+        let changed = agent.apply(report, revision, now);
+        // After the report, which sets the state the age is for.
+        if new {
+            hand_off(&mut self.handed_since, self.handed_until, pane_id, agent);
+        }
+        let changed = changed?;
         // A new agent starts idle, so a report can announce it without changing its status.
         Some(changed || agent.is_active() != was_active)
     }
@@ -1021,7 +1057,7 @@ impl SessionManager {
             self.agents.remove(&pane_id);
         } else {
             let agent = AgentLifecycle::explicit(status, self.agents.get(&pane_id), Instant::now());
-            self.agents.insert(pane_id, agent);
+            self.insert_agent(pane_id, agent);
         }
         true
     }
@@ -1038,7 +1074,7 @@ impl SessionManager {
             return unread;
         };
         if agent.status.state == AgentState::Done {
-            agent.status.state = AgentState::Idle;
+            agent.set_state(AgentState::Idle);
             agent.status.message = None;
             // Seen, so later records can't bring the result back.
             if let Some(pane) = self.find_pane(pane_id) {
@@ -1712,6 +1748,25 @@ impl SessionManager {
             .collect()
     }
 
+    /// Adds a pane's agent, which takes an age handed off for the pane.
+    fn insert_agent(&mut self, pane_id: Uuid, mut agent: AgentLifecycle) {
+        hand_off(
+            &mut self.handed_since,
+            self.handed_until,
+            pane_id,
+            &mut agent,
+        );
+        self.agents.insert(pane_id, agent);
+    }
+
+    /// When the pane's agent entered its current state, in Unix seconds.
+    fn agent_since(&self, pane_id: Uuid) -> Option<u64> {
+        self.agents
+            .get(&pane_id)
+            .filter(|agent| agent.is_active())
+            .map(|agent| agent.since)
+    }
+
     /// Rebuild the session tree from saved snapshots. Process state is *not*
     /// restored — each pane gets a fresh shell, spawned lazily on first
     /// `/ws/pane` connection in its saved cwd (if that directory still exists).
@@ -1908,6 +1963,13 @@ impl SessionManager {
             .flat_map(|w| &w.panes)
             .filter_map(|p| Some((p.id, p.unread.clone()?)))
             .collect();
+        self.handed_since = sessions
+            .iter()
+            .flat_map(|s| &s.windows)
+            .flat_map(|w| &w.panes)
+            .filter_map(|p| Some((p.id, (p.agent_status.state.clone(), p.agent_since?))))
+            .collect();
+        self.handed_until = Some(Instant::now() + HANDED_SINCE_WAIT);
         let restored = self.restore_from_snapshots(sessions);
         self.popups.restore_ended(popups.ended);
         let handed_off: Vec<_> = popups.open.iter().map(|popup| popup.id).collect();
@@ -1993,6 +2055,7 @@ impl SessionManager {
                                 && p.pty.local_cwd().is_none(),
                             agent_status: self.agent_status(p.id).cloned().unwrap_or_default(),
                             agent_id: self.agent_id(p.id),
+                            agent_since: self.agent_since(p.id),
                             unread: p.unread.clone(),
                             git: p.pty.local_cwd().and_then(|cwd| self.git.lookup(&cwd)),
                             editor: p.editor.clone(),
@@ -2574,6 +2637,122 @@ mod agent_tests {
         assert_eq!(mgr.running_agent_panes(), vec![pane_id]);
         mgr.set_agent_status(pane_id, AgentStatus::default());
         assert!(mgr.running_agent_panes().is_empty());
+    }
+
+    #[tokio::test]
+    async fn agent_since_changes_only_with_the_state() {
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        let mut mgr = SessionManager::new(
+            "/bin/sh".into(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        let session = mgr.create_session(None).await;
+        let pane_id = mgr.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        let since = |mgr: &SessionManager| mgr.all_snapshots()[0].windows[0].panes[0].agent_since;
+        let status = |state, message: &str| AgentStatus {
+            state,
+            agent: Some("custom".into()),
+            source: Some("api".into()),
+            message: Some(message.into()),
+            background: None,
+        };
+        assert_eq!(since(&mgr), None);
+        mgr.set_agent_status(pane_id, status(AgentState::Working, "a"));
+        assert!(since(&mgr).is_some());
+        // Backdate it, as if it had worked a while.
+        mgr.agents.get_mut(&pane_id).unwrap().since = 1;
+        mgr.set_agent_status(pane_id, status(AgentState::Working, "b"));
+        assert_eq!(since(&mgr), Some(1));
+        mgr.set_agent_status(pane_id, status(AgentState::Blocked, "b"));
+        assert!(since(&mgr).unwrap() > 1);
+        mgr.set_agent_status(pane_id, AgentStatus::default());
+        assert_eq!(since(&mgr), None);
+    }
+
+    #[tokio::test]
+    async fn a_replacement_agent_starts_a_new_age() {
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        let mut mgr = SessionManager::new(
+            "/bin/sh".into(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        let session = mgr.create_session(None).await;
+        let pane_id = mgr.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        let since = |mgr: &SessionManager| mgr.all_snapshots()[0].windows[0].panes[0].agent_since;
+        let now = Instant::now();
+        mgr.apply_agent_report(pane_id, report(AgentEvent::TurnStart, "first"), now);
+        let first = mgr.agent_id(pane_id);
+        mgr.agents.get_mut(&pane_id).unwrap().since = 1;
+        // The same agent keeps its age.
+        mgr.apply_agent_report(pane_id, report(AgentEvent::TurnStart, "first"), now);
+        assert_eq!(since(&mgr), Some(1));
+        // Another one in the same state is announced and starts over.
+        assert_eq!(
+            mgr.apply_agent_report(pane_id, report(AgentEvent::TurnStart, "second"), now),
+            Some(true)
+        );
+        assert_ne!(mgr.agent_id(pane_id), first);
+        assert!(since(&mgr).unwrap() > 1);
+    }
+
+    #[tokio::test]
+    async fn an_upgrade_keeps_the_age_of_an_unchanged_state() {
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        let mut mgr = SessionManager::new(
+            "/bin/sh".into(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        let session = mgr.create_session(None).await;
+        let pane_id = mgr.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        let since = |mgr: &SessionManager| mgr.all_snapshots()[0].windows[0].panes[0].agent_since;
+        let status = |state| AgentStatus {
+            state,
+            agent: Some("custom".into()),
+            source: Some("api".into()),
+            message: None,
+            background: None,
+        };
+        let hand_off = |mgr: &mut SessionManager, state| {
+            mgr.handed_since.insert(pane_id, (state, 5));
+            mgr.handed_until = Some(Instant::now() + HANDED_SINCE_WAIT);
+        };
+        hand_off(&mut mgr, AgentState::Blocked);
+        mgr.set_agent_status(pane_id, status(AgentState::Blocked));
+        assert_eq!(since(&mgr), Some(5));
+        // A repeated report is a new instance in the same state.
+        mgr.set_agent_status(pane_id, status(AgentState::Blocked));
+        assert_eq!(since(&mgr), Some(5));
+        mgr.set_agent_status(pane_id, status(AgentState::Working));
+        assert!(since(&mgr).unwrap() > 5);
+        mgr.set_agent_status(pane_id, status(AgentState::Blocked));
+        assert!(since(&mgr).unwrap() > 5);
+        assert!(mgr.handed_since.is_empty());
+
+        // Another state drops it; so does the deadline.
+        mgr.set_agent_status(pane_id, AgentStatus::default());
+        hand_off(&mut mgr, AgentState::Blocked);
+        mgr.set_agent_status(pane_id, status(AgentState::Working));
+        assert!(since(&mgr).unwrap() > 5);
+        mgr.set_agent_status(pane_id, AgentStatus::default());
+        hand_off(&mut mgr, AgentState::Blocked);
+        mgr.handed_until = Some(Instant::now() - Duration::from_secs(1));
+        mgr.set_agent_status(pane_id, status(AgentState::Blocked));
+        assert!(since(&mgr).unwrap() > 5);
     }
 
     #[cfg(unix)]

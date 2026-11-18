@@ -123,8 +123,7 @@ const watchLayouts = (page: Page) =>
       const area = document.querySelector<HTMLElement>('[data-agent-tiles]');
       // Not while the dialog is still closed (`display: none`) or the tiles transparent.
       if (area?.checkVisibility({ opacityProperty: true })) {
-        const tiles = [...area.children]
-          .map((tile) => tile as HTMLElement)
+        const tiles = [...area.querySelectorAll<HTMLElement>(':scope > [data-agent-tile]')]
           .filter((tile) => getComputedStyle(tile).opacity !== '0')
           .map((tile) => ({ x: tile.offsetLeft, y: tile.offsetTop, w: tile.offsetWidth, h: tile.offsetHeight }));
         if (tiles.length) {
@@ -221,15 +220,35 @@ try {
     return useStore.getState().agentPanes.size === 4;
   });
 
-  // First open: tiles appear once, at their final layout.
-  await watchLayouts(page);
+  // Live panes are hidden at first; every agent is listed, grouped by state.
+  const rows = page.locator('[data-agent-row]');
+  const mirrorCount = () =>
+    page.evaluate(() => ((window as any).__sockets as WebSocket[]).filter((s) => s.url.includes('mirror=1')).length);
   await setOpen(page, true);
+  await page.getByText('No live panes shown').waitFor();
+  assert.equal(await rows.count(), 4);
+  assert.deepEqual(
+    await page.$$eval('[data-agent-group]', (lists) => lists.map((list) => list.getAttribute('data-agent-group'))),
+    ['working'],
+  );
+  assert.equal(await mirrorCount(), 0, 'hidden agents open no mirrors');
+
+  // Show all: tiles appear once, at their final layout.
+  await watchLayouts(page);
+  await page.getByRole('button', { name: 'Show all', exact: true }).click();
   await replaysShown(page, 4);
   await page.waitForTimeout(300);
   const first = await stopWatching(page);
-  assert.equal(first.length, 1, `first open moved tiles: ${JSON.stringify(first)}`);
+  assert.equal(first.length, 1, `showing all moved tiles: ${JSON.stringify(first)}`);
   const settled = first[0];
   assert.equal(settled.length, 4);
+  // The card rows take exactly the height packing reserves (CHROME_H in AgentGrid.tsx), so terminals aren't clipped.
+  assert.deepEqual(
+    await page.$$eval('[data-agent-tile]', (tiles) =>
+      tiles.map((tile) => tile.clientHeight - tile.querySelector<HTMLElement>('[data-agent-mirror]')!.offsetHeight),
+    ),
+    [84, 84, 84, 84],
+  );
   // Tile widths follow the panes' current columns, not the fallback.
   const widths = settled.map((tile) => tile.w).sort((a, b) => b - a);
   const perColumn = [200, 160, 120, 90].map((cols, i) => widths[i] / cols);
@@ -261,39 +280,47 @@ try {
   );
 
   // The grid's keys work after switching tabs with the mouse or the keyboard.
+  // Numbers and Up/Down follow the list (by urgency), Left/Right the tiles.
+  const ids = (selector: string, attribute: string) =>
+    page.$$eval(selector, (els, attribute) => els.map((el) => el.getAttribute(attribute)!), attribute);
+  const rowIds = await ids('[data-agent-row]', 'data-agent-row');
+  const tileIds = await ids('[data-agent-tile]', 'data-agent-tile');
   const selectedTile = () =>
-    page.evaluate(() =>
-      [...document.querySelectorAll<HTMLInputElement>('[data-agent-tiles] input')].findIndex((tile) => tile.checked),
+    page.evaluate(
+      () => document.querySelector('[data-agent-tile]:has(input:checked)')?.getAttribute('data-agent-tile') ?? null,
     );
-  const pressAndExpect = async (key: string, expected: number) => {
+  const pressAndExpect = async (key: string, expected: string) => {
     await page.keyboard.press(key);
     await waitForAsync(
       page,
       (expected) =>
-        [...document.querySelectorAll<HTMLInputElement>('[data-agent-tiles] input')].findIndex(
-          (tile) => tile.checked,
-        ) === expected,
+        document.querySelector('[data-agent-tile]:has(input:checked)')?.getAttribute('data-agent-tile') === expected,
       expected,
     );
   };
-  // The grid opens on the active pane, whose tile depends on session order.
-  await pressAndExpect('1', 0);
-  await pressAndExpect('2', 1);
-  await pressAndExpect('l', 2);
-  await pressAndExpect('h', 1);
+  const numberOf = (id: string) => String(rowIds.indexOf(id) + 1);
+  // The grid opens on the active pane.
+  await pressAndExpect('1', rowIds[0]);
+  await pressAndExpect('2', rowIds[1]);
+  await pressAndExpect('j', rowIds[2]);
+  await pressAndExpect('k', rowIds[1]);
+  await pressAndExpect(numberOf(tileIds[0]), tileIds[0]);
+  await pressAndExpect('l', tileIds[1]);
+  await pressAndExpect('l', tileIds[2]);
+  await pressAndExpect('h', tileIds[1]);
   await page.getByRole('tab', { name: 'Live panes', exact: true }).focus();
-  await pressAndExpect('1', 0);
+  await pressAndExpect('1', rowIds[0]);
   await page.keyboard.press('ArrowRight');
-  assert.equal(await selectedTile(), 0, 'arrow keys on a focused tab belong to the tabs');
+  assert.equal(await selectedTile(), rowIds[0], 'arrow keys on a focused tab belong to the tabs');
   await page.keyboard.press('Enter');
   await page.getByText('No usage received yet').waitFor();
   await page.keyboard.press('2');
-  assert.equal(await selectedTile(), 0, 'grid keys must not move the hidden selection');
+  assert.equal(await selectedTile(), rowIds[0], 'grid keys must not move the hidden selection');
   await page.getByRole('tab', { name: 'Live panes', exact: true }).focus();
   await page.keyboard.press('Enter');
   await replaysShown(page, 4);
-  await pressAndExpect('2', 1);
-  await pressAndExpect('1', 0);
+  await pressAndExpect('2', rowIds[1]);
+  await pressAndExpect('1', rowIds[0]);
 
   // Tab cycles the views and leaves the grid its keys.
   const selectedView = () => page.locator('dialog[open] [role="tab"][aria-selected="true"]').innerText();
@@ -308,10 +335,10 @@ try {
   assert.equal(await selectedView(), 'Usage');
   await page.keyboard.press('Shift+Tab');
   await replaysShown(page, 4);
-  await pressAndExpect('2', 1);
-  await pressAndExpect('1', 0);
+  await pressAndExpect('2', rowIds[1]);
+  await pressAndExpect('1', rowIds[0]);
 
-  // Minimized agents leave the tiles, drop their mirror, and stay in the list.
+  // Hidden agents leave the tiles, drop their mirror, and stay in the list.
   const tileCountNow = () => page.locator('[data-agent-tiles] [data-agent-mirror]').count();
   const openMirrors = () =>
     page.evaluate(
@@ -320,11 +347,15 @@ try {
           (socket) => socket.url.includes('mirror=1') && socket.readyState === WebSocket.OPEN,
         ).length,
     );
-  const rows = page.locator('[data-agent-row]');
-  assert.equal(await rows.count(), 4);
-  await page.keyboard.press('m');
-  await waitForAsync(page, () => document.querySelectorAll('[data-agent-tiles] [data-agent-mirror]').length === 3);
-  await waitForAsync(page, () => document.querySelectorAll('[data-agent-row][data-minimized]').length === 1);
+  const tilesAre = (count: number) =>
+    waitForAsync(
+      page,
+      (count) => document.querySelectorAll('[data-agent-tiles] [data-agent-mirror]').length === count,
+      count,
+    );
+  await page.keyboard.press(' ');
+  await tilesAre(3);
+  await waitForAsync(page, () => document.querySelectorAll('[data-agent-row][data-shown]').length === 3);
   await waitForAsync(
     page,
     () =>
@@ -332,43 +363,88 @@ try {
         (socket) => socket.url.includes('mirror=1') && socket.readyState === WebSocket.OPEN,
       ).length === 3,
   );
-  assert.equal(await rows.count(), 4, 'minimized agents stay listed');
-  // Enter on a minimized agent restores it.
-  await page.keyboard.press('1');
-  await page.keyboard.press('Enter');
+  assert.equal(await rows.count(), 4, 'hidden agents stay listed');
+  // Space again shows it.
+  await page.keyboard.press(' ');
   await replaysShown(page, 4);
-  assert.equal(await page.locator('dialog[open]').count(), 1, 'restoring must not leave the grid');
-  // A list click toggles.
-  await rows.nth(2).click();
-  await waitForAsync(page, () => document.querySelectorAll('[data-agent-tiles] [data-agent-mirror]').length === 3);
-  await rows.nth(2).click();
+  // Only the eye toggles; it keeps the grid open.
+  const eye = (id: string) => page.locator(`[data-agent-row="${id}"] [data-agent-eye]`);
+  await eye(rowIds[2]).click();
+  await tilesAre(3);
+  assert.equal(await page.locator('dialog[open]').count(), 1, 'the eye must not leave the grid');
+  await eye(rowIds[2]).click();
   await replaysShown(page, 4);
   // `o` shows only the selected agent, and again shows all.
   await page.keyboard.press('2');
   await page.keyboard.press('o');
-  await waitForAsync(page, () => document.querySelectorAll('[data-agent-tiles] [data-agent-mirror]').length === 1);
-  assert.equal(await selectedTile(), 0);
+  await tilesAre(1);
+  assert.equal(await selectedTile(), rowIds[1]);
   await page.keyboard.press('o');
   await replaysShown(page, 4);
   assert.equal(await tileCountNow(), 4);
   assert.equal(await openMirrors(), 4);
-  await pressAndExpect('1', 0);
+  await pressAndExpect('1', rowIds[0]);
   // Enter on a focused sidebar control activates it, not the selected agent.
   await page.keyboard.press('o');
-  await waitForAsync(page, () => document.querySelectorAll('[data-agent-tiles] [data-agent-mirror]').length === 1);
+  await tilesAre(1);
   await page.getByRole('button', { name: 'Show all' }).focus();
   await page.keyboard.press('Enter');
   await replaysShown(page, 4);
   assert.equal(await page.locator('dialog[open]').count(), 1, 'Show all must not leave the grid');
-  await rows.nth(2).locator('button').focus();
+  await eye(rowIds[2]).focus();
   await page.keyboard.press('Enter');
-  await waitForAsync(page, () => document.querySelector('[data-agent-row][data-minimized]') !== null);
-  assert.equal(await page.locator('[data-agent-row]').nth(2).getAttribute('data-minimized'), 'true');
-  assert.equal(await page.locator('dialog[open]').count(), 1, 'a row must not leave the grid');
-  await rows.nth(2).locator('button').focus();
+  await waitForAsync(
+    page,
+    (id) => !document.querySelector(`[data-agent-row="${id}"]`)!.hasAttribute('data-shown'),
+    rowIds[2],
+  );
+  assert.equal(await page.locator('dialog[open]').count(), 1, 'an eye must not leave the grid');
+  await eye(rowIds[2]).focus();
   await page.keyboard.press('Enter');
   await replaysShown(page, 4);
-  await pressAndExpect('1', 0);
+  await pressAndExpect('1', rowIds[0]);
+
+  // Space on a focused row shows or hides it rather than going to the pane.
+  await page.locator(`[data-agent-row="${rowIds[2]}"] button:not([aria-pressed])`).focus();
+  await page.keyboard.press(' ');
+  await tilesAre(3);
+  assert.equal(await page.locator('dialog[open]').count(), 1, 'Space on a row must not leave the grid');
+  await page.keyboard.press(' ');
+  await replaysShown(page, 4);
+  await page.locator('dialog[open]').focus();
+
+  // Clicking a row goes to its pane, shown or not; so does Enter on a focused row,
+  // which arrows keep on the selected one.
+  const sessionOf = (pane: string) =>
+    page.evaluate(async (pane) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      return useStore
+        .getState()
+        .allSessions.find((s: any) => s.windows.some((w: any) => w.panes.some((p: any) => p.id === pane)))
+        .name as string;
+    }, pane);
+  const leavesFor = async (pane: string, go: () => Promise<unknown>) => {
+    const session = await sessionOf(pane);
+    await go();
+    await page.waitForURL(new RegExp(`/s/${session}\\b`), { timeout: 5000 });
+    await page.locator('dialog[open]').waitFor({ state: 'detached', timeout: 5000 });
+    await setOpen(page, true);
+    await replaysShown(page, 4);
+    await pressAndExpect('1', rowIds[0]);
+  };
+  await leavesFor(rowIds[3], () =>
+    page.locator(`[data-agent-row="${rowIds[3]}"]`).click({ position: { x: 60, y: 12 } }),
+  );
+  await leavesFor(rowIds[1], async () => {
+    await page.locator(`[data-agent-row="${rowIds[0]}"] button:not([aria-pressed])`).focus();
+    await pressAndExpect('ArrowDown', rowIds[1]);
+    await waitForAsync(
+      page,
+      (id) => document.activeElement?.closest('[data-agent-row]')?.getAttribute('data-agent-row') === id,
+      rowIds[1],
+    );
+    await page.keyboard.press('Enter');
+  });
 
   // Reconnecting mirrors replay old sizes without moving tiles.
   await watchLayouts(page);
@@ -405,11 +481,14 @@ try {
   const narrowest = (layout: { w: number }[]) => Math.min(...layout.map((tile) => tile.w));
   assert(narrowest(resized[1]) > narrowest(resized[0]), JSON.stringify(resized));
 
-  // A new agent joins in one layout change, without a placeholder size.
-  await watchLayouts(page);
-  await baseline(page);
+  // A new agent is listed, hidden; shown, it joins in one layout change, without a placeholder size.
   const late = await startAgent('agent-e', 100, 30);
   agents.push(late);
+  await waitForAsync(page, () => document.querySelectorAll('[data-agent-row]').length === 5);
+  assert.equal(await tileCountNow(), 4, 'new agents start hidden');
+  await watchLayouts(page);
+  await baseline(page);
+  await eye(late.id).click();
   await replaysShown(page, 5);
   await page.waitForTimeout(300);
   const joined = await stopWatching(page);
@@ -423,32 +502,33 @@ try {
     waitForAsync(page, (count) => (window as any).__watch.layouts.at(-1).length === count, count);
   await watchLayouts(page);
   await baseline(page);
-  agents.push(await startAgent('agent-stuck', 110, 30, hold(null)));
+  const stuck = await startAgent('agent-stuck', 110, 30, hold(null));
+  agents.push(stuck);
+  await eye(stuck.id).click();
   await tileCount(6);
   await stopWatching(page);
 
   // Meanwhile, a slow agent still joins at its own size, not the fallback.
   await watchLayouts(page);
   await baseline(page);
-  agents.push(await startAgent('agent-slow', 70, 20, hold(600)));
+  const slow = await startAgent('agent-slow', 70, 20, hold(600));
+  agents.push(slow);
+  await eye(slow.id).click();
   await tileCount(7);
   await page.waitForTimeout(1000);
-  const slow = await stopWatching(page);
-  assert.equal(slow.length, 2, `slow agent beside a stuck one: ${JSON.stringify(slow)}`);
+  const slowLayouts = await stopWatching(page);
+  assert.equal(slowLayouts.length, 2, `slow agent beside a stuck one: ${JSON.stringify(slowLayouts)}`);
 
-  // An agent that starts while the view is closed appears on reopening, at its own size.
+  // An agent that starts while the view is closed is listed on reopening and shows at its own size.
   await setOpen(page, false);
   await page.waitForTimeout(200);
   const closedAgent = await startAgent('agent-closed', 130, 35);
   agents.push(closedAgent);
-  // Past the size deadline, which must not expire while closed.
-  await page.waitForTimeout(2500);
+  await page.waitForTimeout(500);
   await setOpen(page, true);
+  await eye(closedAgent.id).click();
   await replaysShown(page, 8);
-  await waitForAsync(
-    page,
-    () => getComputedStyle(document.querySelector('[data-agent-tiles]')!).opacity === '1',
-  );
+  await waitForAsync(page, () => getComputedStyle(document.querySelector('[data-agent-tiles]')!).opacity === '1');
   const tileWidthPerColumn = (name: string, cols: number) =>
     page.evaluate(
       ([name, cols]) => {
@@ -469,9 +549,10 @@ try {
     30,
     undefined,
     // Its own process group, so the agent doesn't end at a prompt.
-    "sh -c 'trap \"n=\\$((n+1)); echo int-\\$n\" INT; while :; do sleep 1; done'",
+    'sh -c \'trap "n=\\$((n+1)); echo int-\\$n" INT; while :; do sleep 1; done\'',
   );
   agents.push(victim);
+  await eye(victim.id).click();
   await replaysShown(page, 9);
   const killButton = page
     .locator('[data-agent-tiles] > div', { hasText: 'agent-kill' })
@@ -531,10 +612,14 @@ try {
   await page.keyboard.press('y');
   // The server sends nothing for that agent, even to one replacing it.
   await notify(victim.id, 'UserPromptSubmit', 'agent-kill-2');
-  await waitForAsync(page, async (pane) => {
-    const { useStore } = await import('/src/state/store.tsx' as string);
-    return useStore.getState().agentPanes.has(pane);
-  }, victim.id);
+  await waitForAsync(
+    page,
+    async (pane) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      return useStore.getState().agentPanes.has(pane);
+    },
+    victim.id,
+  );
   assert.notEqual(await agentId(), exited);
   const control = new (WebSocket as any)(`${backend.replace('http', 'ws')}/ws/control`, {
     headers: { Authorization: `Bearer ${token}` },

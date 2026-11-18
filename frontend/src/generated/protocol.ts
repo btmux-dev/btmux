@@ -144,7 +144,11 @@ cwd_remote: boolean, agent_status: AgentStatus,
 /**
  * Names the running agent instance, so a client can target it.
  */
-agent_id: number | null, unread: PaneAlert | null, git: PaneGit | null, editor: PaneEditor, };
+agent_id: number | null,
+/**
+ * When the agent entered its current state, in Unix seconds.
+ */
+agent_since: number | null, unread: PaneAlert | null, git: PaneGit | null, editor: PaneEditor, };
 
 // prettier-ignore
 export type WindowSnapshot = { id: string, name: string, panes: Array<PaneSnapshot>, active_pane: number, layout: Layout, zoomed_pane: string | null, };

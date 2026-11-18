@@ -113,6 +113,7 @@ fn serialize_snapshots(snapshots: &[SessionSnapshot]) -> Result<String, String> 
                     .as_object_mut()
                     .expect("pane snapshots serialize as an object");
                 pane.remove("agent_status");
+                pane.remove("agent_since");
                 pane.remove("unread");
                 pane.remove("git");
                 pane.remove("cwd_remote");
@@ -170,6 +171,7 @@ mod agent_status_tests {
                     cwd_remote: false,
                     agent_status: Default::default(),
                     agent_id: None,
+                    agent_since: None,
                     unread: None,
                     git: None,
                     editor: crate::session::PaneEditor {
@@ -215,6 +217,7 @@ mod agent_status_tests {
                         background: None,
                     },
                     agent_id: None,
+                    agent_since: Some(1),
                     unread: Some(PaneAlert {
                         level: NotificationLevel::Attention,
                         title: Some("Done".to_string()),
@@ -237,6 +240,7 @@ mod agent_status_tests {
         }];
         let json = serialize_snapshots(&snapshots).unwrap();
         assert!(!json.contains("agent_status"));
+        assert!(!json.contains("agent_since"));
         assert!(!json.contains("private prompt"));
         assert!(!json.contains("private reply"));
         assert!(!json.contains("worktree_root"));

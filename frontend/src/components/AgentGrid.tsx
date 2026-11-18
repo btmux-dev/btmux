@@ -21,11 +21,18 @@ import { Kbd } from '@astryxdesign/core/Kbd';
 import { EmptyState } from '@astryxdesign/core/EmptyState';
 import { Icon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
-import { Bot, Eye, EyeOff, Minus, RotateCcw, X } from 'lucide-react';
-import { useStore } from '../state/store';
+import { ToggleButton } from '@astryxdesign/core/ToggleButton';
+import { StatusDot } from '@astryxdesign/core/StatusDot';
+import { Bot, Eye, EyeOff, RotateCcw, X } from 'lucide-react';
+import { githubKey, useStore } from '../state/store';
 import { ClientMessage } from '../protocol/messages';
-import type { AgentStatus } from '../state/types';
+import type { AgentStatus, PaneGit } from '../state/types';
 import { AgentStatusBadge } from './PaneTitleBar';
+import { AGENTS } from './AgentIcon';
+import { AGENT_DOT_VARIANT } from './AgentNavItem';
+import { GithubBadge } from './GithubBadge';
+import { AGENT_GROUP_LABELS, formatSince, groupAgents } from '../lib/agentGroups';
+import { formatCost, formatTokens, recentUsage } from '../lib/agentUsage';
 import { MirrorPane } from './MirrorPane';
 import { KeyHint } from './KeyHint';
 import { usePressHint } from '../hooks/usePressHint';
@@ -54,6 +61,9 @@ interface AgentPaneEntry {
   paneTitle: string | null;
   agentStatus: AgentStatus;
   agentId: number | null;
+  /** Unix seconds. */
+  since: number | null;
+  git: PaneGit | null;
 }
 
 function buildEntries(
@@ -75,6 +85,8 @@ function buildEntries(
           paneTitle: pane.title,
           agentStatus: pane.agent_status,
           agentId: pane.agent_id,
+          since: pane.agent_since,
+          git: pane.git,
         });
       });
     });
@@ -82,33 +94,51 @@ function buildEntries(
   return entries;
 }
 
-const paneLabel = (entry: AgentPaneEntry) => entry.paneTitle || `pane ${entry.paneIndex + 1}`;
+const paneLabel = (entry: AgentPaneEntry) =>
+  entry.paneTitle ||
+  (entry.agentStatus.agent && (AGENTS.get(entry.agentStatus.agent)?.name ?? entry.agentStatus.agent)) ||
+  `pane ${entry.paneIndex + 1}`;
 
-// Minimized agents, per browser. Pane ids are UUIDs, so stale ids never match.
-const MINIMIZED_KEY = 'btmux-minimized-agents';
+/** What the agent says it is doing or waiting on. */
+const paneDetail = (entry: AgentPaneEntry) => entry.agentStatus.message || entry.agentStatus.background;
 
-function loadMinimized(): ReadonlySet<string> {
+// Agents whose live pane is shown, per browser. Pane ids are UUIDs, so stale ids never match.
+const SHOWN_KEY = 'btmux-shown-agents';
+
+function loadShown(): ReadonlySet<string> {
   try {
-    const parsed = JSON.parse(localStorage.getItem(MINIMIZED_KEY) ?? '[]');
+    const parsed = JSON.parse(localStorage.getItem(SHOWN_KEY) ?? '[]');
     return new Set(Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : []);
   } catch {
     return new Set();
   }
 }
 
-function saveMinimized(ids: ReadonlySet<string>) {
+function saveShown(ids: ReadonlySet<string>) {
   try {
-    localStorage.setItem(MINIMIZED_KEY, JSON.stringify([...ids]));
+    localStorage.setItem(SHOWN_KEY, JSON.stringify([...ids]));
   } catch {
-    // Storage may be unavailable; minimizing still works for this page.
+    // Storage may be unavailable; showing still works for this page.
   }
 }
 
+/** Unix seconds, ticking while `active`. */
+function useNow(active: boolean) {
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now() / 1000);
+    const timer = window.setInterval(() => setNow(Date.now() / 1000), 10_000);
+    return () => clearInterval(timer);
+  }, [active]);
+  return now;
+}
+
 const GAP = 12;
-const SIDEBAR_WIDTH = 300;
-// Per-tile card chrome around the terminal (padding, border, header row).
+const SIDEBAR_WIDTH = 320;
+// Per-tile card chrome around the terminal (padding, border, header and detail rows).
 const CHROME_W = 24;
-const CHROME_H = 56;
+const CHROME_H = 84;
 const FALLBACK_SIZE = { w: 640, h: 400 };
 const MIN_SCALE = 0.1;
 // How long a mirror may take to report its size before it gets the fallback.
@@ -178,7 +208,7 @@ function SizeDeadline({ paneId, onExpire }: { paneId: string; onExpire: (paneId:
   return null;
 }
 
-/** Full-screen live mirrors of agent panes, with a sidebar listing every agent. */
+/** Every agent, grouped by state, with live mirrors of the ones chosen. */
 export function AgentGrid({ send }: Props) {
   const [view, setView] = useState<AgentView>('panes');
   const open = useStore((s) => s.agentGridOpen);
@@ -186,22 +216,36 @@ export function AgentGrid({ send }: Props) {
   const setOpen = useStore((s) => s.setAgentGridOpen);
   const allSessions = useStore((s) => s.allSessions);
   const agentPanes = useStore((s) => s.agentPanes);
+  const telemetry = useStore((s) => s.agentTelemetry);
+  const github = useStore((s) => s.github);
   const config = useStore((s) => s.config);
   const location = useLocation();
   const navigate = useNavigate();
   const isNarrow = useMediaQuery(NARROW_QUERY);
+  const now = useNow(open);
   const entries = useMemo(() => buildEntries(allSessions, agentPanes), [allSessions, agentPanes]);
   const terminalBg = chromePalette(config?.theme ?? null).bodyBg;
+  // The list, numbers, and selection go by urgency; tiles keep pane order, so they don't move.
+  const groups = useMemo(
+    () =>
+      groupAgents(
+        entries,
+        (entry) => entry.agentStatus.state,
+        (entry) => entry.since,
+      ),
+    [entries],
+  );
+  const ordered = useMemo(() => groups.flatMap(([, members]) => members), [groups]);
 
-  // Minimized agents stay in the sidebar and drop their mirror.
-  const [minimized, setMinimizedState] = useState<ReadonlySet<string>>(loadMinimized);
-  const setMinimized = (ids: Iterable<string>) => {
+  // Live panes are opt-in; hidden agents stay in the sidebar without a mirror.
+  const [shownIds, setShownState] = useState<ReadonlySet<string>>(loadShown);
+  const setShown = (ids: Iterable<string>) => {
     const panes = new Set(allSessions.flatMap((s) => s.windows.flatMap((w) => w.panes.map((p) => p.id))));
     const next = new Set([...ids].filter((id) => panes.has(id)));
-    setMinimizedState(next);
-    saveMinimized(next);
+    setShownState(next);
+    saveShown(next);
   };
-  const shown = useMemo(() => entries.filter((entry) => !minimized.has(entry.paneId)), [entries, minimized]);
+  const shown = useMemo(() => entries.filter((entry) => shownIds.has(entry.paneId)), [entries, shownIds]);
 
   const [mirrorsReady, setMirrorsReady] = useState(false);
   const hasEverBeenReady = useRef(false);
@@ -230,6 +274,16 @@ export function AgentGrid({ send }: Props) {
   const [timedOutPanes, setTimedOutPanes] = useState<ReadonlySet<string>>(new Set());
   const sizeTimedOut = useCallback((paneId: string) => setTimedOutPanes((prev) => new Set(prev).add(paneId)), []);
   const allSized = shown.every((entry) => naturals[entry.paneId] || timedOutPanes.has(entry.paneId));
+  // Tiles shown together (Show all) join together, once all are sized.
+  const [laidOut, setLaidOut] = useState<ReadonlySet<string>>(new Set());
+  const placed = useMemo(
+    () => new Set(shown.map((entry) => entry.paneId).filter((id) => allSized || laidOut.has(id))),
+    [shown, allSized, laidOut],
+  );
+  useEffect(() => {
+    if (allSized)
+      setLaidOut((prev) => (prev.size === placed.size && [...placed].every((id) => prev.has(id)) ? prev : placed));
+  }, [allSized, placed]);
   const [tilesShown, setTilesShown] = useState(false);
   useEffect(() => {
     if (open) {
@@ -257,12 +311,16 @@ export function AgentGrid({ send }: Props) {
     () =>
       area && area.w > 0 && area.h > 0
         ? pack(
-            shown.map((entry) => naturals[entry.paneId] ?? (timedOutPanes.has(entry.paneId) ? FALLBACK_SIZE : null)),
+            shown.map((entry) =>
+              placed.has(entry.paneId)
+                ? (naturals[entry.paneId] ?? (timedOutPanes.has(entry.paneId) ? FALLBACK_SIZE : null))
+                : null,
+            ),
             area.w,
             area.h,
           )
         : null,
-    [area, shown, naturals, timedOutPanes],
+    [area, shown, placed, naturals, timedOutPanes],
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [killing, setKilling] = useState<AgentPaneEntry | null>(null);
@@ -280,17 +338,29 @@ export function AgentGrid({ send }: Props) {
       const activeWindow = session?.windows[session.active_window];
       const activePaneId = activeWindow?.panes[activeWindow.active_pane]?.id;
       const active = entries.find((entry) => entry.paneId === activePaneId);
-      setSelectedId((active ?? shown[0] ?? entries[0])?.paneId ?? null);
+      setSelectedId((active ?? ordered[0])?.paneId ?? null);
     }
     wasOpen.current = open;
-  }, [open, entries, shown, location.pathname, allSessions]);
+  }, [open, entries, ordered, location.pathname, allSessions]);
 
-  // Selection is by pane, over all agents; a gone agent falls back to the first.
+  // Selection is by pane, over all agents; a gone agent falls back to the most urgent.
   const selectedIdx = Math.max(
     0,
-    entries.findIndex((entry) => entry.paneId === selectedId),
+    ordered.findIndex((entry) => entry.paneId === selectedId),
   );
-  const selected = entries[selectedIdx];
+  const selected = ordered[selectedIdx];
+
+  // Keeps the selection in view, and focus on its row when a row has focus, so Enter opens it.
+  // By id: updates rebuild entries, and must not scroll the list back.
+  const selectedPane = selected?.paneId;
+  useEffect(() => {
+    if (!open || !selectedPane) return;
+    const row = dialogRef.current?.querySelector<HTMLElement>(`[data-agent-row="${selectedPane}"]`);
+    if (!row) return;
+    row.scrollIntoView({ block: 'nearest' });
+    const focused = document.activeElement?.closest('[data-agent-row]');
+    if (focused && focused !== row) row.querySelector<HTMLElement>('button:not([aria-pressed])')?.focus();
+  }, [open, selectedPane]);
 
   // SessionPane refocuses the active pane on close.
   const cancel = () => setOpen(false);
@@ -328,16 +398,16 @@ export function AgentGrid({ send }: Props) {
     requestAnimationFrame(() => dialogRef.current?.focus());
   };
 
-  const toggleMinimized = (entry: AgentPaneEntry) => {
-    const next = new Set(minimized);
+  const toggleShown = (entry: AgentPaneEntry) => {
+    const next = new Set(shownIds);
     if (!next.delete(entry.paneId)) next.add(entry.paneId);
-    setMinimized(next);
+    setShown(next);
   };
 
   // Shows only this agent; again, shows them all.
   const toggleOnly = (entry: AgentPaneEntry) => {
     const alone = shown.length === 1 && shown[0].paneId === entry.paneId;
-    setMinimized(alone ? [] : entries.filter((other) => other !== entry).map((other) => other.paneId));
+    setShown(alone ? entries.map((other) => other.paneId) : [entry.paneId]);
   };
 
   const changeView = (value: AgentView) => {
@@ -361,11 +431,20 @@ export function AgentGrid({ send }: Props) {
     }
     if (TAB_KEYS.has(e.key) && (e.target as Element).closest('[role="tablist"]')) return;
     if (n === 0 || !selected) return;
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' || e.key === ' ') {
+      const target = e.target as Element;
+      // Space on a focused row shows or hides it; the row's button would go to the pane.
+      const row = e.key === ' ' && !target.closest('[aria-pressed]') && target.closest('[data-agent-row]');
+      const rowEntry = row && ordered.find((entry) => entry.paneId === row.getAttribute('data-agent-row'));
+      if (rowEntry) {
+        e.preventDefault();
+        toggleShown(rowEntry);
+        return;
+      }
       // A focused control activates itself.
-      if ((e.target as Element).closest('button, a[href], input')) return;
+      if (target.closest('button, a[href], input')) return;
       e.preventDefault();
-      if (minimized.has(selected.paneId)) toggleMinimized(selected);
+      if (e.key === ' ') toggleShown(selected);
       else select(selected);
       return;
     }
@@ -373,35 +452,22 @@ export function AgentGrid({ send }: Props) {
     const left = e.key === 'ArrowLeft' || e.key === 'h';
     const down = e.key === 'ArrowDown' || e.key === 'j';
     const up = e.key === 'ArrowUp' || e.key === 'k';
-    if (right || left || down || up) {
+    if (down || up) {
       e.preventDefault();
-      // Arrows move between tiles; from a minimized agent, to the nearest tile.
+      const next = ordered[selectedIdx + (down ? 1 : -1)];
+      if (next) setSelectedId(next.paneId);
+      return;
+    }
+    if (left || right) {
+      e.preventDefault();
+      // Left and right move between tiles; from a hidden agent, to the first or last.
       const pos = shown.indexOf(selected);
-      if (pos < 0) {
-        const next =
-          entries.slice(selectedIdx + 1).find((entry) => !minimized.has(entry.paneId)) ??
-          entries
-            .slice(0, selectedIdx)
-            .reverse()
-            .find((entry) => !minimized.has(entry.paneId));
-        if (next) setSelectedId(next.paneId);
-        return;
-      }
-      if (left || right) {
-        const next = shown[pos + (right ? 1 : -1)];
-        if (next) setSelectedId(next.paneId);
-        return;
-      }
-      const lines = packed?.lines ?? [];
-      const li = lines.findIndex((line) => line.includes(pos));
-      const target = lines[li + (down ? 1 : -1)];
-      if (li < 0 || !target) return;
-      const col = lines[li].indexOf(pos);
-      setSelectedId(shown[target[Math.min(col, target.length - 1)]].paneId);
+      const next = pos < 0 ? shown[right ? 0 : shown.length - 1] : shown[pos + (right ? 1 : -1)];
+      if (next) setSelectedId(next.paneId);
       return;
     }
     if (!e.metaKey && !e.ctrlKey && !e.altKey) {
-      const action = { r: reset, m: toggleMinimized, o: toggleOnly, x: confirmKill }[e.key];
+      const action = { r: reset, o: toggleOnly, x: confirmKill }[e.key];
       if (action) {
         e.preventDefault();
         action(selected);
@@ -412,80 +478,141 @@ export function AgentGrid({ send }: Props) {
       const idx = Number(e.key) - 1;
       if (idx < n) {
         e.preventDefault();
-        setSelectedId(entries[idx].paneId);
+        setSelectedId(ordered[idx].paneId);
       }
     }
   };
 
   if (!mounted) return null;
 
-  const minimizedCount = entries.length - shown.length;
+  const allShown = shown.length === entries.length;
+  const number = (entry: AgentPaneEntry) => ordered.indexOf(entry);
+  const usage = (entry: AgentPaneEntry) => {
+    const pane = telemetry[entry.paneId];
+    if (!pane) return null;
+    const totals = recentUsage(pane, now);
+    const tokens = totals.input_tokens + totals.output_tokens;
+    const parts = [
+      totals.cost_usd != null && formatCost(totals.cost_usd, 2),
+      tokens > 0 && `${formatTokens(tokens)} tokens`,
+    ];
+    return parts.filter(Boolean).join(' · ') || null;
+  };
+  const githubStatus = (entry: AgentPaneEntry) =>
+    entry.git?.branch ? github.get(githubKey(entry.git.repo_id, entry.git.branch)) : undefined;
+  const since = (entry: AgentPaneEntry) => (entry.since == null ? null : formatSince(entry.since, now));
+
   const sidebar = (
-    <List
-      density="compact"
-      header={
-        <HStack gap={2} vAlign="center" hAlign="between">
-          <Text type="supporting" hasTabularNumbers>
-            {minimizedCount ? `${shown.length} of ${entries.length} shown` : `${entries.length} shown`}
-          </Text>
-          {minimizedCount > 0 && (
-            <Button
-              label="Show all"
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setMinimized([]);
-                dialogRef.current?.focus();
-              }}
-            />
-          )}
-        </HStack>
-      }
-    >
-      {entries.map((entry, i) => {
-        const isMinimized = minimized.has(entry.paneId);
-        return (
-          <ListItem
-            key={entry.paneId}
-            data-agent-row={entry.paneId}
-            data-minimized={isMinimized || undefined}
-            isSelected={entry === selected}
-            startContent={
-              <Icon
-                icon={isMinimized ? EyeOff : Eye}
-                size="sm"
-                color="secondary"
-                label={isMinimized ? 'Minimized' : 'Shown'}
+    <VStack gap={3}>
+      <HStack gap={2} vAlign="center" hAlign="between">
+        <Text type="supporting" hasTabularNumbers>
+          {shown.length ? `${shown.length} of ${entries.length} shown` : `${entries.length} agents`}
+        </Text>
+        <Button
+          label={allShown ? 'Hide all' : 'Show all'}
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            setShown(allShown ? [] : entries.map((entry) => entry.paneId));
+            dialogRef.current?.focus();
+          }}
+        />
+      </HStack>
+      {groups.map(([group, members]) => (
+        <List
+          key={group}
+          density="compact"
+          data-agent-group={group}
+          header={
+            <HStack gap={2} vAlign="center">
+              <StatusDot
+                variant={AGENT_DOT_VARIANT[group]}
+                label={AGENT_GROUP_LABELS[group]}
+                className="btm-agent-dot"
+                data-agent-state={group}
               />
-            }
-            label={
-              <Text maxLines={1} color={isMinimized ? 'secondary' : 'primary'}>
-                {paneLabel(entry)}
+              <Text type="label">{AGENT_GROUP_LABELS[group]}</Text>
+              <Text type="supporting" color="secondary" hasTabularNumbers>
+                {members.length}
               </Text>
-            }
-            description={
-              <Text type="supporting" maxLines={1} className="btm-mono">
-                {entry.sessionName} › {entry.windowName}
-              </Text>
-            }
-            endContent={
-              <HStack gap={1} vAlign="center">
-                <AgentStatusBadge status={entry.agentStatus} />
-                {i < 9 && <Kbd keys={String(i + 1)} />}
-              </HStack>
-            }
-            // A click toggles; a double click (two toggles) switches to the pane.
-            onClick={() => {
-              setSelectedId(entry.paneId);
-              toggleMinimized(entry);
-              // A focused row would take Enter from the grid.
-              dialogRef.current?.focus();
-            }}
-            onDoubleClick={() => select(entry)}
-          />
-        );
-      })}
-    </List>
+            </HStack>
+          }
+        >
+          {members.map((entry) => {
+            const isShown = shownIds.has(entry.paneId);
+            const i = number(entry);
+            const agent = entry.agentStatus.agent ? AGENTS.get(entry.agentStatus.agent) : undefined;
+            const detail = paneDetail(entry);
+            const branch = entry.git?.branch;
+            const time = since(entry);
+            return (
+              <ListItem
+                key={entry.paneId}
+                data-agent-row={entry.paneId}
+                data-shown={isShown || undefined}
+                isSelected={entry === selected}
+                align="start"
+                startContent={
+                  <Icon
+                    icon={agent?.icon ?? Bot}
+                    size="sm"
+                    color="secondary"
+                    label={agent?.name ?? entry.agentStatus.agent ?? 'Agent'}
+                  />
+                }
+                label={<Text maxLines={1}>{paneLabel(entry)}</Text>}
+                description={
+                  <VStack gap={0.5}>
+                    {detail && (
+                      <Text type="supporting" maxLines={2}>
+                        {detail}
+                      </Text>
+                    )}
+                    <Text type="supporting" color="secondary" maxLines={1} className="btm-mono">
+                      {entry.sessionName} › {entry.windowName}
+                      {branch && ` · ${branch}`}
+                    </Text>
+                  </VStack>
+                }
+                endContent={
+                  <HStack gap={1} vAlign="center">
+                    {time && (
+                      <Text
+                        type="supporting"
+                        color="secondary"
+                        hasTabularNumbers
+                        aria-label={`${AGENT_GROUP_LABELS[group]} for ${time}`}
+                      >
+                        {time}
+                      </Text>
+                    )}
+                    {i < 9 && <Kbd keys={String(i + 1)} />}
+                    <ToggleButton
+                      label={isShown ? 'Hide live pane' : 'Show live pane'}
+                      tooltip={isShown ? 'Hide live pane (space)' : 'Show live pane (space)'}
+                      icon={<EyeOff />}
+                      pressedIcon={<Eye />}
+                      isIconOnly
+                      size="sm"
+                      isPressed={isShown}
+                      data-agent-eye
+                      onPressedChange={(_, e) => {
+                        e.stopPropagation();
+                        setSelectedId(entry.paneId);
+                        toggleShown(entry);
+                        // A focused button would take Enter from the grid.
+                        dialogRef.current?.focus();
+                      }}
+                    />
+                  </HStack>
+                }
+                onClick={() => select(entry)}
+              />
+            );
+          })}
+        </List>
+      ))}
+    </VStack>
   );
 
   const tiles = (
@@ -497,18 +624,23 @@ export function AgentGrid({ send }: Props) {
     >
       {shown.length === 0 && (
         <EmptyState
-          icon={<Icon icon={EyeOff} size="lg" color="secondary" />}
-          title="All agents minimized"
-          description="Click an agent in the list to show it."
+          icon={<Icon icon={Eye} size="lg" color="secondary" />}
+          title="No live panes shown"
+          description="Use an agent's eye button, or select it and press Space, to watch it here."
         />
       )}
       {packed &&
         shown.map((entry, i) => {
-          const number = entries.indexOf(entry);
+          const n = number(entry);
           const size = packed.sizes[i];
+          const detail = paneDetail(entry);
+          const status = githubStatus(entry);
+          const spent = usage(entry);
+          const time = since(entry);
           return (
             <div
               key={entry.paneId}
+              data-agent-tile={entry.paneId}
               // An unsized tile keeps its mirror mounted, which reports the size.
               style={
                 size
@@ -531,7 +663,7 @@ export function AgentGrid({ send }: Props) {
               >
                 <VStack gap={2} className="h-full min-h-0">
                   <HStack gap={2} vAlign="center" className="min-w-0">
-                    {number < 9 && <Kbd keys={String(number + 1)} />}
+                    {n < 9 && <Kbd keys={String(n + 1)} />}
                     <Text maxLines={1} className="min-w-0 flex-1">
                       <Text color="secondary" className="btm-mono">
                         {entry.sessionName}
@@ -541,6 +673,11 @@ export function AgentGrid({ send }: Props) {
                     </Text>
                     <HStack gap={1} vAlign="center" className="shrink-0">
                       <AgentStatusBadge status={entry.agentStatus} />
+                      {time && (
+                        <Text type="supporting" color="secondary" hasTabularNumbers>
+                          {time}
+                        </Text>
+                      )}
                       <IconButton
                         label="Reset agent state"
                         tooltip="Reset agent state (r)"
@@ -556,15 +693,15 @@ export function AgentGrid({ send }: Props) {
                         }}
                       />
                       <IconButton
-                        label="Minimize"
-                        tooltip="Minimize (m)"
-                        icon={<Minus />}
+                        label="Hide live pane"
+                        tooltip="Hide live pane (space)"
+                        icon={<EyeOff />}
                         variant="ghost"
                         size="sm"
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          toggleMinimized(entry);
+                          toggleShown(entry);
                           dialogRef.current?.focus();
                         }}
                       />
@@ -581,6 +718,31 @@ export function AgentGrid({ send }: Props) {
                         }}
                       />
                     </HStack>
+                  </HStack>
+                  <HStack gap={2} vAlign="center" className="h-6 min-w-0 shrink-0" data-agent-detail>
+                    <Text type="supporting" color="secondary" maxLines={1} className="min-w-0 flex-1">
+                      {detail}
+                    </Text>
+                    {status ? (
+                      <GithubBadge status={status} size="sm" />
+                    ) : (
+                      entry.git?.branch && (
+                        <Text type="supporting" color="secondary" maxLines={1} className="btm-mono max-w-1/3 min-w-0">
+                          {entry.git.branch}
+                        </Text>
+                      )
+                    )}
+                    {spent && (
+                      <Text
+                        type="supporting"
+                        color="secondary"
+                        hasTabularNumbers
+                        className="shrink-0"
+                        aria-label={`Reported usage in the last 24 hours: ${spent}`}
+                      >
+                        {spent}
+                      </Text>
+                    )}
                   </HStack>
                   <VStack
                     data-agent-mirror
@@ -695,9 +857,15 @@ export function AgentGrid({ send }: Props) {
                 </VStack>
               ) : (
                 <>
-                  {/* Narrow screens stack the list above the tiles. */}
-                  {isNarrow && <VStack className="max-h-1/3 shrink-0 overflow-auto">{sidebar}</VStack>}
-                  {tiles}
+                  {/* Narrow screens stack the list above the tiles; without tiles, it takes the height. */}
+                  {isNarrow && (
+                    <VStack
+                      className={shown.length ? 'max-h-1/3 shrink-0 overflow-auto' : 'min-h-0 flex-1 overflow-auto'}
+                    >
+                      {sidebar}
+                    </VStack>
+                  )}
+                  {(shown.length > 0 || !isNarrow) && tiles}
                 </>
               )}
             </VStack>
@@ -724,10 +892,11 @@ export function AgentGrid({ send }: Props) {
 
 const HINTS: [string[], string][] = [
   [['tab'], 'next tab'],
-  [['up', 'down', 'left', 'right'], 'navigate'],
+  [['up', 'down'], 'list'],
+  [['left', 'right'], 'tiles'],
   [['1', '9'], 'select agent'],
-  [['enter'], 'switch'],
-  [['m'], 'minimize'],
+  [['enter'], 'go to pane'],
+  [['space'], 'show/hide'],
   [['o'], 'only'],
   [['r'], 'reset agent state'],
   [['x'], 'kill agent session'],

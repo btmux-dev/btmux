@@ -47,6 +47,9 @@ open editors at once.
 - Ctrl chords such as `Ctrl-d`, `Ctrl-o`, and `Ctrl-v` go to Vim, except the
   btmux prefix and shortcuts the browser keeps (such as Ctrl-W outside macOS).
 - Mode and registers are per client; edits are shared as always.
+- On macOS, holding `h` `j` `k` `l` in a browser opens the accent menu
+  instead of repeating; see
+  [Key repeat on macOS](/configuration/keybindings/#key-repeat-on-macos).
 
 ## Language servers
 

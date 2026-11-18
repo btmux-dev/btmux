@@ -20,6 +20,22 @@ fn next_incarnation() -> u64 {
     NEXT_INCARNATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Unknown and idle look alike to clients, so moving between them keeps an age.
+fn same_age(a: &AgentState, b: &AgentState) -> bool {
+    a == b
+        || matches!(
+            (a, b),
+            (AgentState::Idle, AgentState::Unknown) | (AgentState::Unknown, AgentState::Idle)
+        )
+}
+
+/// Wall-clock seconds, which clients compare with their own clocks.
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
 /// Names a tool call across its permission and completion hooks.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ToolCall {
@@ -268,6 +284,11 @@ pub struct AgentLifecycle {
     blocked_tool: Option<ToolCall>,
     /// Changes whenever another agent instance takes over this lifecycle.
     incarnation: u64,
+    /// When this instance entered its state, in Unix seconds.
+    pub(super) since: u64,
+    /// A state and its age from before an upgrade, taken if this agent's
+    /// first known state matches it.
+    handed: Option<(AgentState, u64)>,
     /// Identity reported by hooks (may be a wrapper's child).
     process: Option<AgentProcess>,
     /// Identity selected by the process scan; also keys the manifest.
@@ -317,9 +338,20 @@ impl AgentLifecycle {
     /// Keeps the observed agent of an active `previous` lifecycle, so its
     /// background work stays shown.
     pub fn explicit(mut status: AgentStatus, previous: Option<&Self>, now: Instant) -> Self {
+        // A repeated report keeps the state's age, or one still handed off.
+        let same = previous.filter(|previous| {
+            !previous.ended
+                && same_age(&previous.status.state, &status.state)
+                && previous.status.agent == status.agent
+        });
         let previous = previous.filter(|previous| previous.scans_screen());
         status.background = previous.and_then(|previous| previous.status.background.clone());
         let mut lifecycle = Self::new(status, Authority::Explicit, now);
+        if let Some(same) = same {
+            lifecycle.since = same.since;
+            lifecycle.handed = same.handed.clone();
+            lifecycle.settle_handed();
+        }
         if let Some(previous) = previous {
             lifecycle.observed = previous.observed;
             lifecycle.observed_name = previous.observed_name.clone();
@@ -366,6 +398,8 @@ impl AgentLifecycle {
             turn_complete: false,
             blocked_tool: None,
             incarnation: next_incarnation(),
+            since: unix_now(),
+            handed: None,
             process: None,
             observed: None,
             observed_name: None,
@@ -449,6 +483,34 @@ impl AgentLifecycle {
             .filter(|_| self.reads_screen())
     }
 
+    /// Starts a new age when the state changes.
+    pub fn set_state(&mut self, state: AgentState) {
+        if !same_age(&self.status.state, &state) {
+            self.since = unix_now();
+        }
+        self.status.state = state;
+        self.settle_handed();
+    }
+
+    /// Takes the age an upgrade handed off for the pane, if its state matches.
+    pub fn hand_off(&mut self, state: AgentState, since: u64) {
+        self.handed = Some((state, since));
+        self.settle_handed();
+    }
+
+    /// Agents found again by scanning are unknown until their state shows.
+    fn settle_handed(&mut self) {
+        let Some((state, since)) = &self.handed else {
+            return;
+        };
+        if same_age(state, &self.status.state) {
+            self.since = *since;
+            self.handed = None;
+        } else if self.status.state != AgentState::Unknown {
+            self.handed = None;
+        }
+    }
+
     pub fn blocked_tool(&self) -> Option<&ToolCall> {
         self.blocked_tool.as_ref()
     }
@@ -497,7 +559,7 @@ impl AgentLifecycle {
         self.status.background = None;
         self.program_suspended |= self.authority == Authority::Program;
         if self.authority != Authority::Explicit {
-            self.status.state = AgentState::Unknown;
+            self.set_state(AgentState::Unknown);
             self.status.source = Some("process".into());
             self.status.message = None;
             self.authority = Authority::Process;
@@ -543,7 +605,7 @@ impl AgentLifecycle {
             }
         }
         self.pending_screen = None;
-        self.status.state = state;
+        self.set_state(state);
         self.status.source = Some("screen".into());
         self.status.message = None;
         self.authority = Authority::Screen;
@@ -629,7 +691,7 @@ impl AgentLifecycle {
                 let (state, message) = program_state(summary);
                 // Idle does not acknowledge an unread completion.
                 if !(previous.state == AgentState::Done && state == AgentState::Idle) {
-                    self.status.state = state;
+                    self.set_state(state);
                     self.status.message = message;
                 }
                 self.status.source = Some(PROGRAM_SOURCE.into());
@@ -642,7 +704,7 @@ impl AgentLifecycle {
                 self.last_seen = now;
             }
             None if self.authority == Authority::Program => {
-                self.status.state = AgentState::Unknown;
+                self.set_state(AgentState::Unknown);
                 self.status.message = None;
                 self.status.source = self.observed.is_some().then(|| "process".into());
                 self.authority = Authority::Process;
@@ -816,6 +878,7 @@ impl AgentLifecycle {
         }
 
         let previous = self.status.clone();
+        let incarnation = self.incarnation;
         self.last_seen = now;
         self.ended = false;
         if different_session || restarted {
@@ -825,6 +888,8 @@ impl AgentLifecycle {
             };
             self.process = report.process;
             self.incarnation = next_incarnation();
+            self.since = unix_now();
+            self.handed = None;
             self.turn_id = None;
             self.turn_complete = false;
             self.blocked_tool = None;
@@ -900,7 +965,7 @@ impl AgentLifecycle {
         let asserted = asserted
             .filter(|_| self.authority != Authority::Program || different_session || restarted);
         if let Some((state, message)) = asserted {
-            self.status.state = state;
+            self.set_state(state);
             self.status.message = message;
             self.status.source = report.source;
             self.authority = Authority::Hook;
@@ -908,7 +973,8 @@ impl AgentLifecycle {
             // A new instance takes over from a suspended program too.
             self.program_suspended &= !(different_session || restarted);
         }
-        Some(self.status != previous)
+        // A replacement is news even in the same state: it starts a new age.
+        Some(self.status != previous || self.incarnation != incarnation)
     }
 
     fn retire_turn(&mut self) {
@@ -937,6 +1003,8 @@ impl AgentLifecycle {
     pub fn end(&mut self, now: Instant) {
         self.ended_process = self.observed.or(self.process);
         self.status = AgentStatus::default();
+        self.since = unix_now();
+        self.handed = None;
         self.authority = Authority::Process;
         self.named_by_report = false;
         self.named_by_program = false;
@@ -1222,6 +1290,33 @@ mod tests {
     }
 
     #[test]
+    fn unknown_and_idle_share_an_age() {
+        let mut agent = claude(Instant::now());
+        agent.set_state(AgentState::Idle);
+        agent.since = 7;
+        agent.set_state(AgentState::Unknown);
+        agent.set_state(AgentState::Idle);
+        assert_eq!(agent.since, 7);
+        agent.set_state(AgentState::Working);
+        assert!(agent.since > 7);
+    }
+
+    #[test]
+    fn a_handed_off_age_waits_for_the_first_known_state() {
+        let mut agent = claude(Instant::now());
+        agent.hand_off(AgentState::Blocked, 5);
+        assert!(agent.since > 5, "still unknown");
+        agent.set_state(AgentState::Blocked);
+        assert_eq!(agent.since, 5);
+
+        let mut agent = claude(Instant::now());
+        agent.hand_off(AgentState::Blocked, 5);
+        agent.set_state(AgentState::Working);
+        agent.set_state(AgentState::Blocked);
+        assert!(agent.since > 5, "another state came first");
+    }
+
+    #[test]
     fn hooks_from_a_wrapped_child_process_stay_accepted() {
         let now = Instant::now();
         let wrapper = AgentProcess {
@@ -1310,7 +1405,8 @@ mod tests {
         let mut clear = report(AgentEvent::SessionStart, "cleared", None);
         clear.process = Some(wrapped);
         clear.ancestors = vec![wrapper];
-        assert_eq!(agent.apply(clear, 1, now), Some(false));
+        // A new instance, so clients learn its id and age.
+        assert_eq!(agent.apply(clear, 1, now), Some(true));
         assert!(agent.matches_session(Some("cleared")));
     }
 
