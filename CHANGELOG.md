@@ -13,6 +13,7 @@ actions, saved state, and API types can change in any release.
 - The desktop app upgrades a desktop server kept running after it quits:
   when the app is newer, the server's card in the picker shows **Upgrade**,
   which moves it to the app's version in place, keeping its shells.
+  ([#166](https://github.com/btmux-dev/btmux/pull/166))
 
 ### Changed
 
