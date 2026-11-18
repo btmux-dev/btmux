@@ -8,6 +8,11 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Added
+
+- An [API reference](https://btmux-dev.github.io/btmux/automation/api/) for the
+  REST API, generated from its OpenAPI document.
+
 ## [0.0.211] - 2026-11-18
 
 ### Added

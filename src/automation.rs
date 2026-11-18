@@ -199,6 +199,7 @@ fn last_lines(text: &str, count: usize) -> String {
 }
 
 #[derive(Serialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct AgentWait {
     /// None once the agent has exited.
     pub status: Option<AgentStatus>,
@@ -283,6 +284,7 @@ fn status_of(mgr: &SessionManager, pane_id: Uuid) -> Result<Option<AgentStatus>,
 }
 
 #[derive(Serialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct PromptOutcome {
     /// None once the agent has exited.
     pub status: Option<AgentStatus>,

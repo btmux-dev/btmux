@@ -1,0 +1,3561 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "btmux REST API",
+    "description": "Manage sessions, windows, and panes, drive pane input and output, and coordinate coding agents. Every request sends the access token as `Authorization: Bearer <token>`.",
+    "license": {
+      "name": "MIT"
+    },
+    "version": "unstable"
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8004",
+      "description": "Default local server"
+    }
+  ],
+  "paths": {
+    "/api/sessions": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "List sessions",
+        "operationId": "list-sessions",
+        "responses": {
+          "200": {
+            "description": "Every session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SessionSummary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Create a session",
+        "operationId": "create-a-session",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The new session and its first pane",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateSessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid runtime",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Clear sessions",
+        "description": "Kills every session and starts one fresh default session, as `btmux clear-sessions` does.",
+        "operationId": "clear-sessions",
+        "responses": {
+          "200": {
+            "description": "The single fresh session left",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SessionSummary"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Get a session",
+        "operationId": "get-a-session",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The session with its windows, panes, and layouts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSnapshot"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such session"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Kill a session",
+        "operationId": "kill-a-session",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "409": {
+            "description": "It is the last session"
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/rename": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Rename a session",
+        "operationId": "rename-a-session",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The session's new name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RenameSessionResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such session"
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/windows": {
+      "post": {
+        "tags": [
+          "Windows"
+        ],
+        "summary": "Create a window",
+        "operationId": "create-a-window",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWindowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The new window's first pane",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateWindowResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such session"
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/windows/switch": {
+      "post": {
+        "tags": [
+          "Windows"
+        ],
+        "summary": "Switch windows",
+        "description": "Makes another window active: `index` is absolute, or `-1` for the next window and `-2` for the previous.",
+        "operationId": "switch-windows",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SwitchWindowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "No such session"
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/windows/rename": {
+      "post": {
+        "tags": [
+          "Windows"
+        ],
+        "summary": "Rename the active window",
+        "description": "Renames the session's active window. To rename another, use `POST /api/windows/{window_id}/rename`.",
+        "operationId": "rename-the-active-window",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameWindowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The window's new name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RenameWindowResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such session"
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/windows/close": {
+      "post": {
+        "tags": [
+          "Windows"
+        ],
+        "summary": "Close the active window",
+        "description": "Closes the session's active window. To close another, use `DELETE /api/windows/{window_id}`.",
+        "operationId": "close-the-active-window",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "409": {
+            "description": "It is the session's last window"
+          }
+        }
+      }
+    },
+    "/api/windows/{window_id}": {
+      "delete": {
+        "tags": [
+          "Windows"
+        ],
+        "summary": "Kill a window",
+        "operationId": "kill-a-window",
+        "parameters": [
+          {
+            "name": "window_id",
+            "in": "path",
+            "description": "Window ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "No such window"
+          },
+          "409": {
+            "description": "It is the session's last window"
+          }
+        }
+      }
+    },
+    "/api/windows/{window_id}/select": {
+      "post": {
+        "tags": [
+          "Windows"
+        ],
+        "summary": "Select a window",
+        "operationId": "select-a-window",
+        "parameters": [
+          {
+            "name": "window_id",
+            "in": "path",
+            "description": "Window ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "No such window"
+          }
+        }
+      }
+    },
+    "/api/windows/{window_id}/rename": {
+      "post": {
+        "tags": [
+          "Windows"
+        ],
+        "summary": "Rename a window",
+        "operationId": "rename-a-window",
+        "parameters": [
+          {
+            "name": "window_id",
+            "in": "path",
+            "description": "Window ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameWindowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The window's new name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RenameWindowResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Empty name"
+          },
+          "404": {
+            "description": "No such window"
+          }
+        }
+      }
+    },
+    "/api/panes": {
+      "get": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "List panes",
+        "operationId": "list-panes",
+        "responses": {
+          "200": {
+            "description": "Every pane, with its window and session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PaneInfo"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/split": {
+      "post": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Split a pane",
+        "operationId": "split-a-pane",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SplitPaneByIdRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The new pane",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                },
+                "example": {
+                  "pane_id": "6f1c…"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid direction"
+          },
+          "404": {
+            "description": "No such pane"
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}": {
+      "delete": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Kill a pane",
+        "operationId": "kill-a-pane",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "No such pane"
+          },
+          "409": {
+            "description": "The pane can't be closed"
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/select": {
+      "post": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Select a pane",
+        "operationId": "select-a-pane",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "No such pane"
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/focus": {
+      "post": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Focus a pane",
+        "operationId": "focus-a-pane",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "No such pane"
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/open-file-browser": {
+      "post": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Open the file browser",
+        "description": "Switches every client to the pane, then opens the file browser, Git mode, or the process viewer there.",
+        "operationId": "open-the-file-browser",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenFileBrowserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "No such pane"
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/panes/{pane_id}/split": {
+      "post": {
+        "tags": [
+          "Session panes"
+        ],
+        "summary": "Split an active-window pane",
+        "operationId": "split-an-active-window-pane",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SplitPaneRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "Invalid direction"
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "409": {
+            "description": "The pane isn't in the session's active window"
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/panes/{pane_id}": {
+      "delete": {
+        "tags": [
+          "Session panes"
+        ],
+        "summary": "Kill an active-window pane",
+        "operationId": "kill-an-active-window-pane",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "409": {
+            "description": "The pane isn't in the session's active window"
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/panes/{pane_id}/zoom": {
+      "post": {
+        "tags": [
+          "Session panes"
+        ],
+        "summary": "Zoom a pane",
+        "operationId": "zoom-a-pane",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "409": {
+            "description": "The pane isn't in the session's active window"
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/panes/{pane_id}/select": {
+      "post": {
+        "tags": [
+          "Session panes"
+        ],
+        "summary": "Select an active-window pane",
+        "operationId": "select-an-active-window-pane",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "409": {
+            "description": "The pane isn't in the session's active window"
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/panes/navigate": {
+      "post": {
+        "tags": [
+          "Session panes"
+        ],
+        "summary": "Move to a neighboring pane",
+        "description": "Selects the pane in `direction` (`left`, `right`, `up`, or `down`) from the active one.",
+        "operationId": "move-to-a-neighboring-pane",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NavigateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "No such session"
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/panes/cycle": {
+      "post": {
+        "tags": [
+          "Session panes"
+        ],
+        "summary": "Cycle panes",
+        "description": "Selects the pane `delta` places on in layout order.",
+        "operationId": "cycle-panes",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeltaRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "No such session"
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/panes/swap": {
+      "post": {
+        "tags": [
+          "Session panes"
+        ],
+        "summary": "Swap panes",
+        "description": "Swaps the active pane with the one `delta` places on in layout order.",
+        "operationId": "swap-panes",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeltaRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "No such session"
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/layout": {
+      "post": {
+        "tags": [
+          "Session panes"
+        ],
+        "summary": "Select a layout",
+        "description": "Rearranges the active window's panes in a named preset.",
+        "operationId": "select-a-layout",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SelectLayoutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "Unknown preset"
+          },
+          "404": {
+            "description": "No such session"
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/layout/next": {
+      "post": {
+        "tags": [
+          "Session panes"
+        ],
+        "summary": "Next layout",
+        "operationId": "next-layout",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "No such session"
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/input": {
+      "post": {
+        "tags": [
+          "Pane I/O"
+        ],
+        "summary": "Send input",
+        "operationId": "send-input",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaneInputRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaneInputResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such pane"
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/output": {
+      "get": {
+        "tags": [
+          "Pane I/O"
+        ],
+        "summary": "Read raw output",
+        "operationId": "read-raw-output",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "cols",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "rows",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw PTY bytes, escapes included",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "format": "int32",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The shell failed to start"
+          },
+          "404": {
+            "description": "No such pane"
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/capture": {
+      "get": {
+        "tags": [
+          "Pane I/O"
+        ],
+        "summary": "Capture the screen",
+        "operationId": "capture-the-screen",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "scrollback",
+            "in": "query",
+            "description": "Include retained scrollback above the screen.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "history",
+            "in": "query",
+            "description": "Include at most this many rows of history (`tmux capture-pane -S -N`).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "lines",
+            "in": "query",
+            "description": "Only the last N lines.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The rendered text",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such pane"
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "List agents",
+        "operationId": "list-agents",
+        "responses": {
+          "200": {
+            "description": "Every pane running an agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AgentPane"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/prompt": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Prompt an agent",
+        "description": "Pastes `prompt` into the pane's agent and submits it. With `wait` (the default), replies once the agent has started and settled (idle, done, or blocked).",
+        "operationId": "prompt-an-agent",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PanePromptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "With `wait`, the turn's outcome; without, `{\"submitted\": true}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromptOutcome"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such pane"
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/wait": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Wait for an agent",
+        "operationId": "wait-for-an-agent",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "states",
+            "in": "query",
+            "description": "Comma-separated agent states; default `idle,done,blocked`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "timeout_ms",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The agent's status once it settles, exits, or the wait times out",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentWait"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such pane"
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/agent-status": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Explain an agent's status",
+        "operationId": "explain-agent-status",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The pane's agent status and what it was derived from",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such pane"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Set an agent's status",
+        "description": "Sets the pane's agent status explicitly, above what hooks and the screen report.",
+        "operationId": "set-agent-status",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaneAgentStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "No such pane"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Clear an agent's status",
+        "operationId": "clear-agent-status",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "No such pane"
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/worktree": {
+      "post": {
+        "tags": [
+          "Worktrees"
+        ],
+        "summary": "Create a worktree",
+        "operationId": "create-a-worktree",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWorktreeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The new worktree and its window's pane",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Created"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such pane"
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Worktrees"
+        ],
+        "summary": "Remove a worktree",
+        "operationId": "remove-a-worktree",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The removed worktree and the panes it closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Removed"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such pane"
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/popup": {
+      "post": {
+        "tags": [
+          "Popups"
+        ],
+        "summary": "Open a popup",
+        "description": "Runs a program in a popup over the pane. Replies once a client started it; then wait for its exit status.",
+        "operationId": "open-popup",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PopupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Started in a client",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                },
+                "example": {
+                  "id": "3b9d…"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such pane"
+          },
+          "409": {
+            "description": "No client is showing the pane"
+          },
+          "422": {
+            "description": "The program can't start"
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/popup/{id}": {
+      "get": {
+        "tags": [
+          "Popups"
+        ],
+        "summary": "Wait for a popup",
+        "operationId": "wait-for-popup",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Popup ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The program's exit status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                },
+                "example": {
+                  "status": 0
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such popup"
+          },
+          "409": {
+            "description": "No client showed the popup"
+          },
+          "422": {
+            "description": "The program failed to start"
+          }
+        }
+      }
+    },
+    "/api/notify": {
+      "post": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Show a notification",
+        "description": "Shows a notification, not tied to a pane, in every client.",
+        "operationId": "notify",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "422": {
+            "description": "Empty title"
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/notify": {
+      "post": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Report an agent event",
+        "description": "Takes an agent hook's JSON payload as is (Claude Code, Codex, Gemini CLI), or `event`, `title`, and `body` from other callers. Updates the pane's agent status and, for events worth attention, marks the pane and notifies every client.",
+        "operationId": "notify-pane",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaneNotifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "No such pane"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Clear a pane's notification",
+        "operationId": "clear-pane-notification",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "404": {
+            "description": "No such pane"
+          }
+        }
+      }
+    },
+    "/api/system": {
+      "get": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "Describe the server host",
+        "operationId": "system-info",
+        "responses": {
+          "200": {
+            "description": "OS, CPU, memory, disks, and shell",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "Check optional programs",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Which optional programs the server found and whether they run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthReport"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/server/shutdown": {
+      "post": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "Shut down the server",
+        "operationId": "shut-down",
+        "responses": {
+          "202": {
+            "description": "Stopping; every shell closes"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Address": {
+        "type": "object",
+        "required": [
+          "interface",
+          "address"
+        ],
+        "properties": {
+          "interface": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string",
+            "description": "CIDR notation."
+          }
+        }
+      },
+      "AgentPane": {
+        "type": "object",
+        "description": "A pane running an agent, as listed to automation.",
+        "required": [
+          "pane_id",
+          "session_id",
+          "session_name",
+          "window_index",
+          "window_name",
+          "status"
+        ],
+        "properties": {
+          "pane_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "session_name": {
+            "type": "string"
+          },
+          "window_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "window_name": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/AgentStatus"
+          }
+        }
+      },
+      "AgentState": {
+        "type": "string",
+        "description": "Lifecycle states for an agent occupying a pane.\n\nThis intentionally follows Herdr's small semantic vocabulary. Failure and\npermission details belong in the accompanying message/notification instead\nof multiplying lifecycle states.",
+        "enum": [
+          "unknown",
+          "idle",
+          "working",
+          "blocked",
+          "done"
+        ]
+      },
+      "AgentStatus": {
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/AgentState"
+          },
+          "agent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "background": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Background work the agent's screen shows, such as \"2 shells, 1 monitor\"."
+          }
+        }
+      },
+      "AgentWait": {
+        "type": "object",
+        "required": [
+          "timed_out"
+        ],
+        "properties": {
+          "status": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AgentStatus",
+                "description": "None once the agent has exited."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timed_out": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CpuInfo": {
+        "type": "object",
+        "required": [
+          "brand",
+          "threads",
+          "mhz"
+        ],
+        "properties": {
+          "brand": {
+            "type": "string"
+          },
+          "threads": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cores": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "mhz": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CreateSessionRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "window_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/Runtime"
+          }
+        }
+      },
+      "CreateSessionResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "pane_id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pane_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "CreateWindowRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "select": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Make it the active window. Default true."
+          }
+        }
+      },
+      "CreateWindowResponse": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "pane_id"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "pane_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "CreateWorktreeRequest": {
+        "type": "object",
+        "required": [
+          "branch"
+        ],
+        "properties": {
+          "branch": {
+            "type": "string"
+          },
+          "select": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Make its window the active one. Default true."
+          }
+        }
+      },
+      "Created": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "pane_id",
+          "path",
+          "branch"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "pane_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "path": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          }
+        }
+      },
+      "DeltaRequest": {
+        "type": "object",
+        "required": [
+          "delta"
+        ],
+        "properties": {
+          "delta": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "DiskInfo": {
+        "type": "object",
+        "required": [
+          "mount",
+          "file_system",
+          "usage",
+          "removable"
+        ],
+        "properties": {
+          "mount": {
+            "type": "string"
+          },
+          "file_system": {
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "removable": {
+            "type": "boolean"
+          }
+        }
+      },
+      "FileBrowserMode": {
+        "type": "string",
+        "enum": [
+          "files",
+          "git",
+          "process"
+        ]
+      },
+      "GuestShell": {
+        "type": "string",
+        "enum": [
+          "bash",
+          "zsh",
+          "fish"
+        ]
+      },
+      "HealthCheck": {
+        "type": "object",
+        "required": [
+          "name",
+          "status",
+          "value",
+          "purpose"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/HealthStatus"
+          },
+          "value": {
+            "type": "string",
+            "description": "A version, or a word such as \"Not found\"."
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What is wrong, or what happens without it."
+          }
+        }
+      },
+      "HealthGroup": {
+        "type": "object",
+        "required": [
+          "title",
+          "checks"
+        ],
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HealthCheck"
+            }
+          }
+        }
+      },
+      "HealthReport": {
+        "type": "object",
+        "required": [
+          "groups",
+          "path"
+        ],
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HealthGroup"
+            }
+          },
+          "path": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The server's `PATH`, where programs are looked up."
+          }
+        }
+      },
+      "HealthStatus": {
+        "type": "string",
+        "enum": [
+          "ok",
+          "missing",
+          "warning",
+          "error"
+        ]
+      },
+      "Layout": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "pane_id",
+              "type"
+            ],
+            "properties": {
+              "pane_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "leaf"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "ratio",
+              "left",
+              "right",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "ratio": {
+                "type": "number",
+                "format": "float"
+              },
+              "left": {
+                "$ref": "#/components/schemas/Layout"
+              },
+              "right": {
+                "$ref": "#/components/schemas/Layout"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "v_split"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "ratio",
+              "top",
+              "bottom",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "ratio": {
+                "type": "number",
+                "format": "float"
+              },
+              "top": {
+                "$ref": "#/components/schemas/Layout"
+              },
+              "bottom": {
+                "$ref": "#/components/schemas/Layout"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "h_split"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "NavigateRequest": {
+        "type": "object",
+        "required": [
+          "direction"
+        ],
+        "properties": {
+          "direction": {
+            "type": "string"
+          }
+        }
+      },
+      "NotificationLevel": {
+        "type": "string",
+        "enum": [
+          "info",
+          "attention",
+          "success",
+          "error"
+        ]
+      },
+      "NotifyRequest": {
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "level": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NotificationLevel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "OpenFileBrowserRequest": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FileBrowserMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "focus_file": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PaneAgentStatusRequest": {
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/AgentState"
+          },
+          "agent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PaneAlert": {
+        "type": "object",
+        "description": "A pane notification nobody has viewed yet.",
+        "required": [
+          "level"
+        ],
+        "properties": {
+          "level": {
+            "$ref": "#/components/schemas/NotificationLevel"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PaneEditor": {
+        "type": "object",
+        "description": "The native editor over a pane, the same in every tab.",
+        "required": [
+          "shown",
+          "files"
+        ],
+        "properties": {
+          "shown": {
+            "type": "boolean"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Open files (absolute paths), in tab order."
+          },
+          "active": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PaneGit": {
+        "type": "object",
+        "description": "A pane's place in a git repo.",
+        "required": [
+          "repo_id",
+          "repo_name",
+          "worktree_root",
+          "main_worktree"
+        ],
+        "properties": {
+          "repo_id": {
+            "type": "string",
+            "description": "The repo's common git dir, shared by all its worktrees."
+          },
+          "repo_name": {
+            "type": "string"
+          },
+          "worktree_root": {
+            "type": "string"
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`None` when HEAD is detached."
+          },
+          "main_worktree": {
+            "type": "boolean",
+            "description": "The repo's main worktree rather than a linked one."
+          }
+        }
+      },
+      "PaneInfo": {
+        "type": "object",
+        "description": "One pane with its window and session, for `GET /api/panes` and the tmux-style\nCLI. Fields are named like tmux format variables.",
+        "required": [
+          "session_id",
+          "session_name",
+          "window_id",
+          "window_index",
+          "window_name",
+          "window_active",
+          "window_zoomed_flag",
+          "pane_id",
+          "pane_index",
+          "pane_active"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "session_name": {
+            "type": "string"
+          },
+          "window_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "window_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "window_name": {
+            "type": "string"
+          },
+          "window_active": {
+            "type": "boolean"
+          },
+          "window_zoomed_flag": {
+            "type": "boolean"
+          },
+          "pane_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "pane_index": {
+            "type": "integer",
+            "description": "Layout order, as `prefix + q` numbers panes.",
+            "minimum": 0
+          },
+          "pane_active": {
+            "type": "boolean"
+          },
+          "pane_current_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pane_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PaneInputRequest": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Sent verbatim, before `keys`."
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "tmux-style key names, e.g. `[\"Enter\"]` or `[\"C-c\"]`."
+          },
+          "cols": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Only used if the PTY hasn't been spawned yet (no browser has attached\nto this pane). Ignored once a shell is already running.",
+            "minimum": 0
+          },
+          "rows": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "PaneInputResponse": {
+        "type": "object",
+        "required": [
+          "newly_spawned"
+        ],
+        "properties": {
+          "newly_spawned": {
+            "type": "boolean",
+            "description": "True if this call caused the shell to spawn. Callers polling\n`/output` afterward should expect a short delay before the shell\nprints its first prompt."
+          }
+        }
+      },
+      "PaneNotifyRequest": {
+        "type": "object",
+        "properties": {
+          "hook_event_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Agent harness hook event name (e.g. \"Stop\", \"AfterAgent\")."
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Harness identity; shared by every event in one agent session."
+          },
+          "turn_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Turn identity, when the harness provides one."
+          },
+          "prompt_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Claude Code: shared by every event of one turn."
+          },
+          "tool_use_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Explicit event field (custom callers)."
+          },
+          "level": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NotificationLevel",
+                "description": "Severity level for UI treatment."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Explicit title (custom callers or Notification event)."
+          },
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Explicit body (custom callers)."
+          },
+          "last_assistant_message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Claude Code/Codex Stop and SubagentStop: last assistant message."
+          },
+          "prompt_response": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Gemini CLI AfterAgent: final response."
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Notification event message."
+          },
+          "notification_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Gemini CLI Notification category."
+          },
+          "task_subject": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "CC TaskCompleted: task subject line."
+          },
+          "task_description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "CC TaskCompleted: task description."
+          },
+          "tool_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "CC PermissionRequest: tool name."
+          },
+          "tool_input": {
+            "description": "CC PermissionRequest: tool input object."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "CC StopFailure: error category."
+          },
+          "agent_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "CC SubagentStop: agent type."
+          },
+          "agent": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional agent name for semantic status reporting."
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional reporter identity for semantic status reporting. SessionStart\nhooks may use this field for their start reason instead."
+          }
+        }
+      },
+      "PanePromptRequest": {
+        "type": "object",
+        "required": [
+          "prompt"
+        ],
+        "properties": {
+          "prompt": {
+            "type": "string"
+          },
+          "wait": {
+            "type": "boolean"
+          },
+          "timeout_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "PaneSnapshot": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cwd_remote": {
+            "type": "boolean",
+            "description": "`cwd` is on another host."
+          },
+          "agent_status": {
+            "$ref": "#/components/schemas/AgentStatus"
+          },
+          "agent_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Names the running agent instance, so a client can target it.",
+            "minimum": 0
+          },
+          "agent_since": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the agent entered its current state, in Unix seconds.",
+            "minimum": 0
+          },
+          "unread": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PaneAlert"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "git": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PaneGit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "editor": {
+            "$ref": "#/components/schemas/PaneEditor"
+          }
+        }
+      },
+      "PopupCommand": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A program and its arguments.",
+            "required": [
+              "exec"
+            ],
+            "properties": {
+              "exec": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "A program and its arguments."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A command line for the pane's shell.",
+            "required": [
+              "shell"
+            ],
+            "properties": {
+              "shell": {
+                "type": "string",
+                "description": "A command line for the pane's shell."
+              }
+            }
+          }
+        ]
+      },
+      "PopupRequest": {
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Chosen by the caller, so a request retried across an upgrade finds\nits popup rather than running the program again."
+          },
+          "command": {
+            "$ref": "#/components/schemas/PopupCommand"
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "env": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "array",
+              "items": false,
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PromptOutcome": {
+        "type": "object",
+        "required": [
+          "started",
+          "timed_out"
+        ],
+        "properties": {
+          "status": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AgentStatus",
+                "description": "None once the agent has exited."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "started": {
+            "type": "boolean",
+            "description": "Whether the agent was seen working on the prompt."
+          },
+          "timed_out": {
+            "type": "boolean"
+          },
+          "screen": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The rendered screen once output went quiet; None once the pane has\nclosed."
+          }
+        }
+      },
+      "Removed": {
+        "type": "object",
+        "required": [
+          "path",
+          "closed_panes"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "closed_panes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "RenameSessionRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "RenameSessionResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "RenameWindowRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "RenameWindowResponse": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "Runtime": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "local"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The shared Multipass instance, with these host directories mounted\nat the same paths.",
+            "required": [
+              "mounts",
+              "shell",
+              "type"
+            ],
+            "properties": {
+              "mounts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "shell": {
+                "$ref": "#/components/schemas/GuestShell"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "multipass"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Where a session's shells run."
+      },
+      "SelectLayoutRequest": {
+        "type": "object",
+        "required": [
+          "preset"
+        ],
+        "properties": {
+          "preset": {
+            "type": "string"
+          }
+        }
+      },
+      "SessionSnapshot": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "windows",
+          "active_window"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/Runtime"
+          },
+          "windows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WindowSnapshot"
+            }
+          },
+          "active_window": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "SessionSummary": {
+        "type": "object",
+        "description": "One entry per session for the StatusBar and the session picker.",
+        "required": [
+          "id",
+          "name",
+          "runtime"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/Runtime"
+          }
+        }
+      },
+      "SplitPaneByIdRequest": {
+        "type": "object",
+        "required": [
+          "direction"
+        ],
+        "properties": {
+          "direction": {
+            "type": "string",
+            "description": "Where the new pane goes: left, right, up, or down."
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "select": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Make the new pane active. Default true."
+          }
+        }
+      },
+      "SplitPaneRequest": {
+        "type": "object",
+        "required": [
+          "direction"
+        ],
+        "properties": {
+          "direction": {
+            "type": "string"
+          }
+        }
+      },
+      "SwitchWindowRequest": {
+        "type": "object",
+        "required": [
+          "index"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Absolute window index, or the sentinels `-1` (next) / `-2` (prev) also\nused by the `/ws/control` protocol."
+          }
+        }
+      },
+      "SystemInfo": {
+        "type": "object",
+        "required": [
+          "os_id",
+          "arch",
+          "uptime",
+          "shell",
+          "memory",
+          "swap",
+          "disks",
+          "addresses",
+          "processes"
+        ],
+        "properties": {
+          "user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "host_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "os": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "\"macOS 26.0 Tahoe\", \"Ubuntu 24.04 LTS\"."
+          },
+          "os_id": {
+            "type": "string",
+            "description": "`ID` from os-release, or \"macos\"/\"windows\"."
+          },
+          "arch": {
+            "type": "string"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Hardware vendor and model."
+          },
+          "kernel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "uptime": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "shell": {
+            "type": "string",
+            "description": "The shell new panes run, with its version when it reports one."
+          },
+          "cpu": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CpuInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "memory": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "swap": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "disks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiskInfo"
+            }
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Address"
+            }
+          },
+          "load": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "description": "1, 5, and 15 minute load; `null` where the OS has none."
+          },
+          "processes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "locale": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Usage": {
+        "type": "object",
+        "description": "Bytes.",
+        "required": [
+          "used",
+          "total"
+        ],
+        "properties": {
+          "used": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "WindowSnapshot": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "panes",
+          "active_pane",
+          "layout"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "panes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaneSnapshot"
+            }
+          },
+          "active_pane": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "layout": {
+            "$ref": "#/components/schemas/Layout"
+          },
+          "zoomed_pane": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "token": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The profile's access token (`state.token`)."
+      }
+    }
+  },
+  "security": [
+    {
+      "token": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Sessions"
+    },
+    {
+      "name": "Windows"
+    },
+    {
+      "name": "Panes",
+      "description": "Panes in any window, by ID."
+    },
+    {
+      "name": "Session panes",
+      "description": "Panes in a session's active window."
+    },
+    {
+      "name": "Pane I/O",
+      "description": "Type into panes and read their screens."
+    },
+    {
+      "name": "Agents",
+      "description": "Coding agents running in panes."
+    },
+    {
+      "name": "Worktrees",
+      "description": "Git worktrees, each with its own window."
+    },
+    {
+      "name": "Popups",
+      "description": "Programs in a popup over a pane."
+    },
+    {
+      "name": "Notifications"
+    },
+    {
+      "name": "Server"
+    }
+  ]
+}

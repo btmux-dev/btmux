@@ -315,7 +315,7 @@ test-frontend:
 
 # Generate the TypeScript wire contract from Rust
 protocol:
-    BTMUX_UPDATE_PROTOCOL=1 cargo test -- protocol::generated_protocol_is_current handoff::tests::format_changes_bump_the_version
+    BTMUX_UPDATE_PROTOCOL=1 cargo test -- protocol::generated_protocol_is_current api::openapi::openapi_is_current handoff::tests::format_changes_bump_the_version
 
 # Browser regressions, each file against its own fresh, isolated stack
 # (`--jobs N` runs N at once, `--shard I/N` a part; see browser-test-stack.ts).

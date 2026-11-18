@@ -38,6 +38,7 @@ pub fn router() -> Router<AppState> {
         )
 }
 
+#[cfg_attr(test, utoipa::path(post, path = "/api/windows/{window_id}/select", tag = "Windows", operation_id = "select-a-window", summary = "Select a window", params(("window_id" = Uuid, Path, description = "Window ID")), responses((status = 204, description = "Done"), (status = 404, description = "No such window"))))]
 async fn api_select_window_by_id(
     State(state): State<AppState>,
     Path(window_id): Path<Uuid>,
@@ -52,6 +53,7 @@ async fn api_select_window_by_id(
     StatusCode::NO_CONTENT.into_response()
 }
 
+#[cfg_attr(test, utoipa::path(post, path = "/api/windows/{window_id}/rename", tag = "Windows", operation_id = "rename-a-window", summary = "Rename a window", params(("window_id" = Uuid, Path, description = "Window ID")), request_body = RenameWindowRequest, responses((status = 200, description = "The window's new name", body = RenameWindowResponse), (status = 400, description = "Empty name"), (status = 404, description = "No such window"))))]
 async fn api_rename_window_by_id(
     State(state): State<AppState>,
     Path(window_id): Path<Uuid>,
@@ -78,12 +80,14 @@ async fn api_rename_window_by_id(
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 struct SwitchWindowRequest {
     /// Absolute window index, or the sentinels `-1` (next) / `-2` (prev) also
     /// used by the `/ws/control` protocol.
     index: i32,
 }
 
+#[cfg_attr(test, utoipa::path(post, path = "/api/sessions/{session_id}/windows/switch", tag = "Windows", operation_id = "switch-windows", summary = "Switch windows", description = "Makes another window active: `index` is absolute, or `-1` for the next window and `-2` for the previous.", params(("session_id" = Uuid, Path, description = "Session ID")), request_body = SwitchWindowRequest, responses((status = 204, description = "Done"), (status = 404, description = "No such session"))))]
 async fn api_switch_window(
     State(state): State<AppState>,
     Path(session_id): Path<Uuid>,
@@ -101,15 +105,18 @@ async fn api_switch_window(
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 struct RenameWindowRequest {
     name: String,
 }
 
 #[derive(Serialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 struct RenameWindowResponse {
     name: String,
 }
 
+#[cfg_attr(test, utoipa::path(post, path = "/api/sessions/{session_id}/windows/rename", tag = "Windows", operation_id = "rename-the-active-window", summary = "Rename the active window", description = "Renames the session's active window. To rename another, use `POST /api/windows/{window_id}/rename`.", params(("session_id" = Uuid, Path, description = "Session ID")), request_body = RenameWindowRequest, responses((status = 200, description = "The window's new name", body = RenameWindowResponse), (status = 404, description = "No such session"))))]
 /// Renames the session's *active* window — `SessionManager` has no
 /// window-id-addressable rename. Callers targeting a specific window must
 /// `switch` to it first.
@@ -138,6 +145,7 @@ async fn api_rename_window(
     Json(RenameWindowResponse { name }).into_response()
 }
 
+#[cfg_attr(test, utoipa::path(post, path = "/api/sessions/{session_id}/windows/close", tag = "Windows", operation_id = "close-the-active-window", summary = "Close the active window", description = "Closes the session's active window. To close another, use `DELETE /api/windows/{window_id}`.", params(("session_id" = Uuid, Path, description = "Session ID")), responses((status = 204, description = "Done"), (status = 404, description = "No such session"), (status = 409, description = "It is the session's last window"))))]
 /// Closes the session's *active* window — see `api_rename_window` note.
 async fn api_close_window(State(state): State<AppState>, Path(session_id): Path<Uuid>) -> Response {
     let mut mgr = state.write().await;
@@ -154,6 +162,7 @@ async fn api_close_window(State(state): State<AppState>, Path(session_id): Path<
     StatusCode::NO_CONTENT.into_response()
 }
 
+#[cfg_attr(test, utoipa::path(delete, path = "/api/windows/{window_id}", tag = "Windows", operation_id = "kill-a-window", summary = "Kill a window", params(("window_id" = Uuid, Path, description = "Window ID")), responses((status = 204, description = "Done"), (status = 404, description = "No such window"), (status = 409, description = "It is the session's last window"))))]
 async fn api_kill_window(State(state): State<AppState>, Path(window_id): Path<Uuid>) -> Response {
     let mut mgr = state.write().await;
     let Some(session) = mgr

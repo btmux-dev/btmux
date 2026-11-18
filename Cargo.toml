@@ -79,6 +79,7 @@ windows-sys = { version = "0.61", features = [
 
 [dev-dependencies]
 ts-rs = { version = "12.0.1", features = ["uuid-impl"] }
+utoipa = { version = "6.0.0", features = ["uuid", "preserve_order", "preserve_path_order"] }
 
 [profile.release]
 strip = true

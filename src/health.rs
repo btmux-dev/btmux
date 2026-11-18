@@ -16,6 +16,7 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct HealthReport {
     pub groups: Vec<HealthGroup>,
     /// The server's `PATH`, where programs are looked up.
@@ -24,6 +25,7 @@ pub struct HealthReport {
 
 #[derive(Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct HealthGroup {
     pub title: String,
     pub checks: Vec<HealthCheck>,
@@ -31,6 +33,7 @@ pub struct HealthGroup {
 
 #[derive(Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct HealthCheck {
     pub name: String,
     pub status: HealthStatus,
@@ -45,6 +48,7 @@ pub struct HealthCheck {
 #[derive(Serialize, Clone, Copy, Debug, PartialEq)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub enum HealthStatus {
     Ok,
     /// Optional and absent; nothing is broken.
@@ -470,6 +474,7 @@ async fn shell_check(shell: String) -> HealthCheck {
     }
 }
 
+#[cfg_attr(test, utoipa::path(get, path = "/api/health", tag = "Server", operation_id = "health", summary = "Check optional programs", responses((status = 200, description = "Which optional programs the server found and whether they run", body = HealthReport))))]
 pub async fn handle(State(state): State<AppState>) -> Json<HealthReport> {
     Json(report(&state).await)
 }

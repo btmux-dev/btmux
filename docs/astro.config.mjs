@@ -4,6 +4,7 @@ import { unified } from "@astrojs/markdown-remark";
 import starlight from "@astrojs/starlight";
 import starlightLinksValidator from "starlight-links-validator";
 import starlightLlmsTxt from "starlight-llms-txt";
+import starlightOpenAPI, { createOpenAPISidebarGroup } from "starlight-openapi";
 import { remarkRepoLinks } from "./src/remark-repo-links.mjs";
 import { generateChangelogPage } from "./scripts/changelog-page.mjs";
 
@@ -23,6 +24,10 @@ const version = readFileSync(new URL("../Cargo.toml", import.meta.url), "utf8")
 const versionHref = `${base}/project/changelog/#${
   released.includes(version) ? version.replaceAll(".", "") : "unreleased"
 }`;
+
+// The REST API reference, generated from openapi.json (`just protocol`) and
+// listed under Automation.
+const apiReference = createOpenAPISidebarGroup();
 
 // Sidebar groups, one per content directory; pages order themselves with
 // `sidebar.order` in their frontmatter.
@@ -51,7 +56,19 @@ export default defineConfig({
   integrations: [
     starlight({
       plugins: [
-        starlightLinksValidator(),
+        starlightOpenAPI([
+          {
+            base: "automation/api",
+            schema: "./openapi.json",
+            sidebar: {
+              label: "API reference",
+              group: apiReference,
+              operations: { badges: true },
+            },
+          },
+        ]),
+        // It can't see starlight-openapi's routes.
+        starlightLinksValidator({ exclude: [`${base}/automation/api/**`] }),
         // /llms.txt, /llms-full.txt, and /llms-small.txt (https://llmstxt.org).
         starlightLlmsTxt({
           projectName: "btmux",
@@ -76,7 +93,10 @@ export default defineConfig({
       editLink: { baseUrl: `${repo}/edit/main/docs/` },
       sidebar: Object.entries(groups).map(([label, directory]) => ({
         label,
-        items: [{ autogenerate: { directory } }],
+        items: [
+          { autogenerate: { directory } },
+          ...(directory === "automation" ? [apiReference] : []),
+        ],
       })),
     }),
   ],

@@ -228,6 +228,7 @@ pub async fn shutdown_requested() {
     SHUTDOWN.notified().await;
 }
 
+#[cfg_attr(test, utoipa::path(post, path = "/api/server/shutdown", tag = "Server", operation_id = "shut-down", summary = "Shut down the server", responses((status = 202, description = "Stopping; every shell closes"))))]
 async fn api_shutdown() -> StatusCode {
     tracing::info!("shutdown requested over the API");
     SHUTDOWN.notify_one();
@@ -235,6 +236,7 @@ async fn api_shutdown() -> StatusCode {
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 struct CreateSessionRequest {
     name: Option<String>,
     cwd: Option<String>,
@@ -244,17 +246,20 @@ struct CreateSessionRequest {
 }
 
 #[derive(Serialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 struct CreateSessionResponse {
     id: Uuid,
     name: String,
     pane_id: Uuid,
 }
 
+#[cfg_attr(test, utoipa::path(get, path = "/api/sessions", tag = "Sessions", operation_id = "list-sessions", summary = "List sessions", responses((status = 200, description = "Every session", body = Vec<crate::session::SessionSummary>))))]
 async fn api_list_sessions(State(state): State<AppState>) -> impl IntoResponse {
     let mgr = state.read().await;
     Json(mgr.session_summaries())
 }
 
+#[cfg_attr(test, utoipa::path(post, path = "/api/sessions", tag = "Sessions", operation_id = "create-a-session", summary = "Create a session", request_body = CreateSessionRequest, responses((status = 200, description = "The new session and its first pane", body = CreateSessionResponse), (status = 400, description = "Invalid runtime", body = String, content_type = "text/plain"))))]
 async fn api_create_session(
     State(state): State<AppState>,
     Json(body): Json<CreateSessionRequest>,
@@ -277,6 +282,7 @@ async fn api_create_session(
     Json(CreateSessionResponse { id, name, pane_id }).into_response()
 }
 
+#[cfg_attr(test, utoipa::path(delete, path = "/api/sessions", tag = "Sessions", operation_id = "clear-sessions", summary = "Clear sessions", description = "Kills every session and starts one fresh default session, as `btmux clear-sessions` does.", responses((status = 200, description = "The single fresh session left", body = Vec<crate::session::SessionSummary>))))]
 /// Kill every session and reset to a single fresh default session. Destructive;
 /// driven by the `clear-sessions` subcommand. Broadcasts the new state so every
 /// connected tab re-renders, and the debounced state-saver persists the reset.
@@ -290,6 +296,7 @@ async fn api_clear_sessions(State(state): State<AppState>) -> impl IntoResponse 
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 struct CreateWindowRequest {
     name: Option<String>,
     cwd: Option<String>,
@@ -298,11 +305,13 @@ struct CreateWindowRequest {
 }
 
 #[derive(Serialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 struct CreateWindowResponse {
     session_id: Uuid,
     pane_id: Uuid,
 }
 
+#[cfg_attr(test, utoipa::path(post, path = "/api/sessions/{session_id}/windows", tag = "Windows", operation_id = "create-a-window", summary = "Create a window", params(("session_id" = Uuid, Path, description = "Session ID")), request_body = CreateWindowRequest, responses((status = 200, description = "The new window's first pane", body = CreateWindowResponse), (status = 404, description = "No such session"))))]
 async fn api_create_window(
     State(state): State<AppState>,
     Path(session_id): Path<Uuid>,
@@ -330,6 +339,7 @@ async fn api_create_window(
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 struct PaneNotifyRequest {
     /// Agent harness hook event name (e.g. "Stop", "AfterAgent").
     hook_event_name: Option<String>,
@@ -558,6 +568,7 @@ fn truncate_msg(s: &str, max: usize) -> String {
     }
 }
 
+#[cfg_attr(test, utoipa::path(post, path = "/api/panes/{pane_id}/notify", tag = "Notifications", operation_id = "notify-pane", summary = "Report an agent event", description = "Takes an agent hook's JSON payload as is (Claude Code, Codex, Gemini CLI), or `event`, `title`, and `body` from other callers. Updates the pane's agent status and, for events worth attention, marks the pane and notifies every client.", params(("pane_id" = Uuid, Path, description = "Pane ID")), request_body = PaneNotifyRequest, responses((status = 204, description = "Done"), (status = 404, description = "No such pane"))))]
 async fn api_pane_notify(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -635,12 +646,14 @@ async fn api_pane_notify(
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 struct NotifyRequest {
     level: Option<ws::control::NotificationLevel>,
     title: String,
     body: Option<String>,
 }
 
+#[cfg_attr(test, utoipa::path(post, path = "/api/notify", tag = "Notifications", operation_id = "notify", summary = "Show a notification", description = "Shows a notification, not tied to a pane, in every client.", request_body = NotifyRequest, responses((status = 204, description = "Done"), (status = 422, description = "Empty title"))))]
 /// Show a notification, not tied to a pane, in every client.
 async fn api_notify(State(state): State<AppState>, Json(body): Json<NotifyRequest>) -> Response {
     let Some(title) = cap_text(Some(body.title), 200) else {
@@ -696,6 +709,7 @@ fn process_lineage(pid: u32) -> Vec<AgentProcess> {
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 struct OpenFileBrowserRequest {
     path: String,
     mode: Option<ws::control::FileBrowserMode>,
@@ -737,6 +751,7 @@ async fn api_editors() -> Json<EditorsStatus> {
     Json(EditorsStatus { running })
 }
 
+#[cfg_attr(test, utoipa::path(post, path = "/api/panes/{pane_id}/open-file-browser", tag = "Panes", operation_id = "open-the-file-browser", summary = "Open the file browser", description = "Switches every client to the pane, then opens the file browser, Git mode, or the process viewer there.", params(("pane_id" = Uuid, Path, description = "Pane ID")), request_body = OpenFileBrowserRequest, responses((status = 204, description = "Done"), (status = 404, description = "No such pane"))))]
 async fn api_open_file_browser(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -831,6 +846,7 @@ async fn api_open_editor(
     Json(serde_json::json!({ "opened": true })).into_response()
 }
 
+#[cfg_attr(test, utoipa::path(post, path = "/api/panes/{pane_id}/focus", tag = "Panes", operation_id = "focus-a-pane", summary = "Focus a pane", params(("pane_id" = Uuid, Path, description = "Pane ID")), responses((status = 204, description = "Done"), (status = 404, description = "No such pane"))))]
 /// Switch every connected browser tab to the pane's window and session.
 async fn api_focus_pane(State(state): State<AppState>, Path(pane_id): Path<Uuid>) -> Response {
     let mgr = state.read().await;
@@ -844,6 +860,7 @@ async fn api_focus_pane(State(state): State<AppState>, Path(pane_id): Path<Uuid>
     StatusCode::NO_CONTENT.into_response()
 }
 
+#[cfg_attr(test, utoipa::path(delete, path = "/api/panes/{pane_id}/notify", tag = "Notifications", operation_id = "clear-pane-notification", summary = "Clear a pane's notification", params(("pane_id" = Uuid, Path, description = "Pane ID")), responses((status = 204, description = "Done"), (status = 404, description = "No such pane"))))]
 async fn api_pane_notify_clear(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -860,6 +877,7 @@ async fn api_pane_notify_clear(
 }
 
 #[derive(Deserialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 struct PaneAgentStatusRequest {
     state: AgentState,
     agent: Option<String>,
@@ -867,6 +885,7 @@ struct PaneAgentStatusRequest {
     message: Option<String>,
 }
 
+#[cfg_attr(test, utoipa::path(get, path = "/api/panes/{pane_id}/agent-status", tag = "Agents", operation_id = "explain-agent-status", summary = "Explain an agent's status", params(("pane_id" = Uuid, Path, description = "Pane ID")), responses((status = 200, description = "The pane's agent status and what it was derived from", body = Object), (status = 404, description = "No such pane"))))]
 async fn api_pane_agent_diagnostics(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -878,6 +897,7 @@ async fn api_pane_agent_diagnostics(
     Json(mgr.agent_diagnostics(pane_id)).into_response()
 }
 
+#[cfg_attr(test, utoipa::path(post, path = "/api/panes/{pane_id}/agent-status", tag = "Agents", operation_id = "set-agent-status", summary = "Set an agent's status", description = "Sets the pane's agent status explicitly, above what hooks and the screen report.", params(("pane_id" = Uuid, Path, description = "Pane ID")), request_body = PaneAgentStatusRequest, responses((status = 204, description = "Done"), (status = 404, description = "No such pane"))))]
 async fn api_pane_agent_status(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -903,6 +923,7 @@ async fn api_pane_agent_status(
     StatusCode::NO_CONTENT.into_response()
 }
 
+#[cfg_attr(test, utoipa::path(delete, path = "/api/panes/{pane_id}/agent-status", tag = "Agents", operation_id = "clear-agent-status", summary = "Clear an agent's status", params(("pane_id" = Uuid, Path, description = "Pane ID")), responses((status = 204, description = "Done"), (status = 404, description = "No such pane"))))]
 async fn api_pane_agent_status_clear(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,

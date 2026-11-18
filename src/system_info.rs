@@ -14,6 +14,7 @@ use crate::AppState;
 
 #[derive(Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct SystemInfo {
     pub user: Option<String>,
     pub host_name: Option<String>,
@@ -42,6 +43,7 @@ pub struct SystemInfo {
 
 #[derive(Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct CpuInfo {
     pub brand: String,
     pub threads: usize,
@@ -53,6 +55,7 @@ pub struct CpuInfo {
 /// Bytes.
 #[derive(Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct Usage {
     #[cfg_attr(test, ts(type = "number"))]
     pub used: u64,
@@ -62,6 +65,7 @@ pub struct Usage {
 
 #[derive(Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct DiskInfo {
     pub mount: String,
     pub file_system: String,
@@ -71,12 +75,14 @@ pub struct DiskInfo {
 
 #[derive(Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct Address {
     pub interface: String,
     /// CIDR notation.
     pub address: String,
 }
 
+#[cfg_attr(test, utoipa::path(get, path = "/api/system", tag = "Server", operation_id = "system-info", summary = "Describe the server host", responses((status = 200, description = "OS, CPU, memory, disks, and shell", body = SystemInfo))))]
 pub async fn handle(State(state): State<AppState>) -> Json<SystemInfo> {
     Json(report(&state).await)
 }

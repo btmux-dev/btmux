@@ -1271,6 +1271,7 @@ pub enum ServerMessage {
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub enum FileBrowserMode {
     Files,
     Git,

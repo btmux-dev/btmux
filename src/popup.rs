@@ -50,6 +50,7 @@ const EXIT_NOT_FOUND: i32 = 127;
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub enum PopupCommand {
     /// A program and its arguments.
     Exec(Vec<String>),
@@ -525,6 +526,7 @@ pub async fn close(state: &AppState, id: Uuid) {
 }
 
 #[derive(Deserialize, Serialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct PopupRequest {
     /// Chosen by the caller, so a request retried across an upgrade finds
     /// its popup rather than running the program again.
@@ -539,6 +541,7 @@ pub struct PopupRequest {
     pub title: Option<String>,
 }
 
+#[cfg_attr(test, utoipa::path(post, path = "/api/panes/{pane_id}/popup", tag = "Popups", operation_id = "open-popup", summary = "Open a popup", description = "Runs a program in a popup over the pane. Replies once a client started it; then wait for its exit status.", params(("pane_id" = Uuid, Path, description = "Pane ID")), request_body = PopupRequest, responses((status = 200, description = "Started in a client", body = Object, example = json!({"id": "3b9d…"})), (status = 404, description = "No such pane"), (status = 409, description = "No client is showing the pane"), (status = 422, description = "The program can't start"))))]
 /// Opens a popup and replies `{"id": ...}` once a tab started it: 409 if no
 /// tab does, 422 if its program can't start.
 pub async fn api_popup(
@@ -614,6 +617,7 @@ pub async fn api_popup(
     }
 }
 
+#[cfg_attr(test, utoipa::path(get, path = "/api/panes/{pane_id}/popup/{id}", tag = "Popups", operation_id = "wait-for-popup", summary = "Wait for a popup", params(("pane_id" = Uuid, Path, description = "Pane ID"), ("id" = Uuid, Path, description = "Popup ID")), responses((status = 200, description = "The program's exit status", body = Object, example = json!({"status": 0})), (status = 404, description = "No such popup"), (status = 409, description = "No client showed the popup"), (status = 422, description = "The program failed to start"))))]
 /// Replies `{"status": ...}` once the popup's program exits.
 pub async fn api_wait(
     State(state): State<AppState>,

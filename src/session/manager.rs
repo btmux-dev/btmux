@@ -99,6 +99,7 @@ pub struct SessionManager {
 
 #[derive(Serialize, Deserialize, Clone)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct SessionSnapshot {
     pub id: Uuid,
     pub name: String,
@@ -110,6 +111,7 @@ pub struct SessionSnapshot {
 
 #[derive(Serialize, Deserialize, Clone)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct WindowSnapshot {
     pub id: Uuid,
     pub name: String,
