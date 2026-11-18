@@ -79,8 +79,9 @@ pub fn shutdown(server: &RunningServer) -> Result<(), String> {
     }
 }
 
-/// Moves `server` to `exe` in place, as `btmux upgrade` does.
-pub fn upgrade(server: &RunningServer, exe: &Path) -> Result<(), String> {
+/// Moves `server` to `exe`, release `target`, in place, as `btmux upgrade`
+/// does; does nothing if it already runs `target` or later.
+pub fn upgrade(server: &RunningServer, exe: &Path, target: &str) -> Result<(), String> {
     // The server first runs `exe` to check it, for up to 10 s.
     let client = Client::builder()
         .no_proxy()
@@ -98,6 +99,11 @@ pub fn upgrade(server: &RunningServer, exe: &Path) -> Result<(), String> {
             .ok()
     };
     let before = info().ok_or("The desktop server is no longer available.")?;
+    // Another window may have upgraded it since the picker listed it. Even a
+    // same-version handoff restarts its editors and browser.
+    if !newer(target, before["version"].as_str().unwrap_or_default()) {
+        return Ok(());
+    }
     let response = client
         .post(format!("http://{}/api/server/upgrade", server.address))
         .bearer_auth(&server.token)
@@ -235,6 +241,32 @@ mod tests {
         assert!(!newer("0.0.208", "0.0.209"));
         assert!(!newer("0.0.210", "test"));
         assert!(!newer("1.0", "0.0.1"));
+    }
+
+    #[test]
+    fn skips_servers_already_at_the_target() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let server = RunningServer {
+            pid: std::process::id(),
+            address: listener.local_addr().unwrap(),
+            profile: Some("desktop".into()),
+            token: "t".repeat(64),
+        };
+        let responder = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 4096];
+            let count = stream.read(&mut request).unwrap();
+            assert!(request[..count].starts_with(b"GET /api/info "));
+            let body = r#"{"version":"0.0.209","profile":"desktop","instance":"a","pid":1}"#;
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            drop(stream);
+            listener
+        });
+        upgrade(&server, Path::new("/nonexistent/btmux"), "0.0.209").unwrap();
+        let listener = responder.join().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        // No upgrade request followed.
+        assert!(listener.accept().is_err());
     }
 
     #[test]

@@ -788,7 +788,7 @@ async fn upgrade_server(
         .sidecar("btmux")
         .map_err(|_| "Could not find the bundled btmux server.".to_string())?;
     let exe = PathBuf::from(std::process::Command::from(sidecar).get_program());
-    tauri::async_runtime::spawn_blocking(move || servers::upgrade(&server, &exe))
+    tauri::async_runtime::spawn_blocking(move || servers::upgrade(&server, &exe, APP_VERSION))
         .await
         .map_err(|_| "Could not upgrade btmux.".to_string())?
 }

@@ -266,12 +266,15 @@
       }
 
       async function upgrade() {
+        if (!desktopServer?.upgrade) return;
         busy(`Upgrading the desktop server to ${desktopServer.upgrade}…`);
         try {
           await invoke("upgrade_server", { address: desktopServer.address });
           await refresh();
         } catch (message) {
           showError(message);
+          // Disabled while busy, which dropped its focus.
+          (desktopServer?.upgrade ? element("desktop-upgrade") : element("desktop-connect")).focus();
         }
       }
 
@@ -315,14 +318,7 @@
           const lifetime = desktopServer.bundled ? "Stops when btmux quits" : "Keeps running after btmux quits";
           element("desktop-detail").textContent = `${lifetime} · ${desktopServer.address}`;
         }
-        // A kept server stays on the app version that started it.
-        const upgradable = desktopServer?.upgrade;
-        element("desktop-upgrade").hidden = !upgradable;
-        element("desktop-upgrade-note").hidden = !upgradable;
-        if (upgradable) {
-          element("desktop-upgrade-note").textContent =
-            `Version ${desktopServer.version}. Upgrade moves it to ${upgradable} and keeps its shells running.`;
-        }
+        renderUpgrade();
         renderTailnet();
         const others = choices.filter((server) => !server.desktop);
         servers.replaceChildren(
@@ -349,6 +345,17 @@
           }),
         );
         element("none").hidden = others.length > 0;
+      }
+
+      // A kept server stays on the app version that started it.
+      function renderUpgrade() {
+        const upgradable = desktopServer?.upgrade;
+        element("desktop-upgrade").hidden = !upgradable;
+        element("desktop-upgrade-note").hidden = !upgradable;
+        if (upgradable) {
+          element("desktop-upgrade-note").textContent =
+            `Version ${desktopServer.version}. Upgrade moves it to ${upgradable}, keeping its shells if the versions are compatible.`;
+        }
       }
 
       function renderTailnet() {
@@ -379,7 +386,10 @@
           } catch {}
           if (current !== generation) return;
           const server = choices?.find((choice) => choice.desktop);
-          if (server && server.address === desktopServer?.address) desktopServer = server;
+          if (server && server.address === desktopServer?.address) {
+            desktopServer = server;
+            renderUpgrade();
+          }
           renderTailnet();
         }, 3000);
       }

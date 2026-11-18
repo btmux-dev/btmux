@@ -222,11 +222,25 @@ try {
   ]);
   await upgrading.close();
   const refused = await open([outdated], { upgrade_server: 'Could not upgrade the desktop server: Neovim has unsaved changes: 1.' }, '?return=switch');
-  await refused.getByRole('button', { name: 'Upgrade the desktop server' }).click();
+  await refused.getByRole('button', { name: 'Upgrade the desktop server' }).focus();
+  await refused.keyboard.press('Enter');
   await refused.getByRole('alert').filter({ hasText: 'Neovim has unsaved changes' }).waitFor();
   assert(await refused.getByRole('button', { name: 'Connect to the desktop server' }).isEnabled());
   assert(await refused.getByRole('button', { name: 'Upgrade the desktop server' }).isEnabled());
+  // Focus returns for a retry.
+  assert.equal(await refused.evaluate(() => document.activeElement?.id), 'desktop-upgrade');
   await refused.close();
+
+  // Another client's upgrade, seen by the tailnet poll, hides the button.
+  const polled = await open([{ ...outdated, tailnet: { state: 'starting' } }], {}, '?return=switch');
+  await polled.getByRole('button', { name: 'Upgrade the desktop server' }).waitFor();
+  await polled.evaluate(() => {
+    const state = (window as LauncherWindow).launcherTest;
+    state.choices = [{ ...state.choices[0], version: '0.0.209', upgrade: null }];
+  });
+  await polled.getByRole('button', { name: 'Upgrade the desktop server' }).waitFor({ state: 'hidden' });
+  assert(await polled.locator('#desktop-upgrade-note').isHidden());
+  await polled.close();
 
   const unstoppable = await open([kept], { stop_server: 'The server did not stop.' }, '?return=switch');
   await unstoppable.getByRole('button', { name: 'Stop the desktop server' }).click();

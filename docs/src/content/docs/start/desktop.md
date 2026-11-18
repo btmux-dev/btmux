@@ -34,8 +34,9 @@ When starting it, choose **Keep it running after btmux quits** to keep shells
 alive until you stop the server or log out. The choice is remembered. Such a
 server stays on the app version that started it. After an app update, its card
 shows **Upgrade**, which moves it to the new version in place, keeping its
-shells (macOS and Linux; on Windows, stop and start it). It doesn't start at
-login. For that, install the
+shells (macOS and Linux). The server refuses if the two versions hand over
+their state differently, and says so; then, as on Windows, stop and start it,
+which closes its shells. It doesn't start at login. For that, install the
 [service](installation.mdx#run-it-as-a-service) and connect to it instead.
 
 **Stop** asks first, because it closes the server's shells.
