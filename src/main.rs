@@ -49,6 +49,7 @@ mod tailscale;
 mod telemetry;
 mod tmux_cli;
 mod update_check;
+mod upgrade_status;
 mod vscode;
 mod wallpaper;
 mod widget;

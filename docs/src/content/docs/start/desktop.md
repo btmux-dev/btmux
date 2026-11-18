@@ -26,8 +26,11 @@ layout are saved, but running programs end.
 
 Choose **Keep it running after btmux quits** at server startup to keep shells
 alive until you stop the server or log out. The app remembers your choice.
-The server keeps the app version it started with until it stops. For
-automatic startup at login, connect to a
+The server keeps the app version it started with. When the app is newer, the
+server's card shows **Upgrade**, which moves it to the app's version in place
+and keeps its shells (macOS and Linux). If the two versions can't hand over in
+place, the server refuses and says why. Then stop and start it, which closes
+its shells, as on Windows. For automatic startup at login, connect to a
 [service](installation.mdx#run-it-as-a-service).
 
 **Stop** asks first, because it closes the server's shells.

@@ -87,7 +87,9 @@
               <strong>Running</strong>
               <small id="desktop-detail"></small>
               <small id="desktop-tailnet" hidden></small>
+              <small id="desktop-upgrade-note" hidden></small>
             </div>
+            <button id="desktop-upgrade" type="button" aria-label="Upgrade the desktop server" hidden>Upgrade</button>
             <button id="desktop-stop" class="stop" type="button">Stop</button>
             <button id="desktop-connect" class="primary" type="button" aria-label="Connect to the desktop server">Connect</button>
           </div>
@@ -263,6 +265,26 @@
         }
       }
 
+      async function upgrade() {
+        if (!desktopServer?.upgrade) return;
+        // A poll mid-exec would drop the server from this window's list.
+        clearTimeout(tailnetTimer);
+        generation++;
+        busy(`Upgrading the desktop server to ${desktopServer.upgrade}…`);
+        let failure;
+        try {
+          await invoke("upgrade_server", { address: desktopServer.address });
+        } catch (message) {
+          failure = message;
+        }
+        // Even a failure may have moved or stopped it.
+        await refresh();
+        if (failure === undefined) return;
+        showError(failure);
+        // Disabled while busy, which dropped its focus.
+        (desktopServer?.upgrade ? element("desktop-upgrade") : element("desktop-connect")).focus();
+      }
+
       async function stop() {
         busy("Stopping the desktop server…");
         try {
@@ -303,6 +325,7 @@
           const lifetime = desktopServer.bundled ? "Stops when btmux quits" : "Keeps running after btmux quits";
           element("desktop-detail").textContent = `${lifetime} · ${desktopServer.address}`;
         }
+        renderUpgrade();
         renderTailnet();
         const others = choices.filter((server) => !server.desktop);
         servers.replaceChildren(
@@ -329,6 +352,17 @@
           }),
         );
         element("none").hidden = others.length > 0;
+      }
+
+      // A kept server stays on the app version that started it.
+      function renderUpgrade() {
+        const upgradable = desktopServer?.upgrade;
+        element("desktop-upgrade").hidden = !upgradable;
+        element("desktop-upgrade-note").hidden = !upgradable;
+        if (upgradable) {
+          element("desktop-upgrade-note").textContent =
+            `Version ${desktopServer.version}. Upgrade moves it to ${upgradable}, keeping its shells if the versions are compatible.`;
+        }
       }
 
       function renderTailnet() {
@@ -359,7 +393,10 @@
           } catch {}
           if (current !== generation) return;
           const server = choices?.find((choice) => choice.desktop);
-          if (server && server.address === desktopServer?.address) desktopServer = server;
+          if (server && server.address === desktopServer?.address) {
+            desktopServer = server;
+            renderUpgrade();
+          }
           renderTailnet();
         }, 3000);
       }
@@ -438,6 +475,7 @@
       element("remote-cancel").addEventListener("click", () => showRemoteForm(false));
       remoteForm.addEventListener("submit", addRemote);
       element("desktop-connect").addEventListener("click", () => connect(desktopServer));
+      element("desktop-upgrade").addEventListener("click", upgrade);
       // Set when returning from a server; only a fresh launch starts one.
       const returned = new URLSearchParams(location.search).get("return");
       refresh(!returned).then(() => {

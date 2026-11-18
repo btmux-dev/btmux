@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use tokio::time::Instant;
 
 use crate::config::VERSION;
+use crate::upgrade_status::is_newer;
 use crate::ws::control::{NotificationLevel, ServerMessage};
 use crate::AppState;
 
@@ -27,19 +28,6 @@ static LATEST: Mutex<Option<(Instant, String)>> = Mutex::new(None);
 #[derive(Deserialize)]
 struct Release {
     tag_name: String,
-}
-
-fn parse_version(tag: &str) -> Option<Vec<u64>> {
-    let core = tag.trim().trim_start_matches('v');
-    let core = core.split(['-', '+']).next()?;
-    core.split('.').map(|part| part.parse().ok()).collect()
-}
-
-fn is_newer(candidate: &str, current: &str) -> bool {
-    match (parse_version(candidate), parse_version(current)) {
-        (Some(candidate), Some(current)) => candidate > current,
-        _ => false,
-    }
 }
 
 async fn fetch_latest() -> Result<String, String> {
@@ -157,29 +145,4 @@ pub fn spawn(state: AppState) {
             }
         }
     });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn compares_numeric_components() {
-        assert!(is_newer("v0.0.124", "0.0.123"));
-        assert!(is_newer("0.1.0", "0.0.123"));
-        assert!(is_newer("v0.0.1000", "0.0.999"));
-        assert!(!is_newer("v0.0.123", "0.0.123"));
-        assert!(!is_newer("v0.0.9", "0.0.123"));
-    }
-
-    #[test]
-    fn ignores_unparseable_tags() {
-        assert!(!is_newer("nightly", "0.0.123"));
-        assert!(!is_newer("v1.x", "0.0.123"));
-    }
-
-    #[test]
-    fn strips_prerelease_suffix() {
-        assert_eq!(parse_version("v1.2.3-rc1"), Some(vec![1, 2, 3]));
-    }
 }

@@ -9,6 +9,8 @@ type Choice = {
   url: string;
   bundled: boolean;
   desktop: boolean;
+  version?: string;
+  upgrade?: string | null;
   tailnet?: Tailnet | null;
 };
 type Remote = { url: string; profile: string | null; version: string | null; error: string | null };
@@ -200,7 +202,45 @@ try {
   const unshared = await open([kept], {}, '?return=switch');
   await unshared.getByText('Keeps running after btmux quits').waitFor();
   assert(await unshared.locator('#desktop-tailnet').isHidden());
+  assert(await unshared.getByRole('button', { name: 'Upgrade the desktop server' }).isHidden());
   await unshared.close();
+
+  // A kept server older than the app offers to upgrade in place.
+  const outdated = { ...kept, version: '0.0.208', upgrade: '0.0.209' };
+  const upgrading = await open([outdated], {}, '?return=switch');
+  await upgrading.getByText('Version 0.0.208. Upgrade moves it to 0.0.209').waitFor();
+  await upgrading.evaluate(() => {
+    const state = (window as LauncherWindow).launcherTest;
+    state.choices = [{ ...state.choices[0], version: '0.0.209', upgrade: null }];
+  });
+  await upgrading.getByRole('button', { name: 'Upgrade the desktop server' }).click();
+  await upgrading.getByRole('button', { name: 'Upgrade the desktop server' }).waitFor({ state: 'hidden' });
+  assert(await upgrading.locator('#desktop-upgrade-note').isHidden());
+  assert.deepEqual((await calls(upgrading)).slice(1), [
+    { command: 'upgrade_server', args: { address: '127.0.0.1:9400' } },
+    { command: 'discover_servers', args: undefined },
+  ]);
+  await upgrading.close();
+  const refused = await open([outdated], { upgrade_server: 'Could not upgrade the desktop server: Neovim has unsaved changes: 1.' }, '?return=switch');
+  await refused.getByRole('button', { name: 'Upgrade the desktop server' }).focus();
+  await refused.keyboard.press('Enter');
+  await refused.getByRole('alert').filter({ hasText: 'Neovim has unsaved changes' }).waitFor();
+  assert(await refused.getByRole('button', { name: 'Connect to the desktop server' }).isEnabled());
+  assert(await refused.getByRole('button', { name: 'Upgrade the desktop server' }).isEnabled());
+  // Focus returns for a retry.
+  assert.equal(await refused.evaluate(() => document.activeElement?.id), 'desktop-upgrade');
+  await refused.close();
+
+  // Another client's upgrade, seen by the tailnet poll, hides the button.
+  const polled = await open([{ ...outdated, tailnet: { state: 'starting' } }], {}, '?return=switch');
+  await polled.getByRole('button', { name: 'Upgrade the desktop server' }).waitFor();
+  await polled.evaluate(() => {
+    const state = (window as LauncherWindow).launcherTest;
+    state.choices = [{ ...state.choices[0], version: '0.0.209', upgrade: null }];
+  });
+  await polled.getByRole('button', { name: 'Upgrade the desktop server' }).waitFor({ state: 'hidden' });
+  assert(await polled.locator('#desktop-upgrade-note').isHidden());
+  await polled.close();
 
   const unstoppable = await open([kept], { stop_server: 'The server did not stop.' }, '?return=switch');
   await unstoppable.getByRole('button', { name: 'Stop the desktop server' }).click();

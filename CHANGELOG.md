@@ -8,6 +8,14 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Added
+
+- The desktop app upgrades a desktop server kept running after it quits:
+  when the app is newer, the server's card in the picker shows **Upgrade**,
+  which moves it to the app's version in place, keeping its shells when the
+  versions are compatible.
+  ([#166](https://github.com/btmux-dev/btmux/pull/166))
+
 ### Changed
 
 - The Homebrew tap moved to `btmux-dev/tap`: `brew install btmux-dev/tap/btmux`.

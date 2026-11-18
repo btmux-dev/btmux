@@ -42,6 +42,10 @@ that mode it starts detached and uses the profile's saved credential.
 **Share it on my tailnet** saves its port in `tailnet-port` in the app's
 settings folder, below the OS's ephemeral port range. If the port is taken,
 start without sharing or delete the file to pick a new port.
+**Upgrade** posts the bundled binary to `/api/server/upgrade`, as
+`btmux upgrade` does, after rechecking that the server is older, and waits
+for a new instance with the same pid (`src/upgrade_status.rs`, shared with the
+server).
 
 The app validates remote credentials through `/api/info` and stores them in
 an owner-only `remote-servers.json` in the app's settings folder
