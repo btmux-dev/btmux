@@ -19,8 +19,9 @@ and ARM64 Windows.
 brew install --cask btmux-dev/tap/btmux
 ```
 
-The app is signed and notarized. To add `btmux` to your shell's `PATH`,
-choose **btmux → Install Command-Line Tool…** or install the Homebrew formula.
+The app is signed and notarized. Intel Macs are not supported. To add
+`btmux` to your shell's `PATH`, choose **btmux → Install Command-Line Tool…**
+or install the Homebrew formula.
 
 </TabItem>
 <TabItem label="Linux">
@@ -155,7 +156,8 @@ btmux upgrade
 
 `btmux upgrade` keeps running shells and their scrollback
 ([how](../internals/upgrade.md)). If it can't, `btmux restart` ends them and
-restores the layout. On Windows, quit btmux, replace the binary, and start it again.
+restores the layout. Windows has no in-place upgrade: quit btmux,
+replace the binary, and start it again.
 
 For the desktop app, quit it, then run `brew upgrade --cask btmux`
 or the new installer.

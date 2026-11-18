@@ -53,7 +53,7 @@ open editors at once.
 ## Language servers
 
 The editor shares one instance of each language server per project root across
-clients. The root is the nearest directory in the Git worktree with a marker
+clients. The root is the outermost directory in the Git worktree with a marker
 for that language, such as `Cargo.toml`. The status line shows server state
 and progress.
 

@@ -39,7 +39,7 @@ memory: `btmux upgrade` keeps it, and restarting the server clears it.
 
 For Claude Code and Codex accounts logged in on the server, Usage shows the
 percentage used and reset time for each subscription limit, including use outside
-btmux. API-key sessions have no subscription limits.
+btmux. Agents using an API key, or not logged in, aren't listed.
 
 btmux reads limits through the CLI without sending a prompt or reading
 credentials. `GET /api/agent-limits` returns the same data.

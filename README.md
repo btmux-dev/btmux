@@ -18,7 +18,7 @@ Windows. Use it in the desktop app or a browser, including on mobile. Powered by
 ## Highlights
 
 - tmux-style sessions, windows, splits, zoom, and key bindings
-- Persistent shells with simultaneous clients
+- Server-side sessions with simultaneous clients
 - Tailscale HTTPS access with QR sign-in for mobile
 - File and Git browser, process viewer, and web browser
 - Native editor with language servers, Neovim GUI, and VS Code

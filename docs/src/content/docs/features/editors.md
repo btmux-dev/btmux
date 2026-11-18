@@ -16,7 +16,7 @@ Choose it with `editor` in [`config.toml`](../configuration/index.md).
 | `"pane"`   | The terminal: the pane's running Neovim, else `$EDITOR` in its shell |
 
 With `"pane"`, opening a file requires Neovim or the shell in the foreground.
-If another program has focus, btmux shows an error.
+Otherwise, btmux shows an error.
 
 ## Over a pane
 

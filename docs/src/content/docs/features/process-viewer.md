@@ -10,7 +10,7 @@ port or check CPU, memory, and disk usage by session, window, or pane.
 ![The process viewer scoped to one session: its processes on the left, and per-pane usage with a listening port on the right](../../../assets/screenshots/process-viewer-dark.png)
 ![The process viewer scoped to one session: its processes on the left, and per-pane usage with a listening port on the right](../../../assets/screenshots/process-viewer-light.png)
 
-The process or port list and the usage panel refresh once per second.
+Processes and usage refresh every second, ports every 3 seconds.
 
 | Key                     | Action                                              |
 | ----------------------- | --------------------------------------------------- |

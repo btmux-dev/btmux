@@ -49,9 +49,8 @@ Rebind any of them under [`[keys]`](../configuration/keybindings.md).
 - **Sessions are per client.** Two clients can show different sessions, while
   window and pane selection is shared by all of them. `L` goes back to that
   client's previous session.
-- **Detach.** Close the browser tab to detach. See
-  [what survives](how-it-works.md#what-survives) when you close a desktop window,
-  restart the server, or upgrade it.
+- **No attach or detach.** Closing the client detaches. See
+  [what survives](how-it-works.md#what-survives) a restart or upgrade.
 - **Size owner.** The first client on a pane sets its size until it leaves or
   another client types, pastes, or clicks in it. tmux sizes to the smallest
   client by default.
@@ -69,8 +68,9 @@ Rebind any of them under [`[keys]`](../configuration/keybindings.md).
 - **`[keys]`.** Each action has one key. Overriding it moves the action off its
   default key rather than adding a second one.
 - **Popups.** `btmux display-popup` (or `popup`) takes `-t -d -e -T -E` and
-  closes when its program exits. Bind one with `[[popup]]` in `config.toml`.
-  See [Popups](../automation/popups.md) for arguments and key bindings.
+  closes when its program exits. Several arguments run as a program, not a
+  shell command. Bind one with `[[popup]]` in `config.toml`. See
+  [Popups](../automation/popups.md).
 
 ## Not available
 
