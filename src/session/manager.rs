@@ -2852,7 +2852,16 @@ mod agent_tests {
         assert_eq!(mgr.running_agent_panes(), vec![pane_id]);
         let grace = Duration::from_secs(3);
         assert!(!mgr.end_agents_at_prompt(now, grace));
-        assert!(mgr.end_agents_at_prompt(now + grace, grace));
+        // The new shell may not be in the foreground yet.
+        let mut ended = false;
+        for _ in 0..200 {
+            ended = mgr.end_agents_at_prompt(now + grace, grace);
+            if ended {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(ended);
         assert!(mgr.running_agent_panes().is_empty());
 
         mgr.apply_agent_report(pane_id, report(AgentEvent::SessionStart, "second"), now);

@@ -788,7 +788,15 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join(format!("btmux-health-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("tool");
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        // Written by a child: a write fd here could leak into a concurrent
+        // test's fork and make running the script fail with ETXTBSY.
+        let written = std::process::Command::new("/bin/sh")
+            .args(["-c", "printf '%s\\n' \"$2\" > \"$1\"", "sh"])
+            .arg(&path)
+            .arg(format!("#!/bin/sh\n{body}"))
+            .status()
+            .unwrap();
+        assert!(written.success());
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
         (dir, path)
     }

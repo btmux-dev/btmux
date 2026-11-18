@@ -912,7 +912,8 @@ mod tests {
         async fn cancelling_shell_path_kills_descendants() {
             let (dir, shell) = test_script(&spawns_child("wait"), 0o755);
             let asked = shell_path(shell.to_str().unwrap(), Duration::from_secs(30));
-            assert!(tokio::time::timeout(CHILD_STARTED, asked).await.is_err());
+            let result = tokio::time::timeout(CHILD_STARTED, asked).await;
+            assert!(result.is_err(), "{result:?}");
             assert_child_exits(&dir).await;
             std::fs::remove_dir_all(&dir).unwrap();
         }

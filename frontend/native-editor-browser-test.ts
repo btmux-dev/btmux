@@ -588,7 +588,10 @@ try {
     for (let i = 0; i < 100 && readFileSync(main, 'utf8') !== 'let bad = 1;\nuse item;\nfakeCompletion\nend'; i++)
       await page.waitForTimeout(50);
     assert.equal(readFileSync(main, 'utf8'), 'let bad = 1;\nuse item;\nfakeCompletion\nend');
-    assert.match(readFileSync(join(lspDir, 'log'), 'utf8'), /textDocument\/didSave/);
+    // didSave follows the write.
+    const lspLog = () => readFileSync(join(lspDir, 'log'), 'utf8');
+    for (let i = 0; i < 100 && !/textDocument\/didSave/.test(lspLog()); i++) await page.waitForTimeout(50);
+    assert.match(lspLog(), /textDocument\/didSave/);
     console.log('PASS format on save');
 
     // A format answered after switching files changes the file it was for.
