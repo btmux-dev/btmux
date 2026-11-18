@@ -78,7 +78,7 @@ function describe(entry: Entry): string {
         entry.keys.map(cap).join(' '),
         entry.count > 1 ? `×${entry.count}` : '',
         entry.pending ? ' (pending)' : '',
-        entry.cancelled ? ' (cancelled)' : '',
+        entry.canceled ? ' (canceled)' : '',
         entry.label ? ` = ${entry.label}` : '',
       ].join('');
   }
@@ -115,11 +115,11 @@ test('the prefix waits for its key and shows the action', () => {
   expect(shown(caster).slice(1)).toEqual(['binding:⌃A C = New session', 'chord:⌃⇧A']);
 });
 
-test('a prefix without a key shows as cancelled', () => {
+test('a prefix without a key shows as canceled', () => {
   const { caster, press } = setup();
   press('a', { ctrlKey: true }, { kind: 'prefix' });
   caster.cancelPrefix();
-  expect(shown(caster)).toEqual(['binding:⌃A  (cancelled)']);
+  expect(shown(caster)).toEqual(['binding:⌃A  (canceled)']);
 });
 
 test('repeats count on the binding they repeat', () => {
@@ -148,6 +148,18 @@ test('chords count repeats; chords mode drops typing', () => {
   press('Enter');
   press('Tab', { altKey: true, shiftKey: true });
   expect(shown(caster)).toEqual(['chord:CtrlC×2', 'chord:AltShift⇥']);
+});
+
+test('chords mode shows no hidden entry for plain typing', () => {
+  const { caster, press, inputs } = setup();
+  caster.mode = 'chords';
+  const socket = inputs.open('pane');
+  const pane = { id: 'pane', socket };
+  press('x', {}, undefined, pane);
+  press('c', { ctrlKey: true }, undefined, pane);
+  inputs.report(socket, null);
+  expect(shown(caster)).toEqual(['hidden:unknown']);
+  expect(caster.snapshot().length).toBe(1);
 });
 
 test('Option text on macOS is typing, not a chord', () => {
@@ -220,7 +232,7 @@ test('text without a keydown goes through the same check', () => {
   expect(shown(caster)).toEqual(['hidden:password', 'text:ok']);
 });
 
-test('cancelling the prefix tells subscribers', () => {
+test('canceling the prefix tells subscribers', () => {
   const { caster, press } = setup();
   let changes = 0;
   caster.subscribe(() => changes++);

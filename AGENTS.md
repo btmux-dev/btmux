@@ -1112,8 +1112,8 @@ while the overlay shows, sockets send `{type:"watch_input",on}` and get
 `{type:"input_mode",hidden,inputs}`, `hidden` meaning any check since the last
 report hid input (`null` on Windows, which can't tell) and `inputs` the frames
 received before it. `PtyHandle::hidden_input` (canonical mode without echo: a
-password prompt, not a raw-mode program) is checked by the reader before each
-chunk's output goes out, so a prompt's report precedes it, and around each input
+password prompt, not a raw-mode program) is checked, while a socket watches, by the reader before
+each chunk's output goes out, so a prompt's report precedes it, and around each input
 frame. Unknown or unanswered input (2 s) shows as hidden. `[key-overlay]` sets
 `mode` and `position`.
 

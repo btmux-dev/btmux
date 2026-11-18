@@ -86,7 +86,7 @@ function KeyOverlayView() {
       flushSoon();
     };
     terminalInput.setWatching(true);
-    // A prefix ended without a key (timeout, the mobile key bar) shows as cancelled.
+    // A prefix ended without a key (timeout, the mobile key bar) shows as canceled.
     const unsubscribe = useStore.subscribe((state, prev) => {
       if (prev.prefixActive && !state.prefixActive) window.setTimeout(() => keyCaster.cancelPrefix());
     });
@@ -106,9 +106,11 @@ function KeyOverlayView() {
 
   // Drop entries once shown long enough.
   useEffect(() => {
-    if (entries.length === 0) return;
+    // A pending prefix stays until its key, so it sets no deadline.
+    const expiring = entries.filter((entry) => !(entry.kind === 'binding' && entry.pending));
+    if (expiring.length === 0) return;
     const now = performance.now();
-    const next = Math.min(...entries.map((entry) => entry.at + ENTRY_MS - now));
+    const next = Math.min(...expiring.map((entry) => entry.at + ENTRY_MS - now));
     const timer = window.setTimeout(() => keyCaster.expire(), Math.max(next, 0) + 10);
     return () => clearTimeout(timer);
   }, [entries]);
@@ -166,6 +168,7 @@ function EntryView({ entry, fade }: { entry: Entry; fade: boolean }) {
         'max-w-[80vw] rounded-lg border border-border bg-popover px-3 py-2 text-xl text-primary shadow-lg',
         fade && !pending && 'btm-key-overlay-fade',
       )}
+      style={{ animationDuration: `${ENTRY_MS}ms` }}
     >
       {renderEntry(entry)}
     </HStack>
@@ -211,7 +214,7 @@ function renderEntry(entry: Entry): ReactNode {
         <>
           {entry.prefix && <KeyCaps cap={entry.prefix} />}
           {entry.prefix && entry.keys.length === 0 && (
-            <span className="text-base text-secondary">{entry.cancelled ? 'prefix, no key' : 'prefix…'}</span>
+            <span className="text-base text-secondary">{entry.canceled ? 'prefix, no key' : 'prefix…'}</span>
           )}
           {entry.keys.map((cap, i) => (
             <KeyCaps key={i} cap={cap} />

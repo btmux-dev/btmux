@@ -30,7 +30,7 @@ export type Entry =
       /** What the keys did; null if nothing is bound to them. */
       label: string | null;
       pending: boolean;
-      cancelled: boolean;
+      canceled: boolean;
       count: number;
     }
   /** Input to a terminal at a password prompt, or one btmux can't tell about. */
@@ -112,6 +112,9 @@ function typedText(e: KeyInfo, mac: boolean): string | null {
   if (mac && macOptionText(e) !== null) return e.key;
   return e.ctrlKey || e.altKey || e.metaKey ? null : e.key;
 }
+
+/** Whether a keydown can make an entry: not a lone modifier or mid-composition. */
+const shown = (e: KeyInfo) => !e.isComposing && !IGNORED.has(e.key);
 
 const modified = (e: KeyInfo) => e.ctrlKey || e.altKey || e.metaKey;
 
@@ -231,7 +234,7 @@ export class KeyCaster {
     const last = this.last();
     if (last?.kind !== 'binding' || !last.pending) return;
     last.pending = false;
-    last.cancelled = true;
+    last.canceled = true;
     this.touch(last);
     this.changed();
   }
@@ -296,8 +299,8 @@ export class KeyCaster {
 
   /** Whether held input is hidden; undefined while its terminal hasn't said. */
   private verdict(held: Held): HiddenReason | false | undefined {
-    // Keys btmux took never reach the terminal.
-    if (held.terminal === null || held.note) return false;
+    // Keys btmux took never reach the terminal; keys never shown needn't wait.
+    if (held.terminal === null || held.note || (held.key && !shown(held.key))) return false;
     const socket = held.socket;
     if (!socket || socket.closed) return 'unknown';
     const late = this.now() >= held.deadline;
@@ -315,18 +318,18 @@ export class KeyCaster {
 
   private commit(input: Held, hidden: HiddenReason | false): boolean {
     if (input.text !== null) {
+      if (this.mode === 'chords') return false;
       if (hidden) this.addHidden(hidden);
-      else if (this.mode === 'all') for (const char of input.text) this.addText(char, false);
-      else return false;
+      else for (const char of input.text) this.addText(char, false);
       return true;
     }
     const info = input.key;
-    if (!info || info.isComposing || IGNORED.has(info.key)) return false;
+    if (!info || !shown(info)) return false;
     const note = input.note;
     const cap = capOf(info, this.mac);
     const last = this.last();
     if (note?.kind === 'prefix') {
-      this.push({ kind: 'binding', prefix: cap, keys: [], label: null, pending: true, cancelled: false, count: 1 });
+      this.push({ kind: 'binding', prefix: cap, keys: [], label: null, pending: true, canceled: false, count: 1 });
       return true;
     }
     if (note?.kind === 'binding') {
@@ -342,7 +345,7 @@ export class KeyCaster {
           keys: [cap],
           label: note.label,
           pending: false,
-          cancelled: false,
+          canceled: false,
           count: 1,
         });
       }
@@ -359,18 +362,20 @@ export class KeyCaster {
           keys: [cap],
           label: note.label,
           pending: false,
-          cancelled: false,
+          canceled: false,
           count: 1,
         });
       }
       return true;
     }
+    const text = typedText(info, this.mac);
+    const chord = text === null && (info.ctrlKey || info.altKey || info.metaKey || /^F\d+$/.test(info.key));
+    // Chords mode shows nothing of plain typing, hidden or not.
+    if (!chord && this.mode === 'chords') return false;
     if (hidden) {
       this.addHidden(hidden);
       return true;
     }
-    const text = typedText(info, this.mac);
-    const chord = text === null && (info.ctrlKey || info.altKey || info.metaKey || /^F\d+$/.test(info.key));
     if (chord) {
       if (last?.kind === 'chord' && sameCap(last.cap, cap) && this.now() - last.at < RUN_GAP_MS) {
         last.count += 1;
@@ -380,7 +385,6 @@ export class KeyCaster {
       }
       return true;
     }
-    if (this.mode === 'chords') return false;
     if (text !== null) this.addText(text === ' ' ? '␣' : text, false);
     else this.addText([...cap.mods, cap.key].join(this.mac ? '' : '+'), true);
     return true;

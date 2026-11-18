@@ -236,7 +236,7 @@ export function useKeybindings(
           sendPrefix(sessionIdRef.current, prefixRef.current, sendRef.current);
           return;
         }
-        keyCaster.note(e, { kind: 'binding', label: bindingLabel(e, bindsRef.current) });
+        keyCaster.note(e, { kind: 'binding', label: bindingLabel(e, sessionIdRef.current, bindsRef.current) });
         const action = dispatch(
           e,
           sessionIdRef.current,
@@ -264,10 +264,16 @@ function castLabel(action: string): string {
 }
 
 /** What a key after the prefix does, for the key overlay. */
-function bindingLabel(e: KeyboardEvent, binds: Map<string, string>): string | null {
-  if (!binds.has(e.key) && e.key >= '0' && e.key <= '9') return `Select window ${e.key}`;
+function bindingLabel(e: KeyboardEvent, sessionId: string, binds: Map<string, string>): string | null {
+  if (selectsWindow(e, binds))
+    return windowIndexAtDisplayPos(sessionId, parseInt(e.key, 10)) === null ? null : `Select window ${e.key}`;
   const action = bindFor(e, binds);
   return action ? castLabel(action) : null;
+}
+
+/** An unbound digit after the prefix selects the window at that position. */
+function selectsWindow(e: KeyboardEvent, binds: Map<string, string>): boolean {
+  return !binds.has(e.key) && e.key >= '0' && e.key <= '9';
 }
 
 function dispatch(
@@ -277,7 +283,7 @@ function dispatch(
   send: (msg: ClientMessage) => void,
   onSwitchToSession: (sessionName: string) => void,
 ): string | null {
-  if (!binds.has(e.key) && e.key >= '0' && e.key <= '9') {
+  if (selectsWindow(e, binds)) {
     // The digit is a *display* position; map it to the backend window index so
     // the hotkey matches the (possibly sorted) status-bar numbering.
     const target = windowIndexAtDisplayPos(sessionId, parseInt(e.key, 10));

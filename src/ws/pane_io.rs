@@ -66,7 +66,6 @@ fn current_size_frame((cols, rows): (u16, u16)) -> Message {
     Message::Text(format!(r#"{{"type":"current_size","cols":{cols},"rows":{rows}}}"#).into())
 }
 
-/// Tell a viewer whether its size drives the PTY.
 /// Whether the terminal hides input, for a viewer that asked (`watch_input`),
 /// with how many of its input frames came before the check.
 fn input_mode_frame(hidden: Option<bool>, inputs: u64) -> Message {
@@ -77,6 +76,7 @@ fn input_mode_frame(hidden: Option<bool>, inputs: u64) -> Message {
     )
 }
 
+/// Tell a viewer whether its size drives the PTY.
 fn owner_frame(owner: bool) -> Message {
     Message::Text(format!(r#"{{"type":"owner","owner":{owner}}}"#).into())
 }
@@ -178,10 +178,7 @@ async fn handle_socket(
             );
         }
         for frame in first {
-            if !matches!(
-                tokio::time::timeout(std::time::Duration::from_secs(10), ws_tx.send(frame)).await,
-                Ok(Ok(()))
-            ) {
+            if !send_frame(&mut ws_tx, frame).await {
                 return;
             }
         }
@@ -204,11 +201,7 @@ async fn handle_socket(
                     },
                     Output::Size(cols, rows) => Message::Text(size_frame(cols, rows).into()),
                 };
-                if !matches!(
-                    tokio::time::timeout(std::time::Duration::from_secs(10), ws_tx.send(frame))
-                        .await,
-                    Ok(Ok(()))
-                ) {
+                if !send_frame(&mut ws_tx, frame).await {
                     return;
                 }
             }
@@ -218,11 +211,7 @@ async fn handle_socket(
                         .to_string()
                         .into(),
                 );
-                if !matches!(
-                    tokio::time::timeout(std::time::Duration::from_secs(10), ws_tx.send(ready))
-                        .await,
-                    Ok(Ok(()))
-                ) {
+                if !send_frame(&mut ws_tx, ready).await {
                     return;
                 }
                 replaying = false;
@@ -261,10 +250,7 @@ async fn handle_socket(
                     let next = is_owner(&owner_rx.borrow_and_update());
                     if next != owner {
                         owner = next;
-                        if !matches!(
-                            tokio::time::timeout(std::time::Duration::from_secs(10), ws_tx.send(owner_frame(owner))).await,
-                            Ok(Ok(()))
-                        ) {
+                        if !send_frame(&mut ws_tx, owner_frame(owner)).await {
                             return;
                         }
                     }
@@ -273,6 +259,7 @@ async fn handle_socket(
         }
     };
     let receive = async {
+        let mut _watch = None;
         while let Some(Ok(msg)) = ws_rx.next().await {
             if matches!(msg, Message::Close(_)) {
                 break;
@@ -307,6 +294,8 @@ async fn handle_socket(
                     };
                     if let ControlMsg::WatchInput { on } = control {
                         watching.store(on, Ordering::Relaxed);
+                        // Before checking, so the reader keeps the mode current.
+                        _watch = on.then(|| hidden_input.watch());
                         if on {
                             check();
                             input_checked.notify_one();

@@ -16,7 +16,7 @@ pub use crate::process::Pid;
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 #[cfg(unix)]
@@ -724,6 +724,17 @@ pub struct HiddenInput {
     #[cfg(unix)]
     probe: Arc<Mutex<Option<Probe>>>,
     tx: Arc<watch::Sender<Option<bool>>>,
+    /// Sockets reporting it; the reader checks only while there are any.
+    watchers: Arc<AtomicUsize>,
+}
+
+/// A socket reporting hidden input, until dropped.
+pub struct HiddenInputWatch(Arc<AtomicUsize>);
+
+impl Drop for HiddenInputWatch {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 impl HiddenInput {
@@ -732,7 +743,18 @@ impl HiddenInput {
             #[cfg(unix)]
             probe: probe.clone(),
             tx: Arc::new(watch::channel(cfg!(unix).then_some(false)).0),
+            watchers: Arc::default(),
         }
+    }
+
+    /// Have the reader check after each output chunk while the guard lives.
+    pub fn watch(&self) -> HiddenInputWatch {
+        self.watchers.fetch_add(1, Ordering::Relaxed);
+        HiddenInputWatch(self.watchers.clone())
+    }
+
+    fn watched(&self) -> bool {
+        self.watchers.load(Ordering::Relaxed) > 0
     }
 
     /// Check the terminal now, publishing a change to subscribers.
@@ -852,7 +874,9 @@ impl OutputPipeline {
         self.poll_cwd();
         // Before the output goes out: password prompts turn echo off before
         // writing themselves, so viewers learn it no later than they see them.
-        self.hidden_input.check();
+        if self.hidden_input.watched() {
+            self.hidden_input.check();
+        }
         let mut sb = self.scrollback.lock().unwrap();
         if !result.scrollback.is_empty() {
             sb.push(Output::Data(exact_bytes(result.scrollback)));

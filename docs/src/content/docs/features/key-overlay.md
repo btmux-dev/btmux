@@ -71,6 +71,6 @@ A capture listener on `window` sees each key before any surface does, and
 before the key is committed (`lib/keyCast.ts`). Terminal input waits for
 the server: while the overlay is shown, each pane socket asks for
 `input_mode` reports (`watch_input`). The server checks the terminal's modes
-(canonical without echo) after each output chunk, before that output goes out,
+(canonical without echo) while any socket asks, after each output chunk, before that output goes out,
 and around each input frame; each report says whether any check since the last
 one hid input, and how many input frames came before it.
