@@ -3,7 +3,16 @@
 // line show of pending keys: held prefixes, and vim's own unfinished commands.
 import type { VimBind, VimGroup, VimMode } from '../../generated/protocol';
 import { IS_MAC } from '../nvimKeys';
-import { eventToken, groupNames, KeyTable, keyTables, showKeys, step, type KeyEntry, type KeyMode } from './keyLayer';
+import {
+  consume,
+  eventToken,
+  groupNames,
+  KeyTable,
+  keyTables,
+  showKeys,
+  type KeyEntry,
+  type KeyMode,
+} from './keyLayer';
 import { vimPresets, whichKeyRows, type WhichKeyRow } from './whichKey';
 
 /** How long keys wait before the which-key popup shows what can follow. */
@@ -92,25 +101,34 @@ export class Sequences {
       this.noteTyped(token);
       return false;
     }
-    const next = step(table, this.held, token);
-    switch (next.kind) {
-      case 'pass':
-        this.noteTyped(token);
-        return false;
-      case 'wait':
-        this.hold(next.keys, mode, next.ambiguous);
-        return true;
-      case 'run':
-        this.clear();
-        this.host.run(next.entry, mode);
-        return true;
-      case 'replay':
-        this.clear();
-        this.typed = [];
-        this.host.replay(next.keys, mode);
-        for (const key of next.keys) this.noteTyped(key);
-        return true;
+    const held = this.held;
+    const { out, held: next, ambiguous } = consume(table, [...held, token]);
+    // Not a mapping's start: the key does what it does.
+    if (!held.length && !next.length && out.length === 1 && out[0].kind === 'keys') {
+      this.noteTyped(token);
+      return false;
     }
+    // This key, going through as typed last: its own event does that.
+    const last = out[out.length - 1];
+    const through = !next.length && last?.kind === 'keys';
+    if (through) last.keys = last.keys.slice(0, -1);
+    this.clear();
+    for (const o of out) {
+      if (o.kind === 'run') this.host.run(o.entry, mode);
+      else if (o.keys.length) {
+        this.host.replay(o.keys, mode);
+        for (const key of o.keys) this.noteTyped(key);
+      }
+    }
+    if (next.length) this.hold(next, mode, ambiguous);
+    if (!through) return true;
+    this.noteTyped(token);
+    return false;
+  }
+
+  /** A key that went to vim without coming here first (Esc). */
+  passed(key: string) {
+    if (!this.held.length) this.noteTyped(key);
   }
 
   /** Esc: drop held keys; true if there were any. */

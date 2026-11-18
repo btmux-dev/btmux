@@ -1134,19 +1134,22 @@ pub fn run() {
                     file.insert(&new, 0)?;
                     file.insert(&switch, 1)?;
                     file.insert(&PredefinedMenuItem::separator(app)?, 2)?;
-                    // Cmd+W reaches the page, whose native editor closes a file with it.
-                    for item in file.items()? {
+                }
+                // The File and Window menus' Close Window take Cmd+W before the
+                // page sees it; the page closes the window itself, unless the
+                // native editor takes it to close a file (`installDesktopCloseKey`).
+                for (name, key) in [("File", Some("CmdOrCtrl+Shift+W")), ("Window", None)] {
+                    let Some(sub) = submenu(name) else { continue };
+                    for (position, item) in sub.items()?.into_iter().enumerate() {
                         if let MenuItemKind::Predefined(close) = &item
-                            && close.text().is_ok_and(|text| text == "Close Window")
+                            && close
+                                .text()
+                                .is_ok_and(|text| text.replace('&', "") == "Close Window")
                         {
-                            file.remove(close)?;
-                            file.append(&MenuItem::with_id(
-                                app,
-                                CLOSE_WINDOW,
-                                "Close Window",
-                                true,
-                                Some("CmdOrCtrl+Shift+W"),
-                            )?)?;
+                            sub.remove(close)?;
+                            let item =
+                                MenuItem::with_id(app, CLOSE_WINDOW, "Close Window", true, key)?;
+                            sub.insert(&item, position)?;
                         }
                     }
                 }

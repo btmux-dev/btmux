@@ -119,6 +119,12 @@ try {
   await popup.waitFor({ state: 'detached' });
   await mode('NORMAL');
   assert.equal(await pane.getByLabel('Pending keys').count(), 0);
+  // Vim's own prefixes too, and Esc ending them clears the popup.
+  await page.keyboard.press('z');
+  await row('z').getByText('Line to center').waitFor();
+  await page.keyboard.press('Escape');
+  await popup.waitFor({ state: 'detached' });
+  assert.equal(await pane.getByLabel('Pending keys').count(), 0);
   console.log('PASS the leader shows which-key, and Esc drops it');
 
   // <leader>f formats the file; gqq formats a line through the server.
@@ -181,6 +187,9 @@ try {
   await at('Ln 300, Col 1');
   await page.keyboard.press('Control+o');
   await at('Ln 1, Col 1');
+  // Going back isn't a jump: forward still goes there.
+  await page.keyboard.press('Control+i');
+  await at('Ln 300, Col 1');
   console.log('PASS CTRL-O and CTRL-I follow jumps across files');
 
   // Without a server, gq hard wraps.
@@ -204,6 +213,8 @@ try {
       '"<leader>h" = "editor-hover"',
       '"<leader>hs" = "none"',
       '"<leader>p" = { action = "command-palette", desc = "Palette" }',
+      '"<leader>z" = { keys = "0" }',
+      '"<leader>zz" = { keys = "$" }',
       '"jk" = { keys = "<Esc>", modes = ["insert"] }',
       '[native-editor.vim-groups]',
       '"<leader>h" = "git"',
@@ -230,10 +241,21 @@ try {
   await page.keyboard.press(' ');
   await at('Ln 1, Col 6');
   assert.equal(await popup.count(), 0);
-  // Insert-mode keys and a btmux action.
-  await page.keyboard.type('ijk');
+  // A complete mapping the next key doesn't continue runs, then that key.
+  await page.keyboard.type('ggw');
+  await at('Ln 1, Col 5');
+  await page.keyboard.type(',zj');
+  await at('Ln 2, Col 1');
+  // Insert-mode keys: what isn't the mapping is typed.
+  await page.keyboard.type('ijx');
+  await mode('INSERT');
+  await until('jx typed', async () => (await lines(page, paneId))!.split('\n')[1].startsWith('jx'));
+  await page.keyboard.type('jk');
   await mode('NORMAL');
-  assert.equal((await lines(page, paneId))?.includes('jk'), false);
+  await until('jk not typed', async () => (await lines(page, paneId))!.split('\n')[1].startsWith('jxuse'));
+  await page.keyboard.type('u');
+  await until('undone', async () => (await lines(page, paneId))!.split('\n')[1].startsWith('use'));
+  // A btmux action.
   await page.keyboard.type(',p');
   await page.getByRole('dialog').getByRole('combobox').first().waitFor();
   await page.keyboard.press('Escape');
@@ -259,6 +281,13 @@ try {
   await at('Ln 1, Col 5');
   await page.keyboard.press('Shift+F8');
   await at('Ln 1, Col 13');
+  // A chord no key finishes doesn't take the next edit.
+  await page.keyboard.press('ControlOrMeta+k');
+  await popup.waitFor();
+  await new Promise((r) => setTimeout(r, 500));
+  await page.keyboard.type('q');
+  await popup.waitFor({ state: 'detached' });
+  await until('q typed', async () => (await lines(page, paneId))!.startsWith('let thing = qbad;'));
   console.log('PASS VS Code chords, F8, and Go Back without vim');
 } finally {
   await browser.close();

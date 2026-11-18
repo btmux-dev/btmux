@@ -219,6 +219,8 @@ export class PaneEditor {
           setDisplay((path) => this.display(path));
           if (this.active) noteOpened(this.active);
         },
+        // Keys held for a mapping don't wait for a return.
+        blur: () => this.keys.reset(),
       }),
       keymap.of([
         { key: 'Mod-p', run: () => this.quickOpen(), preventDefault: true, scope: EARLY_SCOPE },
@@ -335,6 +337,8 @@ export class PaneEditor {
       e.preventDefault();
       return true;
     }
+    // Otherwise it goes to vim, which may end a command the popup shows.
+    if (plainEsc) this.keys.passed('<Esc>');
     // A quick second Esc hides the editor; the first still closes panels and
     // completions. With vim, only a run of Escs that starts in normal mode
     // with nothing pending hides it: one that leaves insert or visual mode,
@@ -397,10 +401,12 @@ export class PaneEditor {
     if (!target) return true;
     this.navigating = true;
     void this.display(target.path).then((view) => {
+      // The move there isn't a jump of its own.
+      if (view) {
+        const pos = Math.min(target.pos, view.state.doc.length);
+        view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
+      }
       this.navigating = false;
-      if (!view) return;
-      const pos = Math.min(target.pos, view.state.doc.length);
-      view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
     });
     return true;
   }
@@ -431,10 +437,15 @@ export class PaneEditor {
 
   /** The vim mappings and which-key settings from the config. */
   setKeys(binds: readonly VimBind[], groups: readonly VimGroup[], timeout: number, whichKey: boolean) {
-    this.keys.configure(binds, groups, timeout, whichKey);
-    this.insertMaps = binds
-      .filter((b) => b.mode === 'insert' && b.rhs)
-      .map((b) => ({ lhs: b.keys.join(''), rhs: b.rhs!.join('') }));
+    // Vim maps typed keys in insert mode itself, inserting them as it waits.
+    const insertKeys = (b: VimBind) => b.mode === 'insert' && !!b.rhs;
+    this.keys.configure(
+      binds.filter((b) => !insertKeys(b)),
+      groups,
+      timeout,
+      whichKey,
+    );
+    this.insertMaps = binds.filter(insertKeys).map((b) => ({ lhs: b.keys.join(''), rhs: b.rhs!.join('') }));
     this.vimLib?.setInsertMappings(this.insertMaps);
   }
 

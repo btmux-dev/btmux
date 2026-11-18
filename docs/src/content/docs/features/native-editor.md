@@ -26,7 +26,7 @@ Keys follow VS Code's defaults. These are the ones to know first:
 | `Ctrl-g`                    | Goes to a line                                              |
 | `Mod-Shift-Enter`           | Inserts a line above                                        |
 | `Mod-d` / `Mod-F2`          | Selects the next or every occurrence of the word            |
-| `Mod-k`, then another key   | VS Code's chords; a popup lists them                        |
+| `Mod-k`, then another key   | VS Code's chords; a popup lists them, and other keys type   |
 | Esc twice                   | Hides the editor                                            |
 
 Mod is Cmd on macOS and Ctrl elsewhere. Go back and forward are `Alt-←` and
@@ -134,11 +134,13 @@ Keys are written as in Vim: `<C-w>`, `<A-x>` (Alt), `<D-k>` (Cmd), `<S-Tab>`,
 `<Space>`, `<CR>`, `<Esc>`. An action in insert mode needs a key that types
 nothing, such as `<C-k>`; map typed keys like `jk` with `keys`.
 
-Keys that start a mapping wait for the rest. A key that doesn't continue one
-sends them all to Vim, so `gg` and `viw` still work. A mapping that also
-starts a longer one, such as `<leader>h` beside `<leader>hs`, runs once no
-key follows within `timeout`. A Vim command the leader shadows (with `,`,
-repeating `f` backward) runs only when the next key isn't mapped.
+Keys that start a mapping wait for the rest, as in Vim. When the next key
+doesn't continue one, the longest mapping among the keys runs and the rest
+are mapped again; keys no mapping starts with go to Vim, so `gg` and `viw`
+still work. A mapping that also starts a longer one, such as `<leader>h`
+beside `<leader>hs`, runs once no key follows within `timeout`. A Vim command
+the leader shadows (with `,`, repeating `f` backward) runs only when the next
+key isn't mapped. Esc drops keys typed so far, so it can't be mapped.
 
 ## Language servers
 

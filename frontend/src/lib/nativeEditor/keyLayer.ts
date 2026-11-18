@@ -115,22 +115,37 @@ export function keyTables(binds: readonly VimBind[]): Map<VimMode, KeyTable> {
 export const groupNames = (groups: readonly VimGroup[]) => new Map(groups.map((g) => [join(g.keys), g.name]));
 export const groupName = (names: Map<string, string>, keys: readonly string[]) => names.get(join(keys)) ?? null;
 
-export type Step =
-  /** Not a mapping's start: the key does what it does. */
-  | { kind: 'pass' }
-  /** Held for more keys; a mapping of its own too if `ambiguous`, run after the timeout. */
-  | { kind: 'wait'; keys: string[]; ambiguous: boolean }
-  | { kind: 'run'; entry: KeyEntry }
-  /** Held keys that turned out not to be a mapping: give them to vim. */
-  | { kind: 'replay'; keys: string[] };
+export type Output = { kind: 'run'; entry: KeyEntry } | { kind: 'keys'; keys: string[] };
 
-/** What `key` does after the held keys `held`, as in Vim: the longest mapping wins. */
-export function step(table: KeyTable, held: readonly string[], key: string): Step {
-  const keys = [...held, key];
-  const { entry, prefix } = table.lookup(keys);
-  if (prefix) return { kind: 'wait', keys, ambiguous: entry !== null };
-  if (entry) return { kind: 'run', entry };
-  return held.length ? { kind: 'replay', keys } : { kind: 'pass' };
+/**
+ * Keys as Vim maps them: the longest mapping wins. When no mapping goes on,
+ * the longest one among the keys runs and the rest are mapped again; from a
+ * key no mapping starts with, keys go through as typed. `held` waits for more
+ * keys, and is a mapping of its own too if `ambiguous`, run after the timeout.
+ */
+export function consume(
+  table: KeyTable,
+  keys: readonly string[],
+): { out: Output[]; held: string[]; ambiguous: boolean } {
+  const out: Output[] = [];
+  let rest = [...keys];
+  while (rest.length) {
+    const { entry, prefix } = table.lookup(rest);
+    if (prefix) return { out, held: rest, ambiguous: entry !== null };
+    if (entry) {
+      out.push({ kind: 'run', entry });
+      break;
+    }
+    let n = rest.length - 1;
+    while (n > 0 && !table.lookup(rest.slice(0, n)).entry) n--;
+    if (!n) {
+      out.push({ kind: 'keys', keys: rest });
+      break;
+    }
+    out.push({ kind: 'run', entry: table.lookup(rest.slice(0, n)).entry! });
+    rest = rest.slice(n);
+  }
+  return { out, held: [], ambiguous: false };
 }
 
 /** A key name for `KeyCap`: `ctrl+w`, `shift+tab`, `space`, `G`. */

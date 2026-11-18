@@ -150,6 +150,14 @@
     </main>
     <script>
       const invoke = (command, args) => window.__TAURI__.core.invoke(command, args);
+      // The menu leaves Cmd+W to pages (btmux's editor closes files with it).
+      if (/Mac/.test(navigator.platform))
+        addEventListener("keydown", (e) => {
+          if (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "w") {
+            e.preventDefault();
+            invoke("close_window").catch(() => {});
+          }
+        });
       const element = (id) => document.getElementById(id);
       const servers = element("servers");
       const status = element("status");

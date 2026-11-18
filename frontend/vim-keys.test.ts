@@ -1,7 +1,7 @@
 // Run with `just test-frontend` (bun test).
 import { expect, test } from 'bun:test';
 import { ChangeSet } from '@codemirror/state';
-import { eventToken, keyCapKeys, KeyTable, keyTables, showKeys, step } from './src/lib/nativeEditor/keyLayer';
+import { consume, eventToken, keyCapKeys, KeyTable, keyTables, showKeys } from './src/lib/nativeEditor/keyLayer';
 import { describe, vimPresets, whichKeyRows } from './src/lib/nativeEditor/whichKey';
 import { JumpList } from './src/lib/nativeEditor/jumps';
 import { optionChordKey } from './src/lib/macOption';
@@ -70,20 +70,24 @@ test('Option chords on macOS are named by their physical key, unless Option type
 
 const entry = (keys: string[], action: string) => ({ keys, action, rhs: null, desc: null });
 
-test('steps follow Vim: the longest mapping wins, and others replay', () => {
+test('keys map as in Vim: the longest mapping wins, and others go through', () => {
   const table = new KeyTable([
     entry(['g', 'd'], 'editor-go-to-definition'),
     entry(['g', 'r', 'n'], 'editor-rename'),
     entry(['<Space>', 'h'], 'editor-hover'),
     entry(['<Space>', 'h', 's'], 'editor-stage-hunk'),
   ]);
-  expect(step(table, [], 'x')).toEqual({ kind: 'pass' });
-  expect(step(table, [], 'g')).toEqual({ kind: 'wait', keys: ['g'], ambiguous: false });
-  expect(step(table, ['g'], 'd')).toMatchObject({ kind: 'run', entry: { action: 'editor-go-to-definition' } });
-  expect(step(table, ['g'], 'g')).toEqual({ kind: 'replay', keys: ['g', 'g'] });
-  expect(step(table, ['g'], 'r')).toEqual({ kind: 'wait', keys: ['g', 'r'], ambiguous: false });
-  expect(step(table, ['<Space>'], 'h')).toEqual({ kind: 'wait', keys: ['<Space>', 'h'], ambiguous: true });
-  expect(step(table, ['<Space>', 'h'], 's')).toMatchObject({ kind: 'run', entry: { action: 'editor-stage-hunk' } });
+  const run = (action: string) => ({ kind: 'run', entry: expect.objectContaining({ action }) });
+  expect(consume(table, ['x'])).toEqual({ out: [{ kind: 'keys', keys: ['x'] }], held: [], ambiguous: false });
+  expect(consume(table, ['g'])).toEqual({ out: [], held: ['g'], ambiguous: false });
+  expect(consume(table, ['g', 'd']).out).toEqual([run('editor-go-to-definition')]);
+  expect(consume(table, ['g', 'g']).out).toEqual([{ kind: 'keys', keys: ['g', 'g'] }]);
+  expect(consume(table, ['g', 'r'])).toEqual({ out: [], held: ['g', 'r'], ambiguous: false });
+  expect(consume(table, ['<Space>', 'h'])).toEqual({ out: [], held: ['<Space>', 'h'], ambiguous: true });
+  expect(consume(table, ['<Space>', 'h', 's']).out).toEqual([run('editor-stage-hunk')]);
+  // A complete mapping a key didn't continue runs, and the rest map again.
+  expect(consume(table, ['<Space>', 'h', 'j']).out).toEqual([run('editor-hover'), { kind: 'keys', keys: ['j'] }]);
+  expect(consume(table, ['<Space>', 'h', 'g'])).toEqual({ out: [run('editor-hover')], held: ['g'], ambiguous: false });
 });
 
 test('tables are per mode', () => {

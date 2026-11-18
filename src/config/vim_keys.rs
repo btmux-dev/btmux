@@ -336,6 +336,11 @@ pub fn resolve(leader: &str, user: &BTreeMap<String, VimKey>) -> Result<Vec<VimB
     }
     for (text, key) in user {
         let keys = parse_keys(text, Some(leader)).map_err(|e| format!("vim-keys `{text}`: {e}"))?;
+        if keys.iter().any(|k| k == "<Esc>") {
+            return Err(format!(
+                "vim-keys `{text}`: Esc drops pending keys and hides the editor, so it can't be mapped"
+            ));
+        }
         let modes = key.modes.clone().unwrap_or_else(|| vec![VimMode::Normal]);
         binds.retain(|b| !(b.keys == keys && modes.contains(&b.mode)));
         let (action, rhs) = match &key.target {
@@ -514,6 +519,16 @@ mod tests {
         )
         .is_err());
         assert!(resolve("<Space>", &user(&[("<bad>", action("editor-hover", None))])).is_err());
+        assert!(resolve(
+            "<Space>",
+            &user(&[("<Esc>", action("editor-problems", None))])
+        )
+        .is_err());
+        assert!(resolve(
+            "<Space>",
+            &user(&[("<leader><esc>", action("editor-problems", None))])
+        )
+        .is_err());
     }
 
     #[test]
