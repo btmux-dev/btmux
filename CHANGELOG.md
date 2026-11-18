@@ -16,6 +16,7 @@ actions, saved state, and API types can change in any release.
 - The status bar shows a button for the configured editor only, not one for
   each editor the server can run; the palette's `editor-*` actions still
   toggle the others.
+  ([#165](https://github.com/btmux-dev/btmux/pull/165))
 
 ### Fixed
 
