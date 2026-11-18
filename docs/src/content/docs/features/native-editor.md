@@ -82,7 +82,9 @@ args = ["--stdio"]
 config = { basedpyright = { analysis = { typeCheckingMode = "strict" } } }
 ```
 
-`config` answers the server's `workspace/configuration` requests. Changes
+`file-types` are extensions; `file-names` are whole names, such as
+`Makefile`, matched ignoring case. `config` answers the server's
+`workspace/configuration` requests. Changes
 apply to servers started afterward. nil releases since 2025-06-13 format with
 nixfmt by default (Nixpkgs builds in its own); for older ones, or another
 formatter, set `config = { nil = { formatting = { command = ["alejandra"] } } }`

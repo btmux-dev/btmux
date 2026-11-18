@@ -722,8 +722,10 @@ pub struct LanguageConfig {
     pub name: String,
     /// The LSP language id; `name` if unset.
     pub language_id: Option<String>,
-    /// File extensions (`rs`) or whole file names (`Makefile`).
+    /// File extensions (`rs`).
     pub file_types: Vec<String>,
+    /// Whole file names (`Makefile`), matched ignoring case.
+    pub file_names: Vec<String>,
     /// Files or directories marking a project root, such as `Cargo.toml`.
     pub roots: Vec<String>,
     pub language_servers: Vec<String>,

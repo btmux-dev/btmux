@@ -18,6 +18,12 @@ actions, saved state, and API types can change in any release.
   bodies highlighted as shell, and just-lsp as a built-in language server.
   ([#161](https://github.com/btmux-dev/btmux/pull/161))
 
+### Changed
+
+- A `[[language]]` table's `file-types` are extensions only; whole file names,
+  such as `Makefile`, go in `file-names` and match ignoring case.
+  ([#161](https://github.com/btmux-dev/btmux/pull/161))
+
 ## [0.0.208] - 2026-11-18
 
 ### Added

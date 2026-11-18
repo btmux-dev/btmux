@@ -7,7 +7,7 @@ use std::sync::{Arc, LazyLock, RwLock};
 
 use crate::config::{FileConfig, LanguageConfig, LanguageServerConfig};
 
-/// (name, language id, file types, roots, servers)
+/// (name, language id, extensions, roots, servers)
 type Builtin = (
     &'static str,
     &'static str,
@@ -81,25 +81,12 @@ const LANGUAGES: &[Builtin] = &[
     (
         "bash",
         "shellscript",
-        &["sh", "bash", ".bashrc", ".bash_profile"],
+        &["sh", "bash"],
         &[],
         &["bash-language-server"],
     ),
     ("toml", "toml", &["toml"], &[], &["taplo"]),
-    (
-        "just",
-        "just",
-        &[
-            "just",
-            "justfile",
-            "Justfile",
-            "JUSTFILE",
-            ".justfile",
-            ".Justfile",
-        ],
-        &[],
-        &["just-lsp"],
-    ),
+    ("just", "just", &["just"], &[], &["just-lsp"]),
     (
         "yaml",
         "yaml",
@@ -143,6 +130,12 @@ const LANGUAGES: &[Builtin] = &[
         &[],
         &["vscode-html-language-server"],
     ),
+];
+
+/// Built-in languages' whole file names, matched ignoring case.
+const FILE_NAMES: &[(&str, &[&str])] = &[
+    ("bash", &[".bashrc", ".bash_profile"]),
+    ("just", &["justfile", ".justfile"]),
 ];
 
 /// (name, command, args)
@@ -213,6 +206,11 @@ impl LspConfig {
                 name: name.to_string(),
                 language_id: Some(id.to_string()),
                 file_types: types.iter().map(|t| t.to_string()).collect(),
+                file_names: FILE_NAMES
+                    .iter()
+                    .filter(|(language, _)| language == name)
+                    .flat_map(|(_, names)| names.iter().map(|n| n.to_string()))
+                    .collect(),
                 roots: roots.iter().map(|r| r.to_string()).collect(),
                 language_servers: names.iter().map(|n| n.to_string()).collect(),
             });
@@ -224,13 +222,14 @@ impl LspConfig {
         }
     }
 
-    /// The language covering `path`: a whole-name match, else by extension.
+    /// The language covering `path`: a whole-name match (ignoring case),
+    /// else by extension.
     pub fn language(&self, path: &Path) -> Option<&LanguageConfig> {
         let name = path.file_name()?.to_str()?;
         let ext = path.extension().and_then(|e| e.to_str());
         self.languages
             .iter()
-            .find(|l| l.file_types.iter().any(|t| t == name))
+            .find(|l| l.file_names.iter().any(|n| n.eq_ignore_ascii_case(name)))
             .or_else(|| {
                 let ext = ext?;
                 self.languages
@@ -389,10 +388,11 @@ mod tests {
             config.language(Path::new("/x/.bashrc")).unwrap().name,
             "bash"
         );
-        for name in ["justfile", ".justfile", "tasks.just"] {
+        for name in ["justfile", "Justfile", ".JUSTFILE", "tasks.just"] {
             let path = Path::new("/x").join(name);
             assert_eq!(config.language(&path).unwrap().name, "just");
         }
+        assert!(config.language(Path::new("/x/notes.justfile")).is_none());
         assert!(config.language(Path::new("/x/notes.txt")).is_none());
         assert_eq!(config.servers["pyright"].command, "pyright-langserver");
     }
