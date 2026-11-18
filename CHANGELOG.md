@@ -8,12 +8,40 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Added
+
+- Vim mode in the native editor has Neovim's language server mappings (`grn`,
+  `gra`, `grr`, `gri`, `grt`, `grx`, `gO`, `K`, `]d`, insert-mode `Ctrl-s`),
+  `gd`, `gD`, `gW`, `gq` formatting through the server, and `<leader>f`.
+- A `<leader>` (Space by default) and your own Vim mappings to any action or
+  keys, in `[native-editor.vim-keys]`.
+- A which-key popup lists the keys that can follow a pending prefix, in Vim
+  mode and after VS Code's `Mod-k` chords. The status line shows pending keys.
+- Go back and forward across files: `Ctrl-o` / `Ctrl-i` in Vim mode, VS Code's
+  keys otherwise.
+- More of VS Code's keys in the native editor: `Mod-k` chords for hover,
+  formatting, and folding, `Shift-F8`, expand and shrink selection,
+  `Ctrl-g`, `Mod-Shift-Enter`, `Mod-F2`, and, in the desktop app, `Mod-t` and
+  `Mod-w`.
+- `editor-*` actions for definitions, references, rename, hover, formatting,
+  code lenses, diagnostics, folding, and going back and forward.
+
 ### Changed
 
+- The native editor's Vim hunk mappings start with the leader, Space, instead
+  of `\`.
+- In the macOS desktop app, Close Window is `Cmd-Shift-W`: `Cmd-W` closes the
+  native editor's file, and the window elsewhere.
 - Language servers' output, starts, and exits go to `lsp.log.YYYY-MM-DD`
   beside btmux's own log (the last 14 are kept), rather than to `btmux.log`
   at the `debug` level only.
   ([#168](https://github.com/btmux-dev/btmux/pull/168))
+
+### Fixed
+
+- Option chords in the native editor on macOS, such as `Shift-Option-F` to
+  format.
+- Vim's `gg` and `G` after switching files in the native editor.
 
 ## [0.0.210] - 2026-11-18
 

@@ -3,21 +3,8 @@ import { getCM, Vim, vim, type CodeMirror } from '@replit/codemirror-vim';
 import { Prec, type Extension } from '@codemirror/state';
 import { closeCompletion, completionStatus } from '@codemirror/autocomplete';
 import { EditorView, ViewPlugin, runScopeHandlers } from '@codemirror/view';
-import { jumpToDefinition } from '@codemirror/lsp-client';
-import { showHover } from './hover';
-import { toDiagnostic } from './actions';
-import {
-  blameCurrentLine,
-  hunkLines,
-  nextHunk,
-  prevHunk,
-  previewHunk,
-  resetBuffer,
-  resetHunk,
-  stageBuffer,
-  stageHunk,
-  gitCommands,
-} from './gitSigns';
+import { canFormatRange, formatRange } from './features';
+import { hunkLines } from './gitSigns';
 
 /** What ex commands and the mode line reach in the editor showing a view. */
 export interface VimHost {
@@ -58,36 +45,28 @@ Vim.defineEx('quit', 'q', (cm) => hostOf(cm)?.hide());
 Vim.defineEx('qall', 'qa', (cm) => hostOf(cm)?.hide());
 Vim.defineEx('bdelete', 'bd', (cm, params) => hostOf(cm)?.close(bang(params)));
 
-Vim.defineAction('btmuxDefinition', (cm) => void jumpToDefinition(cm.cm6));
-Vim.defineAction('btmuxHover', (cm) => void showHover(cm.cm6));
-Vim.defineAction('btmuxNextDiagnostic', (cm) => void toDiagnostic(cm.cm6, 'next'));
-Vim.defineAction('btmuxPrevDiagnostic', (cm) => void toDiagnostic(cm.cm6, 'prev'));
-Vim.mapCommand('gd', 'action', 'btmuxDefinition', {}, { context: 'normal' });
-Vim.mapCommand('K', 'action', 'btmuxHover', {}, { context: 'normal' });
-Vim.mapCommand(']d', 'action', 'btmuxNextDiagnostic', {}, { context: 'normal' });
-Vim.mapCommand('[d', 'action', 'btmuxPrevDiagnostic', {}, { context: 'normal' });
+// `gq`: format with the language server when it formats ranges, else hard
+// wrap, as codemirror-vim's own `gq` does (Neovim sets 'formatexpr' to the
+// server's). `gw` keeps wrapping.
+Vim.defineOperator('btmuxFormat', (cm, args, ranges, oldAnchor) => {
+  const view = cm.cm6;
+  const { anchor, head } = ranges[0];
+  if (canFormatRange(view)) {
+    const [from, to] = [cm.indexFromPos(anchor), cm.indexFromPos(head)].sort((a, b) => a - b);
+    void formatRange(view, from, to);
+    return anchor.line <= head.line ? anchor : head;
+  }
+  const wrap = (cm as unknown as { hardWrap?: (r: { from: number; to: number }) => number }).hardWrap;
+  if (!wrap) return;
+  const from = Math.min(anchor.line, head.line);
+  let to = Math.max(anchor.line, head.line);
+  if (args.linewise) to--;
+  let end = wrap.call(cm, { from, to });
+  if (end > from && args.linewise) end--;
+  return (args as { keepCursor?: boolean }).keepCursor ? oldAnchor : ({ line: end, ch: 0 } as typeof oldAnchor);
+});
+Vim.mapCommand('gq', 'operator', 'btmuxFormat', {}, {});
 
-// Git signs, with the mappings gitsigns.nvim suggests (`\` is Vim's default leader).
-const gitActions: [string, string, (view: EditorView) => boolean, string?][] = [
-  [']c', 'btmuxNextHunk', nextHunk],
-  ['[c', 'btmuxPrevHunk', prevHunk],
-  ['\\hs', 'btmuxStageHunk', stageHunk, 'visual'],
-  ['\\hr', 'btmuxResetHunk', resetHunk, 'visual'],
-  ['\\hS', 'btmuxStageBuffer', stageBuffer],
-  ['\\hR', 'btmuxResetBuffer', resetBuffer],
-  ['\\hp', 'btmuxPreviewHunk', previewHunk],
-  ['\\hb', 'btmuxBlameLine', blameCurrentLine],
-  ['\\tb', 'btmuxToggleLineBlame', gitCommands['editor-toggle-line-blame']],
-];
-for (const [keys, name, run, visual] of gitActions) {
-  Vim.defineAction(name, (cm) => {
-    run(cm.cm6);
-    // A range staged or reset from visual mode ends it.
-    if (visual && cm.state.vim?.visualMode) Vim.exitVisualMode(cm);
-  });
-  Vim.mapCommand(keys, 'action', name, {}, { context: 'normal' });
-  if (visual) Vim.mapCommand(keys, 'action', name, {}, { context: 'visual' });
-}
 // `ih`: the hunk's lines, as a text object.
 Vim.defineMotion('btmuxHunk', (cm, head) => {
   const lines = hunkLines(cm.cm6, head.line);
@@ -139,6 +118,92 @@ export function vimIdle(view: EditorView): boolean {
   return !state.insertMode && !state.visualMode && !state.insertModeReturn && !pending && !cm.state.dialog;
 }
 
+const inputPending = (input: VimState['inputState']) =>
+  !!input &&
+  (input.keyBuffer.length > 0 ||
+    !!input.operator ||
+    input.prefixRepeat.length > 0 ||
+    input.motionRepeat.length > 0 ||
+    !!input.registerName);
+
+/** The mode the editor's mappings apply in: null while vim is midway through a command, or in a prompt. */
+export function mappingMode(view: EditorView): 'normal' | 'visual' | 'insert' | null {
+  const cm = getCM(view);
+  const state = vimState(view);
+  if (!cm || !state || cm.state.dialog) return null;
+  if (state.insertMode) return (cm.state as { overwrite?: boolean }).overwrite ? null : 'insert';
+  if (inputPending(state.inputState)) return null;
+  return state.visualMode ? 'visual' : 'normal';
+}
+
+/** What vim holds of a command: its keys so far, and whether an operator waits for a motion. */
+export function pendingInput(view: EditorView): { keys: string[]; operator: boolean } | null {
+  const state = vimState(view);
+  if (!state || state.insertMode || !inputPending(state.inputState)) return null;
+  const input = state.inputState!;
+  return { keys: [...input.keyBuffer], operator: !!input.operator };
+}
+
+/** Give vim keys as if typed. Vim resets itself if a command throws; the key that fed it still counts as handled. */
+export function feedKeys(view: EditorView, keys: readonly string[]) {
+  const cm = getCM(view);
+  if (!cm) return;
+  for (const key of keys) {
+    try {
+      Vim.handleKey(cm, key, 'user');
+    } catch (error) {
+      console.error(error);
+    }
+  }
+}
+
+/**
+ * Vim's jump list is global, but its marks are positions in the state they
+ * were made in, and the view shows another file's state after a switch:
+ * there they'd be wrong or out of range (`gg` would throw). A mark from a
+ * replaced state reads as removed, which vim skips. CTRL-O and CTRL-I use
+ * the editor's own list (`jumps.ts`), across files.
+ */
+let marksGuarded = false;
+function guardMarks(cm: CodeMirror) {
+  if (marksGuarded) return;
+  marksGuarded = true;
+  const mark = (cm as unknown as { setBookmark(pos: { line: number; ch: number }): { clear(): void } }).setBookmark({
+    line: 0,
+    ch: 0,
+  });
+  mark.clear();
+  type Mark = { cm: CodeMirror };
+  const proto = Object.getPrototypeOf(mark) as { find(this: Mark): unknown };
+  const find = proto.find;
+  proto.find = function (this: Mark) {
+    return getCM(this.cm.cm6) === this.cm ? find.call(this) : null;
+  };
+}
+
+export function exitVisual(view: EditorView) {
+  const cm = getCM(view);
+  if (cm?.state.vim?.visualMode) Vim.exitVisualMode(cm as Parameters<typeof Vim.exitVisualMode>[0]);
+}
+
+/** Registers and their text, for the which-key popup after `"`. */
+export function registers(): { name: string; text: string }[] {
+  const controller = Vim.getRegisterController() as unknown as {
+    registers: Record<string, { toString(): string } | undefined>;
+  };
+  return Object.entries(controller.registers)
+    .map(([name, register]) => ({ name, text: register?.toString() ?? '' }))
+    .filter((r) => r.text);
+}
+
+/** Insert-mode `keys` mappings (`jk` to Esc), global to vim like its own. */
+let insertMaps: string[] = [];
+export function setInsertMappings(maps: { lhs: string; rhs: string }[]) {
+  for (const lhs of insertMaps) Vim.unmap(lhs, 'insert');
+  for (const { lhs, rhs } of maps) Vim.map(lhs, rhs, 'insert');
+  insertMaps = maps.map((m) => m.lhs);
+}
+
 const modeLabel = (mode: string, subMode?: string) =>
   mode === 'visual' && subMode ? (subMode === 'linewise' ? 'VISUAL LINE' : 'VISUAL BLOCK') : mode.toUpperCase();
 
@@ -154,6 +219,7 @@ const carried = new WeakSet<EditorView>();
 const modeReporter = ViewPlugin.define((view) => {
   const cm = getCM(view);
   const host = hosts.get(view);
+  if (cm) guardMarks(cm);
   let mode = 'NORMAL';
   const changed = (e: { mode: string; subMode?: string }) => {
     mode = modeLabel(e.mode, e.subMode);

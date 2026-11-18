@@ -8,6 +8,7 @@ import {
   highlightSpecialChars,
   keymap,
   lineNumbers,
+  type ViewUpdate,
   rectangularSelection,
   runScopeHandlers,
 } from '@codemirror/view';
@@ -27,7 +28,13 @@ import { gitSigns, gitSummary } from './gitSigns';
 import { editorCommands, toDiagnostic } from './actions';
 import { keyboardTooltips } from './hover';
 import { noteOpened, quickOpen } from './quickOpen';
-import { QUICK_OPEN_NEEDS_FOLDER } from './registry';
+import { EDITOR_COMMANDS, LSP_COMMANDS, QUICK_OPEN_NEEDS_FOLDER } from './registry';
+import { Sequences } from './sequences';
+import { JumpList, type Jump } from './jumps';
+import { vscodeKeys } from './vscodeKeys';
+import { closeDesktopWindow, isDesktopApp } from '../desktopApp';
+import type { KeyEntry, KeyMode } from './keyLayer';
+import type { VimBind, VimGroup } from '../../generated/protocol';
 import { findPaneState, useStore } from '../../state/store';
 import { workspaceFolder } from '../vscodeFolder';
 import type { VimHost } from './vim';
@@ -84,7 +91,21 @@ export interface PaneEditorEvents {
   open(path: string, line?: number | null): void;
   /** Close `path`, asking to save unsaved changes unless `force` discards them. */
   close(path: string, force: boolean): void;
+  /** Run a btmux action (a mapping to one that isn't the editor's). */
+  action(name: string): void;
 }
+
+const IS_WINDOWS = typeof navigator !== 'undefined' && /^Win/.test(navigator.platform);
+
+/** VS Code's Go Back and Go Forward. */
+const NAVIGATION_KEYS = IS_MAC
+  ? { back: 'Ctrl--', forward: 'Ctrl-Shift--' }
+  : IS_WINDOWS
+    ? { back: 'Alt-ArrowLeft', forward: 'Alt-ArrowRight' }
+    : { back: 'Ctrl-Alt--', forward: 'Ctrl-Shift--' };
+
+/** Actions run from visual mode that keep it: they change the selection. */
+const KEEPS_VISUAL = new Set(['editor-expand-selection', 'editor-shrink-selection']);
 
 export interface FileStatus extends DocStatus {
   language: string | null;
@@ -138,6 +159,14 @@ export class PaneEditor {
   private visible = true;
   /** Vim's mode while vim is on, for the status line. */
   vimMode: string | null = null;
+  /** Key sequences: mappings ahead of vim, and what's pending of them. */
+  readonly keys: Sequences;
+  private insertMaps: { lhs: string; rhs: string }[] = [];
+  private readonly jumps = new JumpList();
+  /** Going back or forward: its moves aren't jumps. */
+  private navigating = false;
+  /** Just switched files: the first move there (to a jump's target, a revealed line) isn't one. */
+  private landed = false;
 
   constructor(
     parent: HTMLElement,
@@ -146,6 +175,16 @@ export class PaneEditor {
     private readonly events: PaneEditorEvents,
   ) {
     this.appearance = appearance;
+    this.keys = new Sequences({
+      mode: () => this.mappingMode(),
+      vimPending: () => (this.vim && this.vimLib ? this.vimLib.pendingInput(this.view) : null),
+      registers: () => this.vimLib?.registers() ?? [],
+      run: (entry, mode) => this.runMapping(entry, mode),
+      replay: (keys) => {
+        if (this.vim) this.vimLib?.feedKeys(this.view, keys);
+      },
+      changed: () => this.events.changed(),
+    });
     this.view = new EditorView({ parent, state: this.placeholder() });
     // Drop a server's features once it fails, and add them back if it recovers.
     this.stopStatus = editorConnection.onLspStatus(() => {
@@ -249,6 +288,17 @@ export class PaneEditor {
         // VS Code's next and previous problem, ahead of lint's F8.
         { key: 'F8', run: (view) => toDiagnostic(view, 'next'), preventDefault: true },
         { key: 'Shift-F8', run: (view) => toDiagnostic(view, 'prev'), preventDefault: true },
+        { key: NAVIGATION_KEYS.back, run: () => this.navigate(true), preventDefault: true },
+        { key: NAVIGATION_KEYS.forward, run: () => this.navigate(false), preventDefault: true },
+        ...vscodeKeys(
+          isDesktopApp()
+            ? {
+                workspaceSymbols: (view) => !!editorCommands['editor-workspace-symbols'](view),
+                // With no file to close, the window, as elsewhere in the app.
+                close: () => this.close(false) || (IS_MAC && (closeDesktopWindow(), true)),
+              }
+            : null,
+        ),
         ...closeBracketsKeymap,
         ...defaultKeymap,
         ...searchKeymap,
@@ -260,6 +310,8 @@ export class PaneEditor {
       ]),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) doc.push();
+        if (update.docChanged) this.jumps.map(doc.path, update.changes);
+        else if (update.selectionSet && doc.view) this.noteMove(doc, update);
         if (!doc.view) return;
         if (update.docChanged || update.selectionSet) this.updateCursor();
         if (update.docChanged || update.transactions.some((tr) => tr.effects.length > 0)) {
@@ -276,11 +328,18 @@ export class PaneEditor {
   }
 
   private keydown(e: KeyboardEvent, view: EditorView): boolean {
+    const plainEsc = e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey;
+    // Esc drops keys held for a mapping, and nothing else.
+    if (plainEsc && this.keys.cancel()) {
+      this.esc = { last: -Infinity, armed: false };
+      e.preventDefault();
+      return true;
+    }
     // A quick second Esc hides the editor; the first still closes panels and
     // completions. With vim, only a run of Escs that starts in normal mode
     // with nothing pending hides it: one that leaves insert or visual mode,
     // or cancels a command, never does.
-    if (e.key === 'Escape' && !e.repeat && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+    if (plainEsc && !e.repeat) {
       const idle = this.vimLib?.vimIdle(this.view) ?? true;
       if (e.timeStamp - this.esc.last >= DOUBLE_ESC_MS) {
         this.esc = { last: e.timeStamp, armed: idle };
@@ -294,9 +353,89 @@ export class PaneEditor {
       return true;
     }
     this.esc = { last: -Infinity, armed: false };
+    if (this.docs.get(this.active ?? '')?.view && this.keys.keydown(e)) {
+      e.preventDefault();
+      return true;
+    }
     const option = optionChord(e);
     if (option) return runScopeHandlers(view, option, EARLY_SCOPE) || runScopeHandlers(view, option, 'editor');
     return runScopeHandlers(view, e, EARLY_SCOPE);
+  }
+
+  private here(): Jump | null {
+    const doc = this.active ? this.docs.get(this.active) : undefined;
+    if (!doc?.view) return null;
+    const pos = this.view.state.selection.main.head;
+    return { path: doc.path, pos, line: this.view.state.doc.lineAt(pos).number };
+  }
+
+  /**
+   * Record a jump: a move tagged as one (to a definition, a symbol, a
+   * diagnostic), or any other that leaves the screen (`G`, a search).
+   */
+  private noteMove(doc: Doc, update: ViewUpdate) {
+    const landed = this.landed;
+    this.landed = false;
+    if (this.navigating || landed) return;
+    const tagged = update.transactions.some(
+      (tr) => tr.isUserEvent('select.definition') || tr.isUserEvent('select.jump'),
+    );
+    const before = update.startState.selection.main.head;
+    const fromLine = update.startState.doc.lineAt(before).number;
+    const toLine = update.state.doc.lineAt(update.state.selection.main.head).number;
+    const screen = Math.max(1, Math.floor(this.view.dom.clientHeight / this.view.defaultLineHeight));
+    const pointer = update.transactions.some((tr) => tr.isUserEvent('select.pointer'));
+    if (tagged || (!pointer && Math.abs(toLine - fromLine) >= screen))
+      this.jumps.record({ path: doc.path, pos: before, line: fromLine });
+  }
+
+  /** Go back (or forward) to where a jump left. */
+  private navigate(back: boolean): boolean {
+    const here = this.here();
+    if (!here) return false;
+    const target = back ? this.jumps.back(here) : this.jumps.forward(here);
+    if (!target) return true;
+    this.navigating = true;
+    void this.display(target.path).then((view) => {
+      this.navigating = false;
+      if (!view) return;
+      const pos = Math.min(target.pos, view.state.doc.length);
+      view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
+    });
+    return true;
+  }
+
+  /** Where mappings apply: without vim, VS Code's chords; with it, its mode once nothing is pending. */
+  private mappingMode(): KeyMode | null {
+    if (!this.vim) return 'plain';
+    return this.vimLib?.mappingMode(this.view) ?? null;
+  }
+
+  private runMapping(entry: KeyEntry, mode: KeyMode) {
+    if (entry.rhs) {
+      this.vimLib?.feedKeys(this.view, entry.rhs);
+      return;
+    }
+    const action = entry.action;
+    if (!action) return;
+    if (!EDITOR_COMMANDS.includes(action)) this.events.action(action);
+    else if (!this.command(action))
+      useStore
+        .getState()
+        .showToast(
+          LSP_COMMANDS.includes(action) ? 'Needs a language server for this file' : `Can't run ${action} here`,
+          'info',
+        );
+    if (mode === 'visual' && !KEEPS_VISUAL.has(action)) this.vimLib?.exitVisual(this.view);
+  }
+
+  /** The vim mappings and which-key settings from the config. */
+  setKeys(binds: readonly VimBind[], groups: readonly VimGroup[], timeout: number, whichKey: boolean) {
+    this.keys.configure(binds, groups, timeout, whichKey);
+    this.insertMaps = binds
+      .filter((b) => b.mode === 'insert' && b.rhs)
+      .map((b) => ({ lhs: b.keys.join(''), rhs: b.rhs!.join('') }));
+    this.vimLib?.setInsertMappings(this.insertMaps);
   }
 
   private countProblems() {
@@ -359,8 +498,12 @@ export class PaneEditor {
     }
     if (active !== this.active || (active && !this.docs.get(active)?.view)) {
       const focused = this.view.hasFocus;
+      const from = active !== this.active ? this.here() : null;
+      if (from && !this.navigating) this.jumps.record(from);
+      if (from) this.landed = true;
       if (this.active) this.docs.get(this.active)?.attach(null);
       this.active = active && this.docs.has(active) ? active : null;
+      this.keys.reset();
       // Recent files are those viewed here, not other tabs' or restored ones.
       if (this.active && focused) noteOpened(this.active);
       this.epoch++;
@@ -432,6 +575,7 @@ export class PaneEditor {
       if (!this.vimLib) {
         this.vimLib = lib;
         lib.setVimHost(this.view, this.vimHost);
+        lib.setInsertMappings(this.insertMaps);
       }
       this.applyVim();
     });
@@ -505,6 +649,8 @@ export class PaneEditor {
   /** Run a palette command (`editorCommands`, quick open) on the shown file. */
   command(action: string): boolean {
     if (action === 'editor-quick-open') return this.quickOpen();
+    if (action === 'editor-go-back' || action === 'editor-go-forward')
+      return this.navigate(action === 'editor-go-back');
     const run = editorCommands[action];
     const doc = this.active ? this.docs.get(this.active) : undefined;
     if (!run || !doc?.view) return false;
@@ -518,6 +664,7 @@ export class PaneEditor {
     if (visible === this.visible) return;
     this.visible = visible;
     this.epoch++;
+    this.keys.reset();
   }
 
   /**

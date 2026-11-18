@@ -41,5 +41,10 @@ const PUNCTUATION: Record<string, string> = {
  */
 export function optionChordKey(e: KeyInit): string | null {
   if (!e.altKey || e.ctrlKey || e.metaKey || macOptionText(e) !== null) return null;
-  return physicalKey({ ...e, shiftKey: false }) ?? PUNCTUATION[e.code] ?? null;
+  // Not a spread: an event's properties are getters on its prototype.
+  return (
+    physicalKey({ key: e.key, code: e.code, ctrlKey: false, altKey: true, shiftKey: false, metaKey: false }) ??
+    PUNCTUATION[e.code] ??
+    null
+  );
 }

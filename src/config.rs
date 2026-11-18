@@ -9,7 +9,10 @@ use crate::session::NotificationLevel;
 use crate::worktree::DEFAULT_PATH as DEFAULT_WORKTREE_PATH;
 
 mod save;
+pub mod vim_keys;
 pub use save::render as render_config;
+use vim_keys::DEFAULT_TIMEOUT as DEFAULT_VIM_TIMEOUT;
+pub use vim_keys::{VimBind, VimGroup};
 
 pub const DEFAULT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_PORT: u16 = 8004;
@@ -658,14 +661,71 @@ impl Default for MultipassConfig {
     }
 }
 
-/// `[native-editor]`.
-#[derive(Deserialize, Clone, Debug, Default, PartialEq)]
-#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+/// `[native-editor]`, with its vim mappings resolved.
+#[derive(Deserialize, Clone, Debug, PartialEq)]
+#[serde(try_from = "RawNativeEditor")]
 pub struct NativeEditorConfig {
     /// Format with the language server before saving.
     pub format_on_save: bool,
     /// Vim keybindings.
     pub vim: bool,
+    /// How long a mapping that is also a prefix waits for more keys, in ms.
+    pub timeout: u32,
+    /// Show the keys that can follow a pending prefix.
+    pub which_key: bool,
+    /// The defaults merged with `vim-keys`, `<leader>` substituted.
+    pub vim_binds: Vec<VimBind>,
+    pub vim_groups: Vec<VimGroup>,
+}
+
+#[derive(Deserialize)]
+#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+struct RawNativeEditor {
+    format_on_save: bool,
+    vim: bool,
+    leader: String,
+    timeout: u32,
+    which_key: bool,
+    vim_keys: BTreeMap<String, vim_keys::VimKey>,
+    vim_groups: BTreeMap<String, String>,
+}
+
+impl Default for RawNativeEditor {
+    fn default() -> Self {
+        Self {
+            format_on_save: false,
+            vim: false,
+            leader: vim_keys::DEFAULT_LEADER.into(),
+            timeout: vim_keys::DEFAULT_TIMEOUT,
+            which_key: true,
+            vim_keys: BTreeMap::new(),
+            vim_groups: BTreeMap::new(),
+        }
+    }
+}
+
+impl TryFrom<RawNativeEditor> for NativeEditorConfig {
+    type Error = String;
+
+    fn try_from(raw: RawNativeEditor) -> Result<Self, String> {
+        let leader = vim_keys::parse_leader(&raw.leader)?;
+        Ok(Self {
+            format_on_save: raw.format_on_save,
+            vim: raw.vim,
+            timeout: raw.timeout,
+            which_key: raw.which_key,
+            vim_binds: vim_keys::resolve(&leader, &raw.vim_keys)?,
+            vim_groups: vim_keys::resolve_groups(&leader, &raw.vim_groups)?,
+        })
+    }
+}
+
+impl Default for NativeEditorConfig {
+    fn default() -> Self {
+        RawNativeEditor::default()
+            .try_into()
+            .expect("default vim mappings resolve")
+    }
 }
 
 /// What the key overlay shows.
@@ -1475,6 +1535,14 @@ pub struct ClientConfig {
     pub format_on_save: bool,
     /// `[native-editor] vim`.
     pub vim_mode: bool,
+    /// Vim mappings in the native editor: defaults and `[native-editor.vim-keys]`.
+    pub vim_binds: Vec<VimBind>,
+    /// Which-key group names: defaults and `[native-editor.vim-groups]`.
+    pub vim_groups: Vec<VimGroup>,
+    /// `[native-editor] timeout`, in ms.
+    pub vim_timeout: u32,
+    /// `[native-editor] which-key`.
+    pub which_key: bool,
     /// `[key-overlay] mode`.
     pub key_overlay_mode: KeyOverlayMode,
     /// `[key-overlay] position`.
@@ -2086,6 +2154,11 @@ pub fn generate_config_toml() -> String {
 # [native-editor]
 # format-on-save = false
 # vim = false   # Vim keybindings; :w saves, :q hides, a double Esc hides only from normal mode
+# leader = " "       # <leader> in vim-keys and vim-groups: one key, like "," or "<Space>"
+# timeout = {DEFAULT_VIM_TIMEOUT}     # ms a vim mapping that is also a prefix waits for more keys
+# which-key = true   # show the keys that can follow a pending prefix
+# [native-editor.vim-keys]    # "keys" = "action", {{ action = "…", modes = ["normal", "visual"], desc = "…" }}, {{ keys = "…" }}, or "none"
+# [native-editor.vim-groups]  # "prefix" = "name shown for it in the which-key popup"
 # [language-server.rust-analyzer]
 # command = "rust-analyzer"
 # args = []
@@ -2394,6 +2467,10 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         editor: file.editor.unwrap_or(Editor::Native),
         format_on_save: file.native_editor.format_on_save,
         vim_mode: file.native_editor.vim,
+        vim_binds: file.native_editor.vim_binds.clone(),
+        vim_groups: file.native_editor.vim_groups.clone(),
+        vim_timeout: file.native_editor.timeout,
+        which_key: file.native_editor.which_key,
         key_overlay_mode: file.key_overlay.mode,
         key_overlay_position: file.key_overlay.position,
         editors: [
@@ -3132,6 +3209,50 @@ palette:
         assert!(file.native_editor.vim && file.native_editor.format_on_save);
         assert!(resolve_binds(&file, ColorMode::Dark).vim_mode);
         assert!(toml::from_str::<FileConfig>("[native-editor]\nvim-mode = true\n").is_err());
+    }
+
+    #[test]
+    fn vim_mappings_resolve_with_the_leader_and_reach_the_client() {
+        let file: FileConfig = toml::from_str(
+            r#"
+            [native-editor]
+            leader = ","
+            timeout = 500
+            which-key = false
+            [native-editor.vim-keys]
+            "<leader>x" = "editor-problems"
+            [native-editor.vim-groups]
+            "<leader>x" = "lists"
+            "#,
+        )
+        .unwrap();
+        let client = resolve_binds(&file, ColorMode::Dark);
+        assert_eq!((client.vim_timeout, client.which_key), (500, false));
+        let has = |keys: &[&str], action: &str| {
+            client
+                .vim_binds
+                .iter()
+                .any(|b| b.keys == keys && b.action.as_deref() == Some(action))
+        };
+        assert!(has(&[",", "x"], "editor-problems"));
+        assert!(has(&[",", "h", "s"], "editor-stage-hunk"));
+        assert!(client
+            .vim_groups
+            .iter()
+            .any(|g| g.keys == [",", "x"] && g.name == "lists"));
+        let defaults = resolve_binds(&FileConfig::default(), ColorMode::Dark);
+        assert!(defaults
+            .vim_binds
+            .iter()
+            .any(|b| b.keys == ["<Space>", "f"]));
+        assert_eq!((defaults.vim_timeout, defaults.which_key), (1000, true));
+        for bad in [
+            "[native-editor]\nleader = \"ab\"\n",
+            "[native-editor.vim-keys]\n\"<nope>\" = \"editor-hover\"\n",
+            "[native-editor.vim-keys]\n\"jk\" = { action = \"editor-hover\", modes = [\"insert\"] }\n",
+        ] {
+            assert!(toml::from_str::<FileConfig>(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

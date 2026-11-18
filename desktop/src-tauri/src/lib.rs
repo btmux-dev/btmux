@@ -38,6 +38,7 @@ mod zoom;
 
 const NEW_WINDOW: &str = "new-window";
 const SWITCH_SERVER: &str = "switch-server";
+const CLOSE_WINDOW: &str = "close-window";
 const ZOOM_IN: &str = "zoom-in";
 const ZOOM_OUT: &str = "zoom-out";
 const ACTUAL_SIZE: &str = "actual-size";
@@ -438,6 +439,7 @@ fn allow_remote(app: &AppHandle, origin: &str) -> Result<(), String> {
         .permission("allow-switch-server")
         .permission("allow-zoom")
         .permission("allow-new-window")
+        .permission("allow-close-window")
         .permission("allow-set-background")
         .permission("allow-set-color-scheme")
         .permission("shell:allow-open");
@@ -908,6 +910,13 @@ fn set_color_scheme(window: WebviewWindow, state: State<'_, Server>, scheme: Sch
         .insert(window.label().into(), scheme);
 }
 
+// Closes the page's window: Cmd+W outside the native editor, which takes it
+// to close a file, as VS Code does (Cmd+Shift+W closes the window from the menu).
+#[tauri::command]
+fn close_window(window: WebviewWindow) {
+    let _ = window.close();
+}
+
 // The desktop app's own version, which may differ from the connected server's.
 #[tauri::command]
 fn desktop_info() -> &'static str {
@@ -1049,11 +1058,18 @@ pub fn run() {
             set_color_scheme,
             desktop_info,
             zoom,
-            new_window
+            new_window,
+            close_window
         ])
         .on_menu_event(|app, event| {
             let step = match event.id().as_ref() {
                 NEW_WINDOW => return spawn_window(app),
+                CLOSE_WINDOW => {
+                    if let Some(window) = focused_window(app) {
+                        let _ = window.close();
+                    }
+                    return;
+                }
                 SWITCH_SERVER => {
                     if let Some(window) = focused_window(app) {
                         show_picker(&window, "switch");
@@ -1118,6 +1134,21 @@ pub fn run() {
                     file.insert(&new, 0)?;
                     file.insert(&switch, 1)?;
                     file.insert(&PredefinedMenuItem::separator(app)?, 2)?;
+                    // Cmd+W reaches the page, whose native editor closes a file with it.
+                    for item in file.items()? {
+                        if let MenuItemKind::Predefined(close) = &item
+                            && close.text().is_ok_and(|text| text == "Close Window")
+                        {
+                            file.remove(close)?;
+                            file.append(&MenuItem::with_id(
+                                app,
+                                CLOSE_WINDOW,
+                                "Close Window",
+                                true,
+                                Some("CmdOrCtrl+Shift+W"),
+                            )?)?;
+                        }
+                    }
                 }
                 if let Some(view) = submenu("View") {
                     let items = [
