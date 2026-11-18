@@ -15,8 +15,12 @@ use crate::config::LanguageServerConfig;
 
 /// Messages larger than this end the connection.
 const MAX_MESSAGE: usize = 64 * 1024 * 1024;
+/// The tracing target written to `lsp.log`: server stderr, starts, and exits.
+pub const LOG_TARGET: &str = "lsp";
 /// Stderr lines kept for the error shown when a server exits.
 const STDERR_LINES: usize = 20;
+/// Longer stderr lines are split, so output without newlines stays bounded.
+const STDERR_LINE_BYTES: u64 = 64 * 1024;
 
 /// Read one message; `None` at the end of the stream.
 pub async fn read_message<R: AsyncBufRead + Unpin>(
@@ -89,6 +93,7 @@ pub fn spawn(
     let (tx, rx) = mpsc::unbounded_channel();
     let (stop, stopped) = oneshot::channel();
     tokio::spawn(async move {
+        let sandboxed = sandbox.is_some();
         let command = match sandbox {
             Some(instance) => in_sandbox(&instance, &root, &config)
                 .ok_or_else(|| "Multipass isn't installed".to_string()),
@@ -97,12 +102,15 @@ pub fn spawn(
         let exit = match command {
             Ok(mut command) => {
                 command.current_dir(&root);
-                run(&name, &config, command, rx, stopped, on_message).await
+                run(&name, &config, sandboxed, command, rx, stopped, on_message).await
             }
-            Err(message) => Exit {
-                message: message.to_string(),
-                started: false,
-            },
+            Err(message) => {
+                tracing::info!(target: LOG_TARGET, "{name}: {message}");
+                Exit {
+                    message,
+                    started: false,
+                }
+            }
         };
         on_exit(exit);
     });
@@ -171,12 +179,42 @@ fn sandbox_args(
     args
 }
 
+/// Log each stderr line and keep the last few, decoding invalid UTF-8 lossily
+/// so one bad byte doesn't end the stream.
+async fn drain_stderr<R: AsyncBufRead + Unpin>(
+    mut reader: R,
+    label: &str,
+    tail: &Mutex<VecDeque<String>>,
+) {
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        match (&mut reader)
+            .take(STDERR_LINE_BYTES)
+            .read_until(b'\n', &mut buf)
+            .await
+        {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+        let line = String::from_utf8_lossy(&buf);
+        let line = line.trim_end_matches(['\n', '\r']);
+        tracing::info!(target: LOG_TARGET, "{label}: {line}");
+        let mut tail = tail.lock().unwrap();
+        if tail.len() == STDERR_LINES {
+            tail.pop_front();
+        }
+        tail.push_back(line.to_owned());
+    }
+}
+
 /// The shell's status for a program it couldn't find.
 const NOT_FOUND: i32 = 127;
 
 async fn run(
     name: &str,
     config: &LanguageServerConfig,
+    sandboxed: bool,
     mut command: tokio::process::Command,
     mut rx: mpsc::UnboundedReceiver<Value>,
     mut stopped: oneshot::Receiver<()>,
@@ -196,27 +234,39 @@ async fn run(
     command.process_group(0);
     let mut child = match command.spawn() {
         Ok(child) => child,
-        Err(e) => return failed(format!("Cannot start {}: {e}", config.command)),
+        Err(e) => {
+            let message = format!("Cannot start {}: {e}", config.command);
+            tracing::info!(target: LOG_TARGET, "{name}: {message}");
+            return failed(message);
+        }
     };
     let pid = child.id();
+    let label = match pid {
+        Some(pid) => format!("{name}[{pid}]"),
+        None => name.to_owned(),
+    };
+    let root = command.as_std().get_current_dir().unwrap_or(".".as_ref());
+    tracing::info!(
+        target: LOG_TARGET,
+        "{label}: started {} in {}",
+        std::iter::once(&config.command)
+            .chain(&config.args)
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(" "),
+        root.display()
+    );
     let mut stdin = child.stdin.take().expect("piped");
     let stdout = child.stdout.take().expect("piped");
     let stderr = child.stderr.take().expect("piped");
 
     let tail = Arc::new(Mutex::new(VecDeque::new()));
     let stderr_tail = tail.clone();
-    let server = name.to_owned();
-    tokio::spawn(async move {
-        let mut lines = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            tracing::debug!(server, "{line}");
-            let mut tail = stderr_tail.lock().unwrap();
-            if tail.len() == STDERR_LINES {
-                tail.pop_front();
-            }
-            tail.push_back(line);
-        }
-    });
+    let server = label.clone();
+    let drain =
+        tokio::spawn(
+            async move { drain_stderr(BufReader::new(stderr), &server, &stderr_tail).await },
+        );
     let writer = tokio::spawn(async move {
         while let Some(message) = rx.recv().await {
             if stdin.write_all(&frame(&message)).await.is_err() || stdin.flush().await.is_err() {
@@ -232,7 +282,7 @@ async fn run(
                 Ok(Some(message)) => on_message(message),
                 Ok(None) => break,
                 Err(e) => {
-                    tracing::warn!(server = name, "invalid message: {e}");
+                    tracing::warn!(target: LOG_TARGET, "{label}: invalid message: {e}");
                     break;
                 }
             }
@@ -255,16 +305,19 @@ async fn run(
     let _ = child.kill().await;
     let status = child.wait().await;
     writer.abort();
+    // The group is gone, so stderr ends: take its last lines.
+    let _ = tokio::time::timeout(Duration::from_secs(1), drain).await;
     let tail: Vec<String> = tail.lock().unwrap().iter().cloned().collect();
-    if let Ok(status) = &status {
-        if status.code() == Some(NOT_FOUND) {
-            return failed(format!("{} not found in the sandbox", config.command));
-        }
-    }
+    let code = status.as_ref().ok().and_then(|status| status.code());
     let status = match status {
         Ok(status) => status.to_string(),
         Err(e) => e.to_string(),
     };
+    tracing::info!(target: LOG_TARGET, "{label}: exited ({status})");
+    // The guest shell's status for a missing program; a host server's own 127 is a crash.
+    if sandboxed && code == Some(NOT_FOUND) {
+        return failed(format!("{} not found in the sandbox", config.command));
+    }
     Exit {
         message: match tail.last() {
             Some(last) => format!("{name} exited ({status}): {last}"),
@@ -306,6 +359,59 @@ mod tests {
                 "--x",
             ]
         );
+    }
+
+    #[derive(Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn logs_all_of_stderr_and_the_exit() {
+        let captured = Captured::default();
+        let writer = captured.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let mut command = tokio::process::Command::new("sh");
+        command.args(["-c", r"printf 'a\n\377\nb\n' >&2; exit 127"]);
+        let config = LanguageServerConfig {
+            command: "fake".into(),
+            ..Default::default()
+        };
+        let (_tx, rx) = mpsc::unbounded_channel();
+        let (_stop, stopped) = oneshot::channel();
+        let exit = run("fake", &config, true, command, rx, stopped, |_| {}).await;
+        assert!(!exit.started);
+        let text = String::from_utf8_lossy(&captured.0.lock().unwrap()).into_owned();
+        assert!(text.contains(": a\n"), "{text}");
+        assert!(text.contains(": \u{fffd}\n"), "{text}");
+        // All of stderr comes before the exit.
+        let b = text.find(": b\n").expect(&text);
+        assert!(text[b..].contains("exited (exit status: 127)"), "{text}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_host_servers_127_is_a_crash() {
+        let mut command = tokio::process::Command::new("sh");
+        command.args(["-c", "exit 127"]);
+        let (_tx, rx) = mpsc::unbounded_channel();
+        let (_stop, stopped) = oneshot::channel();
+        let config = LanguageServerConfig::default();
+        let exit = run("fake", &config, false, command, rx, stopped, |_| {}).await;
+        assert!(exit.started, "{}", exit.message);
     }
 
     #[tokio::test]

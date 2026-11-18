@@ -8,6 +8,13 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Changed
+
+- Language servers' output, starts, and exits go to `lsp.log.YYYY-MM-DD`
+  beside btmux's own log (the last 14 are kept), rather than to `btmux.log`
+  at the `debug` level only.
+  ([#168](https://github.com/btmux-dev/btmux/pull/168))
+
 ## [0.0.210] - 2026-11-18
 
 ### Added

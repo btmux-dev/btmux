@@ -63,6 +63,7 @@ use clap::{CommandFactory, Parser};
 use notify::{RecursiveMode, Watcher};
 use time::UtcOffset;
 use tokio::sync::RwLock;
+use tracing_subscriber::filter::Targets;
 use tracing_subscriber::fmt::time::OffsetTime;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -83,17 +84,53 @@ fn resolve_log_level(configured: &str, environment: Option<String>) -> String {
         .unwrap_or_else(|| configured.to_string())
 }
 
+/// Daily `lsp.log` files kept; older ones are deleted.
+const LSP_LOG_FILES: usize = 14;
+
 fn log_directives(level: &str) -> String {
-    match level.trim() {
+    let lsp = native_editor::lsp::process::LOG_TARGET;
+    let directives = match level.trim() {
         simple @ ("error" | "warn" | "info" | "debug" | "trace") => {
             format!("off,btmux={simple}")
         }
         directives => format!("off,{directives}"),
+    };
+    // Language servers' records go to `lsp.log` unless a directive names them.
+    let named = directives.split(',').any(|directive| {
+        let target = directive
+            .split(['=', '['])
+            .next()
+            .unwrap_or_default()
+            .trim();
+        target == lsp || target.starts_with(&format!("{lsp}::"))
+    });
+    if named {
+        directives
+    } else {
+        format!("{directives},{lsp}=off")
     }
 }
 
 fn make_filter(level: &str) -> EnvFilter {
     EnvFilter::try_new(log_directives(level)).unwrap_or_else(|_| EnvFilter::new("off,btmux=info"))
+}
+
+/// A daily log file in `dir`, keeping `keep` files if set, or why it can't be
+/// opened (`rolling::daily` panics).
+fn daily_log(
+    dir: &std::path::Path,
+    name: &str,
+    keep: Option<usize>,
+) -> Result<tracing_appender::rolling::RollingFileAppender, String> {
+    let mut builder = tracing_appender::rolling::Builder::new()
+        .rotation(tracing_appender::rolling::Rotation::DAILY)
+        .filename_prefix(name);
+    if let Some(keep) = keep {
+        builder = builder.max_log_files(keep);
+    }
+    builder
+        .build(dir)
+        .map_err(|e| format!("cannot open {name} in {}: {e}", dir.display()))
 }
 
 #[tokio::main]
@@ -214,20 +251,49 @@ async fn main() {
 
     let console_layer = tracing_subscriber::fmt::layer().with_filter(console_filter);
 
-    let log_dir = persistence::log_dir();
-    if let Some(log_dir) = &log_dir {
-        let file_appender = tracing_appender::rolling::daily(log_dir, "btmux.log");
-        let file_layer = tracing_subscriber::fmt::layer()
-            .with_writer(file_appender)
-            .with_ansi(false)
-            .with_timer(local_time)
-            .with_filter(file_filter);
-        tracing_subscriber::registry()
-            .with(console_layer)
-            .with(file_layer)
-            .init();
-    } else {
-        tracing_subscriber::registry().with(console_layer).init();
+    let log_dir = persistence::log_dir().filter(|_| file_level.trim() != "off");
+    let mut log_errors = Vec::new();
+    let mut open_log = |dir: &std::path::Path, name: &str, keep: Option<usize>| {
+        daily_log(dir, name, keep)
+            .map_err(|e| log_errors.push(e))
+            .ok()
+    };
+    let file_layer = log_dir
+        .as_ref()
+        .and_then(|dir| open_log(dir, "btmux.log", None))
+        .map(|appender| {
+            tracing_subscriber::fmt::layer()
+                .with_writer(appender)
+                .with_ansi(false)
+                .with_timer(local_time.clone())
+                .with_filter(file_filter)
+        });
+    // Language servers' stderr, starts, and exits, in their own file; only
+    // the server (no subcommand) runs them.
+    let lsp_layer = log_dir
+        .as_ref()
+        .filter(|_| args.command.is_none())
+        .and_then(|dir| open_log(dir, "lsp.log", Some(LSP_LOG_FILES)))
+        .map(|appender| {
+            tracing_subscriber::fmt::layer()
+                .with_writer(appender)
+                .with_ansi(false)
+                .with_timer(local_time)
+                .with_level(false)
+                .with_target(false)
+                .with_filter(Targets::new().with_target(
+                    native_editor::lsp::process::LOG_TARGET,
+                    tracing::Level::TRACE,
+                ))
+        });
+    let file_layer_open = file_layer.is_some() || lsp_layer.is_some();
+    tracing_subscriber::registry()
+        .with(console_layer)
+        .with(file_layer)
+        .with(lsp_layer)
+        .init();
+    for error in log_errors {
+        tracing::warn!("{error}");
     }
 
     if let Some(config::SubCommand::Version) = args.command {
@@ -480,8 +546,8 @@ async fn main() {
         listen_address: format!("{}:{}", args.host, args.port),
         executable: pty::server_exe().and_then(absolute_path),
         log_files: log_dir
-            .filter(|_| file_level.trim() != "off")
-            .and_then(|dir| absolute_path(&dir.join("btmux.log.*"))),
+            .filter(|_| file_layer_open)
+            .and_then(|dir| absolute_path(&dir.join("*.log.*"))),
         instance: uuid::Uuid::new_v4().to_string(),
         pid: std::process::id(),
     };
@@ -1073,11 +1139,14 @@ mod tests {
 
     #[test]
     fn simple_levels_target_btmux_and_full_directives_are_preserved() {
-        assert_eq!(log_directives("debug"), "off,btmux=debug");
+        assert_eq!(log_directives("debug"), "off,btmux=debug,lsp=off");
         assert_eq!(
             log_directives("btmux=trace,tower_http=info"),
-            "off,btmux=trace,tower_http=info"
+            "off,btmux=trace,tower_http=info,lsp=off"
         );
+        // Naming the language server target opts into it.
+        assert_eq!(log_directives("warn,lsp=info"), "off,warn,lsp=info");
+        assert_eq!(log_directives("lsp[x]=debug"), "off,lsp[x]=debug");
     }
 
     #[tokio::test]
