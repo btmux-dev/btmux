@@ -26,6 +26,8 @@ use tauri_plugin_shell::process::{Command, CommandChild, CommandEvent};
 #[rustfmt::skip]
 #[path = "../../../src/discovery.rs"]
 mod discovery;
+#[cfg(target_os = "macos")]
+mod cli;
 mod remote;
 mod servers;
 mod zoom;
@@ -35,6 +37,8 @@ const SWITCH_SERVER: &str = "switch-server";
 const ZOOM_IN: &str = "zoom-in";
 const ZOOM_OUT: &str = "zoom-out";
 const ACTUAL_SIZE: &str = "actual-size";
+#[cfg(target_os = "macos")]
+const INSTALL_CLI: &str = "install-cli";
 const DESKTOP_PROFILE: &str = "desktop";
 
 // A page's light or dark appearance.
@@ -985,6 +989,8 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
         spawn_window(app)
     }));
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_plugin_dialog::init());
     builder
         .plugin(tauri_plugin_shell::init())
         .manage(Server::default())
@@ -1014,6 +1020,8 @@ pub fn run() {
                     }
                     return;
                 }
+                #[cfg(target_os = "macos")]
+                INSTALL_CLI => return cli::install(app.clone()),
                 ZOOM_IN => "in",
                 ZOOM_OUT => "out",
                 ACTUAL_SIZE => "reset",
@@ -1040,6 +1048,18 @@ pub fn run() {
                         _ => None,
                     })
                 };
+                // After "About btmux" and its separator.
+                if let Some(MenuItemKind::Submenu(app_menu)) = menu.items()?.into_iter().next() {
+                    let install = MenuItem::with_id(
+                        app,
+                        INSTALL_CLI,
+                        "Install Command-Line Tool…",
+                        true,
+                        None::<&str>,
+                    )?;
+                    app_menu.insert(&install, 2)?;
+                    app_menu.insert(&PredefinedMenuItem::separator(app)?, 3)?;
+                }
                 if let Some(file) = submenu("File") {
                     let new = MenuItem::with_id(
                         app,

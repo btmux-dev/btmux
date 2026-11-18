@@ -69,6 +69,22 @@ While the window is hidden, attention and error
 [notifications](../agents/index.md#notifications) from connected servers appear
 as OS notifications. Clicking one focuses the app and its pane.
 
+## The btmux command
+
+The app's server is the `btmux` command, which it also installs:
+
+- **macOS:** choose **btmux → Install Command-Line Tool…**. It links
+  `/usr/local/bin/btmux` into the app, so app updates update it, and asks for
+  an administrator password. Keep the app in a lasting place such as
+  `/Applications`. Choose it again to remove the link.
+- **Linux:** the `.deb` installs `/usr/bin/btmux`.
+- **Windows:** the installer adds `bin\btmux.exe` in its folder to your user
+  `PATH`, and removes it on uninstall. Open a new terminal to use it. Stop
+  `btmux` servers running from it before installing an update or uninstalling.
+
+A `btmux` earlier in `PATH` still wins. After updating the app, `btmux upgrade`
+moves a running command-line server to the new version.
+
 ## Versions
 
 The app and a server it connects to can be different versions. When they
