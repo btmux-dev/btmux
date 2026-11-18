@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { editorShown, findPaneState, nativeEditorInput, nativeEditorOver, useStore } from '../state/store';
 import { dispatchKey } from '../lib/paneTerminal';
-import { QUICK_OPEN_NEEDS_FOLDER, runEditorCommand, runEditorCommandWhenShown } from '../lib/nativeEditor/registry';
+import {
+  EDITOR_COMMANDS,
+  LSP_COMMANDS,
+  QUICK_OPEN_NEEDS_FOLDER,
+  runEditorCommand,
+  runEditorCommandWhenShown,
+} from '../lib/nativeEditor/registry';
 import { findPane, vscodeFolderFor, workspaceFolder } from '../lib/vscodeFolder';
 import { ClientMessage } from '../protocol/messages';
 import type { Appearance } from '../state/types';
@@ -654,41 +660,6 @@ export function runAction(
       );
       break;
     }
-    case 'editor-code-actions':
-    case 'editor-document-symbols':
-    case 'editor-workspace-symbols':
-    case 'editor-incoming-calls':
-    case 'editor-go-to-declaration':
-    case 'editor-go-to-implementation':
-    case 'editor-go-to-type-definition':
-    case 'editor-outgoing-calls':
-    case 'editor-supertypes':
-    case 'editor-subtypes':
-    case 'editor-expand-selection': {
-      const win = session?.windows[session.active_window];
-      const paneId = win?.zoomed_pane ?? win?.panes[win.active_pane]?.id ?? null;
-      const failed = () =>
-        useStore.getState().showToast('Needs a file with a language server open in the editor', 'info');
-      if (!paneId || !nativeEditorOver(store, paneId)) failed();
-      else runEditorCommand(paneId, action, failed);
-      break;
-    }
-    case 'editor-next-hunk':
-    case 'editor-prev-hunk':
-    case 'editor-preview-hunk':
-    case 'editor-stage-hunk':
-    case 'editor-reset-hunk':
-    case 'editor-stage-buffer':
-    case 'editor-reset-buffer':
-    case 'editor-blame-line':
-    case 'editor-toggle-line-blame': {
-      const win = session?.windows[session.active_window];
-      const paneId = win?.zoomed_pane ?? win?.panes[win.active_pane]?.id ?? null;
-      const failed = () => useStore.getState().showToast('Needs a file open in the editor', 'info');
-      if (!paneId || !nativeEditorOver(store, paneId)) failed();
-      else runEditorCommand(paneId, action, failed);
-      break;
-    }
     case 'shut-down-neovim':
     case 'shut-down-vscode':
       send({ type: 'shut_down_editor', editor: action === 'shut-down-neovim' ? 'neovim' : 'vscode' });
@@ -708,6 +679,22 @@ export function runAction(
       break;
     }
     default: {
+      if (EDITOR_COMMANDS.includes(action)) {
+        const win = session?.windows[session.active_window];
+        const paneId = win?.zoomed_pane ?? win?.panes[win.active_pane]?.id ?? null;
+        const failed = () =>
+          useStore
+            .getState()
+            .showToast(
+              LSP_COMMANDS.includes(action)
+                ? 'Needs a file with a language server open in the editor'
+                : 'Needs a file open in the editor',
+              'info',
+            );
+        if (!paneId || !nativeEditorOver(store, paneId)) failed();
+        else runEditorCommand(paneId, action, failed);
+        break;
+      }
       const popup = popupIndex(action);
       if (popup !== null) {
         const binding = store.config?.popups[popup];

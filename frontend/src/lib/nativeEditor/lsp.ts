@@ -171,7 +171,11 @@ function reveal(uri: string, at: Position | null) {
   void display(path).then((view) => {
     if (!view || !at) return;
     const pos = offset(view.state.doc, at);
-    view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: 'center' }) });
+    view.dispatch({
+      selection: { anchor: pos },
+      effects: EditorView.scrollIntoView(pos, { y: 'center' }),
+      userEvent: 'select.jump',
+    });
     view.focus();
   });
 }
@@ -298,7 +302,7 @@ function wordTarget(view: EditorView, pos: number): RenameTarget | null {
   return word && { pos: word.from, name: view.state.sliceDoc(word.from, word.to) };
 }
 
-const startRename = (view: EditorView) => {
+export const startRename = (view: EditorView) => {
   const plugin = LSPPlugin.get(view);
   if (!plugin) return false;
   const head = view.state.selection.main.head;
@@ -417,7 +421,7 @@ export async function format(view: EditorView) {
 }
 
 /** Instead of `formatKeymap`, whose command would format whatever file the view shows by then. */
-const formatCommand = (view: EditorView) => {
+export const formatCommand = (view: EditorView) => {
   if (!LSPPlugin.get(view)) return false;
   format(view).catch((error) => toast('Formatting failed', error));
   return true;
@@ -604,6 +608,12 @@ const dismissedSignature = StateField.define<Tooltip['create'] | null>({
   create: () => null,
   update: (value, tr) => tr.effects.reduce((v, e) => (e.is(dismissSignature) ? e.value : v), value),
 });
+/** Show signature help, even if Esc dismissed it. */
+export const signatureHelpCommand = (view: EditorView) => {
+  if (view.state.field(dismissedSignature, false)) view.dispatch({ effects: dismissSignature.of(null) });
+  return showSignatureHelp(view);
+};
+
 const signatureDismissal: Extension = [
   dismissedSignature,
   EditorView.editorAttributes.compute([signatureField, dismissedSignature], (state): Record<string, string> => {
@@ -626,10 +636,7 @@ const signatureDismissal: Extension = [
     keymap.of([
       {
         key: 'Mod-Shift-Space',
-        run: (view) => {
-          if (view.state.field(dismissedSignature)) view.dispatch({ effects: dismissSignature.of(null) });
-          return showSignatureHelp(view);
-        },
+        run: signatureHelpCommand,
       },
     ]),
   ),

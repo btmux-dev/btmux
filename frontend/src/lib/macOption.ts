@@ -17,3 +17,29 @@ export function macOptionText(e: KeyInit): string | null {
   if (!e.altKey || e.ctrlKey || e.metaKey || !/^[!-~]$/.test(e.key)) return null;
   return e.key.toLowerCase() === physicalKey(e)?.toLowerCase() ? null : e.key;
 }
+
+// Punctuation keys Option chords are bound with, by `code`.
+const PUNCTUATION: Record<string, string> = {
+  BracketLeft: '[',
+  BracketRight: ']',
+  Backslash: '\\',
+  Minus: '-',
+  Equal: '=',
+  Semicolon: ';',
+  Quote: "'",
+  Comma: ',',
+  Period: '.',
+  Slash: '/',
+  Backquote: '`',
+};
+
+/**
+ * The unshifted key an Option chord is bound with (`f` for Shift-Option-F),
+ * or null if this isn't one or Option types ASCII text on this layout. Pass
+ * only macOS events: CodeMirror's keymaps take these chords as typed text
+ * there, so they never match `Alt-…` bindings.
+ */
+export function optionChordKey(e: KeyInit): string | null {
+  if (!e.altKey || e.ctrlKey || e.metaKey || macOptionText(e) !== null) return null;
+  return physicalKey({ ...e, shiftKey: false }) ?? PUNCTUATION[e.code] ?? null;
+}

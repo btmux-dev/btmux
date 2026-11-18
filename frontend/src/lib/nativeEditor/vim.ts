@@ -1,11 +1,11 @@
 // Vim keybindings for the native editor (`[native-editor] vim`).
 import { getCM, Vim, vim, type CodeMirror } from '@replit/codemirror-vim';
-import { Prec, StateEffect, StateField, type Extension } from '@codemirror/state';
+import { Prec, type Extension } from '@codemirror/state';
 import { closeCompletion, completionStatus } from '@codemirror/autocomplete';
-import { EditorView, ViewPlugin, runScopeHandlers, showTooltip, type Tooltip } from '@codemirror/view';
-import { jumpToDefinition, LSPPlugin } from '@codemirror/lsp-client';
-import { forEachDiagnostic } from '@codemirror/lint';
-import { ask, has } from './features';
+import { EditorView, ViewPlugin, runScopeHandlers } from '@codemirror/view';
+import { jumpToDefinition } from '@codemirror/lsp-client';
+import { showHover } from './hover';
+import { toDiagnostic } from './actions';
 import {
   blameCurrentLine,
   hunkLines,
@@ -60,8 +60,8 @@ Vim.defineEx('bdelete', 'bd', (cm, params) => hostOf(cm)?.close(bang(params)));
 
 Vim.defineAction('btmuxDefinition', (cm) => void jumpToDefinition(cm.cm6));
 Vim.defineAction('btmuxHover', (cm) => void showHover(cm.cm6));
-Vim.defineAction('btmuxNextDiagnostic', (cm) => toDiagnostic(cm.cm6, true));
-Vim.defineAction('btmuxPrevDiagnostic', (cm) => toDiagnostic(cm.cm6, false));
+Vim.defineAction('btmuxNextDiagnostic', (cm) => void toDiagnostic(cm.cm6, 'next'));
+Vim.defineAction('btmuxPrevDiagnostic', (cm) => void toDiagnostic(cm.cm6, 'prev'));
 Vim.mapCommand('gd', 'action', 'btmuxDefinition', {}, { context: 'normal' });
 Vim.mapCommand('K', 'action', 'btmuxHover', {}, { context: 'normal' });
 Vim.mapCommand(']d', 'action', 'btmuxNextDiagnostic', {}, { context: 'normal' });
@@ -100,22 +100,6 @@ Vim.defineMotion('btmuxHunk', (cm, head) => {
 });
 for (const context of ['operatorPending', 'visual'])
   Vim.mapCommand('ih', 'motion', 'btmuxHunk', { linewise: true }, { context });
-
-/**
- * Move the cursor to the next or previous diagnostic's start, wrapping.
- * Unlike lint's commands, it doesn't select it, which would enter visual mode.
- */
-function toDiagnostic(view: EditorView, forward: boolean) {
-  const head = view.state.selection.main.head;
-  const starts: number[] = [];
-  forEachDiagnostic(view.state, (_, from) => void starts.push(from));
-  starts.sort((a, b) => a - b);
-  if (!starts.length) return;
-  const target = forward
-    ? (starts.find((from) => from > head) ?? starts[0])
-    : ([...starts].reverse().find((from) => from < head) ?? starts[starts.length - 1]);
-  view.dispatch({ selection: { anchor: target }, scrollIntoView: true });
-}
 
 type VimState = {
   insertMode?: boolean;
@@ -212,80 +196,5 @@ const altKeys = Prec.highest(
   }),
 );
 
-/** Keys that leave a hover up: modifiers alone, and Cmd chords such as copying from it. */
-const keepsHover = (e: KeyboardEvent) =>
-  e.key === 'Shift' || e.key === 'Control' || e.key === 'Alt' || e.key === 'Meta' || e.metaKey;
-
-// `K`: lsp-client's hover only follows the pointer.
-/** Counts keys, so a hover answered after one (Esc, `i`) isn't shown; a new state gets a new one. */
-const hoverRequests = ViewPlugin.fromClass(
-  class {
-    generation = 0;
-  },
-  {
-    eventObservers: {
-      keydown(e, view) {
-        if (keepsHover(e)) return;
-        this.generation++;
-        // Any key closes a `K` hover, and still does what it does.
-        if (view.state.field(hoverField, false)) view.dispatch({ effects: setHover.of(null) });
-      },
-    },
-  },
-);
-
-const setHover = StateEffect.define<Tooltip | null>();
-const hoverField = StateField.define<Tooltip | null>({
-  create: () => null,
-  update(value, tr) {
-    for (const e of tr.effects) if (e.is(setHover)) return e.value;
-    return tr.docChanged || tr.selection ? null : value;
-  },
-  provide: (f) => showTooltip.from(f),
-});
-
-type Markup = string | { language: string; value: string } | { kind: string; value: string };
-type Hover = { contents: Markup | Markup[]; range?: { start: { line: number; character: number } } };
-
-const markdown = (m: Markup) =>
-  typeof m === 'string' ? m : 'language' in m ? '```' + m.language + '\n' + m.value + '\n```' : null;
-
-async function showHover(view: EditorView) {
-  const plugin = LSPPlugin.get(view);
-  const requests = view.plugin(hoverRequests);
-  if (!plugin || !requests || !has(plugin, 'hoverProvider')) return;
-  const generation = ++requests.generation;
-  const pos = view.state.selection.main.head;
-  const result = await ask<Hover | null>(view, 'textDocument/hover', (p) => ({ position: p.toPosition(pos) })).catch(
-    () => null,
-  );
-  const current = view.plugin(hoverRequests) === requests && requests.generation === generation;
-  if (!result || !current || view.state.selection.main.head !== pos) return;
-  const parts = Array.isArray(result.contents) ? result.contents : [result.contents];
-  const html = parts
-    .map((part) => {
-      const md = markdown(part);
-      return md === null
-        ? plugin.docToHTML(part as { kind: 'markdown'; value: string })
-        : plugin.docToHTML(md, 'markdown');
-    })
-    .filter(Boolean)
-    .join('<br>');
-  if (!html) return;
-  const at = result.range ? plugin.fromPosition(result.range.start) : pos;
-  view.dispatch({
-    effects: setHover.of({
-      pos: Math.min(at, pos),
-      above: true,
-      create() {
-        const dom = document.createElement('div');
-        dom.className = 'cm-lsp-hover-tooltip cm-lsp-documentation';
-        dom.innerHTML = html;
-        return { dom };
-      },
-    }),
-  });
-}
-
 /** Vim, ahead of every keymap so its Ctrl chords win; Esc handling stays the editor's (`PaneEditor.keydown`). */
-export const vimExtension: Extension = [altKeys, vim(), modeReporter, hoverField, hoverRequests];
+export const vimExtension: Extension = [altKeys, vim(), modeReporter];

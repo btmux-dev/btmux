@@ -22,15 +22,17 @@ import { editorConnection } from './connection';
 import { editorTheme, type EditorAppearance } from './theme';
 import { detectIndent, languageFor } from './languages';
 import { format, lspExtension, serverFailed, setDisplay } from './lsp';
-import { editorCommands, serverFoldsChanged } from './features';
-import { gitCommands, gitSigns, gitSummary } from './gitSigns';
+import { serverFoldsChanged } from './features';
+import { gitSigns, gitSummary } from './gitSigns';
+import { editorCommands, toDiagnostic } from './actions';
+import { keyboardTooltips } from './hover';
 import { noteOpened, quickOpen } from './quickOpen';
 import { QUICK_OPEN_NEEDS_FOLDER } from './registry';
 import { findPaneState, useStore } from '../../state/store';
 import { workspaceFolder } from '../vscodeFolder';
 import type { VimHost } from './vim';
 import { IS_MAC } from '../nvimKeys';
-import { macOptionText, physicalKey } from '../macOption';
+import { optionChordKey } from '../macOption';
 
 type Vim = typeof import('./vim');
 // Loaded once vim is turned on.
@@ -49,14 +51,26 @@ const QUICK_OPEN_WAIT_MS = 2000;
 const DOUBLE_ESC_MS = 300;
 
 /**
- * Alt-W closes the shown file (Mod-W closes the browser tab). CodeMirror's
- * keymaps skip Option chords on macOS, so there it is matched here, unless
- * Option types ASCII text on this layout; elsewhere it is a keymap binding,
- * which also matches other layouts and Caps Lock.
+ * An Option chord on macOS as CodeMirror's keymaps should see it: by its
+ * physical key, since they take it as the text Option types. Null for other
+ * keys, and where Option types ASCII text on this layout.
  */
-function isMacCloseKey(e: KeyboardEvent): boolean {
-  if (!IS_MAC || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return false;
-  return macOptionText(e) === null && physicalKey(e) === 'w';
+function optionChord(e: KeyboardEvent): KeyboardEvent | null {
+  const key = IS_MAC ? optionChordKey(e) : null;
+  if (key === null) return null;
+  return {
+    type: e.type,
+    key,
+    code: e.code,
+    keyCode: e.keyCode,
+    altKey: true,
+    shiftKey: e.shiftKey,
+    ctrlKey: false,
+    metaKey: false,
+    repeat: e.repeat,
+    preventDefault: () => e.preventDefault(),
+    stopPropagation: () => e.stopPropagation(),
+  } as KeyboardEvent;
 }
 
 export interface PaneEditorEvents {
@@ -169,7 +183,8 @@ export class PaneEditor {
       }),
       keymap.of([
         { key: 'Mod-p', run: () => this.quickOpen(), preventDefault: true, scope: EARLY_SCOPE },
-        ...(IS_MAC ? [] : [{ key: 'Alt-w', run: () => this.close(false), preventDefault: true, scope: EARLY_SCOPE }]),
+        // Mod-W closes the browser tab.
+        { key: 'Alt-w', run: () => this.close(false), preventDefault: true, scope: EARLY_SCOPE },
       ]),
     ];
   }
@@ -228,8 +243,12 @@ export class PaneEditor {
       indentUnit.of(detectIndent(text)),
       this.languageC.of(this.languages.get(doc.path)?.support ?? []),
       this.lspC.of(this.lspFor(doc)),
+      keyboardTooltips,
       keymap.of([
         { key: 'Mod-s', run: () => (void this.save(false), true), preventDefault: true },
+        // VS Code's next and previous problem, ahead of lint's F8.
+        { key: 'F8', run: (view) => toDiagnostic(view, 'next'), preventDefault: true },
+        { key: 'Shift-F8', run: (view) => toDiagnostic(view, 'prev'), preventDefault: true },
         ...closeBracketsKeymap,
         ...defaultKeymap,
         ...searchKeymap,
@@ -275,10 +294,8 @@ export class PaneEditor {
       return true;
     }
     this.esc = { last: -Infinity, armed: false };
-    if (isMacCloseKey(e) && this.close(false)) {
-      e.preventDefault();
-      return true;
-    }
+    const option = optionChord(e);
+    if (option) return runScopeHandlers(view, option, EARLY_SCOPE) || runScopeHandlers(view, option, 'editor');
     return runScopeHandlers(view, e, EARLY_SCOPE);
   }
 
@@ -488,7 +505,7 @@ export class PaneEditor {
   /** Run a palette command (`editorCommands`, quick open) on the shown file. */
   command(action: string): boolean {
     if (action === 'editor-quick-open') return this.quickOpen();
-    const run = editorCommands[action] ?? gitCommands[action];
+    const run = editorCommands[action];
     const doc = this.active ? this.docs.get(this.active) : undefined;
     if (!run || !doc?.view) return false;
     this.view.focus();
