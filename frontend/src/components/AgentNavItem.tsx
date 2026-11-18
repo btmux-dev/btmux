@@ -7,20 +7,9 @@ import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { Text } from '@astryxdesign/core/Text';
 import { useStore } from '../state/store';
 import { getAnimations } from '../state/configDefaults';
-import type { AgentState } from '../state/types';
+import { AGENT_GROUPS, agentGroup, type AgentGroup } from '../lib/agentGroups';
 
-type AgentGroup = 'waiting' | 'working' | 'done' | 'idle';
-
-// Most urgent first.
-const GROUPS: AgentGroup[] = ['waiting', 'working', 'done', 'idle'];
-const GROUP_OF: Record<AgentState, AgentGroup> = {
-  blocked: 'waiting',
-  working: 'working',
-  done: 'done',
-  idle: 'idle',
-  unknown: 'idle',
-};
-const DOT_VARIANT = { waiting: 'warning', working: 'accent', done: 'success', idle: 'neutral' } as const;
+export const AGENT_DOT_VARIANT = { blocked: 'warning', working: 'accent', done: 'success', idle: 'neutral' } as const;
 const RAIL_DOTS_PER_ROW = 4;
 
 /** Agents nav entry with live per-state agent indicators. */
@@ -33,12 +22,12 @@ export function AgentNavItem({ collapsed, onClick }: { collapsed: boolean; onCli
     for (const session of allSessions)
       for (const win of session.windows)
         for (const pane of win.panes)
-          if (agentPanes.has(pane.id)) list.push({ id: pane.id, group: GROUP_OF[pane.agent_status.state] });
-    return list.sort((a, b) => GROUPS.indexOf(a.group) - GROUPS.indexOf(b.group));
+          if (agentPanes.has(pane.id)) list.push({ id: pane.id, group: agentGroup(pane.agent_status.state) });
+    return list.sort((a, b) => AGENT_GROUPS.indexOf(a.group) - AGENT_GROUPS.indexOf(b.group));
   }, [allSessions, agentPanes]);
-  const counts = GROUPS.map((group) => [group, agents.filter((agent) => agent.group === group).length] as const).filter(
-    ([, count]) => count > 0,
-  );
+  const counts = AGENT_GROUPS.map(
+    (group) => [group, agents.filter((agent) => agent.group === group).length] as const,
+  ).filter(([, count]) => count > 0);
   const summary = counts.map(([group, count]) => `${count} ${group}`).join(', ');
 
   return (
@@ -76,7 +65,7 @@ export function AgentNavItem({ collapsed, onClick }: { collapsed: boolean; onCli
             {counts.map(([group, count]) => (
               <HStack key={group} gap={1} vAlign="center">
                 <StatusDot
-                  variant={DOT_VARIANT[group]}
+                  variant={AGENT_DOT_VARIANT[group]}
                   label={`${count} ${group}`}
                   tooltip={`${count} ${group}`}
                   className="btm-agent-dot"

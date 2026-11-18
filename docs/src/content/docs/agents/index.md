@@ -47,19 +47,30 @@ is shown beside the state: `idle · 2 shells, 1 monitor`.
 
 ## Agent view
 
-`<prefix> + a` shows every agent pane on the server as a live tile, with its
-session, window, and state.
+`<prefix> + a` lists every agent on the server, grouped by state with the most
+urgent first: **blocked**, then **done**, **working**, and **idle**. Within a
+group, the agent that has waited longest comes first.
+
+Each agent shows its pane title, what it is asking or reported when it
+finished, how long it has been in its state, and its session, window, and Git
+branch. Click one to go straight to its pane.
+
+To watch agents without leaving the view, click an agent's eye button: its pane
+appears as a live tile beside the list, with its GitHub status and reported
+cost. Tiles are hidden until you show them, and each client remembers which
+ones you chose.
 
 ![The agent view with three agents: working, blocked, and done](../../../assets/screenshots/agent-view-dark.png)
 ![The agent view with three agents: working, blocked, and done](../../../assets/screenshots/agent-view-light.png)
 
 | Key                  | Action                                          |
 | -------------------- | ----------------------------------------------- |
-| Arrows, `h` `j` `k` `l` | Move between tiles                           |
+| `Up` `Down`, `j` `k` | Move through the list                           |
+| `Left` `Right`, `h` `l` | Move between tiles                           |
 | `1`-`9`              | Select an agent                                 |
 | `Enter`              | Go to that pane                                 |
-| `o`                  | Show only this agent, and back                  |
-| `m`                  | Minimize or restore the tile                    |
+| `Space`              | Show or hide its tile                           |
+| `o`                  | Show only this agent's tile, and back to all    |
 | `r`                  | Reset the agent's state                         |
 | `x`                  | End the agent's session (asks first)            |
 | `Tab`                | Switch to the [Usage](usage.md) tab             |

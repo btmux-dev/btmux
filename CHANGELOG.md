@@ -13,6 +13,13 @@ actions, saved state, and API types can change in any release.
 - A documentation site with a desktop walkthrough and references for commands
   and configuration. ([#135](https://github.com/btmux-dev/btmux/pull/135))
 
+### Changed
+
+- The agent view groups agents by state, most urgent first, and shows what
+  each is asking, how long it has waited, and its branch. Clicking an agent
+  goes to its pane; live tiles are shown only through the eye button.
+  ([#155](https://github.com/btmux-dev/btmux/pull/155))
+
 ### Fixed
 
 - GitHub status finds pull requests for branches pushed to a URL and for
