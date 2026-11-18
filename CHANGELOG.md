@@ -8,6 +8,8 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+## [0.0.211] - 2026-11-18
+
 ### Added
 
 - Vim mode in the native editor has Neovim's language server mappings (`grn`,
