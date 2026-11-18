@@ -127,6 +127,7 @@ const KEY_SECTIONS: { title: string; actions: string[] }[] = [
     actions: [
       'command-palette',
       'list-keys',
+      'toggle-key-overlay',
       'choose-appearance',
       'choose-colors',
       'choose-font',

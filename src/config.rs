@@ -668,6 +668,40 @@ pub struct NativeEditorConfig {
     pub vim: bool,
 }
 
+/// What the key overlay shows.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum KeyOverlayMode {
+    /// Every key, with typing merged into runs.
+    #[default]
+    All,
+    /// btmux key bindings and chords with Ctrl, Alt, or Cmd only.
+    Chords,
+}
+
+/// Where the key overlay sits.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum KeyOverlayPosition {
+    #[default]
+    Bottom,
+    BottomLeft,
+    BottomRight,
+    Top,
+    TopLeft,
+    TopRight,
+}
+
+/// `[key-overlay]`: the pressed keys shown on screen, toggled per client.
+#[derive(Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+pub struct KeyOverlayConfig {
+    pub mode: KeyOverlayMode,
+    pub position: KeyOverlayPosition,
+}
+
 /// `[language-server.NAME]`: a language server the native editor can run.
 #[derive(Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
@@ -902,6 +936,9 @@ pub struct FileConfig {
     /// The native editor.
     #[serde(rename = "native-editor")]
     pub native_editor: NativeEditorConfig,
+    /// The key overlay.
+    #[serde(rename = "key-overlay")]
+    pub key_overlay: KeyOverlayConfig,
     /// Language servers for the native editor, by name; these replace
     /// built-in definitions of the same name.
     #[serde(rename = "language-server")]
@@ -981,6 +1018,7 @@ impl Default for FileConfig {
             multipass: MultipassConfig::default(),
             github: GithubConfig::default(),
             native_editor: NativeEditorConfig::default(),
+            key_overlay: KeyOverlayConfig::default(),
             language_servers: BTreeMap::new(),
             languages: Vec::new(),
             window_grid_count: Some(DEFAULT_WINDOW_GRID_COUNT),
@@ -1435,6 +1473,10 @@ pub struct ClientConfig {
     pub format_on_save: bool,
     /// `[native-editor] vim`.
     pub vim_mode: bool,
+    /// `[key-overlay] mode`.
+    pub key_overlay_mode: KeyOverlayMode,
+    /// `[key-overlay] position`.
+    pub key_overlay_position: KeyOverlayPosition,
     /// Whether the server found Chrome or Chromium for the browser surface.
     pub browser: bool,
     /// Whether this tab reaches the server through a btmux connect relay;
@@ -2053,6 +2095,12 @@ pub fn generate_config_toml() -> String {
 # command = "basedpyright-langserver"
 # args = ["--stdio"]
 
+# The pressed keys shown on screen, for recording demos; the status bar's
+# keyboard button turns it on for one client.
+# [key-overlay]
+# mode = "all"   # or "chords": key bindings and Ctrl, Alt, or Cmd chords only
+# position = "bottom"   # "bottom-left", "bottom-right", "top", "top-left", or "top-right"
+
 # OS notifications for agent and pane events while btmux is hidden or
 # unfocused. In-app toasts are unaffected.
 # [notifications]
@@ -2341,6 +2389,8 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         editor: file.editor.unwrap_or(Editor::Native),
         format_on_save: file.native_editor.format_on_save,
         vim_mode: file.native_editor.vim,
+        key_overlay_mode: file.key_overlay.mode,
+        key_overlay_position: file.key_overlay.position,
         editors: [
             (Editor::Native, true),
             (Editor::Neovim, crate::ws::nvim::available()),

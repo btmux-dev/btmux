@@ -42,6 +42,9 @@ interface AppStore {
   agentGridOpen: boolean;
   agentGridMounted: boolean;
   agentPanes: Set<string>;
+  /** Whether this client shows pressed keys. Local UI state. */
+  keyOverlay: boolean;
+  setKeyOverlay: (on: boolean) => void;
   /** Open `btmux pick`, `confirm`, and `input` widgets. */
   widgets: WidgetSummary[];
   /** Open `btmux popup` popups, over their panes. */
@@ -219,6 +222,19 @@ export const nativeEditorOver = (s: AppStore, paneId: string | null | undefined)
 export const nativeEditorInput = (paneId: string) =>
   document.querySelector(`[data-native-editor][data-pane-id="${CSS.escape(paneId)}"]`);
 
+const KEY_OVERLAY_STORAGE = 'btmux.keyOverlay';
+
+/** On with `?keys` in the URL (for recordings), else as this browser last left it. */
+function initialKeyOverlay(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (new URLSearchParams(window.location.search).has('keys')) return true;
+  try {
+    return localStorage.getItem(KEY_OVERLAY_STORAGE) === '1';
+  } catch {
+    return false;
+  }
+}
+
 export const useStore = create<AppStore>((set, get) => ({
   sessions: [],
   allSessions: [],
@@ -232,6 +248,15 @@ export const useStore = create<AppStore>((set, get) => ({
   agentGridOpen: false,
   agentGridMounted: false,
   agentPanes: new Set(),
+  keyOverlay: initialKeyOverlay(),
+  setKeyOverlay: (keyOverlay) => {
+    try {
+      localStorage.setItem(KEY_OVERLAY_STORAGE, keyOverlay ? '1' : '');
+    } catch {
+      // Not remembered without storage.
+    }
+    set({ keyOverlay });
+  },
   widgets: [],
   popups: [],
   popupShown: null,

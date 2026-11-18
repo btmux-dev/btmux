@@ -8,6 +8,7 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
+use std::sync::atomic::Ordering;
 use uuid::Uuid;
 
 use crate::{config, AppState};
@@ -65,6 +66,16 @@ fn current_size_frame((cols, rows): (u16, u16)) -> Message {
     Message::Text(format!(r#"{{"type":"current_size","cols":{cols},"rows":{rows}}}"#).into())
 }
 
+/// Whether the terminal hides input, for a viewer that asked (`watch_input`),
+/// with how many of its input frames came before the check.
+fn input_mode_frame(hidden: Option<bool>, inputs: u64) -> Message {
+    Message::Text(
+        serde_json::json!({"type": "input_mode", "hidden": hidden, "inputs": inputs})
+            .to_string()
+            .into(),
+    )
+}
+
 /// Tell a viewer whether its size drives the PTY.
 fn owner_frame(owner: bool) -> Message {
     Message::Text(format!(r#"{{"type":"owner","owner":{owner}}}"#).into())
@@ -98,6 +109,7 @@ async fn handle_socket(
                 replay,
                 pty.subscribe_owner(),
                 size,
+                pty.hidden_input(),
             ))
         });
         // A popup whose program can't start ends; one that started wakes its request.
@@ -113,7 +125,7 @@ async fn handle_socket(
         }
         attachment
     };
-    let (input_tx, mut output_rx, replay, mut owner_rx, size) = match attachment {
+    let (input_tx, mut output_rx, replay, mut owner_rx, size, hidden_input) = match attachment {
         Some(Ok(attachment)) => attachment,
         failure => {
             let error = failure
@@ -131,6 +143,25 @@ async fn handle_socket(
         }
     };
     let is_owner = |owner: &Option<Uuid>| !mirror && *owner == Some(viewer_id);
+    // The key overlay asks whether the terminal hides input, as of each input
+    // frame and before the output of a prompt that hides it.
+    let watching = std::sync::atomic::AtomicBool::new(false);
+    let inputs = std::sync::atomic::AtomicU64::new(0);
+    let input_checked = tokio::sync::Notify::new();
+    // Any check since the last report hid input: a report covers several
+    // inputs, and a password's Enter can turn echo back on.
+    let checked = std::sync::Mutex::new(Some(false));
+    let check = || {
+        let now = hidden_input.check();
+        let mut checked = checked.lock().unwrap();
+        *checked = any_hidden(*checked, now);
+    };
+    // What a report says: the checks since the last one, and the mode now.
+    let report = |now: Option<bool>| {
+        let hidden = any_hidden(checked.lock().unwrap().replace(false), now);
+        input_mode_frame(hidden, inputs.load(Ordering::Relaxed))
+    };
+    let mut mode_rx = hidden_input.subscribe();
     let send = async {
         let mut pending = replay;
         let mut replaying = true;
@@ -147,14 +178,21 @@ async fn handle_socket(
             );
         }
         for frame in first {
-            if !matches!(
-                tokio::time::timeout(std::time::Duration::from_secs(10), ws_tx.send(frame)).await,
-                Ok(Ok(()))
-            ) {
+            if !send_frame(&mut ws_tx, frame).await {
                 return;
             }
         }
         loop {
+            // The reader publishes a change before the output it found it with.
+            if mode_rx.has_changed().unwrap_or(false) {
+                let hidden = *mode_rx.borrow_and_update();
+                if watching.load(Ordering::Relaxed) {
+                    let frame = report(hidden);
+                    if !send_frame(&mut ws_tx, frame).await {
+                        return;
+                    }
+                }
+            }
             for event in coalesce(std::mem::take(&mut pending)) {
                 let frame = match event {
                     Output::Data(bytes) => match deflater.as_mut() {
@@ -163,11 +201,7 @@ async fn handle_socket(
                     },
                     Output::Size(cols, rows) => Message::Text(size_frame(cols, rows).into()),
                 };
-                if !matches!(
-                    tokio::time::timeout(std::time::Duration::from_secs(10), ws_tx.send(frame))
-                        .await,
-                    Ok(Ok(()))
-                ) {
+                if !send_frame(&mut ws_tx, frame).await {
                     return;
                 }
             }
@@ -177,11 +211,7 @@ async fn handle_socket(
                         .to_string()
                         .into(),
                 );
-                if !matches!(
-                    tokio::time::timeout(std::time::Duration::from_secs(10), ws_tx.send(ready))
-                        .await,
-                    Ok(Ok(()))
-                ) {
+                if !send_frame(&mut ws_tx, ready).await {
                     return;
                 }
                 replaying = false;
@@ -193,6 +223,26 @@ async fn handle_socket(
                     // past missing bytes. The client reconnects to a fresh snapshot.
                     Err(_) => return,
                 },
+                _ = input_checked.notified() => {
+                    let hidden = *mode_rx.borrow_and_update();
+                    let frame = report(hidden);
+                    if !send_frame(&mut ws_tx, frame).await {
+                        return;
+                    }
+                }
+                // A change without output, as from `stty -echo`.
+                changed = mode_rx.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                    let hidden = *mode_rx.borrow_and_update();
+                    if watching.load(Ordering::Relaxed) {
+                        let frame = report(hidden);
+                        if !send_frame(&mut ws_tx, frame).await {
+                            return;
+                        }
+                    }
+                }
                 changed = owner_rx.changed(), if !mirror => {
                     if changed.is_err() {
                         return;
@@ -200,10 +250,7 @@ async fn handle_socket(
                     let next = is_owner(&owner_rx.borrow_and_update());
                     if next != owner {
                         owner = next;
-                        if !matches!(
-                            tokio::time::timeout(std::time::Duration::from_secs(10), ws_tx.send(owner_frame(owner))).await,
-                            Ok(Ok(()))
-                        ) {
+                        if !send_frame(&mut ws_tx, owner_frame(owner)).await {
                             return;
                         }
                     }
@@ -212,6 +259,7 @@ async fn handle_socket(
         }
     };
     let receive = async {
+        let mut _watch = None;
         while let Some(Ok(msg)) = ws_rx.next().await {
             if matches!(msg, Message::Close(_)) {
                 break;
@@ -221,8 +269,21 @@ async fn handle_socket(
             }
             match msg {
                 Message::Binary(data) => {
+                    // Checked around queueing it: a program can turn echo off
+                    // without output, or back on as it reads the input.
+                    let watched = watching.load(Ordering::Relaxed);
+                    if watched {
+                        check();
+                    }
                     if input_tx.send_wait(data.to_vec()).await.is_err() {
                         break;
+                    }
+                    if watched {
+                        check();
+                    }
+                    inputs.fetch_add(1, Ordering::Relaxed);
+                    if watched {
+                        input_checked.notify_one();
                     }
                 }
                 Message::Text(text) => {
@@ -231,6 +292,16 @@ async fn handle_socket(
                         tracing::debug!(%pane_id, "ignored invalid pane control frame");
                         continue;
                     };
+                    if let ControlMsg::WatchInput { on } = control {
+                        watching.store(on, Ordering::Relaxed);
+                        // Before checking, so the reader keeps the mode current.
+                        _watch = on.then(|| hidden_input.watch());
+                        if on {
+                            check();
+                            input_checked.notify_one();
+                        }
+                        continue;
+                    }
                     let mut mgr = state.write().await;
                     if let Some(pty) = mgr.find_pty_mut(pane_id) {
                         match control {
@@ -238,6 +309,7 @@ async fn handle_socket(
                                 pty.resize_viewer(viewer_id, cols, rows)
                             }
                             ControlMsg::Claim => pty.claim_viewer(viewer_id),
+                            ControlMsg::WatchInput { .. } => {}
                         }
                     }
                 }
@@ -348,4 +420,27 @@ enum ControlMsg {
     },
     /// User input in this viewer: make its size drive the PTY.
     Claim,
+    /// Report whether the terminal hides input (`input_mode` frames).
+    WatchInput {
+        on: bool,
+    },
+}
+
+/// Hidden if either hid input, unknown if either can't tell.
+fn any_hidden(a: Option<bool>, b: Option<bool>) -> Option<bool> {
+    match (a, b) {
+        (Some(true), _) | (_, Some(true)) => Some(true),
+        (Some(false), Some(false)) => Some(false),
+        _ => None,
+    }
+}
+
+async fn send_frame(
+    tx: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    frame: Message,
+) -> bool {
+    matches!(
+        tokio::time::timeout(std::time::Duration::from_secs(10), tx.send(frame)).await,
+        Ok(Ok(()))
+    )
 }

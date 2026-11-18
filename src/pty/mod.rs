@@ -16,7 +16,7 @@ pub use crate::process::Pid;
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 #[cfg(unix)]
@@ -200,6 +200,8 @@ pub struct PtyHandle {
     pub cwd: Arc<Mutex<Option<String>>>,
     /// The last OSC 7 named another host (an ssh session).
     pub cwd_remote: Arc<AtomicBool>,
+    /// Whether the terminal hides what's typed, as at a password prompt.
+    hidden_input: HiddenInput,
     /// Server port, injected as BTMUX_API_URL into the shell environment.
     port: u16,
     /// Maximum backend replay buffer size in bytes, derived from the config's
@@ -229,6 +231,7 @@ impl PtyHandle {
     ) -> Self {
         let (input_tx, _) = mpsc::channel::<PtyInput>(32);
         let (output_tx, _) = broadcast::channel::<Output>(256);
+        let probe = Arc::new(Mutex::new(None));
 
         Self {
             input_tx: InputSender(input_tx),
@@ -261,7 +264,8 @@ impl PtyHandle {
             exit_tx: env.exit_tx.clone(),
             meta_tx: env.meta_tx.clone(),
             pending_cpr_pgrps: Arc::new(Mutex::new(VecDeque::new())),
-            probe: Arc::new(Mutex::new(None)),
+            hidden_input: HiddenInput::new(&probe),
+            probe,
             title: Arc::new(Mutex::new(None)),
             cwd: Arc::new(Mutex::new(None)),
             cwd_remote: Arc::default(),
@@ -291,6 +295,11 @@ impl PtyHandle {
     /// The exit status, once the shell was reaped.
     pub fn exit_status(&self) -> Option<i32> {
         *self.exit_status.lock().unwrap()
+    }
+
+    /// Whether the terminal hides what's typed, as at a password prompt.
+    pub fn hidden_input(&self) -> HiddenInput {
+        self.hidden_input.clone()
     }
 
     /// Whether the shell runs and hasn't been reaped.
@@ -707,6 +716,65 @@ impl PtyHandle {
     }
 }
 
+/// Whether the program in a PTY reads a line without echoing it, as `sudo`,
+/// `ssh`, and `read -s` do for passwords; raw-mode programs (editors, `ssh`
+/// sessions) don't count. `None` where btmux can't tell (Windows).
+#[derive(Clone)]
+pub struct HiddenInput {
+    #[cfg(unix)]
+    probe: Arc<Mutex<Option<Probe>>>,
+    tx: Arc<watch::Sender<Option<bool>>>,
+    /// Sockets reporting it; the reader checks only while there are any.
+    watchers: Arc<AtomicUsize>,
+}
+
+/// A socket reporting hidden input, until dropped.
+pub struct HiddenInputWatch(Arc<AtomicUsize>);
+
+impl Drop for HiddenInputWatch {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+impl HiddenInput {
+    fn new(#[allow(unused_variables)] probe: &Arc<Mutex<Option<Probe>>>) -> Self {
+        Self {
+            #[cfg(unix)]
+            probe: probe.clone(),
+            tx: Arc::new(watch::channel(cfg!(unix).then_some(false)).0),
+            watchers: Arc::default(),
+        }
+    }
+
+    /// Have the reader check after each output chunk while the guard lives.
+    pub fn watch(&self) -> HiddenInputWatch {
+        self.watchers.fetch_add(1, Ordering::Relaxed);
+        HiddenInputWatch(self.watchers.clone())
+    }
+
+    fn watched(&self) -> bool {
+        self.watchers.load(Ordering::Relaxed) > 0
+    }
+
+    /// Check the terminal now, publishing a change to subscribers.
+    pub fn check(&self) -> Option<bool> {
+        #[cfg(unix)]
+        if let Some(now) = unix::hides_input(&self.probe) {
+            self.tx.send_if_modified(|hidden| {
+                let changed = *hidden != Some(now);
+                *hidden = Some(now);
+                changed
+            });
+        }
+        *self.tx.borrow()
+    }
+
+    pub fn subscribe(&self) -> watch::Receiver<Option<bool>> {
+        self.tx.subscribe()
+    }
+}
+
 pub fn validate_size(cols: u16, rows: u16) -> Result<(), String> {
     if cols == 0 || rows == 0 || cols > 500 || rows > 200 {
         return Err("PTY size must be 1..500 columns and 1..200 rows".into());
@@ -723,6 +791,7 @@ struct OutputPipeline {
     probe: Arc<Mutex<Option<Probe>>>,
     title: Arc<Mutex<Option<String>>>,
     cwd: Arc<Mutex<Option<String>>>,
+    hidden_input: HiddenInput,
     program_status: Arc<Mutex<program_status::ProgramStatus>>,
     scrollback: Arc<Mutex<Replay>>,
     output_tx: broadcast::Sender<Output>,
@@ -754,6 +823,7 @@ impl PtyHandle {
             probe: self.probe.clone(),
             title: self.title.clone(),
             cwd: self.cwd.clone(),
+            hidden_input: self.hidden_input.clone(),
             program_status: self.program_status.clone(),
             scrollback: self.scrollback.clone(),
             output_tx: self.output_tx.clone(),
@@ -802,6 +872,11 @@ impl OutputPipeline {
         self.apply_program_status();
         #[cfg(unix)]
         self.poll_cwd();
+        // Before the output goes out: password prompts turn echo off before
+        // writing themselves, so viewers learn it no later than they see them.
+        if self.hidden_input.watched() {
+            self.hidden_input.check();
+        }
         let mut sb = self.scrollback.lock().unwrap();
         if !result.scrollback.is_empty() {
             sb.push(Output::Data(exact_bytes(result.scrollback)));

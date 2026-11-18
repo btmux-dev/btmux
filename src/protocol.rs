@@ -45,6 +45,8 @@ fn generated_protocol_is_current() {
         SessionSort::decl(&config),
         WindowSort::decl(&config),
         Editor::decl(&config),
+        KeyOverlayMode::decl(&config),
+        KeyOverlayPosition::decl(&config),
         Appearance::decl(&config),
         ColorMode::decl(&config),
         LogConfig::decl(&config),

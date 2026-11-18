@@ -186,6 +186,12 @@ export type WindowSort = "created" | "mru" | "alphabetical";
 export type Editor = "native" | "pane" | "neovim" | "vscode";
 
 // prettier-ignore
+export type KeyOverlayMode = "all" | "chords";
+
+// prettier-ignore
+export type KeyOverlayPosition = "bottom" | "bottom-left" | "bottom-right" | "top" | "top-left" | "top-right";
+
+// prettier-ignore
 export type Appearance = "auto" | "dark" | "light";
 
 // prettier-ignore
@@ -446,6 +452,14 @@ format_on_save: boolean,
  * `[native-editor] vim`.
  */
 vim_mode: boolean,
+/**
+ * `[key-overlay] mode`.
+ */
+key_overlay_mode: KeyOverlayMode,
+/**
+ * `[key-overlay] position`.
+ */
+key_overlay_position: KeyOverlayPosition,
 /**
  * Whether the server found Chrome or Chromium for the browser surface.
  */

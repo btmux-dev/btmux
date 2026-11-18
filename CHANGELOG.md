@@ -8,6 +8,13 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Added
+
+- A key overlay that shows pressed keys and the key bindings they ran, for
+  recording demos. It is off by default; the status bar's keyboard button
+  turns it on. Keys typed at a password prompt are hidden.
+  ([#160](https://github.com/btmux-dev/btmux/pull/160))
+
 ## [0.0.208] - 2026-11-18
 
 ### Added

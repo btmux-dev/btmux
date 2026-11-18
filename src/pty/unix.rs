@@ -748,6 +748,22 @@ impl OutputPipeline {
     }
 }
 
+/// Whether the terminal reads lines without echo; `None` before the shell
+/// runs or once it is gone.
+pub(super) fn hides_input(probe: &Mutex<Option<Probe>>) -> Option<bool> {
+    let probe = probe.lock().unwrap();
+    // The fd stays open while the probe is held.
+    let fd = unsafe { BorrowedFd::borrow_raw(probe.as_ref()?.fd) };
+    let attrs = nix::sys::termios::tcgetattr(fd).ok()?;
+    Some(canonical_without_echo(attrs.local_flags))
+}
+
+/// Canonical input without echo: a password prompt, not a raw-mode program.
+fn canonical_without_echo(flags: nix::sys::termios::LocalFlags) -> bool {
+    use nix::sys::termios::LocalFlags;
+    flags.contains(LocalFlags::ICANON) && !flags.contains(LocalFlags::ECHO)
+}
+
 /// Whether `name` is a shell's executable; login shells start with `-`, Nix
 /// wrappers with `.` and end in `-wrapped`.
 pub(super) fn is_shell(name: &str) -> bool {
@@ -802,4 +818,34 @@ fn set_size(fd: RawFd, cols: u16, rows: u16) {
         ws_ypixel: 0,
     };
     unsafe { libc::ioctl(fd, libc::TIOCSWINSZ, &size) };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::canonical_without_echo;
+    use nix::sys::termios::{tcgetattr, tcsetattr, LocalFlags, SetArg};
+
+    /// The master reports the terminal's modes, as a program sets them on its side.
+    #[test]
+    fn master_sees_hidden_input() {
+        let pty = nix::pty::openpty(None, None).unwrap();
+        let set = |on: LocalFlags, off: LocalFlags| {
+            let mut attrs = tcgetattr(&pty.slave).unwrap();
+            attrs.local_flags.insert(on);
+            attrs.local_flags.remove(off);
+            tcsetattr(&pty.slave, SetArg::TCSANOW, &attrs).unwrap();
+            canonical_without_echo(tcgetattr(&pty.master).unwrap().local_flags)
+        };
+        assert!(!set(
+            LocalFlags::ICANON | LocalFlags::ECHO,
+            LocalFlags::empty()
+        ));
+        // `sudo`'s password prompt.
+        assert!(set(LocalFlags::ICANON, LocalFlags::ECHO));
+        // Raw mode, as editors and `ssh` sessions set it.
+        assert!(!set(
+            LocalFlags::empty(),
+            LocalFlags::ICANON | LocalFlags::ECHO
+        ));
+    }
 }

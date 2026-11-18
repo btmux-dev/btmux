@@ -21,6 +21,7 @@ import { ConnectionBanner } from './components/ConnectionBanner';
 import { ShaderWallpaper, WallpaperImage } from './components/ShaderWallpaper';
 import { ConfigPage } from './components/ConfigPage';
 import { NotificationToasts } from './components/NotificationToasts';
+import { KeyOverlay } from './components/KeyOverlay';
 import { STARTUP_THEME } from './state/startupTheme';
 import {
   getAnimations,
@@ -372,6 +373,7 @@ export function App() {
     <BrowserRouter>
       <ConnectionBanner />
       <NotificationToasts />
+      <KeyOverlay />
       <AppInner send={send} request={request} />
     </BrowserRouter>
   );
