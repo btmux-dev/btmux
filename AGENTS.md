@@ -22,7 +22,7 @@ The `justfile` is the source of truth (`just` lists all recipes). Common ones:
 - `just build` — production build: frontend → `frontend/dist`, then `cargo build --release`.
 - `just run` — release binary serving the built frontend.
 - `just install` — production build + `cargo install --path .`
-- `just vm <cmd>` — Ubuntu VM via Multipass (`scripts/vm.sh`, `scripts/vm-cloud-init.yaml`) for Linux testing and clean demos. `up` creates it; `deploy` builds this working tree in the VM, `release [TAG]` installs a release binary, and both (re)start btmux as a systemd user service on `0.0.0.0:8004` (in-place `btmux upgrade` when running); `info` prints the host-reachable URL and token; `desktop-demo` records the desktop app demos with the server in it; `shell`, `stop`, `delete`.
+- `just vm <cmd>` — Ubuntu VM via Multipass (`scripts/vm.sh`, `scripts/vm-cloud-init.yaml`) for Linux testing and clean demos. `up` creates it; `deploy` builds this working tree in the VM, `release [TAG]` installs a release binary, and both (re)start btmux as a systemd user service on `0.0.0.0:8004` (in-place `btmux upgrade` when running); `info` prints the host-reachable URL and token; `shell`, `stop`, `delete`.
 - `just fmt` (alias `just format`) — format the whole codebase (`cargo fmt` + prettier). **Always run this before committing.**
 
 `just test` runs the Rust regression suite. `just protocol` regenerates the frontend
@@ -42,7 +42,8 @@ first (`vite optimize`) so concurrent stacks don't race to build it, and output
 printed per file as it ends. Stacks put a fake
 `multipass` (`frontend/test-bin`) first on the server's `PATH`, logging its calls
 to the stack's `multipass` dir (`sandbox-browser-test.ts`), so no test starts a VM;
-its `test-editor` is the server's `$EDITOR`. Async page predicates must
+its `test-editor` is the server's `$EDITOR`. Stack shells read `shrc` in the
+stack's config dir (`ENV`) if a file writes one. Async page predicates must
 use `waitForAsync` (`browser-test-utils.ts`): `page.waitForFunction` treats a
 returned Promise as truthy and doesn't wait.
 `just test-browser-surface`, also on demand, covers the browser surface and needs Chrome or Chromium.
@@ -63,7 +64,7 @@ trailer or `claude.ai/code/session_…` URL) in commit messages or PR descriptio
 
 The site in `docs/` is Starlight; pages are in `docs/src/content/docs`, one
 directory per sidebar group, ordered by `sidebar.order`. `just docs-dev` serves
-it and `just docs-build` also checks links. Three parts are generated, so
+it and `just docs-build` also checks links. Four parts are generated, so
 regenerate rather than edit them: `just docs-config` (All options, from
 `generate-config`), `just docs-cli` (All commands, from `--help`; a new command
 needs a group in `docs/scripts/cli-reference.mjs`), and `just docs-screenshots`
@@ -71,7 +72,18 @@ needs a group in `docs/scripts/cli-reference.mjs`), and `just docs-screenshots`
 must show nothing of the host, so the process viewer shot is scoped to the
 demo session with the user's name masked; its editor and Neovim shots use rust-analyzer,
 which needs `RUST_SRC_PATH` set to the standard library's sources, and a Rust
-tree-sitter parser with queries, taken from your Neovim or `NVIM_TS_RUNTIME`).
+tree-sitter parser with queries, taken from your Neovim or `NVIM_TS_RUNTIME`),
+and `just docs-demos` (`frontend/docs-demos.ts`, one rrweb recording per demo
+and theme, each from a fresh stack with the same playground,
+`frontend/demo-playground.ts`, and scripted agents, `frontend/demo-agent.sh`).
+A recording holds the whole DOM, not just what shows, so it rewrites text
+naming the home directory and fails if the home, the user's name, or the token
+remain; it keeps the fonts and images the page loaded beside it, under content
+hashes, and points other stack URLs nowhere. Pages embed one as
+`<btmux-demo name="…" label="…">` (`docs/src/scripts/demo-player.ts`), which
+hides itself without a recording. Recordings live in the `media` prerelease, not
+Git: `just docs-demos-upload` publishes `docs/public/demos`, and the docs
+workflow downloads it.
 
 `CHANGELOG.md` at the repo root is the changelog's only source: the docs'
 Changelog page is generated from it when the site loads its config. A change a

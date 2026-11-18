@@ -68,7 +68,10 @@ export default defineConfig({
         "@fontsource-variable/geist-pixel/elsh.css",
         "./src/styles/custom.css",
       ],
-      components: { SiteTitle: "./src/components/SiteTitle.astro" },
+      components: {
+        Head: "./src/components/Head.astro",
+        SiteTitle: "./src/components/SiteTitle.astro",
+      },
       social: [{ icon: "github", label: "GitHub", href: repo }],
       editLink: { baseUrl: `${repo}/edit/main/docs/` },
       sidebar: Object.entries(groups).map(([label, directory]) => ({

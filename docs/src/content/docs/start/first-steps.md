@@ -6,6 +6,8 @@ sidebar:
 
 btmux opens with one session, one window, and one pane running your shell.
 
+<btmux-demo name="panes" label="Demo: splitting panes, resizing, zooming, layouts, windows, the window grid, and the session picker"></btmux-demo>
+
 ## Split your first pane
 
 1. Press `Ctrl+A`, release, then press `%`. A new shell opens to the right.

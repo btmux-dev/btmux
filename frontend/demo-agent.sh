@@ -1,15 +1,14 @@
 #!/bin/bash
-# A scripted coding agent for scripts/desktop-demo.applescript.
+# A scripted coding agent for docs-demos.ts.
 #
-#   exec -a <claude|codex|gemini> /bin/bash desktop-demo-agent.sh <name>
+#   exec -a <claude|codex|gemini> /bin/bash demo-agent.sh <name>
 #
 # argv[0] makes btmux detect it as that agent; it reports its state through
 # the pane's hook endpoint, like the real agents' hooks. BTMUX_DEMO picks the
-# script (agents or latex), BTMUX_DEMO_SCALE scales its pauses, and it marks
-# its progress as files in BTMUX_DEMO_SYNC for the driver to wait on.
+# script (agents or latex), and it marks its progress as files in
+# BTMUX_DEMO_SYNC for the recorder to wait on.
 set -u
 name="$1"
-scale="${BTMUX_DEMO_SCALE:-1}"
 
 bold=$'\e[1m'
 dim=$'\e[2m'
@@ -19,7 +18,7 @@ blue=$'\e[34m'
 magenta=$'\e[35m'
 reset=$'\e[0m'
 
-pause() { sleep "$(awk -v d="$1" -v s="$scale" 'BEGIN { print d * s }')"; }
+pause() { sleep "$1"; }
 
 hook() {
     curl --silent --output /dev/null --max-time 2 \
@@ -64,7 +63,7 @@ codex) color="$green" ;;
 *) color="$blue" ;;
 esac
 printf '%s%s%s %s(btmux demo agent)%s\n' "$bold$color" "$name" "$reset" "$dim" "$reset"
-printf '%s%s%s\n' "$dim" "$PWD" "$reset"
+printf '%s~%s%s\n' "$dim" "${PWD#"$HOME"}" "$reset"
 hook '{"hook_event_name":"SessionStart"}'
 prompt
 read -r _
@@ -73,32 +72,32 @@ echo
 
 case "${BTMUX_DEMO:-agents}:$name" in
 agents:claude)
-    step "Read src/main.rs" 1.2
-    step "Read src/api/sessions.rs" 1
-    step "Edit src/api/sessions.rs ${green}+42${reset} ${dim}-3${reset}" 1.5
-    step "Edit src/main.rs ${green}+18${reset}" 1.2
-    permission Bash "cargo test list"
-    step "Bash cargo test list" 2
-    say 1 "  ${dim}test result: ok. 9 passed; 0 failed${reset}" ""
-    say 0 "Added ${bold}--json${reset} to ${bold}btmux list${reset}; it prints one object per session."
-    done_turn "Added --json to btmux list; all 9 list tests pass."
+    step "Read src/routes/orders.ts" 1.2
+    step "Read src/server.ts" 1
+    step "Edit src/routes/orders.ts ${green}+38${reset} ${dim}-4${reset}" 1.5
+    step "Write tests/orders.test.ts ${green}+27${reset}" 1.2
+    permission Bash "bun test orders"
+    step "Bash bun test orders" 2
+    say 1 "  ${dim}4 pass, 0 fail${reset}" ""
+    say 0 "${bold}GET /orders${reset} now takes ${bold}?cursor=${reset} and ${bold}?limit=${reset} and returns a next cursor."
+    done_turn "Paginated GET /orders with a cursor; all 4 order tests pass."
     ;;
 agents:codex)
-    step "Explored src/pty/replay.rs" 2
-    step "Ran cargo bench replay" 3
-    say 2 "  ${dim}replay/8MiB    41.2 ms${reset}" "  ${dim}replay/128MiB  690 ms${reset}"
-    step "Explored src/pty/mod.rs" 2
-    say 0 "" "Replay re-parses the whole journal on every attach. Starting from the" \
-        "checkpoint instead would make it proportional to the journal tail."
-    done_turn "Replay re-parses the whole journal on every attach; start from the checkpoint."
+    step "Explored tests/server.test.ts" 2
+    step "Ran bun test --rerun-each 50" 3
+    say 2 "  ${dim}3 of 50 runs failed: address in use${reset}"
+    step "Explored src/server.ts" 2
+    say 0 "" "The tests share port 3000 with a server another test starts. Passing" \
+        "PORT=0 picks a free port, so the runs no longer collide."
+    done_turn "The tests race for port 3000; PORT=0 makes them pick free ports."
     ;;
 agents:gemini)
-    step "ReadFolder src/session" 2
-    step "ReadManyFiles src/session/*.rs" 4
-    step "SearchText \"resolve_index\"" 4
-    step "ReadFile src/session/manager.rs" 5
-    say 0 "The session tree lives in SessionManager; every mutation broadcasts state."
-    done_turn "The session tree lives in SessionManager; every mutation broadcasts state."
+    step "ReadFolder src/routes" 2
+    step "ReadManyFiles src/routes/*.ts" 4
+    step "SearchText \"pattern\"" 4
+    step "ReadFile src/server.ts" 5
+    say 0 "Each route is a pattern and a handler; handle() tries them in order."
+    done_turn "Each route is a pattern and a handler; handle() tries them in order."
     ;;
 latex:*)
     step "Thinking" 1.5

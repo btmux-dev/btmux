@@ -2,7 +2,8 @@
  * Run each browser test file against its own fresh btmux stack: a debug
  * backend and Vite on free ports, with a random token, `/bin/sh`, and
  * temporary XDG and Git config, so neither the user's config, profiles, shell,
- * nor a running `just dev` affects it. A fake `multipass` (`test-bin`) logs to
+ * nor a running `just dev` affects it. Shells read `shrc` in the config
+ * directory (`ENV`) if a test writes one. A fake `multipass` (`test-bin`) logs to
  * the stack's `multipass` directory, and a fake `gh` answers from its `gh`
  * directory.
  *
@@ -150,6 +151,7 @@ async function withStack(
         BTMUX_FAKE_GH: path.join(dir, 'gh'),
         BTMUX_FAKE_LSP: path.join(dir, 'lsp'),
         BTMUX_AUTH_TOKEN: token,
+        ENV: path.join(xdg.XDG_CONFIG_HOME, 'shrc'),
         GIT_CONFIG_GLOBAL: '/dev/null',
         GIT_CONFIG_NOSYSTEM: '1',
       },

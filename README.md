@@ -19,32 +19,6 @@ For macOS, Linux and Windows. Powered by [wterm](https://github.com/vercel-labs/
 - tmux-style CLI, REST API, MCP server and agent skill
 - Nix Home-Manager module
 
-## Demos
-
-### Sessions, windows, and panes
-
-https://github.com/user-attachments/assets/97306cfd-8c85-4134-911e-faada4723815
-
-### File browser, Git mode, and process viewer
-
-https://github.com/user-attachments/assets/5e3c9a36-0783-45ea-886d-db83b4969694
-
-### Neovim GUI
-
-https://github.com/user-attachments/assets/03185362-9673-48bc-97d8-c4695535c16f
-
-### Coding agents
-
-https://github.com/user-attachments/assets/1c1886e8-2c41-412d-8448-a128df24cadf
-
-### LaTeX overlay
-
-https://github.com/user-attachments/assets/716d0792-8989-43f7-887d-76d25f368321
-
-### Shader wallpapers
-
-https://github.com/user-attachments/assets/4417fcdf-7d8f-4a2f-92ba-3144927a4ff2
-
 ## Install
 
 Release builds cover Apple Silicon macOS, x86-64/ARM64 Linux, and x64/ARM64

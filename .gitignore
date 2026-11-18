@@ -7,5 +7,3 @@ desktop/node_modules/
 .DS_Store
 .playwright-cli/
 .playwright-mcp/
-# Raw recordings from scripts/record-desktop-demo.sh
-/demo-*.mp4

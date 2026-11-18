@@ -13,6 +13,8 @@ changes live on the server, so they survive a reload and a
 [`btmux upgrade`](../internals/upgrade.md). A file changed on disk reloads,
 unless you have unsaved changes, which get a warning instead.
 
+<btmux-demo name="editor" label="Demo: opening a file from the shell, quick open, a completion from rust-analyzer, and saving"></btmux-demo>
+
 ![The native editor with a completion menu from rust-analyzer and the selected method's docs](../../../assets/screenshots/editor-completion-dark.png)
 ![The native editor with a completion menu from rust-analyzer and the selected method's docs](../../../assets/screenshots/editor-completion-light.png)
 

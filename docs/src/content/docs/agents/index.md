@@ -9,6 +9,8 @@ btmux notices Claude Code, Codex, and Gemini CLI running in a pane and tracks
 what each is doing, so you can run several and see at a glance which one needs
 you.
 
+<btmux-demo name="agents" label="Demo: three agents in split panes, approving a permission request from the agent view, and jumping to a finished agent"></btmux-demo>
+
 ## Setup
 
 Detection works out of the box: btmux finds the agent's process and reads its

@@ -13,6 +13,8 @@ title bar (or its top-right corner when title bars are off).
 Click the chip, press `<prefix> + m`, or run `latex: toggle overlay` from the
 command palette to open a side panel with the formulas rendered by KaTeX.
 
+<btmux-demo name="latex" label="Demo: an agent's LaTeX rendered in the side panel, with each formula's source highlighted on hover"></btmux-demo>
+
 ![A pane printing LaTeX source, with the overlay showing three rendered formulas](../../../assets/screenshots/latex-dark.png)
 ![A pane printing LaTeX source, with the overlay showing three rendered formulas](../../../assets/screenshots/latex-light.png)
 

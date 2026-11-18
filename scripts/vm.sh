@@ -20,9 +20,6 @@ usage: $0 <command> [args]
   release [TAG]   install a release binary (default: latest) and (re)start btmux
   info            print the URL and access token
   shell           open a shell in the VM
-  desktop-demo [ARGS]
-                  record the desktop app demos with the server in the VM
-                  (ARGS as for scripts/record-desktop-demo.sh)
   stop            stop the VM
   delete          delete and purge the VM
 
@@ -127,11 +124,6 @@ case "${1:-}" in
     release) release "${2:-}" ;;
     info) info ;;
     shell) multipass shell "$VM" ;;
-    desktop-demo)
-        shift
-        up
-        exec "$ROOT/scripts/record-desktop-demo.sh" --vm "$VM" "$@"
-        ;;
     stop) multipass stop "$VM" ;;
     delete) multipass delete --purge "$VM" ;;
     *) usage; exit 1 ;;
