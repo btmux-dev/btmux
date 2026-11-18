@@ -15,7 +15,7 @@ import { getAnimations, getWindowSort } from '../state/configDefaults';
 import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
 import type { ClientMessage } from '../protocol/messages';
 import { SysStatBar } from './SysStatBar';
-import { editorButton, toolbarEditors } from './EditorIcon';
+import { editorButton } from './EditorIcon';
 import { runAction } from '../hooks/useKeybindings';
 import { TailscaleButton } from './TailscaleButton';
 import { MultipassButton } from './MultipassButton';
@@ -54,6 +54,13 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
     closeModals();
     if (mode === 'files') void openFileBrowserFiles(pane.id, pane.cwd ?? null);
     else state().setFileBrowserOpen(true, pane.cwd ?? null, pane.id, mode);
+  };
+  const editor = config?.editor ?? 'native';
+  const editorLabel = editorButton(editor);
+  const toggleEditor = () => {
+    closeModals();
+    state().setFileBrowserOpen(false);
+    runAction('editor', session.id, send, (name) => navigate(`/s/${encodeURIComponent(name)}`));
   };
   const animations = getAnimations(config);
   return (
@@ -135,34 +142,24 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
       <HStack gap={1} className="hidden lg:flex">
         <SysStatBar c={chromePalette(config?.theme ?? null)} barH={28} font={12} animations={getAnimations(config)} />
       </HStack>
-      {toolbarEditors(config?.editor, config?.editors).map((editor) => {
-        const button = editorButton(editor);
-        const action = editor === config?.editor ? 'editor' : `editor-${editor}`;
-        const run = (action: string) => {
-          closeModals();
-          state().setFileBrowserOpen(false);
-          runAction(action, session.id, send, (name) => navigate(`/s/${encodeURIComponent(name)}`));
-        };
-        return editor === 'pane' || editor === 'native' ? (
-          <IconButton
-            key={editor}
-            label={button.label}
-            tooltip={button.label}
-            variant="ghost"
-            size="sm"
-            icon={button.icon}
-            onClick={() => run(action)}
-          />
-        ) : (
-          <EditorMenu
-            key={editor}
-            editor={editor}
-            paneId={activeWindow?.zoomed_pane ?? pane?.id}
-            onToggle={() => run(action)}
-            onShutDown={() => send({ type: 'shut_down_editor', editor })}
-          />
-        );
-      })}
+      {editor === 'pane' || editor === 'native' ? (
+        <IconButton
+          label={editorLabel.label}
+          tooltip={editorLabel.label}
+          variant="ghost"
+          size="sm"
+          icon={editorLabel.icon}
+          onClick={toggleEditor}
+        />
+      ) : (
+        <EditorMenu
+          key={editor}
+          editor={editor}
+          paneId={activeWindow?.zoomed_pane ?? pane?.id}
+          onToggle={toggleEditor}
+          onShutDown={() => send({ type: 'shut_down_editor', editor })}
+        />
+      )}
       {config?.browser && (
         <IconButton
           label="Browser"
