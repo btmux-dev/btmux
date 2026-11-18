@@ -102,7 +102,7 @@ release() {
     [[ -n "${1:-}" ]] && path="download/$1"
     vsh "set -e
         mkdir -p ~/.local/bin
-        curl -fsSL https://github.com/buntec/btmux/releases/$path/btmux-\$(uname -m)-unknown-linux-gnu \
+        curl -fsSL https://github.com/btmux-dev/btmux/releases/$path/btmux-\$(uname -m)-unknown-linux-gnu \
             -o ~/.local/bin/btmux.new
         chmod +x ~/.local/bin/btmux.new && mv ~/.local/bin/btmux.new ~/.local/bin/btmux
         btmux version"

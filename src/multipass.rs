@@ -1112,7 +1112,7 @@ fn install_btmux(instance: &str) -> Result<(), String> {
             crate::config::VERSION
         ));
         let asset = format!("btmux-{arch}-unknown-linux-gnu");
-        let base = "https://github.com/buntec/btmux/releases";
+        let base = "https://github.com/btmux-dev/btmux/releases";
         let script = format!(
             "cd && mkdir -p .cache && {{ curl -fsSL -o {staged} {base}/download/v{version}/{asset} \\
              || {{ echo 'btmux: no release for this version; using the latest' >&2; \\

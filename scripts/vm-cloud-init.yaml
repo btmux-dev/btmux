@@ -25,4 +25,4 @@ runcmd:
     curl -fsSL "https://github.com/neovim/neovim/releases/latest/download/nvim-linux-$arch.tar.gz" | tar -xz -C /opt
     ln -sf "/opt/nvim-linux-$arch/bin/nvim" /usr/local/bin/nvim
   # Git repo for demos to work in.
-  - su - ubuntu -c 'git clone --quiet https://github.com/buntec/btmux.git ~/btmux'
+  - su - ubuntu -c 'git clone --quiet https://github.com/btmux-dev/btmux.git ~/btmux'

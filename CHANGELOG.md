@@ -8,6 +8,18 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Changed
+
+- The Homebrew tap moved to `btmux-dev/tap`: `brew install btmux-dev/tap/btmux`.
+  Existing `buntec/btmux` taps keep updating.
+  ([#164](https://github.com/btmux-dev/btmux/pull/164))
+
+### Fixed
+
+- Markdown previews show images in a paragraph, such as badges, on one line,
+  as GitHub does, rather than one per line.
+  ([#164](https://github.com/btmux-dev/btmux/pull/164))
+
 ## [0.0.209] - 2026-11-18
 
 ### Added

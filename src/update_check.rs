@@ -11,8 +11,8 @@ use crate::config::VERSION;
 use crate::ws::control::{NotificationLevel, ServerMessage};
 use crate::AppState;
 
-const LATEST_RELEASE_API: &str = "https://api.github.com/repos/buntec/btmux/releases/latest";
-const RELEASES_URL: &str = "https://github.com/buntec/btmux/releases/latest";
+const LATEST_RELEASE_API: &str = "https://api.github.com/repos/btmux-dev/btmux/releases/latest";
+const RELEASES_URL: &str = "https://github.com/btmux-dev/btmux/releases/latest";
 const STARTUP_DELAY: Duration = Duration::from_secs(60);
 const CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
 const RETRY_INTERVAL: Duration = Duration::from_secs(60 * 60);

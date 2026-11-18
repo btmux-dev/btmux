@@ -7,7 +7,7 @@ import starlightLlmsTxt from "starlight-llms-txt";
 import { remarkRepoLinks } from "./src/remark-repo-links.mjs";
 import { generateChangelogPage } from "./scripts/changelog-page.mjs";
 
-const repo = "https://github.com/buntec/btmux";
+const repo = "https://github.com/btmux-dev/btmux";
 
 // Served as a GitHub Pages project site, under /btmux.
 const site = "https://btmux-dev.github.io";

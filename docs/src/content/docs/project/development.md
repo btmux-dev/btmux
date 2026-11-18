@@ -8,7 +8,7 @@ Install [Rust](https://rustup.rs), [Bun](https://bun.sh), and
 [`just`](https://github.com/casey/just).
 
 ```sh
-git clone https://github.com/buntec/btmux.git
+git clone https://github.com/btmux-dev/btmux.git
 cd btmux
 just setup  # install dependencies
 just dev    # backend on :8044, frontend on http://localhost:5173
