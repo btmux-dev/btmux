@@ -63,7 +63,7 @@ use clap::{CommandFactory, Parser};
 use notify::{RecursiveMode, Watcher};
 use time::UtcOffset;
 use tokio::sync::RwLock;
-use tracing_subscriber::filter::Targets;
+use tracing_subscriber::filter::{FilterExt, Targets};
 use tracing_subscriber::fmt::time::OffsetTime;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -95,6 +95,25 @@ fn log_directives(level: &str) -> String {
 
 fn make_filter(level: &str) -> EnvFilter {
     EnvFilter::try_new(log_directives(level)).unwrap_or_else(|_| EnvFilter::new("off,btmux=info"))
+}
+
+/// Keeps language servers' records (`lsp.log`'s) out of the other sinks.
+fn not_lsp() -> tracing_subscriber::filter::FilterFn<impl Fn(&tracing::Metadata<'_>) -> bool> {
+    tracing_subscriber::filter::filter_fn(|meta| {
+        meta.target() != native_editor::lsp::process::LOG_TARGET
+    })
+}
+
+/// A daily log file in `dir`, or why it can't be opened (`rolling::daily` panics).
+fn daily_log(
+    dir: &std::path::Path,
+    name: &str,
+) -> Result<tracing_appender::rolling::RollingFileAppender, String> {
+    tracing_appender::rolling::Builder::new()
+        .rotation(tracing_appender::rolling::Rotation::DAILY)
+        .filename_prefix(name)
+        .build(dir)
+        .map_err(|e| format!("cannot open {name} in {}: {e}", dir.display()))
 }
 
 #[tokio::main]
@@ -213,23 +232,31 @@ async fn main() {
         ),
     );
 
-    let console_layer = tracing_subscriber::fmt::layer().with_filter(console_filter);
+    let console_layer = tracing_subscriber::fmt::layer().with_filter(console_filter.and(not_lsp()));
 
     let log_dir = persistence::log_dir();
-    let file_layer = log_dir.as_ref().map(|dir| {
-        tracing_subscriber::fmt::layer()
-            .with_writer(tracing_appender::rolling::daily(dir, "btmux.log"))
-            .with_ansi(false)
-            .with_timer(local_time.clone())
-            .with_filter(file_filter)
-    });
+    let mut log_errors = Vec::new();
+    let mut open_log = |dir: &std::path::Path, name: &str| {
+        daily_log(dir, name).map_err(|e| log_errors.push(e)).ok()
+    };
+    let file_layer = log_dir
+        .as_ref()
+        .and_then(|dir| open_log(dir, "btmux.log"))
+        .map(|appender| {
+            tracing_subscriber::fmt::layer()
+                .with_writer(appender)
+                .with_ansi(false)
+                .with_timer(local_time.clone())
+                .with_filter(file_filter.and(not_lsp()))
+        });
     // Language servers' stderr, starts, and exits, in their own file.
     let lsp_layer = log_dir
         .as_ref()
         .filter(|_| file_level.trim() != "off")
-        .map(|dir| {
+        .and_then(|dir| open_log(dir, "lsp.log"))
+        .map(|appender| {
             tracing_subscriber::fmt::layer()
-                .with_writer(tracing_appender::rolling::daily(dir, "lsp.log"))
+                .with_writer(appender)
                 .with_ansi(false)
                 .with_timer(local_time)
                 .with_level(false)
@@ -244,6 +271,9 @@ async fn main() {
         .with(file_layer)
         .with(lsp_layer)
         .init();
+    for error in log_errors {
+        tracing::warn!("{error}");
+    }
 
     if let Some(config::SubCommand::Version) = args.command {
         println!("btmux {}", config::VERSION);

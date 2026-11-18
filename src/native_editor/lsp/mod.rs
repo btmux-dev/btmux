@@ -1150,7 +1150,6 @@ impl super::Hub {
         if server.generation != generation || server.handle.is_none() {
             return;
         }
-        tracing::info!(server = server.name, "{}", exit.message);
         server.handle = None;
         server.progress.clear();
         // The process's registrations and prompts went with it; a restarted
