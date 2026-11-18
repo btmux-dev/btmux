@@ -268,15 +268,15 @@ jobs:
 
       - uses: actions/checkout@v7
         with:
-          repository: buntec/homebrew-btmux
+          repository: btmux-dev/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: homebrew-btmux
+          path: homebrew-tap
 
       - name: Update formula and cask
-        run: ./scripts/update-homebrew-tap.sh homebrew-btmux "${{ github.ref_name }}"
+        run: ./scripts/update-homebrew-tap.sh homebrew-tap "${{ github.ref_name }}"
 
       - name: Push tap
-        working-directory: homebrew-btmux
+        working-directory: homebrew-tap
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'

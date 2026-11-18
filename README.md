@@ -34,7 +34,7 @@ in the browser (including on mobile), on macOS, Linux, and Windows. Powered by
 **Desktop app** on macOS:
 
 ```sh
-brew install --cask buntec/btmux/btmux
+brew install --cask btmux-dev/tap/btmux
 ```
 
 On Linux and Windows, get the `.deb` or the setup `.exe` from
@@ -45,7 +45,7 @@ experimental.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/btmux-dev/btmux/main/scripts/install.sh | bash
-# or: brew install buntec/btmux/btmux
+# or: brew install btmux-dev/tap/btmux
 ```
 
 [Installation](https://btmux-dev.github.io/btmux/start/installation/) covers

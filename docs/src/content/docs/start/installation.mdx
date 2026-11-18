@@ -18,7 +18,7 @@ Windows.
 <TabItem label="macOS">
 
 ```sh
-brew install --cask buntec/btmux/btmux
+brew install --cask btmux-dev/tap/btmux
 ```
 
 The app is signed and notarized. Intel Macs are not supported. To use its
@@ -66,7 +66,7 @@ browser.
 <TabItem label="macOS">
 
 ```sh
-brew install buntec/btmux/btmux
+brew install btmux-dev/tap/btmux
 ```
 
 Or use the install script, as on Linux.
@@ -80,7 +80,7 @@ curl -fsSL https://raw.githubusercontent.com/btmux-dev/btmux/main/scripts/instal
 
 It downloads the latest release binary to `~/.local/bin`. Set
 `BTMUX_INSTALL_DIR` to choose another location. Homebrew works too:
-`brew install buntec/btmux/btmux`.
+`brew install btmux-dev/tap/btmux`.
 
 </TabItem>
 <TabItem label="Windows">
@@ -154,7 +154,7 @@ Upgrade with whatever you installed with, then move the running server to the
 new binary:
 
 ```sh
-brew update && brew upgrade buntec/btmux/btmux   # or run the install script again
+brew update && brew upgrade btmux   # or run the install script again
 btmux upgrade
 ```
 
@@ -163,7 +163,7 @@ btmux upgrade
 restores the layout. Windows has no in-place upgrade: quit btmux, replace it,
 and start it again.
 
-For the desktop app, quit it, then run `brew upgrade --cask buntec/btmux/btmux`
+For the desktop app, quit it, then run `brew upgrade --cask btmux`
 or the new installer.
 
 ## Other ways to install
