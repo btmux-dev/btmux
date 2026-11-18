@@ -14,13 +14,13 @@ import { EditorState, Facet, Prec, StateEffect, StateField, type Extension } fro
 import { EditorView, keymap, showPanel, type Panel, type Tooltip } from '@codemirror/view';
 import { getIndentUnit, indentUnit, LanguageDescription } from '@codemirror/language';
 import { setDiagnostics, type Diagnostic } from '@codemirror/lint';
-import { languages } from '@codemirror/language-data';
 import DOMPurify from 'dompurify';
 import { useStore } from '../../state/store';
 import type { Overlay } from '../../state/types';
 import type { EditorServerMessage } from '../../generated/protocol';
 import { IS_MAC } from '../nvimKeys';
 import { serverCompletions } from './completion';
+import { languages } from './languages';
 import { offset, type Position, type Range, type TextEdit } from './lspText';
 import { inlineCompletions } from './inlineCompletion';
 import { editorConnection } from './connection';

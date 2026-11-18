@@ -1,5 +1,15 @@
 import { LanguageDescription, type LanguageSupport } from '@codemirror/language';
-import { languages } from '@codemirror/language-data';
+import { languages as dataLanguages } from '@codemirror/language-data';
+
+/** language-data's languages plus ones it lacks. */
+export const languages = [
+  ...dataLanguages,
+  LanguageDescription.of({
+    name: 'Nix',
+    extensions: ['nix'],
+    load: () => import('./nix').then((m) => m.nix()),
+  }),
+];
 
 /** The language for a file name, loaded on first use. */
 export async function languageFor(path: string): Promise<{ name: string; support: LanguageSupport } | null> {

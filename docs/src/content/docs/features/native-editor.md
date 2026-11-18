@@ -78,7 +78,10 @@ config = { basedpyright = { analysis = { typeCheckingMode = "strict" } } }
 ```
 
 `config` answers the server's `workspace/configuration` requests. Changes
-apply to servers started afterward. Files in a
+apply to servers started afterward. nil releases since 2025-06-13 format with
+nixfmt by default (Nixpkgs builds in its own); for older ones, or another
+formatter, set `config = { nil = { formatting = { command = ["alejandra"] } } }`
+under `[language-server.nil]`, along with `command = "nil"`. Files in a
 [sandboxed session](sandbox.md)'s mounts get their servers inside the VM.
 
 Diagnostics, semantic highlighting, inlay hints, code lenses, folding, and
