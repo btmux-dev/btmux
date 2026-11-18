@@ -23,6 +23,7 @@ actions, saved state, and API types can change in any release.
 - A `[[language]]` table's `file-types` are extensions only; whole file names,
   such as `Makefile`, go in `file-names` and match ignoring case.
   ([#161](https://github.com/btmux-dev/btmux/pull/161))
+- The agent view shows agent logos in their brand colors instead of gray.
 
 ## [0.0.208] - 2026-11-18
 
