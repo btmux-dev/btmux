@@ -431,8 +431,24 @@ try {
   for (const [text, tokenColor] of selected.tokens)
     if (tokenColor) assert.equal(tokenColor, selected.row, `${text}: ${JSON.stringify(selected)}`);
   assert.equal(await signature.evaluate((el) => getComputedStyle(el).fontStyle), 'normal');
-  await page.keyboard.press('Escape');
   console.log('PASS highlighted completion details');
+
+  // Ctrl-N and Ctrl-P move through completions, wrapping, as in vim; Ctrl-P
+  // isn't quick open (Mod-p off macOS) while they're open.
+  const selectedLabel = () => completions.locator('li[aria-selected] .cm-completionLabel').textContent();
+  const first = await selectedLabel();
+  await page.keyboard.press('Control+n');
+  await until('Ctrl-N moved', async () => (await selectedLabel()) !== first);
+  await page.keyboard.press('Control+n');
+  await until('Ctrl-N wrapped', async () => (await selectedLabel()) === first);
+  await page.keyboard.press('Control+p');
+  await until('Ctrl-P wrapped', async () => (await selectedLabel()) !== first);
+  assert.equal(await pane.getByRole('combobox', { name: 'Go to file' }).count(), 0);
+  // Each kind has its own Nerd Font icon.
+  const fieldIcon = completions.locator('li', { hasText: 'fakeField' }).locator('.cm-completionIcon-field');
+  assert.equal(await fieldIcon.evaluate((el) => getComputedStyle(el, '::after').content), JSON.stringify('\ueb5f'));
+  await page.keyboard.press('Escape');
+  console.log('PASS Ctrl-N and Ctrl-P move through completions');
 
   // File operations: a file created and edited, the shown one moved with its tab.
   const moving = join(dir, 'move.fake');

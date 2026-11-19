@@ -8,6 +8,12 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Added
+
+- `Ctrl-n` and `Ctrl-p` move through the native editor's completions, quick
+  open, and other pickers, as in Vim.
+  ([#174](https://github.com/btmux-dev/btmux/pull/174))
+
 ### Changed
 
 - The native editor's completions use the editor's font and show a colored

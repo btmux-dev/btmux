@@ -41,6 +41,11 @@ keep `Mod-w` and `Mod-t`, so the editor takes them only in the desktop app:
 Quick open starts with open and recent files. Append `:42` to open a file at
 line 42, or enter `:42` alone to jump there in the current file.
 
+In the completion menu, quick open, and other pickers, `Ctrl-n` and `Ctrl-p`
+move down and up, as in Vim, besides the arrow keys. While completions are
+open, `Ctrl-p` moves in them rather than opening quick open. Off macOS,
+browsers keep `Ctrl-n` for a new window; the desktop app doesn't.
+
 ![Quick open in the native editor, listing files that match what was typed](../../../assets/screenshots/editor-quick-open-dark.png)
 ![Quick open in the native editor, listing files that match what was typed](../../../assets/screenshots/editor-quick-open-light.png)
 

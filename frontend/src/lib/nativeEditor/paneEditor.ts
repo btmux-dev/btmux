@@ -15,7 +15,14 @@ import {
 import { Compartment, EditorSelection, EditorState, Prec, type Extension } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { bracketMatching, foldGutter, foldKeymap, indentOnInput, indentUnit } from '@codemirror/language';
-import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
+import {
+  autocompletion,
+  closeBrackets,
+  closeBracketsKeymap,
+  completionKeymap,
+  currentCompletions,
+  moveCompletionSelection,
+} from '@codemirror/autocomplete';
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
 import { forEachDiagnostic, lintKeymap } from '@codemirror/lint';
 import { Doc, type DocStatus } from './doc';
@@ -50,6 +57,17 @@ let vimLoader: Promise<Vim> | null = null;
 
 /** The keymap scope of chords run ahead of vim (`keydown`). */
 const EARLY_SCOPE = 'btmux-early';
+
+/**
+ * Vim's Ctrl-N and Ctrl-P through open completions, ahead of vim and of Mod-p
+ * (Ctrl-P off macOS). Taken even before CodeMirror's interaction delay lets
+ * the move happen, so a quick Ctrl-P never opens quick open instead.
+ */
+const cycleCompletion = (forward: boolean) => (view: EditorView) => {
+  if (!currentCompletions(view.state).length) return false;
+  moveCompletionSelection(forward)(view);
+  return true;
+};
 
 /** Longest wait for formatting before a save goes ahead without it. */
 const FORMAT_TIMEOUT_MS = 3000;
@@ -217,6 +235,8 @@ export class PaneEditor {
         blur: () => this.keys.reset(),
       }),
       keymap.of([
+        { key: 'Ctrl-n', run: cycleCompletion(true), preventDefault: true, scope: EARLY_SCOPE },
+        { key: 'Ctrl-p', run: cycleCompletion(false), preventDefault: true, scope: EARLY_SCOPE },
         { key: 'Mod-p', run: () => this.quickOpen(), preventDefault: true, scope: EARLY_SCOPE },
         // Mod-W closes the browser tab.
         { key: 'Alt-w', run: () => this.close(false), preventDefault: true, scope: EARLY_SCOPE },
