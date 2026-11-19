@@ -11,6 +11,7 @@ describe('groupAgents', () => {
     { id: 'e', state: 'blocked', since: 20 },
     { id: 'f', state: 'working', since: 30 },
     { id: 'g', state: 'done', since: null },
+    { id: 'h', state: 'waiting', since: 40 },
   ];
   const grouped = groupAgents(
     agents,
@@ -19,7 +20,7 @@ describe('groupAgents', () => {
   ).map(([group, members]) => [group, members.map((agent) => agent.id)]);
 
   test('orders groups by urgency and drops empty ones', () => {
-    expect(grouped.map(([group]) => group)).toEqual(['blocked', 'done', 'working', 'idle']);
+    expect(grouped.map(([group]) => group)).toEqual(['blocked', 'done', 'working', 'waiting', 'idle']);
     expect(
       groupAgents(
         [],
@@ -34,6 +35,7 @@ describe('groupAgents', () => {
       ['blocked', ['e', 'c']],
       ['done', ['g']],
       ['working', ['a', 'f']],
+      ['waiting', ['h']],
       ['idle', ['d', 'b']],
     ]);
   });

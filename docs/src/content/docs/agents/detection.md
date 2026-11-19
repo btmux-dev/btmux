@@ -62,7 +62,9 @@ btmux uses these rules to resolve conflicting reports.
   background work for 700 ms is shown as `waiting`, whatever reported the
   state: Claude Code reports such turns as working over OSC 7501. The
   lifecycle keeps its own state underneath, so the agent is `working` again
-  once its screen shows a turn.
+  once its screen shows a turn, or a hook starts one: only a newer screen can
+  then show it waiting. A `done` agent showing that screen waits as soon as
+  its result is seen.
 
 States are not saved: they reset when the server restarts.
 

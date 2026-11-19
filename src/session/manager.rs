@@ -1076,10 +1076,7 @@ impl SessionManager {
             return unread;
         };
         if agent.status.state == AgentState::Done {
-            agent.set_state(AgentState::Idle);
-            agent.status.message = None;
-            // Idle with background work may be waiting; the next scan says.
-            agent.invalidate_screen();
+            agent.acknowledge();
             // Seen, so later records can't bring the result back.
             if let Some(pane) = self.find_pane(pane_id) {
                 pane.pty.forget_program_results();
