@@ -82,6 +82,16 @@ pub struct Address {
     pub address: String,
 }
 
+#[cfg_attr(test, utoipa::path(
+    get,
+    path = "/api/system",
+    tag = "Server",
+    operation_id = "system-info",
+    summary = "Describe the server host",
+    responses(
+        (status = 200, description = "OS, CPU, memory, disks, and shell", body = SystemInfo),
+    ),
+))]
 pub async fn handle(State(state): State<AppState>) -> Json<SystemInfo> {
     Json(report(&state).await)
 }

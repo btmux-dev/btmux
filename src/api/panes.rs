@@ -64,6 +64,16 @@ pub fn router() -> Router<AppState> {
         )
 }
 
+#[cfg_attr(test, utoipa::path(
+    get,
+    path = "/api/panes",
+    tag = "Panes",
+    operation_id = "list-panes",
+    summary = "List panes",
+    responses(
+        (status = 200, description = "Every pane, with its window and session", body = Vec<crate::session::PaneInfo>),
+    ),
+))]
 pub(crate) async fn api_list_panes(State(state): State<AppState>) -> Response {
     Json(state.read().await.pane_infos()).into_response()
 }
@@ -74,7 +84,8 @@ pub(crate) struct SplitPaneByIdRequest {
     /// Where the new pane goes: left, right, up, or down.
     direction: String,
     cwd: Option<String>,
-    /// Make the new pane active. Default true.
+    /// Make the new pane active.
+    #[cfg_attr(test, schema(default = true))]
     select: Option<bool>,
 }
 
@@ -96,6 +107,21 @@ pub(crate) struct SplitPaneResponse {
 }
 
 /// Splits a pane in any window, returning the new pane's ID.
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/panes/{pane_id}/split",
+    tag = "Panes",
+    operation_id = "split-a-pane",
+    summary = "Split a pane",
+    params(
+        ("pane_id", description = "Pane ID"),
+    ),
+    responses(
+        (status = 200, description = "The new pane", body = SplitPaneResponse),
+        (status = 400, description = "Invalid direction", body = String, content_type = "text/plain"),
+        (status = 404, description = "No such pane"),
+    ),
+))]
 pub(crate) async fn api_split_pane_by_id(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -123,6 +149,22 @@ pub(crate) async fn api_split_pane_by_id(
 
 /// Kills a pane in any window; its last pane closes the window, and the last
 /// window the session.
+#[cfg_attr(test, utoipa::path(
+    delete,
+    path = "/api/panes/{pane_id}",
+    tag = "Panes",
+    operation_id = "kill-a-pane",
+    summary = "Kill a pane",
+    description = "Kills a pane in any window; its last pane closes the window, and the last window the session.",
+    params(
+        ("pane_id", description = "Pane ID"),
+    ),
+    responses(
+        (status = 204, description = "Done"),
+        (status = 404, description = "No such pane"),
+        (status = 409, description = "The pane can't be closed", body = String, content_type = "text/plain"),
+    ),
+))]
 pub(crate) async fn api_kill_pane_by_id(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -141,6 +183,21 @@ pub(crate) async fn api_kill_pane_by_id(
 }
 
 /// Makes the pane active and its window the session's active window.
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/panes/{pane_id}/select",
+    tag = "Panes",
+    operation_id = "select-a-pane",
+    summary = "Select a pane",
+    description = "Makes the pane active and its window the session's active window.",
+    params(
+        ("pane_id", description = "Pane ID"),
+    ),
+    responses(
+        (status = 204, description = "Done"),
+        (status = 404, description = "No such pane"),
+    ),
+))]
 pub(crate) async fn api_select_pane_by_id(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -175,6 +232,23 @@ pub(crate) struct SplitPaneRequest {
     direction: String,
 }
 
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/sessions/{session_id}/panes/{pane_id}/split",
+    tag = "Session panes",
+    operation_id = "split-an-active-window-pane",
+    summary = "Split an active-window pane",
+    params(
+        ("session_id", description = "Session ID"),
+        ("pane_id", description = "Pane ID"),
+    ),
+    responses(
+        (status = 204, description = "Done"),
+        (status = 400, description = "Invalid direction", body = String, content_type = "text/plain"),
+        (status = 404, description = "No such session"),
+        (status = 409, description = "The pane isn't in the session's active window"),
+    ),
+))]
 pub(crate) async fn api_split_pane(
     State(state): State<AppState>,
     Path((session_id, pane_id)): Path<(Uuid, Uuid)>,
@@ -194,6 +268,22 @@ pub(crate) async fn api_split_pane(
     StatusCode::NO_CONTENT.into_response()
 }
 
+#[cfg_attr(test, utoipa::path(
+    delete,
+    path = "/api/sessions/{session_id}/panes/{pane_id}",
+    tag = "Session panes",
+    operation_id = "kill-an-active-window-pane",
+    summary = "Kill an active-window pane",
+    params(
+        ("session_id", description = "Session ID"),
+        ("pane_id", description = "Pane ID"),
+    ),
+    responses(
+        (status = 204, description = "Done"),
+        (status = 404, description = "No such session"),
+        (status = 409, description = "The pane isn't in the session's active window"),
+    ),
+))]
 pub(crate) async fn api_kill_pane(
     State(state): State<AppState>,
     Path((session_id, pane_id)): Path<(Uuid, Uuid)>,
@@ -209,6 +299,22 @@ pub(crate) async fn api_kill_pane(
     StatusCode::NO_CONTENT.into_response()
 }
 
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/sessions/{session_id}/panes/{pane_id}/zoom",
+    tag = "Session panes",
+    operation_id = "zoom-a-pane",
+    summary = "Zoom a pane",
+    params(
+        ("session_id", description = "Session ID"),
+        ("pane_id", description = "Pane ID"),
+    ),
+    responses(
+        (status = 204, description = "Done"),
+        (status = 404, description = "No such session"),
+        (status = 409, description = "The pane isn't in the session's active window"),
+    ),
+))]
 pub(crate) async fn api_zoom_pane(
     State(state): State<AppState>,
     Path((session_id, pane_id)): Path<(Uuid, Uuid)>,
@@ -224,6 +330,22 @@ pub(crate) async fn api_zoom_pane(
     StatusCode::NO_CONTENT.into_response()
 }
 
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/sessions/{session_id}/panes/{pane_id}/select",
+    tag = "Session panes",
+    operation_id = "select-an-active-window-pane",
+    summary = "Select an active-window pane",
+    params(
+        ("session_id", description = "Session ID"),
+        ("pane_id", description = "Pane ID"),
+    ),
+    responses(
+        (status = 204, description = "Done"),
+        (status = 404, description = "No such session"),
+        (status = 409, description = "The pane isn't in the session's active window"),
+    ),
+))]
 pub(crate) async fn api_select_pane(
     State(state): State<AppState>,
     Path((session_id, pane_id)): Path<(Uuid, Uuid)>,
@@ -245,6 +367,21 @@ pub(crate) struct NavigateRequest {
     direction: String,
 }
 
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/sessions/{session_id}/panes/navigate",
+    tag = "Session panes",
+    operation_id = "move-to-a-neighboring-pane",
+    summary = "Move to a neighboring pane",
+    description = "Selects the pane in `direction` (`left`, `right`, `up`, or `down`) from the active one.",
+    params(
+        ("session_id", description = "Session ID"),
+    ),
+    responses(
+        (status = 204, description = "Done"),
+        (status = 404, description = "No such session"),
+    ),
+))]
 pub(crate) async fn api_navigate(
     State(state): State<AppState>,
     Path(session_id): Path<Uuid>,
@@ -267,6 +404,21 @@ pub(crate) struct DeltaRequest {
     delta: i32,
 }
 
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/sessions/{session_id}/panes/cycle",
+    tag = "Session panes",
+    operation_id = "cycle-panes",
+    summary = "Cycle panes",
+    description = "Selects the pane `delta` places on in layout order.",
+    params(
+        ("session_id", description = "Session ID"),
+    ),
+    responses(
+        (status = 204, description = "Done"),
+        (status = 404, description = "No such session"),
+    ),
+))]
 pub(crate) async fn api_cycle_pane(
     State(state): State<AppState>,
     Path(session_id): Path<Uuid>,
@@ -283,6 +435,21 @@ pub(crate) async fn api_cycle_pane(
     StatusCode::NO_CONTENT.into_response()
 }
 
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/sessions/{session_id}/panes/swap",
+    tag = "Session panes",
+    operation_id = "swap-panes",
+    summary = "Swap panes",
+    description = "Swaps the active pane with the one `delta` places on in layout order.",
+    params(
+        ("session_id", description = "Session ID"),
+    ),
+    responses(
+        (status = 204, description = "Done"),
+        (status = 404, description = "No such session"),
+    ),
+))]
 pub(crate) async fn api_swap_pane(
     State(state): State<AppState>,
     Path(session_id): Path<Uuid>,
@@ -305,6 +472,22 @@ pub(crate) struct SelectLayoutRequest {
     preset: String,
 }
 
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/sessions/{session_id}/layout",
+    tag = "Session panes",
+    operation_id = "select-a-layout",
+    summary = "Select a layout",
+    description = "Rearranges the active window's panes in a named preset.",
+    params(
+        ("session_id", description = "Session ID"),
+    ),
+    responses(
+        (status = 204, description = "Done"),
+        (status = 400, description = "Unknown preset"),
+        (status = 404, description = "No such session"),
+    ),
+))]
 pub(crate) async fn api_select_layout(
     State(state): State<AppState>,
     Path(session_id): Path<Uuid>,
@@ -324,6 +507,20 @@ pub(crate) async fn api_select_layout(
     StatusCode::NO_CONTENT.into_response()
 }
 
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/sessions/{session_id}/layout/next",
+    tag = "Session panes",
+    operation_id = "next-layout",
+    summary = "Next layout",
+    params(
+        ("session_id", description = "Session ID"),
+    ),
+    responses(
+        (status = 204, description = "Done"),
+        (status = 404, description = "No such session"),
+    ),
+))]
 pub(crate) async fn api_next_layout(
     State(state): State<AppState>,
     Path(session_id): Path<Uuid>,

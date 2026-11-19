@@ -69,7 +69,7 @@
             }
           },
           "400": {
-            "description": "Invalid runtime",
+            "description": "Invalid runtime; or a malformed JSON body",
             "content": {
               "text/plain": {
                 "schema": {
@@ -80,6 +80,26 @@
           },
           "401": {
             "description": "Missing or wrong access token"
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       },
@@ -140,6 +160,16 @@
               }
             }
           },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
@@ -170,6 +200,16 @@
           "204": {
             "description": "Done"
           },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
@@ -177,7 +217,14 @@
             "description": "No such session"
           },
           "409": {
-            "description": "It is the last session"
+            "description": "It is the last session",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -222,11 +269,41 @@
               }
             }
           },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such session"
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -271,11 +348,41 @@
               }
             }
           },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such session"
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -314,11 +421,41 @@
           "204": {
             "description": "Done"
           },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such session"
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -364,11 +501,41 @@
               }
             }
           },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such session"
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -397,6 +564,16 @@
           "204": {
             "description": "Done"
           },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
@@ -404,7 +581,14 @@
             "description": "No such session"
           },
           "409": {
-            "description": "It is the session's last window"
+            "description": "It is the session's last window",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -432,6 +616,16 @@
           "204": {
             "description": "Done"
           },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
@@ -439,7 +633,14 @@
             "description": "No such window"
           },
           "409": {
-            "description": "It is the session's last window"
+            "description": "It is the session's last window",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -466,6 +667,16 @@
         "responses": {
           "204": {
             "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or wrong access token"
@@ -517,13 +728,40 @@
             }
           },
           "400": {
-            "description": "Empty name"
+            "description": "Empty name; or a malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such window"
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -596,13 +834,40 @@
             }
           },
           "400": {
-            "description": "Invalid direction"
+            "description": "Invalid direction; or a malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such pane"
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -613,6 +878,7 @@
           "Panes"
         ],
         "summary": "Kill a pane",
+        "description": "Kills a pane in any window; its last pane closes the window, and the last window the session.",
         "operationId": "kill-a-pane",
         "parameters": [
           {
@@ -630,6 +896,16 @@
           "204": {
             "description": "Done"
           },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
@@ -637,7 +913,14 @@
             "description": "No such pane"
           },
           "409": {
-            "description": "The pane can't be closed"
+            "description": "The pane can't be closed",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -648,6 +931,7 @@
           "Panes"
         ],
         "summary": "Select a pane",
+        "description": "Makes the pane active and its window the session's active window.",
         "operationId": "select-a-pane",
         "parameters": [
           {
@@ -665,6 +949,16 @@
           "204": {
             "description": "Done"
           },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
@@ -680,6 +974,7 @@
           "Panes"
         ],
         "summary": "Focus a pane",
+        "description": "Switches every client to the pane's window and session.",
         "operationId": "focus-a-pane",
         "parameters": [
           {
@@ -696,6 +991,16 @@
         "responses": {
           "204": {
             "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or wrong access token"
@@ -740,11 +1045,138 @@
           "204": {
             "description": "Done"
           },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such pane"
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/open-editor": {
+      "post": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Open an editor",
+        "description": "Opens `path`, if given, in `editor` (else the `editor` setting) and shows that editor over the pane in every client.",
+        "operationId": "open-an-editor",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenEditorRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Whether it opened; with the `pane` editor it doesn't, and the caller runs `$EDITOR` itself, as `btmux open-editor` does",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenEditorReply"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
+          "404": {
+            "description": "No such pane, or the native editor can't open the file",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The built-in Neovim couldn't open the file",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -793,7 +1225,14 @@
             "description": "Done"
           },
           "400": {
-            "description": "Invalid direction"
+            "description": "Invalid direction; or a malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or wrong access token"
@@ -803,6 +1242,26 @@
           },
           "409": {
             "description": "The pane isn't in the session's active window"
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -839,6 +1298,16 @@
         "responses": {
           "204": {
             "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or wrong access token"
@@ -885,6 +1354,16 @@
           "204": {
             "description": "Done"
           },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
@@ -929,6 +1408,16 @@
         "responses": {
           "204": {
             "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or wrong access token"
@@ -976,11 +1465,41 @@
           "204": {
             "description": "Done"
           },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such session"
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -1019,11 +1538,41 @@
           "204": {
             "description": "Done"
           },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such session"
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -1062,11 +1611,41 @@
           "204": {
             "description": "Done"
           },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such session"
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -1106,13 +1685,40 @@
             "description": "Done"
           },
           "400": {
-            "description": "Unknown preset"
+            "description": "Unknown preset; or a malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such session"
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -1140,6 +1746,16 @@
           "204": {
             "description": "Done"
           },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
@@ -1155,6 +1771,7 @@
           "Pane I/O"
         ],
         "summary": "Send input",
+        "description": "Sends `text` verbatim, then tmux-style `keys`, starting the pane's shell if no client has yet.",
         "operationId": "send-input",
         "parameters": [
           {
@@ -1190,7 +1807,7 @@
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "An unknown key name, no text or keys, or more than 64 KiB; or a malformed ID or JSON body",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1203,10 +1820,27 @@
             "description": "Missing or wrong access token"
           },
           "404": {
-            "description": "No such pane"
+            "description": "No such pane",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
-          "409": {
-            "description": "Conflict",
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1216,7 +1850,7 @@
             }
           },
           "500": {
-            "description": "The operation failed",
+            "description": "The shell failed to start, or the pane closed",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1234,6 +1868,7 @@
           "Pane I/O"
         ],
         "summary": "Read raw output",
+        "description": "The pane's retained output as the terminal emulator receives it; `capture` renders it as text.",
         "operationId": "read-raw-output",
         "parameters": [
           {
@@ -1280,7 +1915,14 @@
             }
           },
           "400": {
-            "description": "The shell failed to start"
+            "description": "The shell failed to start; or a malformed ID or query parameter",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or wrong access token"
@@ -1297,6 +1939,7 @@
           "Pane I/O"
         ],
         "summary": "Capture the screen",
+        "description": "The pane as rendered plain text, like `tmux capture-pane -pJ`.",
         "operationId": "capture-the-screen",
         "parameters": [
           {
@@ -1351,7 +1994,7 @@
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "A malformed ID or query parameter",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1364,10 +2007,7 @@
             "description": "Missing or wrong access token"
           },
           "404": {
-            "description": "No such pane"
-          },
-          "409": {
-            "description": "Conflict",
+            "description": "No such pane",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1377,7 +2017,7 @@
             }
           },
           "500": {
-            "description": "The operation failed",
+            "description": "The shell failed to start",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1458,7 +2098,7 @@
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "The prompt is more than 64 KiB; or a malformed ID or JSON body",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1471,10 +2111,37 @@
             "description": "Missing or wrong access token"
           },
           "404": {
-            "description": "No such pane"
+            "description": "No such pane",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "409": {
-            "description": "Conflict",
+            "description": "No agent, a dialog is waiting for an answer, the agent is busy (with `wait`), or the agent can't take a multi-line prompt",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1484,7 +2151,7 @@
             }
           },
           "500": {
-            "description": "The operation failed",
+            "description": "Writing to the pane failed",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1526,6 +2193,7 @@
           {
             "name": "timeout_ms",
             "in": "query",
+            "description": "Milliseconds: 10 minutes by default, at most an hour.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -1546,7 +2214,7 @@
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "An unknown state; or a malformed ID or query parameter",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1559,10 +2227,7 @@
             "description": "Missing or wrong access token"
           },
           "404": {
-            "description": "No such pane"
-          },
-          "409": {
-            "description": "Conflict",
+            "description": "No such pane",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1572,7 +2237,7 @@
             }
           },
           "500": {
-            "description": "The operation failed",
+            "description": "The server is shutting down",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1610,6 +2275,16 @@
               "application/json": {
                 "schema": {
                   "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -1655,11 +2330,41 @@
           "204": {
             "description": "Done"
           },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such pane"
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       },
@@ -1684,6 +2389,16 @@
         "responses": {
           "204": {
             "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or wrong access token"
@@ -1756,6 +2471,7 @@
           "Worktrees"
         ],
         "summary": "Create a worktree",
+        "description": "Creates a Git worktree for `branch` beside the pane's repository (the `worktree-path` setting) and opens a window in it.",
         "operationId": "create-a-worktree",
         "parameters": [
           {
@@ -1791,7 +2507,7 @@
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "An invalid branch name, or no such remote branch; or a malformed ID or JSON body",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1804,10 +2520,37 @@
             "description": "Missing or wrong access token"
           },
           "404": {
-            "description": "No such pane"
+            "description": "No such pane",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "409": {
-            "description": "Conflict",
+            "description": "The pane isn't in a local Git repository, the worktree's path exists, or the branch tracks another remote branch",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1817,7 +2560,7 @@
             }
           },
           "500": {
-            "description": "The operation failed",
+            "description": "Git failed",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1833,6 +2576,7 @@
           "Worktrees"
         ],
         "summary": "Remove a worktree",
+        "description": "Removes the Git worktree the pane is in, closing every pane in it.",
         "operationId": "remove-a-worktree",
         "parameters": [
           {
@@ -1858,7 +2602,7 @@
             }
           },
           "400": {
-            "description": "Invalid request",
+            "description": "A malformed ID",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1871,10 +2615,17 @@
             "description": "Missing or wrong access token"
           },
           "404": {
-            "description": "No such pane"
+            "description": "No such pane",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "409": {
-            "description": "Conflict",
+            "description": "The pane isn't in a linked worktree, the worktree is locked, or a pane in it is running a program",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1884,7 +2635,7 @@
             }
           },
           "500": {
-            "description": "The operation failed",
+            "description": "Git failed",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1938,7 +2689,7 @@
             }
           },
           "400": {
-            "description": "No command",
+            "description": "No command; or a malformed ID or JSON body",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1951,16 +2702,47 @@
             "description": "Missing or wrong access token"
           },
           "404": {
-            "description": "No such pane"
+            "description": "No such pane",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "409": {
-            "description": "No client is showing the pane"
+            "description": "No client is showing the pane",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "410": {
-            "description": "The popup closed before it started"
+            "description": "The popup closed before it started",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "422": {
-            "description": "The program can't start",
+            "description": "The program can't start; or a body that doesn't match its schema",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1970,7 +2752,14 @@
             }
           },
           "423": {
-            "description": "The pane already has a popup open"
+            "description": "The pane already has a popup open",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -2015,6 +2804,16 @@
               }
             }
           },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
@@ -2022,13 +2821,27 @@
             "description": "No such popup"
           },
           "409": {
-            "description": "No client showed the popup"
+            "description": "No client showed the popup",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "410": {
-            "description": "The server stopped waiting"
+            "description": "The server stopped waiting; ask again"
           },
           "422": {
-            "description": "The program failed to start"
+            "description": "The program failed to start",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -2055,11 +2868,38 @@
           "204": {
             "description": "Done"
           },
+          "400": {
+            "description": "A malformed JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "422": {
-            "description": "Empty title"
+            "description": "Empty title; or a body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
@@ -2098,11 +2938,41 @@
           "204": {
             "description": "Done"
           },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such pane"
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       },
@@ -2128,11 +2998,45 @@
           "204": {
             "description": "Done"
           },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Missing or wrong access token"
           },
           "404": {
             "description": "No such pane"
+          }
+        }
+      }
+    },
+    "/api/info": {
+      "get": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "Describe the server",
+        "operationId": "server-info",
+        "responses": {
+          "200": {
+            "description": "Version, files, and listening address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InfoReply"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token"
           }
         }
       }
@@ -2185,6 +3089,84 @@
         }
       }
     },
+    "/api/server/upgrade": {
+      "post": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "Upgrade in place",
+        "description": "Re-executes the server as another btmux binary, as `btmux upgrade` does, keeping sessions, shells, and scrollback. `GET /api/info` then reports the new version, or `upgrade_error` if the exec failed.",
+        "operationId": "upgrade",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpgradeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Upgrading; clients reconnect to the new binary"
+          },
+          "400": {
+            "description": "A malformed JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token"
+          },
+          "409": {
+            "description": "This server can't hand off to that binary; only a restart can",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "An upgrade is in progress, or the built-in Neovim has unsaved changes",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/server/shutdown": {
       "post": {
         "tags": [
@@ -2195,6 +3177,30 @@
         "responses": {
           "202": {
             "description": "Stopping; every shell closes"
+          },
+          "401": {
+            "description": "Missing or wrong access token"
+          }
+        }
+      }
+    },
+    "/api/openapi.json": {
+      "get": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "This API's OpenAPI document",
+        "operationId": "openapi",
+        "responses": {
+          "200": {
+            "description": "The OpenAPI document for this server's version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing or wrong access token"
@@ -2572,7 +3578,8 @@
               "boolean",
               "null"
             ],
-            "description": "Make it the active window. Default true."
+            "description": "Make it the active window.",
+            "default": true
           }
         }
       },
@@ -2607,7 +3614,8 @@
               "boolean",
               "null"
             ],
-            "description": "Make its window the active one. Default true."
+            "description": "Make its window the active one.",
+            "default": true
           }
         }
       },
@@ -2670,6 +3678,16 @@
             "type": "boolean"
           }
         }
+      },
+      "Editor": {
+        "type": "string",
+        "description": "The editor `prefix + e`, `prefix + [`, the file browser, Git mode, and\n`btmux open-editor` open. Unset, it is the native editor.",
+        "enum": [
+          "native",
+          "pane",
+          "neovim",
+          "vscode"
+        ]
       },
       "FileBrowserMode": {
         "type": "string",
@@ -2772,6 +3790,37 @@
           "warning",
           "error"
         ]
+      },
+      "InfoReply": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ServerInfo"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "upgrade_error": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Why the last `btmux upgrade` failed, if it did."
+              },
+              "tailscale": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/TailscaleStatus",
+                    "description": "With `--tailscale`, whether the tailnet URL is served yet."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "`GET /api/info`: the fixed `ServerInfo` and what changes while it runs."
       },
       "Layout": {
         "oneOf": [
@@ -2941,6 +3990,49 @@
             "type": [
               "string",
               "null"
+            ]
+          }
+        }
+      },
+      "OpenEditorReply": {
+        "type": "object",
+        "required": [
+          "opened"
+        ],
+        "properties": {
+          "opened": {
+            "type": "boolean",
+            "description": "False when the caller should run `$EDITOR` itself."
+          }
+        }
+      },
+      "OpenEditorRequest": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file to open; without one, the editor is just shown."
+          },
+          "line": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "editor": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Editor",
+                "description": "Overrides the `editor` setting."
+              },
+              {
+                "type": "null"
+              }
             ]
           }
         }
@@ -3356,7 +4448,8 @@
             "type": "string"
           },
           "wait": {
-            "type": "boolean"
+            "type": "boolean",
+            "default": true
           },
           "timeout_ms": {
             "type": [
@@ -3364,6 +4457,7 @@
               "null"
             ],
             "format": "int64",
+            "description": "How long to wait, in milliseconds: 10 minutes by default, at most an\nhour.",
             "minimum": 0
           }
         }
@@ -3730,6 +4824,74 @@
           }
         }
       },
+      "ServerInfo": {
+        "type": "object",
+        "required": [
+          "version",
+          "token_source",
+          "listen_address",
+          "instance",
+          "pid"
+        ],
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "profile": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "config_file": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state_file": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "token_file": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "token_source": {
+            "type": "string"
+          },
+          "listen_address": {
+            "type": "string"
+          },
+          "executable": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "log_files": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Daily log files; `None` when file logging is off."
+          },
+          "instance": {
+            "type": "string",
+            "description": "Changes on every start, including an in-place upgrade."
+          },
+          "pid": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Kept by an in-place upgrade.",
+            "minimum": 0
+          }
+        }
+      },
       "SessionSnapshot": {
         "type": "object",
         "required": [
@@ -3803,7 +4965,8 @@
               "boolean",
               "null"
             ],
-            "description": "Make the new pane active. Default true."
+            "description": "Make the new pane active.",
+            "default": true
           }
         }
       },
@@ -3953,6 +5116,74 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "TailscaleStatus": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "starting"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "url",
+              "state"
+            ],
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "serving"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The last attempt failed; btmux keeps retrying.",
+            "required": [
+              "message",
+              "state"
+            ],
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "error"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Whether `--tailscale` serves the tailnet URL yet."
+      },
+      "UpgradeRequest": {
+        "type": "object",
+        "required": [
+          "executable"
+        ],
+        "properties": {
+          "executable": {
+            "type": "string",
+            "description": "The btmux binary to run, an absolute path on the server."
           }
         }
       },

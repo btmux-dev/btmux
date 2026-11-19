@@ -582,6 +582,7 @@ impl Appearance {
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, PartialEq, clap::ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub enum Editor {
     /// btmux's own editor.
     Native,

@@ -28,6 +28,7 @@ struct Assets;
 
 #[derive(Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct ServerInfo {
     pub version: String,
     pub profile: Option<String>,
@@ -45,16 +46,57 @@ pub struct ServerInfo {
     pub pid: u32,
 }
 
+/// `GET /api/info`: the fixed `ServerInfo` and what changes while it runs.
+#[derive(Serialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
+pub(crate) struct InfoReply {
+    #[serde(flatten)]
+    info: ServerInfo,
+    /// Why the last `btmux upgrade` failed, if it did.
+    upgrade_error: Option<String>,
+    /// With `--tailscale`, whether the tailnet URL is served yet.
+    tailscale: Option<crate::tailscale::TailscaleStatus>,
+}
+
 pub fn info_routes(info: ServerInfo) -> Router {
-    Router::new().route(
-        "/api/info",
-        get(move || {
-            let mut info = serde_json::to_value(&info).unwrap();
-            info["upgrade_error"] = crate::handoff::last_error().into();
-            info["tailscale"] = serde_json::to_value(crate::tailscale::status()).unwrap();
-            async move { Json(info) }
-        }),
-    )
+    Router::new()
+        .route("/api/info", get(api_info))
+        .with_state(Arc::new(info))
+}
+
+#[cfg_attr(test, utoipa::path(
+    get,
+    path = "/api/info",
+    tag = "Server",
+    operation_id = "server-info",
+    summary = "Describe the server",
+    responses(
+        (status = 200, description = "Version, files, and listening address", body = InfoReply),
+    ),
+))]
+pub(crate) async fn api_info(State(info): State<Arc<ServerInfo>>) -> Json<InfoReply> {
+    Json(InfoReply {
+        info: (*info).clone(),
+        upgrade_error: crate::handoff::last_error(),
+        tailscale: crate::tailscale::status(),
+    })
+}
+
+/// `docs/public/openapi.json`, which `just protocol` regenerates.
+const OPENAPI: &str = include_str!("../docs/public/openapi.json");
+
+#[cfg_attr(test, utoipa::path(
+    get,
+    path = "/api/openapi.json",
+    tag = "Server",
+    operation_id = "openapi",
+    summary = "This API's OpenAPI document",
+    responses(
+        (status = 200, description = "The OpenAPI document for this server's version", body = Object),
+    ),
+))]
+pub(crate) async fn api_openapi() -> Response {
+    ([(header::CONTENT_TYPE, "application/json")], OPENAPI).into_response()
 }
 
 pub fn create_app(state: AppState) -> Router {
@@ -89,6 +131,7 @@ pub fn create_app(state: AppState) -> Router {
         )
         .route("/api/server/upgrade", axum::routing::post(api_upgrade))
         .route("/api/server/shutdown", axum::routing::post(api_shutdown))
+        .route("/api/openapi.json", get(api_openapi))
         .route(
             "/api/panes/{pane_id}/notify",
             axum::routing::post(api_pane_notify)
@@ -204,11 +247,27 @@ async fn guest_scope(
 }
 
 #[derive(Deserialize)]
-struct UpgradeRequest {
+#[cfg_attr(test, derive(utoipa::ToSchema))]
+pub(crate) struct UpgradeRequest {
+    /// The btmux binary to run, an absolute path on the server.
+    #[cfg_attr(test, schema(value_type = String))]
     executable: std::path::PathBuf,
 }
 
-async fn api_upgrade(
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/server/upgrade",
+    tag = "Server",
+    operation_id = "upgrade",
+    summary = "Upgrade in place",
+    description = "Re-executes the server as another btmux binary, as `btmux upgrade` does, keeping sessions, shells, and scrollback. `GET /api/info` then reports the new version, or `upgrade_error` if the exec failed.",
+    responses(
+        (status = 202, description = "Upgrading; clients reconnect to the new binary"),
+        (status = 409, description = "This server can't hand off to that binary; only a restart can", body = String, content_type = "text/plain"),
+        (status = 423, description = "An upgrade is in progress, or the built-in Neovim has unsaved changes", body = String, content_type = "text/plain"),
+    ),
+))]
+pub(crate) async fn api_upgrade(
     State(state): State<AppState>,
     Json(request): Json<UpgradeRequest>,
 ) -> impl IntoResponse {
@@ -228,6 +287,16 @@ pub async fn shutdown_requested() {
     SHUTDOWN.notified().await;
 }
 
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/server/shutdown",
+    tag = "Server",
+    operation_id = "shut-down",
+    summary = "Shut down the server",
+    responses(
+        (status = 202, description = "Stopping; every shell closes"),
+    ),
+))]
 pub(crate) async fn api_shutdown() -> StatusCode {
     tracing::info!("shutdown requested over the API");
     SHUTDOWN.notify_one();
@@ -252,11 +321,32 @@ pub(crate) struct CreateSessionResponse {
     pane_id: Uuid,
 }
 
+#[cfg_attr(test, utoipa::path(
+    get,
+    path = "/api/sessions",
+    tag = "Sessions",
+    operation_id = "list-sessions",
+    summary = "List sessions",
+    responses(
+        (status = 200, description = "Every session", body = Vec<crate::session::SessionSummary>),
+    ),
+))]
 pub(crate) async fn api_list_sessions(State(state): State<AppState>) -> impl IntoResponse {
     let mgr = state.read().await;
     Json(mgr.session_summaries())
 }
 
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/sessions",
+    tag = "Sessions",
+    operation_id = "create-a-session",
+    summary = "Create a session",
+    responses(
+        (status = 200, description = "The new session and its first pane", body = CreateSessionResponse),
+        (status = 400, description = "Invalid runtime", body = String, content_type = "text/plain"),
+    ),
+))]
 pub(crate) async fn api_create_session(
     State(state): State<AppState>,
     Json(body): Json<CreateSessionRequest>,
@@ -282,6 +372,17 @@ pub(crate) async fn api_create_session(
 /// Kill every session and reset to a single fresh default session. Destructive;
 /// driven by the `clear-sessions` subcommand. Broadcasts the new state so every
 /// connected tab re-renders, and the debounced state-saver persists the reset.
+#[cfg_attr(test, utoipa::path(
+    delete,
+    path = "/api/sessions",
+    tag = "Sessions",
+    operation_id = "clear-sessions",
+    summary = "Clear sessions",
+    description = "Kills every session and starts one fresh default session, as `btmux clear-sessions` does.",
+    responses(
+        (status = 200, description = "The single fresh session left", body = Vec<crate::session::SessionSummary>),
+    ),
+))]
 pub(crate) async fn api_clear_sessions(State(state): State<AppState>) -> impl IntoResponse {
     let mut mgr = state.write().await;
     mgr.clear_sessions().await;
@@ -296,7 +397,8 @@ pub(crate) async fn api_clear_sessions(State(state): State<AppState>) -> impl In
 pub(crate) struct CreateWindowRequest {
     name: Option<String>,
     cwd: Option<String>,
-    /// Make it the active window. Default true.
+    /// Make it the active window.
+    #[cfg_attr(test, schema(default = true))]
     select: Option<bool>,
 }
 
@@ -307,6 +409,20 @@ pub(crate) struct CreateWindowResponse {
     pane_id: Uuid,
 }
 
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/sessions/{session_id}/windows",
+    tag = "Windows",
+    operation_id = "create-a-window",
+    summary = "Create a window",
+    params(
+        ("session_id", description = "Session ID"),
+    ),
+    responses(
+        (status = 200, description = "The new window's first pane", body = CreateWindowResponse),
+        (status = 404, description = "No such session"),
+    ),
+))]
 pub(crate) async fn api_create_window(
     State(state): State<AppState>,
     Path(session_id): Path<Uuid>,
@@ -563,6 +679,21 @@ fn truncate_msg(s: &str, max: usize) -> String {
     }
 }
 
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/panes/{pane_id}/notify",
+    tag = "Notifications",
+    operation_id = "notify-pane",
+    summary = "Report an agent event",
+    description = "Takes an agent hook's JSON payload as is (Claude Code, Codex, Gemini CLI), or `event`, `title`, and `body` from other callers. Updates the pane's agent status and, for events worth attention, marks the pane and notifies every client.",
+    params(
+        ("pane_id", description = "Pane ID"),
+    ),
+    responses(
+        (status = 204, description = "Done"),
+        (status = 404, description = "No such pane"),
+    ),
+))]
 pub(crate) async fn api_pane_notify(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -648,6 +779,18 @@ pub(crate) struct NotifyRequest {
 }
 
 /// Show a notification, not tied to a pane, in every client.
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/notify",
+    tag = "Notifications",
+    operation_id = "notify",
+    summary = "Show a notification",
+    description = "Shows a notification, not tied to a pane, in every client.",
+    responses(
+        (status = 204, description = "Done"),
+        (status = 422, description = "Empty title", body = String, content_type = "text/plain"),
+    ),
+))]
 pub(crate) async fn api_notify(
     State(state): State<AppState>,
     Json(body): Json<NotifyRequest>,
@@ -747,6 +890,21 @@ async fn api_editors() -> Json<EditorsStatus> {
     Json(EditorsStatus { running })
 }
 
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/panes/{pane_id}/open-file-browser",
+    tag = "Panes",
+    operation_id = "open-the-file-browser",
+    summary = "Open the file browser",
+    description = "Switches every client to the pane, then opens the file browser, Git mode, or the process viewer there.",
+    params(
+        ("pane_id", description = "Pane ID"),
+    ),
+    responses(
+        (status = 204, description = "Done"),
+        (status = 404, description = "No such pane"),
+    ),
+))]
 pub(crate) async fn api_open_file_browser(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -769,17 +927,42 @@ pub(crate) async fn api_open_file_browser(
 }
 
 #[derive(Deserialize)]
-struct OpenEditorRequest {
+#[cfg_attr(test, derive(utoipa::ToSchema))]
+pub(crate) struct OpenEditorRequest {
+    /// The file to open; without one, the editor is just shown.
     path: Option<String>,
     line: Option<u32>,
     /// Overrides the `editor` setting.
     editor: Option<crate::config::Editor>,
 }
 
+#[derive(Serialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
+pub(crate) struct OpenEditorReply {
+    /// False when the caller should run `$EDITOR` itself.
+    opened: bool,
+}
+
 /// `btmux open-editor`: open `path` (if any) in `editor` (the request's, else
 /// the setting) and show it over the pane in every tab.
 /// Replies `{"opened": false}` when the caller should run `$EDITOR` instead.
-async fn api_open_editor(
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/panes/{pane_id}/open-editor",
+    tag = "Panes",
+    operation_id = "open-an-editor",
+    summary = "Open an editor",
+    description = "Opens `path`, if given, in `editor` (else the `editor` setting) and shows that editor over the pane in every client.",
+    params(
+        ("pane_id", description = "Pane ID"),
+    ),
+    responses(
+        (status = 200, description = "Whether it opened; with the `pane` editor it doesn't, and the caller runs `$EDITOR` itself, as `btmux open-editor` does", body = OpenEditorReply),
+        (status = 404, description = "No such pane, or the native editor can't open the file", body = String, content_type = "text/plain"),
+        (status = 502, description = "The built-in Neovim couldn't open the file", body = String, content_type = "text/plain"),
+    ),
+))]
+pub(crate) async fn api_open_editor(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
     Json(body): Json<OpenEditorRequest>,
@@ -797,7 +980,7 @@ async fn api_open_editor(
     };
     let msg = match editor {
         crate::config::Editor::Pane => {
-            return Json(serde_json::json!({ "opened": false })).into_response();
+            return Json(OpenEditorReply { opened: false }).into_response();
         }
         crate::config::Editor::Native => {
             let op = match body.path {
@@ -838,10 +1021,25 @@ async fn api_open_editor(
         .events()
         .send(serde_json::to_string(&msg).unwrap());
 
-    Json(serde_json::json!({ "opened": true })).into_response()
+    Json(OpenEditorReply { opened: true }).into_response()
 }
 
 /// Switch every connected browser tab to the pane's window and session.
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/panes/{pane_id}/focus",
+    tag = "Panes",
+    operation_id = "focus-a-pane",
+    summary = "Focus a pane",
+    description = "Switches every client to the pane's window and session.",
+    params(
+        ("pane_id", description = "Pane ID"),
+    ),
+    responses(
+        (status = 204, description = "Done"),
+        (status = 404, description = "No such pane"),
+    ),
+))]
 pub(crate) async fn api_focus_pane(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -857,6 +1055,20 @@ pub(crate) async fn api_focus_pane(
     StatusCode::NO_CONTENT.into_response()
 }
 
+#[cfg_attr(test, utoipa::path(
+    delete,
+    path = "/api/panes/{pane_id}/notify",
+    tag = "Notifications",
+    operation_id = "clear-pane-notification",
+    summary = "Clear a pane's notification",
+    params(
+        ("pane_id", description = "Pane ID"),
+    ),
+    responses(
+        (status = 204, description = "Done"),
+        (status = 404, description = "No such pane"),
+    ),
+))]
 pub(crate) async fn api_pane_notify_clear(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -881,6 +1093,20 @@ pub(crate) struct PaneAgentStatusRequest {
     message: Option<String>,
 }
 
+#[cfg_attr(test, utoipa::path(
+    get,
+    path = "/api/panes/{pane_id}/agent-status",
+    tag = "Agents",
+    operation_id = "explain-agent-status",
+    summary = "Explain an agent's status",
+    params(
+        ("pane_id", description = "Pane ID"),
+    ),
+    responses(
+        (status = 200, description = "The pane's agent status and what it was derived from", body = Object),
+        (status = 404, description = "No such pane"),
+    ),
+))]
 pub(crate) async fn api_pane_agent_diagnostics(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -892,6 +1118,21 @@ pub(crate) async fn api_pane_agent_diagnostics(
     Json(mgr.agent_diagnostics(pane_id)).into_response()
 }
 
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/panes/{pane_id}/agent-status",
+    tag = "Agents",
+    operation_id = "set-agent-status",
+    summary = "Set an agent's status",
+    description = "Sets the pane's agent status explicitly, above what hooks and the screen report.",
+    params(
+        ("pane_id", description = "Pane ID"),
+    ),
+    responses(
+        (status = 204, description = "Done"),
+        (status = 404, description = "No such pane"),
+    ),
+))]
 pub(crate) async fn api_pane_agent_status(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -917,6 +1158,20 @@ pub(crate) async fn api_pane_agent_status(
     StatusCode::NO_CONTENT.into_response()
 }
 
+#[cfg_attr(test, utoipa::path(
+    delete,
+    path = "/api/panes/{pane_id}/agent-status",
+    tag = "Agents",
+    operation_id = "clear-agent-status",
+    summary = "Clear an agent's status",
+    params(
+        ("pane_id", description = "Pane ID"),
+    ),
+    responses(
+        (status = 204, description = "Done"),
+        (status = 404, description = "No such pane"),
+    ),
+))]
 pub(crate) async fn api_pane_agent_status_clear(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,

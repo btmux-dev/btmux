@@ -556,6 +556,26 @@ pub struct PopupRequest {
 
 /// Opens a popup and replies `{"id": ...}` once a tab started it: 409 if no
 /// tab does, 422 if its program can't start.
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/panes/{pane_id}/popup",
+    tag = "Popups",
+    operation_id = "open-popup",
+    summary = "Open a popup",
+    description = "Runs a program in a popup over the pane. Replies once a client started it; then wait for its exit status.",
+    params(
+        ("pane_id", description = "Pane ID"),
+    ),
+    responses(
+        (status = 200, description = "Started in a client", body = PopupOpened),
+        (status = 400, description = "No command", body = String, content_type = "text/plain"),
+        (status = 404, description = "No such pane", body = String, content_type = "text/plain"),
+        (status = 409, description = "No client is showing the pane", body = String, content_type = "text/plain"),
+        (status = 410, description = "The popup closed before it started", body = String, content_type = "text/plain"),
+        (status = 422, description = "The program can't start", body = String, content_type = "text/plain"),
+        (status = 423, description = "The pane already has a popup open", body = String, content_type = "text/plain"),
+    ),
+))]
 pub async fn api_popup(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -630,6 +650,24 @@ pub async fn api_popup(
 }
 
 /// Replies `{"status": ...}` once the popup's program exits.
+#[cfg_attr(test, utoipa::path(
+    get,
+    path = "/api/panes/{pane_id}/popup/{id}",
+    tag = "Popups",
+    operation_id = "wait-for-popup",
+    summary = "Wait for a popup",
+    params(
+        ("pane_id", description = "Pane ID"),
+        ("id", description = "Popup ID"),
+    ),
+    responses(
+        (status = 200, description = "The program exited", body = PopupExited),
+        (status = 404, description = "No such popup"),
+        (status = 409, description = "No client showed the popup", body = String, content_type = "text/plain"),
+        (status = 410, description = "The server stopped waiting; ask again"),
+        (status = 422, description = "The program failed to start", body = String, content_type = "text/plain"),
+    ),
+))]
 pub async fn api_wait(
     State(state): State<AppState>,
     Path((pane_id, id)): Path<(Uuid, Uuid)>,

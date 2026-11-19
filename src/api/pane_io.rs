@@ -8,6 +8,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[cfg(test)]
+use super::openapi::Binary;
 use crate::pty::screen::MAX_CAPTURE_HISTORY;
 use crate::{automation, config, AppState};
 
@@ -60,6 +62,23 @@ pub(crate) struct PaneInputResponse {
     newly_spawned: bool,
 }
 
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/panes/{pane_id}/input",
+    tag = "Pane I/O",
+    operation_id = "send-input",
+    summary = "Send input",
+    description = "Sends `text` verbatim, then tmux-style `keys`, starting the pane's shell if no client has yet.",
+    params(
+        ("pane_id", description = "Pane ID"),
+    ),
+    responses(
+        (status = 200, description = "Sent", body = PaneInputResponse),
+        (status = 400, description = "An unknown key name, no text or keys, or more than 64 KiB", body = String, content_type = "text/plain"),
+        (status = 404, description = "No such pane", body = String, content_type = "text/plain"),
+        (status = 500, description = "The shell failed to start, or the pane closed", body = String, content_type = "text/plain"),
+    ),
+))]
 pub(crate) async fn api_pane_input(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -86,6 +105,23 @@ pub(crate) struct PaneOutputQuery {
 /// Returns the pane's current scrollback as raw PTY bytes — exactly what the
 /// terminal emulator receives (ANSI escapes included). `/capture` renders it
 /// as text.
+#[cfg_attr(test, utoipa::path(
+    get,
+    path = "/api/panes/{pane_id}/output",
+    tag = "Pane I/O",
+    operation_id = "read-raw-output",
+    summary = "Read raw output",
+    description = "The pane's retained output as the terminal emulator receives it; `capture` renders it as text.",
+    params(
+        ("pane_id", description = "Pane ID"),
+        PaneOutputQuery,
+    ),
+    responses(
+        (status = 200, description = "Raw PTY bytes, escapes included", body = inline(Binary), content_type = "application/octet-stream"),
+        (status = 400, description = "The shell failed to start", body = String, content_type = "text/plain"),
+        (status = 404, description = "No such pane"),
+    ),
+))]
 pub(crate) async fn api_pane_output(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -124,6 +160,23 @@ pub(crate) struct PaneCaptureQuery {
 }
 
 /// The pane as rendered plain text, like `tmux capture-pane -pJ`.
+#[cfg_attr(test, utoipa::path(
+    get,
+    path = "/api/panes/{pane_id}/capture",
+    tag = "Pane I/O",
+    operation_id = "capture-the-screen",
+    summary = "Capture the screen",
+    description = "The pane as rendered plain text, like `tmux capture-pane -pJ`.",
+    params(
+        ("pane_id", description = "Pane ID"),
+        PaneCaptureQuery,
+    ),
+    responses(
+        (status = 200, description = "The rendered text", body = String, content_type = "text/plain"),
+        (status = 404, description = "No such pane", body = String, content_type = "text/plain"),
+        (status = 500, description = "The shell failed to start", body = String, content_type = "text/plain"),
+    ),
+))]
 pub(crate) async fn api_pane_capture(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -145,7 +198,10 @@ pub(crate) async fn api_pane_capture(
 pub(crate) struct PanePromptRequest {
     prompt: String,
     #[serde(default = "default_true")]
+    #[cfg_attr(test, schema(default = true))]
     wait: bool,
+    /// How long to wait, in milliseconds: 10 minutes by default, at most an
+    /// hour.
     timeout_ms: Option<u64>,
 }
 
@@ -162,6 +218,24 @@ pub(crate) enum PromptReply {
     Submitted { submitted: bool },
 }
 
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/panes/{pane_id}/prompt",
+    tag = "Agents",
+    operation_id = "prompt-an-agent",
+    summary = "Prompt an agent",
+    description = "Pastes `prompt` into the pane's agent and submits it. With `wait` (the default), replies once the agent has started and settled (idle, done, or blocked).",
+    params(
+        ("pane_id", description = "Pane ID"),
+    ),
+    responses(
+        (status = 200, description = "With `wait`, the turn's outcome; without, `{\"submitted\": true}`", body = PromptReply),
+        (status = 400, description = "The prompt is more than 64 KiB", body = String, content_type = "text/plain"),
+        (status = 404, description = "No such pane", body = String, content_type = "text/plain"),
+        (status = 409, description = "No agent, a dialog is waiting for an answer, the agent is busy (with `wait`), or the agent can't take a multi-line prompt", body = String, content_type = "text/plain"),
+        (status = 500, description = "Writing to the pane failed", body = String, content_type = "text/plain"),
+    ),
+))]
 pub(crate) async fn api_pane_prompt(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -188,10 +262,28 @@ pub(crate) async fn api_pane_prompt(
 pub(crate) struct PaneWaitQuery {
     /// Comma-separated agent states; default `idle,done,blocked`.
     states: Option<String>,
+    /// Milliseconds: 10 minutes by default, at most an hour.
     timeout_ms: Option<u64>,
 }
 
 /// Long-polls until the pane's agent reaches one of `states` or exits.
+#[cfg_attr(test, utoipa::path(
+    get,
+    path = "/api/panes/{pane_id}/wait",
+    tag = "Agents",
+    operation_id = "wait-for-an-agent",
+    summary = "Wait for an agent",
+    params(
+        ("pane_id", description = "Pane ID"),
+        PaneWaitQuery,
+    ),
+    responses(
+        (status = 200, description = "The agent's status once it settles, exits, or the wait times out", body = automation::AgentWait),
+        (status = 400, description = "An unknown state", body = String, content_type = "text/plain"),
+        (status = 404, description = "No such pane", body = String, content_type = "text/plain"),
+        (status = 500, description = "The server is shutting down", body = String, content_type = "text/plain"),
+    ),
+))]
 pub(crate) async fn api_pane_wait(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -217,6 +309,16 @@ pub(crate) async fn api_pane_wait(
     }
 }
 
+#[cfg_attr(test, utoipa::path(
+    get,
+    path = "/api/agents",
+    tag = "Agents",
+    operation_id = "list-agents",
+    summary = "List agents",
+    responses(
+        (status = 200, description = "Every pane running an agent", body = Vec<crate::session::AgentPane>),
+    ),
+))]
 pub(crate) async fn api_agents(State(state): State<AppState>) -> Response {
     Json(state.read().await.agent_panes()).into_response()
 }

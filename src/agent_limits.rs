@@ -137,6 +137,17 @@ pub fn routes() -> Router<AppState> {
     Router::new().route("/api/agent-limits", get(limits))
 }
 
+#[cfg_attr(test, utoipa::path(
+    get,
+    path = "/api/agent-limits",
+    tag = "Agents",
+    operation_id = "agent-limits",
+    summary = "Subscription limits",
+    description = "How much of each subscription limit Claude Code and Codex accounts on the server have used, and when each resets. Agents using an API key, or not logged in, aren't listed.",
+    responses(
+        (status = 200, description = "Each logged-in agent's limits", body = Vec<AgentLimits>),
+    ),
+))]
 pub(crate) async fn limits(State(state): State<AppState>) -> Json<Vec<AgentLimits>> {
     let mut cache = CACHE.lock().await;
     if cache.fetched_at.is_none_or(|at| at.elapsed() >= CACHE_FOR) {

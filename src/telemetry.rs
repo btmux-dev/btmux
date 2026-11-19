@@ -379,6 +379,17 @@ fn accepts(mgr: &crate::session::manager::SessionManager, id: Uuid) -> bool {
     mgr.find_pane(id).is_some() || mgr.telemetry.accepts_closed(id)
 }
 
+#[cfg_attr(test, utoipa::path(
+    get,
+    path = "/api/telemetry",
+    tag = "Agents",
+    operation_id = "agent-usage",
+    summary = "Agent usage",
+    description = "Tokens, cost, requests, and tool calls per agent and model, per minute, for the last 24 hours, as agent view's Usage tab shows them.",
+    responses(
+        (status = 200, description = "Each agent's usage", body = Vec<AgentTelemetry>),
+    ),
+))]
 pub(crate) async fn snapshot(State(state): State<AppState>) -> Json<Vec<AgentTelemetry>> {
     let mgr = state.read().await;
     Json(snapshots(&mgr))

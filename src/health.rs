@@ -474,6 +474,16 @@ async fn shell_check(shell: String) -> HealthCheck {
     }
 }
 
+#[cfg_attr(test, utoipa::path(
+    get,
+    path = "/api/health",
+    tag = "Server",
+    operation_id = "health",
+    summary = "Check optional programs",
+    responses(
+        (status = 200, description = "Which optional programs the server found and whether they run", body = HealthReport),
+    ),
+))]
 pub async fn handle(State(state): State<AppState>) -> Json<HealthReport> {
     Json(report(&state).await)
 }

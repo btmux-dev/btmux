@@ -1,20 +1,23 @@
-//! The REST API's OpenAPI document, `docs/openapi.json`, which the docs
-//! render as the API reference. Test-only, like the generated protocol.
+//! The REST API's OpenAPI document, `docs/public/openapi.json`, which the
+//! docs render as the API reference and `GET /api/openapi.json` serves.
+//! Test-only, like the generated protocol: operations are `utoipa::path`
+//! attributes on their handlers, which read parameters and request bodies
+//! from the handlers' extractors.
 //!
-//! Each operation is a stub that casts its handler to the extractor types
-//! it documents, so a handler taking other types doesn't compile, and
-//! `routes_match` checks each path and method against the router.
+//! `routes_match` checks each path and method against the router,
+//! `api_routes_are_documented` that each `/api` route is documented or
+//! listed in `UNDOCUMENTED`, and `responses_match` real replies against the
+//! documented statuses and schemas.
 
+use utoipa::openapi::content::ContentBuilder;
+use utoipa::openapi::response::ResponseBuilder;
+use utoipa::openapi::schema::{ObjectBuilder, Type};
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
+use utoipa::openapi::{RefOr, Response};
 use utoipa::{Modify, OpenApi};
 
-use axum::extract::{Path, Query, State};
-use axum::http::HeaderMap;
-use axum::Json;
-use uuid::Uuid;
-
 use super::{pane_io, panes, sessions, windows, worktrees};
-use crate::{agent_limits, health, popup, server, system_info, telemetry, AppState};
+use crate::{agent_limits, health, popup, server, system_info, telemetry};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -28,7 +31,7 @@ use crate::{agent_limits, health, popup, server, system_info, telemetry, AppStat
     ),
     servers((url = "http://127.0.0.1:8004", description = "Default local server")),
     security(("token" = [])),
-    modifiers(&Token),
+    modifiers(&Errors),
     tags(
         (name = "Sessions"),
         (name = "Windows"),
@@ -42,65 +45,69 @@ use crate::{agent_limits, health, popup, server, system_info, telemetry, AppStat
         (name = "Server"),
     ),
     paths(
-        list_sessions,
-        create_a_session,
-        clear_sessions,
-        get_a_session,
-        rename_a_session,
-        kill_a_session,
-        create_a_window,
-        switch_windows,
-        rename_the_active_window,
-        close_the_active_window,
-        kill_a_window,
-        select_a_window,
-        rename_a_window,
-        list_panes,
-        split_a_pane,
-        kill_a_pane,
-        select_a_pane,
-        focus_a_pane,
-        open_the_file_browser,
-        split_an_active_window_pane,
-        kill_an_active_window_pane,
-        zoom_a_pane,
-        select_an_active_window_pane,
-        move_to_a_neighboring_pane,
-        cycle_panes,
-        swap_panes,
-        select_a_layout,
-        next_layout,
-        send_input,
-        read_raw_output,
-        capture_the_screen,
-        list_agents,
-        prompt_an_agent,
-        wait_for_an_agent,
-        explain_agent_status,
-        set_agent_status,
-        clear_agent_status,
-        agent_usage,
-        subscription_limits,
-        create_a_worktree,
-        remove_a_worktree,
-        open_popup,
-        wait_for_popup,
-        notify,
-        notify_pane,
-        clear_pane_notification,
-        system_info,
-        health,
-        shut_down,
+        server::api_list_sessions,
+        server::api_create_session,
+        server::api_clear_sessions,
+        sessions::api_get_session,
+        sessions::api_rename_session,
+        sessions::api_kill_session,
+        server::api_create_window,
+        windows::api_switch_window,
+        windows::api_rename_window,
+        windows::api_close_window,
+        windows::api_kill_window,
+        windows::api_select_window_by_id,
+        windows::api_rename_window_by_id,
+        panes::api_list_panes,
+        panes::api_split_pane_by_id,
+        panes::api_kill_pane_by_id,
+        panes::api_select_pane_by_id,
+        server::api_focus_pane,
+        server::api_open_file_browser,
+        server::api_open_editor,
+        panes::api_split_pane,
+        panes::api_kill_pane,
+        panes::api_zoom_pane,
+        panes::api_select_pane,
+        panes::api_navigate,
+        panes::api_cycle_pane,
+        panes::api_swap_pane,
+        panes::api_select_layout,
+        panes::api_next_layout,
+        pane_io::api_pane_input,
+        pane_io::api_pane_output,
+        pane_io::api_pane_capture,
+        pane_io::api_agents,
+        pane_io::api_pane_prompt,
+        pane_io::api_pane_wait,
+        server::api_pane_agent_diagnostics,
+        server::api_pane_agent_status,
+        server::api_pane_agent_status_clear,
+        telemetry::snapshot,
+        agent_limits::limits,
+        worktrees::api_create_worktree,
+        worktrees::api_remove_worktree,
+        popup::api_popup,
+        popup::api_wait,
+        server::api_notify,
+        server::api_pane_notify,
+        server::api_pane_notify_clear,
+        server::api_info,
+        system_info::handle,
+        health::handle,
+        server::api_upgrade,
+        server::api_shutdown,
+        server::api_openapi,
     )
 )]
 struct ApiDoc;
 
 /// Raw bytes, for clients to read as a buffer or stream.
-struct Binary;
+pub(super) struct Binary;
 
 impl utoipa::PartialSchema for Binary {
-    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
-        use utoipa::openapi::schema::{KnownFormat, ObjectBuilder, SchemaFormat, Type};
+    fn schema() -> RefOr<utoipa::openapi::schema::Schema> {
+        use utoipa::openapi::schema::{KnownFormat, SchemaFormat};
         ObjectBuilder::new()
             .schema_type(Type::String)
             .format(Some(SchemaFormat::KnownFormat(KnownFormat::Binary)))
@@ -110,19 +117,41 @@ impl utoipa::PartialSchema for Binary {
 
 impl utoipa::ToSchema for Binary {}
 
-/// Bearer authentication, and its 401 on every operation.
-struct Token;
+/// Bearer authentication, and the errors every handler shares: 401, and
+/// axum's rejections of malformed IDs, query parameters, and JSON bodies.
+struct Errors;
 
-impl Modify for Token {
+impl Modify for Errors {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         for item in openapi.paths.paths.values_mut() {
             for operation in [&mut item.get, &mut item.post, &mut item.delete]
                 .into_iter()
                 .flatten()
             {
-                operation.responses.responses.insert(
+                let parameters = operation.parameters.as_deref().unwrap_or_default();
+                let path = parameters.iter().any(|p| is_in(p, "path"));
+                let query = parameters.iter().any(|p| is_in(p, "query"));
+                let body = operation.request_body.is_some();
+                let malformed = [
+                    (path, "ID"),
+                    (query, "query parameter"),
+                    (body, "JSON body"),
+                ]
+                .into_iter()
+                .filter_map(|(applies, cause)| applies.then_some(cause))
+                .collect::<Vec<_>>();
+                let responses = &mut operation.responses.responses;
+                if !malformed.is_empty() {
+                    let cause = format!("a malformed {}", join_or(&malformed));
+                    add_cause(responses, "400", &cause);
+                }
+                if body {
+                    add_cause(responses, "415", "no `Content-Type: application/json`");
+                    add_cause(responses, "422", "a body that doesn't match its schema");
+                }
+                responses.insert(
                     "401".into(),
-                    utoipa::openapi::Response::new("Missing or wrong access token").into(),
+                    Response::new("Missing or wrong access token").into(),
                 );
             }
         }
@@ -139,956 +168,91 @@ impl Modify for Token {
     }
 }
 
-#[utoipa::path(
-    post,
-    path = "/api/server/shutdown",
-    tag = "Server",
-    operation_id = "shut-down",
-    summary = "Shut down the server",
-    responses(
-        (status = 202, description = "Stopping; every shell closes"),
-    ),
-)]
-fn shut_down() {
-    let _ = server::api_shutdown as fn() -> _;
+fn is_in(parameter: &RefOr<utoipa::openapi::path::Parameter>, location: &str) -> bool {
+    matches!(parameter, RefOr::T(parameter)
+        if serde_json::to_value(&parameter.parameter_in).unwrap() == location)
 }
 
-#[utoipa::path(
-    get,
-    path = "/api/sessions",
-    tag = "Sessions",
-    operation_id = "list-sessions",
-    summary = "List sessions",
-    responses(
-        (status = 200, description = "Every session", body = Vec<crate::session::SessionSummary>),
-    ),
-)]
-fn list_sessions() {
-    let _ = server::api_list_sessions as fn(State<AppState>) -> _;
+fn join_or(causes: &[&str]) -> String {
+    match causes {
+        [one] => one.to_string(),
+        [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
+        [] => String::new(),
+    }
 }
 
-#[utoipa::path(
-    post,
-    path = "/api/sessions",
-    tag = "Sessions",
-    operation_id = "create-a-session",
-    summary = "Create a session",
-    request_body = server::CreateSessionRequest,
-    responses(
-        (status = 200, description = "The new session and its first pane", body = server::CreateSessionResponse),
-        (status = 400, description = "Invalid runtime", body = String, content_type = "text/plain"),
-    ),
-)]
-fn create_a_session() {
-    let _ =
-        server::api_create_session as fn(State<AppState>, Json<server::CreateSessionRequest>) -> _;
-}
-
-#[utoipa::path(
-    delete,
-    path = "/api/sessions",
-    tag = "Sessions",
-    operation_id = "clear-sessions",
-    summary = "Clear sessions",
-    description = "Kills every session and starts one fresh default session, as `btmux clear-sessions` does.",
-    responses(
-        (status = 200, description = "The single fresh session left", body = Vec<crate::session::SessionSummary>),
-    ),
-)]
-fn clear_sessions() {
-    let _ = server::api_clear_sessions as fn(State<AppState>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/sessions/{session_id}/windows",
-    tag = "Windows",
-    operation_id = "create-a-window",
-    summary = "Create a window",
-    params(
-        ("session_id" = Uuid, Path, description = "Session ID"),
-    ),
-    request_body = server::CreateWindowRequest,
-    responses(
-        (status = 200, description = "The new window's first pane", body = server::CreateWindowResponse),
-        (status = 404, description = "No such session"),
-    ),
-)]
-fn create_a_window() {
-    let _ = server::api_create_window
-        as fn(State<AppState>, Path<Uuid>, Json<server::CreateWindowRequest>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/panes/{pane_id}/notify",
-    tag = "Notifications",
-    operation_id = "notify-pane",
-    summary = "Report an agent event",
-    description = "Takes an agent hook's JSON payload as is (Claude Code, Codex, Gemini CLI), or `event`, `title`, and `body` from other callers. Updates the pane's agent status and, for events worth attention, marks the pane and notifies every client.",
-    params(
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-    ),
-    request_body = server::PaneNotifyRequest,
-    responses(
-        (status = 204, description = "Done"),
-        (status = 404, description = "No such pane"),
-    ),
-)]
-fn notify_pane() {
-    let _ = server::api_pane_notify
-        as fn(State<AppState>, Path<Uuid>, HeaderMap, Json<server::PaneNotifyRequest>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/notify",
-    tag = "Notifications",
-    operation_id = "notify",
-    summary = "Show a notification",
-    description = "Shows a notification, not tied to a pane, in every client.",
-    request_body = server::NotifyRequest,
-    responses(
-        (status = 204, description = "Done"),
-        (status = 422, description = "Empty title"),
-    ),
-)]
-fn notify() {
-    let _ = server::api_notify as fn(State<AppState>, Json<server::NotifyRequest>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/panes/{pane_id}/open-file-browser",
-    tag = "Panes",
-    operation_id = "open-the-file-browser",
-    summary = "Open the file browser",
-    description = "Switches every client to the pane, then opens the file browser, Git mode, or the process viewer there.",
-    params(
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-    ),
-    request_body = server::OpenFileBrowserRequest,
-    responses(
-        (status = 204, description = "Done"),
-        (status = 404, description = "No such pane"),
-    ),
-)]
-fn open_the_file_browser() {
-    let _ = server::api_open_file_browser
-        as fn(State<AppState>, Path<Uuid>, Json<server::OpenFileBrowserRequest>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/panes/{pane_id}/focus",
-    tag = "Panes",
-    operation_id = "focus-a-pane",
-    summary = "Focus a pane",
-    params(
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-    ),
-    responses(
-        (status = 204, description = "Done"),
-        (status = 404, description = "No such pane"),
-    ),
-)]
-fn focus_a_pane() {
-    let _ = server::api_focus_pane as fn(State<AppState>, Path<Uuid>) -> _;
-}
-
-#[utoipa::path(
-    delete,
-    path = "/api/panes/{pane_id}/notify",
-    tag = "Notifications",
-    operation_id = "clear-pane-notification",
-    summary = "Clear a pane's notification",
-    params(
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-    ),
-    responses(
-        (status = 204, description = "Done"),
-        (status = 404, description = "No such pane"),
-    ),
-)]
-fn clear_pane_notification() {
-    let _ = server::api_pane_notify_clear as fn(State<AppState>, Path<Uuid>) -> _;
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/panes/{pane_id}/agent-status",
-    tag = "Agents",
-    operation_id = "explain-agent-status",
-    summary = "Explain an agent's status",
-    params(
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-    ),
-    responses(
-        (status = 200, description = "The pane's agent status and what it was derived from", body = Object),
-        (status = 404, description = "No such pane"),
-    ),
-)]
-fn explain_agent_status() {
-    let _ = server::api_pane_agent_diagnostics as fn(State<AppState>, Path<Uuid>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/panes/{pane_id}/agent-status",
-    tag = "Agents",
-    operation_id = "set-agent-status",
-    summary = "Set an agent's status",
-    description = "Sets the pane's agent status explicitly, above what hooks and the screen report.",
-    params(
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-    ),
-    request_body = server::PaneAgentStatusRequest,
-    responses(
-        (status = 204, description = "Done"),
-        (status = 404, description = "No such pane"),
-    ),
-)]
-fn set_agent_status() {
-    let _ = server::api_pane_agent_status
-        as fn(State<AppState>, Path<Uuid>, Json<server::PaneAgentStatusRequest>) -> _;
-}
-
-#[utoipa::path(
-    delete,
-    path = "/api/panes/{pane_id}/agent-status",
-    tag = "Agents",
-    operation_id = "clear-agent-status",
-    summary = "Clear an agent's status",
-    params(
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-    ),
-    responses(
-        (status = 204, description = "Done"),
-        (status = 404, description = "No such pane"),
-    ),
-)]
-fn clear_agent_status() {
-    let _ = server::api_pane_agent_status_clear as fn(State<AppState>, Path<Uuid>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/panes/{pane_id}/popup",
-    tag = "Popups",
-    operation_id = "open-popup",
-    summary = "Open a popup",
-    description = "Runs a program in a popup over the pane. Replies once a client started it; then wait for its exit status.",
-    params(
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-    ),
-    request_body = popup::PopupRequest,
-    responses(
-        (status = 200, description = "Started in a client", body = popup::PopupOpened),
-        (status = 400, description = "No command", body = String, content_type = "text/plain"),
-        (status = 404, description = "No such pane"),
-        (status = 409, description = "No client is showing the pane"),
-        (status = 410, description = "The popup closed before it started"),
-        (status = 422, description = "The program can't start", body = String, content_type = "text/plain"),
-        (status = 423, description = "The pane already has a popup open"),
-    ),
-)]
-fn open_popup() {
-    let _ = popup::api_popup as fn(State<AppState>, Path<Uuid>, Json<popup::PopupRequest>) -> _;
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/panes/{pane_id}/popup/{id}",
-    tag = "Popups",
-    operation_id = "wait-for-popup",
-    summary = "Wait for a popup",
-    params(
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-        ("id" = Uuid, Path, description = "Popup ID"),
-    ),
-    responses(
-        (status = 200, description = "The program exited", body = popup::PopupExited),
-        (status = 410, description = "The server stopped waiting"),
-        (status = 404, description = "No such popup"),
-        (status = 409, description = "No client showed the popup"),
-        (status = 422, description = "The program failed to start"),
-    ),
-)]
-fn wait_for_popup() {
-    let _ = popup::api_wait as fn(State<AppState>, Path<(Uuid, Uuid)>) -> _;
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/system",
-    tag = "Server",
-    operation_id = "system-info",
-    summary = "Describe the server host",
-    responses(
-        (status = 200, description = "OS, CPU, memory, disks, and shell", body = system_info::SystemInfo),
-    ),
-)]
-fn system_info() {
-    let _ = system_info::handle as fn(State<AppState>) -> _;
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/health",
-    tag = "Server",
-    operation_id = "health",
-    summary = "Check optional programs",
-    responses(
-        (status = 200, description = "Which optional programs the server found and whether they run", body = health::HealthReport),
-    ),
-)]
-fn health() {
-    let _ = health::handle as fn(State<AppState>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/panes/{pane_id}/input",
-    tag = "Pane I/O",
-    operation_id = "send-input",
-    summary = "Send input",
-    params(
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-    ),
-    request_body = pane_io::PaneInputRequest,
-    responses(
-        (status = 200, description = "Sent", body = pane_io::PaneInputResponse),
-        (status = 404, description = "No such pane"),
-        (status = 400, description = "Invalid request", body = String, content_type = "text/plain"),
-        (status = 409, description = "Conflict", body = String, content_type = "text/plain"),
-        (status = 500, description = "The operation failed", body = String, content_type = "text/plain"),
-    ),
-)]
-fn send_input() {
-    let _ = pane_io::api_pane_input
-        as fn(State<AppState>, Path<Uuid>, Json<pane_io::PaneInputRequest>) -> _;
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/panes/{pane_id}/output",
-    tag = "Pane I/O",
-    operation_id = "read-raw-output",
-    summary = "Read raw output",
-    params(
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-        pane_io::PaneOutputQuery,
-    ),
-    responses(
-        (status = 200, description = "Raw PTY bytes, escapes included", body = inline(Binary), content_type = "application/octet-stream"),
-        (status = 400, description = "The shell failed to start"),
-        (status = 404, description = "No such pane"),
-    ),
-)]
-fn read_raw_output() {
-    let _ = pane_io::api_pane_output
-        as fn(State<AppState>, Path<Uuid>, Query<pane_io::PaneOutputQuery>) -> _;
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/panes/{pane_id}/capture",
-    tag = "Pane I/O",
-    operation_id = "capture-the-screen",
-    summary = "Capture the screen",
-    params(
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-        pane_io::PaneCaptureQuery,
-    ),
-    responses(
-        (status = 200, description = "The rendered text", body = String, content_type = "text/plain"),
-        (status = 404, description = "No such pane"),
-        (status = 400, description = "Invalid request", body = String, content_type = "text/plain"),
-        (status = 409, description = "Conflict", body = String, content_type = "text/plain"),
-        (status = 500, description = "The operation failed", body = String, content_type = "text/plain"),
-    ),
-)]
-fn capture_the_screen() {
-    let _ = pane_io::api_pane_capture
-        as fn(State<AppState>, Path<Uuid>, Query<pane_io::PaneCaptureQuery>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/panes/{pane_id}/prompt",
-    tag = "Agents",
-    operation_id = "prompt-an-agent",
-    summary = "Prompt an agent",
-    description = "Pastes `prompt` into the pane's agent and submits it. With `wait` (the default), replies once the agent has started and settled (idle, done, or blocked).",
-    params(
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-    ),
-    request_body = pane_io::PanePromptRequest,
-    responses(
-        (status = 200, description = "With `wait`, the turn's outcome; without, `{\"submitted\": true}`", body = pane_io::PromptReply),
-        (status = 404, description = "No such pane"),
-        (status = 400, description = "Invalid request", body = String, content_type = "text/plain"),
-        (status = 409, description = "Conflict", body = String, content_type = "text/plain"),
-        (status = 500, description = "The operation failed", body = String, content_type = "text/plain"),
-    ),
-)]
-fn prompt_an_agent() {
-    let _ = pane_io::api_pane_prompt
-        as fn(State<AppState>, Path<Uuid>, Json<pane_io::PanePromptRequest>) -> _;
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/panes/{pane_id}/wait",
-    tag = "Agents",
-    operation_id = "wait-for-an-agent",
-    summary = "Wait for an agent",
-    params(
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-        pane_io::PaneWaitQuery,
-    ),
-    responses(
-        (status = 200, description = "The agent's status once it settles, exits, or the wait times out", body = crate::automation::AgentWait),
-        (status = 404, description = "No such pane"),
-        (status = 400, description = "Invalid request", body = String, content_type = "text/plain"),
-        (status = 409, description = "Conflict", body = String, content_type = "text/plain"),
-        (status = 500, description = "The operation failed", body = String, content_type = "text/plain"),
-    ),
-)]
-fn wait_for_an_agent() {
-    let _ = pane_io::api_pane_wait
-        as fn(State<AppState>, Path<Uuid>, Query<pane_io::PaneWaitQuery>) -> _;
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/agents",
-    tag = "Agents",
-    operation_id = "list-agents",
-    summary = "List agents",
-    responses(
-        (status = 200, description = "Every pane running an agent", body = Vec<crate::session::AgentPane>),
-    ),
-)]
-fn list_agents() {
-    let _ = pane_io::api_agents as fn(State<AppState>) -> _;
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/panes",
-    tag = "Panes",
-    operation_id = "list-panes",
-    summary = "List panes",
-    responses(
-        (status = 200, description = "Every pane, with its window and session", body = Vec<crate::session::PaneInfo>),
-    ),
-)]
-fn list_panes() {
-    let _ = panes::api_list_panes as fn(State<AppState>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/panes/{pane_id}/split",
-    tag = "Panes",
-    operation_id = "split-a-pane",
-    summary = "Split a pane",
-    params(
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-    ),
-    request_body = panes::SplitPaneByIdRequest,
-    responses(
-        (status = 200, description = "The new pane", body = panes::SplitPaneResponse),
-        (status = 400, description = "Invalid direction"),
-        (status = 404, description = "No such pane"),
-    ),
-)]
-fn split_a_pane() {
-    let _ = panes::api_split_pane_by_id
-        as fn(State<AppState>, Path<Uuid>, Json<panes::SplitPaneByIdRequest>) -> _;
-}
-
-#[utoipa::path(
-    delete,
-    path = "/api/panes/{pane_id}",
-    tag = "Panes",
-    operation_id = "kill-a-pane",
-    summary = "Kill a pane",
-    params(
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-    ),
-    responses(
-        (status = 204, description = "Done"),
-        (status = 404, description = "No such pane"),
-        (status = 409, description = "The pane can't be closed"),
-    ),
-)]
-fn kill_a_pane() {
-    let _ = panes::api_kill_pane_by_id as fn(State<AppState>, Path<Uuid>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/panes/{pane_id}/select",
-    tag = "Panes",
-    operation_id = "select-a-pane",
-    summary = "Select a pane",
-    params(
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-    ),
-    responses(
-        (status = 204, description = "Done"),
-        (status = 404, description = "No such pane"),
-    ),
-)]
-fn select_a_pane() {
-    let _ = panes::api_select_pane_by_id as fn(State<AppState>, Path<Uuid>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/sessions/{session_id}/panes/{pane_id}/split",
-    tag = "Session panes",
-    operation_id = "split-an-active-window-pane",
-    summary = "Split an active-window pane",
-    params(
-        ("session_id" = Uuid, Path, description = "Session ID"),
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-    ),
-    request_body = panes::SplitPaneRequest,
-    responses(
-        (status = 204, description = "Done"),
-        (status = 400, description = "Invalid direction"),
-        (status = 404, description = "No such session"),
-        (status = 409, description = "The pane isn't in the session's active window"),
-    ),
-)]
-fn split_an_active_window_pane() {
-    let _ = panes::api_split_pane
-        as fn(State<AppState>, Path<(Uuid, Uuid)>, Json<panes::SplitPaneRequest>) -> _;
-}
-
-#[utoipa::path(
-    delete,
-    path = "/api/sessions/{session_id}/panes/{pane_id}",
-    tag = "Session panes",
-    operation_id = "kill-an-active-window-pane",
-    summary = "Kill an active-window pane",
-    params(
-        ("session_id" = Uuid, Path, description = "Session ID"),
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-    ),
-    responses(
-        (status = 204, description = "Done"),
-        (status = 404, description = "No such session"),
-        (status = 409, description = "The pane isn't in the session's active window"),
-    ),
-)]
-fn kill_an_active_window_pane() {
-    let _ = panes::api_kill_pane as fn(State<AppState>, Path<(Uuid, Uuid)>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/sessions/{session_id}/panes/{pane_id}/zoom",
-    tag = "Session panes",
-    operation_id = "zoom-a-pane",
-    summary = "Zoom a pane",
-    params(
-        ("session_id" = Uuid, Path, description = "Session ID"),
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-    ),
-    responses(
-        (status = 204, description = "Done"),
-        (status = 404, description = "No such session"),
-        (status = 409, description = "The pane isn't in the session's active window"),
-    ),
-)]
-fn zoom_a_pane() {
-    let _ = panes::api_zoom_pane as fn(State<AppState>, Path<(Uuid, Uuid)>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/sessions/{session_id}/panes/{pane_id}/select",
-    tag = "Session panes",
-    operation_id = "select-an-active-window-pane",
-    summary = "Select an active-window pane",
-    params(
-        ("session_id" = Uuid, Path, description = "Session ID"),
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-    ),
-    responses(
-        (status = 204, description = "Done"),
-        (status = 404, description = "No such session"),
-        (status = 409, description = "The pane isn't in the session's active window"),
-    ),
-)]
-fn select_an_active_window_pane() {
-    let _ = panes::api_select_pane as fn(State<AppState>, Path<(Uuid, Uuid)>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/sessions/{session_id}/panes/navigate",
-    tag = "Session panes",
-    operation_id = "move-to-a-neighboring-pane",
-    summary = "Move to a neighboring pane",
-    description = "Selects the pane in `direction` (`left`, `right`, `up`, or `down`) from the active one.",
-    params(
-        ("session_id" = Uuid, Path, description = "Session ID"),
-    ),
-    request_body = panes::NavigateRequest,
-    responses(
-        (status = 204, description = "Done"),
-        (status = 404, description = "No such session"),
-    ),
-)]
-fn move_to_a_neighboring_pane() {
-    let _ =
-        panes::api_navigate as fn(State<AppState>, Path<Uuid>, Json<panes::NavigateRequest>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/sessions/{session_id}/panes/cycle",
-    tag = "Session panes",
-    operation_id = "cycle-panes",
-    summary = "Cycle panes",
-    description = "Selects the pane `delta` places on in layout order.",
-    params(
-        ("session_id" = Uuid, Path, description = "Session ID"),
-    ),
-    request_body = panes::DeltaRequest,
-    responses(
-        (status = 204, description = "Done"),
-        (status = 404, description = "No such session"),
-    ),
-)]
-fn cycle_panes() {
-    let _ =
-        panes::api_cycle_pane as fn(State<AppState>, Path<Uuid>, Json<panes::DeltaRequest>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/sessions/{session_id}/panes/swap",
-    tag = "Session panes",
-    operation_id = "swap-panes",
-    summary = "Swap panes",
-    description = "Swaps the active pane with the one `delta` places on in layout order.",
-    params(
-        ("session_id" = Uuid, Path, description = "Session ID"),
-    ),
-    request_body = panes::DeltaRequest,
-    responses(
-        (status = 204, description = "Done"),
-        (status = 404, description = "No such session"),
-    ),
-)]
-fn swap_panes() {
-    let _ = panes::api_swap_pane as fn(State<AppState>, Path<Uuid>, Json<panes::DeltaRequest>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/sessions/{session_id}/layout",
-    tag = "Session panes",
-    operation_id = "select-a-layout",
-    summary = "Select a layout",
-    description = "Rearranges the active window's panes in a named preset.",
-    params(
-        ("session_id" = Uuid, Path, description = "Session ID"),
-    ),
-    request_body = panes::SelectLayoutRequest,
-    responses(
-        (status = 204, description = "Done"),
-        (status = 400, description = "Unknown preset"),
-        (status = 404, description = "No such session"),
-    ),
-)]
-fn select_a_layout() {
-    let _ = panes::api_select_layout
-        as fn(State<AppState>, Path<Uuid>, Json<panes::SelectLayoutRequest>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/sessions/{session_id}/layout/next",
-    tag = "Session panes",
-    operation_id = "next-layout",
-    summary = "Next layout",
-    params(
-        ("session_id" = Uuid, Path, description = "Session ID"),
-    ),
-    responses(
-        (status = 204, description = "Done"),
-        (status = 404, description = "No such session"),
-    ),
-)]
-fn next_layout() {
-    let _ = panes::api_next_layout as fn(State<AppState>, Path<Uuid>) -> _;
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/sessions/{session_id}",
-    tag = "Sessions",
-    operation_id = "get-a-session",
-    summary = "Get a session",
-    params(
-        ("session_id" = Uuid, Path, description = "Session ID"),
-    ),
-    responses(
-        (status = 200, description = "The session with its windows, panes, and layouts", body = crate::session::manager::SessionSnapshot),
-        (status = 404, description = "No such session"),
-    ),
-)]
-fn get_a_session() {
-    let _ = sessions::api_get_session as fn(State<AppState>, Path<Uuid>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/sessions/{session_id}/rename",
-    tag = "Sessions",
-    operation_id = "rename-a-session",
-    summary = "Rename a session",
-    params(
-        ("session_id" = Uuid, Path, description = "Session ID"),
-    ),
-    request_body = sessions::RenameSessionRequest,
-    responses(
-        (status = 200, description = "The session's new name", body = sessions::RenameSessionResponse),
-        (status = 404, description = "No such session"),
-    ),
-)]
-fn rename_a_session() {
-    let _ = sessions::api_rename_session
-        as fn(State<AppState>, Path<Uuid>, Json<sessions::RenameSessionRequest>) -> _;
-}
-
-#[utoipa::path(
-    delete,
-    path = "/api/sessions/{session_id}",
-    tag = "Sessions",
-    operation_id = "kill-a-session",
-    summary = "Kill a session",
-    params(
-        ("session_id" = Uuid, Path, description = "Session ID"),
-    ),
-    responses(
-        (status = 204, description = "Done"),
-        (status = 404, description = "No such session"),
-        (status = 409, description = "It is the last session"),
-    ),
-)]
-fn kill_a_session() {
-    let _ = sessions::api_kill_session as fn(State<AppState>, Path<Uuid>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/panes/{pane_id}/worktree",
-    tag = "Worktrees",
-    operation_id = "create-a-worktree",
-    summary = "Create a worktree",
-    params(
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-    ),
-    request_body = worktrees::CreateWorktreeRequest,
-    responses(
-        (status = 200, description = "The new worktree and its window's pane", body = crate::worktree::Created),
-        (status = 404, description = "No such pane"),
-        (status = 400, description = "Invalid request", body = String, content_type = "text/plain"),
-        (status = 409, description = "Conflict", body = String, content_type = "text/plain"),
-        (status = 500, description = "The operation failed", body = String, content_type = "text/plain"),
-    ),
-)]
-fn create_a_worktree() {
-    let _ = worktrees::api_create_worktree
-        as fn(State<AppState>, Path<Uuid>, Json<worktrees::CreateWorktreeRequest>) -> _;
-}
-
-#[utoipa::path(
-    delete,
-    path = "/api/panes/{pane_id}/worktree",
-    tag = "Worktrees",
-    operation_id = "remove-a-worktree",
-    summary = "Remove a worktree",
-    params(
-        ("pane_id" = Uuid, Path, description = "Pane ID"),
-    ),
-    responses(
-        (status = 200, description = "The removed worktree and the panes it closed", body = crate::worktree::Removed),
-        (status = 404, description = "No such pane"),
-        (status = 400, description = "Invalid request", body = String, content_type = "text/plain"),
-        (status = 409, description = "Conflict", body = String, content_type = "text/plain"),
-        (status = 500, description = "The operation failed", body = String, content_type = "text/plain"),
-    ),
-)]
-fn remove_a_worktree() {
-    let _ = worktrees::api_remove_worktree as fn(State<AppState>, Path<Uuid>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/windows/{window_id}/select",
-    tag = "Windows",
-    operation_id = "select-a-window",
-    summary = "Select a window",
-    params(
-        ("window_id" = Uuid, Path, description = "Window ID"),
-    ),
-    responses(
-        (status = 204, description = "Done"),
-        (status = 404, description = "No such window"),
-    ),
-)]
-fn select_a_window() {
-    let _ = windows::api_select_window_by_id as fn(State<AppState>, Path<Uuid>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/windows/{window_id}/rename",
-    tag = "Windows",
-    operation_id = "rename-a-window",
-    summary = "Rename a window",
-    params(
-        ("window_id" = Uuid, Path, description = "Window ID"),
-    ),
-    request_body = windows::RenameWindowRequest,
-    responses(
-        (status = 200, description = "The window's new name", body = windows::RenameWindowResponse),
-        (status = 400, description = "Empty name"),
-        (status = 404, description = "No such window"),
-    ),
-)]
-fn rename_a_window() {
-    let _ = windows::api_rename_window_by_id
-        as fn(State<AppState>, Path<Uuid>, Json<windows::RenameWindowRequest>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/sessions/{session_id}/windows/switch",
-    tag = "Windows",
-    operation_id = "switch-windows",
-    summary = "Switch windows",
-    description = "Makes another window active: `index` is absolute, or `-1` for the next window and `-2` for the previous.",
-    params(
-        ("session_id" = Uuid, Path, description = "Session ID"),
-    ),
-    request_body = windows::SwitchWindowRequest,
-    responses(
-        (status = 204, description = "Done"),
-        (status = 404, description = "No such session"),
-    ),
-)]
-fn switch_windows() {
-    let _ = windows::api_switch_window
-        as fn(State<AppState>, Path<Uuid>, Json<windows::SwitchWindowRequest>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/sessions/{session_id}/windows/rename",
-    tag = "Windows",
-    operation_id = "rename-the-active-window",
-    summary = "Rename the active window",
-    description = "Renames the session's active window. To rename another, use `POST /api/windows/{window_id}/rename`.",
-    params(
-        ("session_id" = Uuid, Path, description = "Session ID"),
-    ),
-    request_body = windows::RenameWindowRequest,
-    responses(
-        (status = 200, description = "The window's new name", body = windows::RenameWindowResponse),
-        (status = 404, description = "No such session"),
-    ),
-)]
-fn rename_the_active_window() {
-    let _ = windows::api_rename_window
-        as fn(State<AppState>, Path<Uuid>, Json<windows::RenameWindowRequest>) -> _;
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/sessions/{session_id}/windows/close",
-    tag = "Windows",
-    operation_id = "close-the-active-window",
-    summary = "Close the active window",
-    description = "Closes the session's active window. To close another, use `DELETE /api/windows/{window_id}`.",
-    params(
-        ("session_id" = Uuid, Path, description = "Session ID"),
-    ),
-    responses(
-        (status = 204, description = "Done"),
-        (status = 404, description = "No such session"),
-        (status = 409, description = "It is the session's last window"),
-    ),
-)]
-fn close_the_active_window() {
-    let _ = windows::api_close_window as fn(State<AppState>, Path<Uuid>) -> _;
-}
-
-#[utoipa::path(
-    delete,
-    path = "/api/windows/{window_id}",
-    tag = "Windows",
-    operation_id = "kill-a-window",
-    summary = "Kill a window",
-    params(
-        ("window_id" = Uuid, Path, description = "Window ID"),
-    ),
-    responses(
-        (status = 204, description = "Done"),
-        (status = 404, description = "No such window"),
-        (status = 409, description = "It is the session's last window"),
-    ),
-)]
-fn kill_a_window() {
-    let _ = windows::api_kill_window as fn(State<AppState>, Path<Uuid>) -> _;
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/telemetry",
-    tag = "Agents",
-    operation_id = "agent-usage",
-    summary = "Agent usage",
-    description = "Tokens, cost, requests, and tool calls per agent and model, per minute, for the last 24 hours, as agent view's Usage tab shows them.",
-    responses(
-        (status = 200, description = "Each agent's usage", body = Vec<crate::telemetry::AgentTelemetry>),
-    ),
-)]
-fn agent_usage() {
-    let _ = telemetry::snapshot as fn(State<AppState>) -> _;
-}
-
-#[utoipa::path(
-    get,
-    path = "/api/agent-limits",
-    tag = "Agents",
-    operation_id = "agent-limits",
-    summary = "Subscription limits",
-    description = "How much of each subscription limit Claude Code and Codex accounts on the server have used, and when each resets. Agents using an API key, or not logged in, aren't listed.",
-    responses(
-        (status = 200, description = "Each logged-in agent's limits", body = Vec<crate::agent_limits::AgentLimits>),
-    ),
-)]
-fn subscription_limits() {
-    let _ = agent_limits::limits as fn(State<AppState>) -> _;
+/// Documents a rejection, which has a plain-text body, adding its cause to
+/// the response's description if the handler sends that status too.
+fn add_cause(
+    responses: &mut std::collections::BTreeMap<String, RefOr<Response>>,
+    status: &str,
+    cause: &str,
+) {
+    let text = || {
+        ContentBuilder::new()
+            .schema(Some(ObjectBuilder::new().schema_type(Type::String)))
+            .build()
+    };
+    match responses.get_mut(status) {
+        Some(RefOr::T(response)) => {
+            response.description = format!("{}; or {cause}", response.description);
+            response
+                .content
+                .entry("text/plain".into())
+                .or_insert_with(|| text().into());
+        }
+        Some(RefOr::Ref(_)) => unreachable!("responses are inline"),
+        None => {
+            let mut description = cause.to_string();
+            description[..1].make_ascii_uppercase();
+            let response = ResponseBuilder::new()
+                .description(description)
+                .content("text/plain", text())
+                .build();
+            responses.insert(status.into(), response.into());
+        }
+    }
 }
 
 fn document() -> String {
     ApiDoc::openapi().to_pretty_json().unwrap() + "\n"
 }
 
+/// Routes the reference leaves out, used by the app, CLI commands, or
+/// agents' exporters rather than by automation.
+const UNDOCUMENTED: &[&str] = &[
+    // The app's own surfaces.
+    "/api/editors",
+    "/api/file",
+    "/api/multipass",
+    "/api/multipass/{action}",
+    "/api/nvim/file",
+    "/api/panes/{pane_id}/editor-file",
+    "/api/panes/{pane_id}/paste-image",
+    "/api/preview/{*path}",
+    "/api/update",
+    "/api/vscode",
+    "/api/vscode/license",
+    "/api/wallpaper/check",
+    "/api/widgets/{id}",
+    // `btmux pick`, `confirm`, and `input`, and sandboxed shells.
+    "/api/panes/{pane_id}/widget",
+    "/api/multipass/bridge",
+    // OTLP receivers.
+    "/api/panes/{pane_id}/telemetry/v1/logs",
+    "/api/panes/{pane_id}/telemetry/v1/metrics",
+    // Signing in: pairing and btmux connect.
+    "/api/pair",
+    "/api/connect/enrollments",
+    "/api/connect/passkeys",
+    "/api/connect/passkeys/{id}",
+    "/api/connect/register",
+    "/api/connect/sign-out-everywhere",
+];
+
 #[test]
 fn openapi_is_current() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/openapi.json");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/public/openapi.json");
     let generated = document();
     if std::env::var_os("BTMUX_UPDATE_PROTOCOL").is_some() {
         std::fs::write(&path, generated).unwrap();
@@ -1097,86 +261,497 @@ fn openapi_is_current() {
     let current = std::fs::read_to_string(&path).unwrap_or_default();
     assert!(
         current == generated,
-        "docs/openapi.json is stale; run `just protocol`"
+        "docs/public/openapi.json is stale; run `just protocol`"
     );
 }
 
-/// Every documented path is routed with that template, and the route takes
-/// exactly the documented methods. Handlers don't run.
-#[tokio::test]
-async fn routes_match() {
+/// Each `/api` route in the sources (outside tests) is documented or in
+/// `UNDOCUMENTED`, so a new one needs a decision.
+#[test]
+fn api_routes_are_documented() {
+    fn sources(dir: &std::path::Path, files: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                sources(&path, files);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                let end = text.find("\n#[cfg(test)]\nmod ").unwrap_or(text.len());
+                files.push(text[..end].to_owned());
+            }
+        }
+    }
+    let mut files = Vec::new();
+    sources(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut files,
+    );
+    let route = regex::Regex::new(r#"\.route\(\s*"(/api/[^"]*)""#).unwrap();
+    let routed: std::collections::BTreeSet<String> = files
+        .iter()
+        .flat_map(|text| route.captures_iter(text))
+        .map(|captures| captures[1].to_owned())
+        .collect();
+
+    let doc = tests::doc();
+    let documented = doc["paths"].as_object().unwrap();
+    for path in &routed {
+        let listed = UNDOCUMENTED.contains(&path.as_str());
+        assert!(
+            documented.contains_key(path) != listed,
+            "{path}: document it, or list it in UNDOCUMENTED, not both"
+        );
+    }
+    for path in UNDOCUMENTED {
+        assert!(
+            routed.contains(*path),
+            "{path} in UNDOCUMENTED isn't routed"
+        );
+    }
+}
+
+mod tests {
+    use super::*;
+
     use axum::body::{to_bytes, Body};
     use axum::extract::{MatchedPath, Request};
     use axum::http::{header, Method, StatusCode};
     use axum::middleware::{self, Next};
+    use axum::Router;
+    use serde_json::{json, Value};
     use tower::ServiceExt;
 
-    let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
-    let (meta_tx, _) = tokio::sync::mpsc::unbounded_channel();
-    let manager = crate::session::manager::SessionManager::new(
-        "/bin/sh".into(),
-        crate::config::FileConfig::default(),
-        exit_tx,
-        meta_tx,
-        8004,
-        None,
-    );
-    let app = server::create_app(std::sync::Arc::new(tokio::sync::RwLock::new(manager)));
-    // Replies with the route's template, for any method.
-    let matched = app.clone().route_layer(middleware::from_fn(
-        |matched: Option<MatchedPath>, _: Request, _: Next| async move {
-            matched
-                .map(|path| path.as_str().to_owned())
-                .unwrap_or_default()
-        },
-    ));
-    let request = |method: Method, uri: &str| {
-        axum::http::Request::builder()
-            .method(method)
-            .uri(uri)
-            .body(Body::empty())
-            .unwrap()
-    };
+    const NIL: &str = "00000000-0000-0000-0000-000000000000";
 
-    let doc = serde_json::to_value(ApiDoc::openapi()).unwrap();
-    for (path, item) in doc["paths"].as_object().unwrap() {
-        let uri = path
-            .split('/')
-            .map(|part| match part.starts_with('{') {
-                true => "00000000-0000-0000-0000-000000000000",
-                false => part,
-            })
-            .collect::<Vec<_>>()
-            .join("/");
-
-        let response = matched
-            .clone()
-            .oneshot(request(Method::GET, &uri))
-            .await
-            .unwrap();
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        assert_eq!(
-            std::str::from_utf8(&body).unwrap(),
-            path,
-            "{path} isn't routed"
+    /// The routes `main` serves, minus sign-in.
+    fn app() -> Router {
+        let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let (meta_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let manager = crate::session::manager::SessionManager::new(
+            "/bin/sh".into(),
+            crate::config::FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8004,
+            None,
         );
+        server::create_app(std::sync::Arc::new(tokio::sync::RwLock::new(manager))).merge(
+            server::info_routes(server::ServerInfo {
+                version: crate::config::VERSION.into(),
+                profile: None,
+                config_file: None,
+                state_file: None,
+                token_file: None,
+                token_source: "test".into(),
+                listen_address: "127.0.0.1:8004".into(),
+                executable: None,
+                log_files: None,
+                instance: "test".into(),
+                pid: 0,
+            }),
+        )
+    }
 
-        // No route takes TRACE, so axum lists the ones it does take.
-        let response = app
-            .clone()
-            .oneshot(request(Method::TRACE, &uri))
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{path}");
-        let allowed = response.headers()[header::ALLOW].to_str().unwrap();
-        let mut allowed: Vec<String> = allowed
-            .split(',')
-            .map(|method| method.trim().to_lowercase())
-            .filter(|method| method != "head")
-            .collect();
-        let mut documented: Vec<String> = item.as_object().unwrap().keys().cloned().collect();
-        allowed.sort();
-        documented.sort();
-        assert_eq!(allowed, documented, "{path} takes other methods");
+    pub(super) fn doc() -> Value {
+        serde_json::to_value(ApiDoc::openapi()).unwrap()
+    }
+
+    /// Every documented path is routed with that template, and the route
+    /// takes exactly the documented methods. Handlers don't run.
+    #[tokio::test]
+    async fn routes_match() {
+        let app = app();
+        // Replies with the route's template, for any method.
+        let matched = app.clone().route_layer(middleware::from_fn(
+            |matched: Option<MatchedPath>, _: Request, _: Next| async move {
+                matched
+                    .map(|path| path.as_str().to_owned())
+                    .unwrap_or_default()
+            },
+        ));
+        let request = |method: Method, uri: &str| {
+            axum::http::Request::builder()
+                .method(method)
+                .uri(uri)
+                .body(Body::empty())
+                .unwrap()
+        };
+
+        for (path, item) in doc()["paths"].as_object().unwrap() {
+            let uri = path
+                .split('/')
+                .map(|part| match part.starts_with('{') {
+                    true => NIL,
+                    false => part,
+                })
+                .collect::<Vec<_>>()
+                .join("/");
+
+            let response = matched
+                .clone()
+                .oneshot(request(Method::GET, &uri))
+                .await
+                .unwrap();
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            assert_eq!(
+                std::str::from_utf8(&body).unwrap(),
+                path,
+                "{path} isn't routed"
+            );
+
+            // No route takes TRACE, so axum lists the ones it does take.
+            let response = app
+                .clone()
+                .oneshot(request(Method::TRACE, &uri))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{path}");
+            let allowed = response.headers()[header::ALLOW].to_str().unwrap();
+            let mut allowed: Vec<String> = allowed
+                .split(',')
+                .map(|method| method.trim().to_lowercase())
+                .filter(|method| method != "head")
+                .collect();
+            let mut documented: Vec<String> = item.as_object().unwrap().keys().cloned().collect();
+            allowed.sort();
+            documented.sort();
+            assert_eq!(allowed, documented, "{path} takes other methods");
+        }
+    }
+
+    /// Sends requests and checks each reply against the document: its
+    /// status is documented for the operation, a body has a documented
+    /// media type, and JSON matches its schema.
+    struct Checker {
+        app: Router,
+        doc: Value,
+    }
+
+    /// A request body: JSON, or JSON sent without a content type.
+    enum Sent {
+        Json(String),
+        Untyped(String),
+    }
+
+    impl Checker {
+        async fn call(
+            &self,
+            method: &Method,
+            template: &str,
+            uri: &str,
+            body: Option<Sent>,
+        ) -> (StatusCode, Value) {
+            let mut request = axum::http::Request::builder()
+                .method(method.clone())
+                .uri(uri);
+            let body = match body {
+                Some(Sent::Json(body)) => {
+                    request = request.header(header::CONTENT_TYPE, "application/json");
+                    Body::from(body)
+                }
+                Some(Sent::Untyped(body)) => Body::from(body),
+                None => Body::empty(),
+            };
+            let response = self
+                .app
+                .clone()
+                .oneshot(request.body(body).unwrap())
+                .await
+                .unwrap();
+            let status = response.status();
+            let media = response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .map(|value| {
+                    value
+                        .to_str()
+                        .unwrap()
+                        .split(';')
+                        .next()
+                        .unwrap()
+                        .to_owned()
+                })
+                .unwrap_or_default();
+            let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+
+            let operation = &self.doc["paths"][template][method.as_str().to_lowercase()];
+            assert!(
+                operation.is_object(),
+                "{method} {template} isn't documented"
+            );
+            let documented = &operation["responses"][status.as_str()];
+            assert!(
+                documented.is_object(),
+                "{method} {uri}: {status} isn't documented ({})",
+                String::from_utf8_lossy(&bytes)
+            );
+            if bytes.is_empty() {
+                return (status, Value::Null);
+            }
+            let Some(content) = documented["content"].get(&media) else {
+                panic!("{method} {uri}: a {status} {media} body isn't documented");
+            };
+            if media != "application/json" {
+                return (status, Value::Null);
+            }
+            let value: Value = serde_json::from_slice(&bytes).unwrap();
+            let mut schema = content["schema"].clone();
+            schema["components"] = self.doc["components"].clone();
+            let validator = jsonschema::validator_for(&schema).unwrap();
+            if let Err(error) = validator.validate(&value) {
+                panic!("{method} {uri}: {error}\n{value:#}");
+            }
+            (status, value)
+        }
+
+        /// Like `call`, expecting `expected`.
+        async fn expect(
+            &self,
+            expected: StatusCode,
+            method: Method,
+            template: &str,
+            uri: &str,
+            body: Option<Value>,
+        ) -> Value {
+            let body = body.map(|body| Sent::Json(body.to_string()));
+            let (status, value) = self.call(&method, template, uri, body).await;
+            assert_eq!(status, expected, "{method} {uri}");
+            value
+        }
+    }
+
+    /// Replies on a fresh server, without shells, match the document.
+    #[tokio::test]
+    async fn responses_match() {
+        use Method as M;
+        use StatusCode as S;
+        let check = Checker {
+            app: app(),
+            doc: doc(),
+        };
+
+        let created = check
+            .expect(
+                S::OK,
+                M::POST,
+                "/api/sessions",
+                "/api/sessions",
+                Some(json!({"name": "first"})),
+            )
+            .await;
+        let session = created["id"].as_str().unwrap().to_owned();
+        let sessions = check
+            .expect(S::OK, M::GET, "/api/sessions", "/api/sessions", None)
+            .await;
+        assert_eq!(sessions[0]["id"], created["id"]);
+        let snapshot = check
+            .expect(
+                S::OK,
+                M::GET,
+                "/api/sessions/{session_id}",
+                &format!("/api/sessions/{session}"),
+                None,
+            )
+            .await;
+        let window = snapshot["windows"][0]["id"].as_str().unwrap().to_owned();
+        let pane = snapshot["windows"][0]["panes"][0]["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        for (uri, status) in [
+            (format!("/api/sessions/{NIL}"), S::NOT_FOUND),
+            ("/api/sessions/nope".to_owned(), S::BAD_REQUEST),
+        ] {
+            check
+                .expect(status, M::GET, "/api/sessions/{session_id}", &uri, None)
+                .await;
+        }
+
+        for path in [
+            "/api/panes",
+            "/api/agents",
+            "/api/telemetry",
+            "/api/info",
+            "/api/system",
+        ] {
+            check.expect(S::OK, M::GET, path, path, None).await;
+        }
+
+        let split = format!("/api/panes/{pane}/split");
+        let template = "/api/panes/{pane_id}/split";
+        for (body, status) in [
+            (Sent::Json(r#"{"direction":"right"}"#.into()), S::OK),
+            (
+                Sent::Json(r#"{"direction":"sideways"}"#.into()),
+                S::BAD_REQUEST,
+            ),
+            (Sent::Json("{".into()), S::BAD_REQUEST),
+            (Sent::Json("{}".into()), S::UNPROCESSABLE_ENTITY),
+            (
+                Sent::Untyped(r#"{"direction":"right"}"#.into()),
+                S::UNSUPPORTED_MEDIA_TYPE,
+            ),
+        ] {
+            let (got, _) = check.call(&M::POST, template, &split, Some(body)).await;
+            assert_eq!(got, status, "POST {split}");
+        }
+        check
+            .expect(
+                S::NOT_FOUND,
+                M::POST,
+                template,
+                &format!("/api/panes/{NIL}/split"),
+                Some(json!({"direction": "right"})),
+            )
+            .await;
+
+        let created = check
+            .expect(
+                S::OK,
+                M::POST,
+                "/api/sessions",
+                "/api/sessions",
+                Some(json!({"name": "second"})),
+            )
+            .await;
+        let second = created["id"].as_str().unwrap().to_owned();
+        let calls = [
+            (
+                S::OK,
+                M::POST,
+                "/api/sessions/{session_id}/windows",
+                format!("/api/sessions/{session}/windows"),
+                Some(json!({})),
+            ),
+            (
+                S::OK,
+                M::POST,
+                "/api/sessions/{session_id}/rename",
+                format!("/api/sessions/{session}/rename"),
+                Some(json!({"name": "main"})),
+            ),
+            (
+                S::OK,
+                M::POST,
+                "/api/sessions/{session_id}/windows/rename",
+                format!("/api/sessions/{session}/windows/rename"),
+                Some(json!({"name": "second"})),
+            ),
+            (
+                S::OK,
+                M::POST,
+                "/api/windows/{window_id}/rename",
+                format!("/api/windows/{window}/rename"),
+                Some(json!({"name": "first"})),
+            ),
+            (
+                S::BAD_REQUEST,
+                M::POST,
+                "/api/windows/{window_id}/rename",
+                format!("/api/windows/{window}/rename"),
+                Some(json!({"name": ""})),
+            ),
+            (
+                S::UNPROCESSABLE_ENTITY,
+                M::POST,
+                "/api/notify",
+                "/api/notify".into(),
+                Some(json!({"title": ""})),
+            ),
+            (
+                S::NO_CONTENT,
+                M::POST,
+                "/api/notify",
+                "/api/notify".into(),
+                Some(json!({"title": "Hi"})),
+            ),
+            (
+                S::OK,
+                M::GET,
+                "/api/panes/{pane_id}/agent-status",
+                format!("/api/panes/{pane}/agent-status"),
+                None,
+            ),
+            (
+                S::NO_CONTENT,
+                M::POST,
+                "/api/panes/{pane_id}/open-file-browser",
+                format!("/api/panes/{pane}/open-file-browser"),
+                Some(json!({"path": "/"})),
+            ),
+            (
+                S::OK,
+                M::POST,
+                "/api/panes/{pane_id}/open-editor",
+                format!("/api/panes/{pane}/open-editor"),
+                Some(json!({"editor": "pane"})),
+            ),
+            (
+                S::BAD_REQUEST,
+                M::POST,
+                "/api/sessions/{session_id}/layout",
+                format!("/api/sessions/{session}/layout"),
+                Some(json!({"preset": "nope"})),
+            ),
+            (
+                S::CONFLICT,
+                M::POST,
+                "/api/sessions/{session_id}/panes/{pane_id}/zoom",
+                format!("/api/sessions/{second}/panes/{pane}/zoom"),
+                None,
+            ),
+            (
+                S::NO_CONTENT,
+                M::DELETE,
+                "/api/sessions/{session_id}",
+                format!("/api/sessions/{second}"),
+                None,
+            ),
+            (
+                S::CONFLICT,
+                M::DELETE,
+                "/api/sessions/{session_id}",
+                format!("/api/sessions/{session}"),
+                None,
+            ),
+            (
+                S::NO_CONTENT,
+                M::POST,
+                "/api/sessions/{session_id}/windows/close",
+                format!("/api/sessions/{session}/windows/close"),
+                None,
+            ),
+            (
+                S::CONFLICT,
+                M::POST,
+                "/api/sessions/{session_id}/windows/close",
+                format!("/api/sessions/{session}/windows/close"),
+                None,
+            ),
+            (
+                S::OK,
+                M::DELETE,
+                "/api/sessions",
+                "/api/sessions".into(),
+                None,
+            ),
+        ];
+        for (status, method, template, uri, body) in calls {
+            check.expect(status, method, template, &uri, body).await;
+        }
+
+        let served = check
+            .expect(
+                S::OK,
+                M::GET,
+                "/api/openapi.json",
+                "/api/openapi.json",
+                None,
+            )
+            .await;
+        assert!(
+            served == doc(),
+            "/api/openapi.json serves a stale document; run `just protocol`"
+        );
     }
 }

@@ -43,6 +43,7 @@ static INSTANCE: OnceLock<Arc<Tailscale>> = OnceLock::new();
 #[derive(Clone, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub enum TailscaleStatus {
     Starting,
     Serving {

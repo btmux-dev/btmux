@@ -5,6 +5,7 @@ import starlight from "@astrojs/starlight";
 import starlightLinksValidator from "starlight-links-validator";
 import starlightLlmsTxt from "starlight-llms-txt";
 import starlightOpenAPI, { createOpenAPISidebarGroup } from "starlight-openapi";
+import { remarkApiEndpoints } from "./src/remark-api-endpoints.mjs";
 import { remarkRepoLinks } from "./src/remark-repo-links.mjs";
 import { generateChangelogPage } from "./scripts/changelog-page.mjs";
 
@@ -25,8 +26,8 @@ const versionHref = `${base}/project/changelog/#${
   released.includes(version) ? version.replaceAll(".", "") : "unreleased"
 }`;
 
-// The REST API reference, generated from openapi.json (`just protocol`) and
-// listed under Automation.
+// The REST API reference, generated from public/openapi.json (`just
+// protocol`) and listed under Automation.
 const apiReference = createOpenAPISidebarGroup();
 
 // Sidebar groups, one per content directory; pages order themselves with
@@ -45,7 +46,9 @@ export default defineConfig({
   site,
   base,
   markdown: {
-    processor: unified({ remarkPlugins: [[remarkRepoLinks, { repo, base }]] }),
+    processor: unified({
+      remarkPlugins: [remarkApiEndpoints, [remarkRepoLinks, { repo, base }]],
+    }),
   },
   vite: {
     define: {
@@ -59,7 +62,7 @@ export default defineConfig({
         starlightOpenAPI([
           {
             base: "automation/api",
-            schema: "./openapi.json",
+            schema: "./public/openapi.json",
             sidebar: {
               label: "API reference",
               group: apiReference,
