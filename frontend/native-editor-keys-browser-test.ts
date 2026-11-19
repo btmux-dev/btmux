@@ -383,10 +383,12 @@ try {
 
   // Without vim, VS Code's keys, which the editor's keymaps bind.
   assert.equal(await paletteKeys('go to definition'), 'F12');
-  assert.equal(await paletteKeys('hover'), 'mod+k mod+i');
+  // Chords are vim key names: Cmd (`<M-k>`) on macOS, Ctrl (`<C-k>`) elsewhere.
+  const chordMod = process.platform === 'darwin' ? 'mod' : 'ctrl';
+  assert.equal(await paletteKeys('hover'), `${chordMod}+k ${chordMod}+i`);
   help = await helpKeys();
   assert.equal(helpRow(help, 'Save'), 'mod+s');
-  assert.equal(helpRow(help, 'Format'), 'shift+alt+f | mod+k mod+f');
+  assert.equal(helpRow(help, 'Format'), `shift+alt+f | ${chordMod}+k ${chordMod}+f`);
   assert.equal(helpRow(help, 'Palette'), undefined);
   const unbound = await waitForAsync(
     page,
