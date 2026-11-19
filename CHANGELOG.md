@@ -14,6 +14,7 @@ actions, saved state, and API types can change in any release.
   monitors, which resumes by itself once they end, shows `waiting on 1 shell`
   instead of `working · 1 shell` or `idle · 1 shell`. `btmux wait` and
   `wait_for_agent` keep waiting through it.
+  ([#176](https://github.com/btmux-dev/btmux/pull/176))
 
 ## [0.0.213] - 2026-11-19
 
