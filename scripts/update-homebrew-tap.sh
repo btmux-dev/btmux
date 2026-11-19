@@ -47,7 +47,7 @@ mkdir -p "$tap_dir/Formula" "$tap_dir/Casks"
 
 cat > "$tap_dir/Formula/btmux.rb" <<EOF
 class Btmux < Formula
-  desc "Browser-based tmux"
+  desc "Persistent terminal workspace for desktop, browser, and mobile"
   homepage "https://github.com/$repo"
   license "MIT"
 

@@ -79,12 +79,12 @@ export default defineConfig({
         starlightLlmsTxt({
           projectName: "btmux",
           description:
-            "btmux is a terminal emulator and tmux-style session manager that runs in the browser, a desktop app, and on phones. A Rust server owns the shells; clients attach over WebSockets. It tracks coding agents, and has a REST API, an MCP server, and a tmux-style CLI.",
+            "btmux is a persistent terminal workspace and tmux-style session manager that runs in the browser, a desktop app, and on phones. A Rust server owns the shells; clients attach over WebSockets. It tracks coding agents, and has a REST API, an MCP server, and a tmux-style CLI.",
         }),
       ],
       title: "btmux",
       description:
-        "A browser-based tmux: terminal emulator and session manager.",
+        "A persistent terminal workspace and session manager for desktop, browser, and mobile.",
       customCss: [
         "@fontsource-variable/geist",
         "@fontsource-variable/geist-mono",

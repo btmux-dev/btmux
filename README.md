@@ -4,8 +4,9 @@
 [![CI](https://github.com/btmux-dev/btmux/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/btmux-dev/btmux/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/github/license/btmux-dev/btmux)](LICENSE)
 
-A terminal emulator and tmux-style session manager for macOS, Linux, and
-Windows. Use it in the desktop app or a browser, including on mobile. Powered by
+A persistent terminal workspace and session manager for desktop, browser, and
+mobile. tmux-style UI, built-in dev tools, and coding agent support. Runs on
+macOS, Linux, and Windows. Powered by
 [wterm](https://github.com/vercel-labs/wterm),
 [libghostty](https://github.com/ghostty-org/ghostty), and
 [Tauri](https://github.com/tauri-apps/tauri).
