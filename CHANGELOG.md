@@ -8,6 +8,13 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Changed
+
+- The native editor's completions use the editor's font and show a colored
+  icon for each kind (field, struct, module, …), the ones the Neovim surface
+  shows, instead of CodeMirror's symbols, which gave fields and properties an
+  empty-looking square.
+
 ## [0.0.212] - 2026-11-19
 
 ### Added

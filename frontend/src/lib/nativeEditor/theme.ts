@@ -44,6 +44,56 @@ export function highlightSpecs(theme: Theme) {
   ];
 }
 
+type IconRole = 'blue' | 'cyan' | 'green' | 'brightRed' | 'magenta' | 'red' | 'yellow' | 'foreground';
+
+/**
+ * Completion kind icons: mini.icons' LSP codicons, as the Neovim surface shows
+ * them, in base16 roles for its highlight groups (Azure/Blue=blue, Orange=brightRed,
+ * Purple=magenta, Grey=foreground). Types are completion types (`KIND_TYPES` in
+ * completion.ts, plus CodeMirror's own `namespace` and `type`).
+ */
+const KIND_ICONS: [type: string, glyph: string, role: IconRole][] = [
+  ['text', '\uea93', 'green'],
+  ['method', '\uea8c', 'blue'],
+  ['function', '\ueabe', 'blue'],
+  ['constructor', '\ueaf8', 'blue'],
+  ['field', '\ueb5f', 'yellow'],
+  ['variable', '\uea88', 'cyan'],
+  ['class', '\ueb5b', 'magenta'],
+  ['interface', '\ueb61', 'magenta'],
+  ['module', '\uea8b', 'magenta'],
+  ['namespace', '\uea8b', 'red'],
+  ['property', '\ueb65', 'yellow'],
+  ['unit', '\uea96', 'cyan'],
+  ['value', '\ueaac', 'blue'],
+  ['enum', '\uea95', 'magenta'],
+  ['keyword', '\ueb62', 'cyan'],
+  ['snippet', '\ueb66', 'green'],
+  ['color', '\ueb5c', 'red'],
+  ['file', '\ueb60', 'blue'],
+  ['reference', '\ueb36', 'cyan'],
+  ['folder', '\uea83', 'blue'],
+  ['enumMember', '\ueb5e', 'yellow'],
+  ['constant', '\ueb5d', 'brightRed'],
+  ['struct', '\uea91', 'magenta'],
+  ['event', '\uea86', 'red'],
+  ['operator', '\ueb64', 'cyan'],
+  ['typeParameter', '\uea92', 'cyan'],
+  ['type', '\uea92', 'cyan'],
+];
+
+function completionIcons(theme: Theme) {
+  const rules: Record<string, Record<string, string>> = {
+    // CodeMirror's list is plain `monospace`; the editor font falls back to the bundled Nerd Font.
+    '.cm-tooltip.cm-tooltip-autocomplete > ul': { fontFamily: 'inherit' },
+    '.cm-completionIcon': { width: '1em', opacity: '1' },
+  };
+  for (const [type, glyph, role] of KIND_ICONS) {
+    rules[`.cm-completionIcon-${type}:after`] = { content: `'${glyph}'`, color: theme[role] };
+  }
+  return rules;
+}
+
 /** The native editor's popups: half translucent, blurred by `backdrop-blur`. */
 export const POPUP_GLASS = {
   backgroundColor: 'color-mix(in srgb, var(--color-background-popover) 50%, transparent)',
@@ -144,6 +194,7 @@ export function editorTheme(a: EditorAppearance): Extension {
         // Token colors aren't checked against the selected row's background.
         '.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-btmux-completionCode *': { color: 'inherit' },
         '.cm-completionMatchedText': { textDecoration: 'none', color: theme.blue, fontWeight: 'bold' },
+        ...completionIcons(theme),
         // Semantic tokens, in the roles `highlightSpecs` uses.
         '.cm-sem-namespace, .cm-sem-type, .cm-sem-class, .cm-sem-enum, .cm-sem-interface, .cm-sem-struct, .cm-sem-typeParameter':
           { color: theme.yellow },

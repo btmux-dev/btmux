@@ -49,26 +49,33 @@ type List = {
   };
 };
 
+/** LSP `CompletionItemKind` → completion type, one per kind for `KIND_ICONS` (theme.ts). */
 const KIND_TYPES: Record<number, string> = {
   1: 'text',
   2: 'method',
   3: 'function',
-  4: 'class',
-  5: 'property',
+  4: 'constructor',
+  5: 'field',
   6: 'variable',
   7: 'class',
   8: 'interface',
-  9: 'namespace',
+  9: 'module',
   10: 'property',
-  11: 'keyword',
-  12: 'constant',
-  13: 'constant',
+  11: 'unit',
+  12: 'value',
+  13: 'enum',
   14: 'keyword',
-  16: 'constant',
-  20: 'constant',
+  15: 'snippet',
+  16: 'color',
+  17: 'file',
+  18: 'reference',
+  19: 'folder',
+  20: 'enumMember',
   21: 'constant',
-  22: 'class',
-  25: 'type',
+  22: 'struct',
+  23: 'event',
+  24: 'operator',
+  25: 'typeParameter',
 };
 
 const textOf = (item: Item) => item.textEdit?.newText || item.textEditText || item.insertText || item.label;
