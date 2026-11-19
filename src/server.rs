@@ -734,6 +734,17 @@ pub(crate) async fn api_pane_notify(
             Some(false) => {}
         }
     }
+    if infer_agent_event(&event, body.notification_type.as_deref()) == Some(AgentEvent::TurnStart) {
+        mgr.drop_held_alert(pane_id);
+    }
+    // Waiting on background work isn't waiting for input.
+    let idle_prompt = body
+        .notification_type
+        .as_deref()
+        .is_some_and(|kind| kind.eq_ignore_ascii_case("idle_prompt"));
+    let waiting = mgr
+        .agent_status(pane_id)
+        .is_some_and(|status| status.state == AgentState::Waiting);
     if matches!(
         event.as_str(),
         "SessionStart"
@@ -747,6 +758,7 @@ pub(crate) async fn api_pane_notify(
             | "AfterTool"
             | "Interrupt"
     ) || repeated
+        || (idle_prompt && waiting)
     {
         return StatusCode::NO_CONTENT.into_response();
     }
@@ -760,24 +772,45 @@ pub(crate) async fn api_pane_notify(
     );
     tracing::debug!(pane_id = %pane_id, body = notif_body.as_deref().unwrap_or("-"), "hook notification body");
 
-    if let Some(pane) = mgr.find_pane_mut(pane_id) {
-        pane.notify(PaneAlert {
-            level,
-            title: title.clone(),
-            body: notif_body.clone(),
-        });
-    }
-    ws::control::broadcast_state(&mgr);
-    let msg = ws::control::ServerMessage::PaneNotification {
-        pane_id,
-        event,
+    let alert = PaneAlert {
         level,
         title,
         body: notif_body,
+    };
+    let finished = matches!(event.as_str(), "Stop" | "AfterAgent");
+    let alert = if finished {
+        mgr.hold_alert(pane_id, event, alert, Instant::now())
+    } else {
+        Some((event, alert))
+    };
+    match alert {
+        Some((event, alert)) => deliver_pane_alert(&mut mgr, pane_id, event, alert),
+        None => tracing::debug!(pane_id = %pane_id, "alert held for background work"),
+    }
+    StatusCode::NO_CONTENT.into_response()
+}
+
+/// Marks the pane and notifies every client.
+pub(crate) fn deliver_pane_alert(
+    mgr: &mut crate::session::manager::SessionManager,
+    pane_id: Uuid,
+    event: String,
+    alert: PaneAlert,
+) {
+    let Some(pane) = mgr.find_pane_mut(pane_id) else {
+        return;
+    };
+    pane.notify(alert.clone());
+    ws::control::broadcast_state(mgr);
+    let msg = ws::control::ServerMessage::PaneNotification {
+        pane_id,
+        event,
+        level: alert.level,
+        title: alert.title,
+        body: alert.body,
         os_client: mgr.alert_client(),
     };
     let _ = mgr.events().send(serde_json::to_string(&msg).unwrap());
-    StatusCode::NO_CONTENT.into_response()
 }
 
 #[derive(Deserialize)]

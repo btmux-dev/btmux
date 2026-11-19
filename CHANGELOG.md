@@ -13,7 +13,8 @@ actions, saved state, and API types can change in any release.
 - A **waiting** agent state: an agent at its prompt with background shells or
   monitors, which resumes by itself once they end, shows `waiting on 1 shell`
   instead of `working · 1 shell` or `idle · 1 shell`. `btmux wait` and
-  `wait_for_agent` keep waiting through it.
+  `wait_for_agent` keep waiting through it, and its "Done" notification is
+  held, then dropped if it resumes.
   ([#176](https://github.com/btmux-dev/btmux/pull/176))
 
 ## [0.0.213] - 2026-11-19

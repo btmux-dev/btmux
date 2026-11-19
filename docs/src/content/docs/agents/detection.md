@@ -51,6 +51,10 @@ btmux uses these rules to resolve conflicting reports.
   for 700 ms, to avoid redraw flicker.
 - A permission `Notification` that repeats a pending `PermissionRequest`, and
   an `idle_prompt` after the turn already finished, are not shown again.
+- A `Stop` (or `AfterAgent`) while the screen lists background work is held:
+  for up to 2 s until the agent shows `waiting`, then for as long as it waits.
+  It is dropped if the agent then works again, which a turn start also does,
+  and shown otherwise. An `idle_prompt` while waiting isn't shown.
 - Hooks may report a wrapper's child process; the process scan's own choice
   identifies the agent and selects its rules. Names reported by hooks take
   precedence over process names. A newly detected agent ignores OSC titles

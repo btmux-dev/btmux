@@ -1008,6 +1008,9 @@ fn spawn_agent_reaper(state: AppState, manifests: Option<std::path::PathBuf>) {
             if changed {
                 ws::control::broadcast_state(&mgr);
             }
+            for (pane_id, held) in mgr.release_held_alerts(now) {
+                server::deliver_pane_alert(&mut mgr, pane_id, held.event, held.alert);
+            }
         }
     });
 }

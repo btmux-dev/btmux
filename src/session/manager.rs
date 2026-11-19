@@ -7,7 +7,7 @@ use uuid::Uuid;
 use super::{
     agent::{AgentEvent, AgentLifecycle, AgentProcess, AgentReport, Authority, ToolCall},
     layout::{Layout, LayoutPreset},
-    AgentPane, AgentState, AgentStatus, Pane, PaneInfo, PaneSnapshot, Runtime, Session,
+    AgentPane, AgentState, AgentStatus, Pane, PaneAlert, PaneInfo, PaneSnapshot, Runtime, Session,
     SessionSummary, Window,
 };
 use crate::config::{ClientConfig, ColorMode, ConfigUpdate, FileConfig};
@@ -34,6 +34,18 @@ pub type HandoffExport = (
     crate::popup::PopupsHandoff,
     Vec<HandoffPane>,
 );
+
+/// How long a held completion alert waits for its agent to show waiting.
+const HELD_ALERT_GRACE: Duration = Duration::from_secs(2);
+
+/// A finished turn's alert, held while its agent may be waiting on
+/// background work that resumes it.
+pub struct HeldAlert {
+    pub event: String,
+    pub alert: PaneAlert,
+    held: Instant,
+    waited: bool,
+}
 
 /// How long after an upgrade a pane's next agent can take its handed-off age.
 #[cfg_attr(not(unix), allow(dead_code))]
@@ -95,6 +107,7 @@ pub struct SessionManager {
     clients: usize,
     /// The control client the user focused most recently; it alone shows OS notifications.
     alert_client: Option<u32>,
+    held_alerts: HashMap<Uuid, HeldAlert>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -165,6 +178,7 @@ impl SessionManager {
             next_client: 0,
             clients: 0,
             alert_client: None,
+            held_alerts: HashMap::new(),
             widgets: Default::default(),
             popups: Default::default(),
             git: GitTracker::new(pty_env.meta_tx.clone()),
@@ -602,6 +616,60 @@ impl SessionManager {
         if self.alert_client == Some(client) {
             self.alert_client = None;
         }
+    }
+
+    /// Holds a finished turn's alert when the agent shows background work, as
+    /// Claude Code's Stop hook fires for turns that background work resumes.
+    /// Returns the alert when it isn't held.
+    pub fn hold_alert(
+        &mut self,
+        pane_id: Uuid,
+        event: String,
+        alert: PaneAlert,
+        now: Instant,
+    ) -> Option<(String, PaneAlert)> {
+        if !self
+            .agent_status(pane_id)
+            .is_some_and(|status| status.background.is_some())
+        {
+            return Some((event, alert));
+        }
+        let alert = HeldAlert {
+            event,
+            alert,
+            held: now,
+            waited: false,
+        };
+        self.held_alerts.insert(pane_id, alert);
+        None
+    }
+
+    /// A new turn makes a held alert stale.
+    pub fn drop_held_alert(&mut self, pane_id: Uuid) {
+        self.held_alerts.remove(&pane_id);
+    }
+
+    /// Held alerts to deliver now: an agent that waited and then works again
+    /// alerts with its next turn instead; one still waiting stays held; others
+    /// go out once the grace for waiting to show has passed.
+    pub fn release_held_alerts(&mut self, now: Instant) -> Vec<(Uuid, HeldAlert)> {
+        let mut released = Vec::new();
+        for (pane_id, mut held) in std::mem::take(&mut self.held_alerts) {
+            if self.find_pane(pane_id).is_none() {
+                continue;
+            }
+            match self.agent_status(pane_id).map(|status| status.state) {
+                Some(AgentState::Waiting) => held.waited = true,
+                Some(AgentState::Working | AgentState::Blocked) if held.waited => continue,
+                _ if held.waited || now.duration_since(held.held) >= HELD_ALERT_GRACE => {
+                    released.push((pane_id, held));
+                    continue;
+                }
+                _ => {}
+            }
+            self.held_alerts.insert(pane_id, held);
+        }
+        released
     }
 
     pub fn alert_client(&self) -> Option<u32> {
@@ -2638,6 +2706,103 @@ mod agent_tests {
         assert_eq!(mgr.running_agent_panes(), vec![pane_id]);
         mgr.set_agent_status(pane_id, AgentStatus::default());
         assert!(mgr.running_agent_panes().is_empty());
+    }
+
+    #[tokio::test]
+    async fn finished_turn_alerts_wait_for_background_work() {
+        use crate::pty::program_status::{State, Summary};
+        use crate::pty::screen::ScreenSnapshot;
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        let mut mgr = SessionManager::new(
+            "/bin/sh".into(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        let session = mgr.create_session(None).await;
+        let pane_id = mgr.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        let detector = crate::session::detection::Detector::new(None);
+        let now = Instant::now();
+        let ms = |ms| now + Duration::from_millis(ms);
+        let rule = "─".repeat(10);
+        let footer = |busy: &str| format!("{rule}\n❯\n{rule}\n  ⏵⏵ auto mode on{busy} · 1 shell");
+        let mut revision = 0;
+        let mut scan = |mgr: &mut SessionManager, text: &str, at| {
+            revision += 1;
+            let screen = ScreenSnapshot {
+                text: text.into(),
+                revision,
+                title_revision: revision,
+                ..Default::default()
+            };
+            let agent = mgr.agents.get_mut(&pane_id).unwrap();
+            agent.scan_screen(&detector, &screen, at);
+            agent.scan_screen(&detector, &screen, at + Duration::from_millis(700));
+        };
+        let program = |state| Summary {
+            state,
+            kind: None,
+            app: None,
+            text: None,
+        };
+        let alert = || PaneAlert {
+            level: crate::ws::control::NotificationLevel::Attention,
+            title: Some("Done".into()),
+            body: None,
+        };
+        let mut agent = AgentLifecycle::detected(
+            AgentProcess {
+                pid: 10,
+                start_time: 5,
+            },
+            "claude".into(),
+            now,
+        );
+        agent.observe_program(Some(&program(State::Working)), now);
+        mgr.agents.insert(pane_id, agent);
+
+        // Without background work, the alert goes out.
+        assert!(mgr
+            .hold_alert(pane_id, "Stop".into(), alert(), now)
+            .is_some());
+
+        // Waiting holds it past the grace; resuming drops it.
+        scan(&mut mgr, &footer(" · esc to interrupt"), now);
+        assert!(mgr
+            .hold_alert(pane_id, "Stop".into(), alert(), now)
+            .is_none());
+        assert!(mgr.release_held_alerts(ms(100)).is_empty());
+        scan(&mut mgr, &footer(""), ms(1000));
+        assert_eq!(
+            mgr.agent_status(pane_id).unwrap().state,
+            AgentState::Waiting
+        );
+        assert!(mgr.release_held_alerts(ms(5000)).is_empty());
+        scan(&mut mgr, &footer(" · esc to interrupt"), ms(6000));
+        assert!(mgr.release_held_alerts(ms(7000)).is_empty());
+        assert!(mgr.held_alerts.is_empty());
+
+        // Waiting that ends in a result delivers it.
+        assert!(mgr
+            .hold_alert(pane_id, "Stop".into(), alert(), ms(7000))
+            .is_none());
+        scan(&mut mgr, &footer(""), ms(7000));
+        assert!(mgr.release_held_alerts(ms(8000)).is_empty());
+        mgr.agents
+            .get_mut(&pane_id)
+            .unwrap()
+            .observe_program(Some(&program(State::Done)), ms(8000));
+        assert_eq!(mgr.release_held_alerts(ms(8100)).len(), 1);
+
+        // An agent that never waits gets it after the grace.
+        assert!(mgr
+            .hold_alert(pane_id, "Stop".into(), alert(), ms(9000))
+            .is_none());
+        assert!(mgr.release_held_alerts(ms(10000)).is_empty());
+        assert_eq!(mgr.release_held_alerts(ms(11000)).len(), 1);
     }
 
     #[tokio::test]

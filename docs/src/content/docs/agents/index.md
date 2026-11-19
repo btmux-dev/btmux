@@ -78,7 +78,10 @@ tile with GitHub status and reported cost. Each client remembers its tiles.
 
 ## Notifications
 
-btmux notifies you when an agent gets blocked, fails, or finishes.
+btmux notifies you when an agent gets blocked, fails, or finishes. A turn
+that ends with background work running notifies only if the agent doesn't
+start again by itself: while it is **waiting**, the notification is held, and
+dropped if the agent resumes.
 
 - **A dot** on the pane and its window, in every connected client. Viewing the
   pane clears it everywhere.
