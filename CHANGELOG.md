@@ -8,6 +8,20 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Changed
+
+- The native editor's popups (quick open, pickers, completions, hovers, the
+  which-key popup, and Vim's `:` and `/` lines) are translucent and blur the
+  text behind them, which they now float over.
+  ([#172](https://github.com/btmux-dev/btmux/pull/172))
+- Completion signatures are highlighted in the file's language.
+  ([#172](https://github.com/btmux-dev/btmux/pull/172))
+
+### Fixed
+
+- Vim's cursor in the native editor keeps its full height while a `:` or `/`
+  line is open. ([#172](https://github.com/btmux-dev/btmux/pull/172))
+
 ## [0.0.211] - 2026-11-18
 
 ### Added

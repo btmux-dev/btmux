@@ -31,7 +31,8 @@ writeFileSync(wrap, Array.from({ length: 30 }, () => 'word').join(' ') + '\n');
 mkdirSync(lspDir, { recursive: true });
 mkdirSync(join(configHome, 'btmux'), { recursive: true });
 const config = join(configHome, 'btmux', 'config.toml');
-const lsp = '[language-server.fake]\ncommand = "fake-lsp"\n[[language]]\nname = "fake"\nfile-types = ["fake"]\nlanguage-servers = ["fake"]\n';
+const lsp =
+  '[language-server.fake]\ncommand = "fake-lsp"\n[[language]]\nname = "fake"\nfile-types = ["fake"]\nlanguage-servers = ["fake"]\n';
 writeFileSync(config, `[native-editor]\nvim = true\n${lsp}`);
 const log = () => {
   try {
@@ -144,7 +145,14 @@ try {
   await page.keyboard.type('K');
   await page.locator('.cm-tooltip').getByText('Fake hover for thing').waitFor();
   await page.keyboard.type('grn');
-  await until('the name', async () => (await pane.getByLabel('New name').inputValue().catch(() => '')) === 'thing');
+  await until(
+    'the name',
+    async () =>
+      (await pane
+        .getByLabel('New name')
+        .inputValue()
+        .catch(() => '')) === 'thing',
+  );
   await page.keyboard.press('Escape');
   await content.click();
   await page.keyboard.type('ggw');
@@ -190,6 +198,30 @@ try {
   await page.keyboard.press('Control+i');
   await at('Ln 300, Col 1');
   console.log('PASS CTRL-O and CTRL-I follow jumps across files');
+
+  // Panels float over the text but leave the cursor's line clear of them,
+  // even with nowhere left to scroll: at the end of the file, and at the top.
+  const clearOf = (panel: 'top' | 'bottom') =>
+    page.waitForFunction(
+      ({ id, panel }) => {
+        const editor = document.querySelector(`[data-native-editor][data-pane-id="${id}"]`)?.closest('.cm-editor');
+        const box = editor?.querySelector(`:scope > .cm-panels-${panel}`)?.getBoundingClientRect();
+        const line = editor?.querySelector('.cm-activeLine')?.getBoundingClientRect();
+        if (!box || !line) return false;
+        return panel === 'bottom' ? line.bottom <= box.top : line.top >= box.bottom;
+      },
+      { id: paneId, panel },
+    );
+  await page.keyboard.type(':');
+  await clearOf('bottom');
+  await page.keyboard.press('Escape');
+  await page.keyboard.type('gg');
+  await at('Ln 1, Col 1');
+  await page.keyboard.press('ControlOrMeta+p');
+  await clearOf('top');
+  await page.keyboard.press('Escape');
+  await content.click();
+  console.log('PASS panels leave the cursor clear at either end of the file');
 
   // Without a server, gq hard wraps.
   await open(wrap);
@@ -273,7 +305,9 @@ try {
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ControlOrMeta+k');
-  await row(process.platform === 'darwin' ? '<M-i>' : '<C-i>').getByText('Hover').waitFor();
+  await row(process.platform === 'darwin' ? '<M-i>' : '<C-i>')
+    .getByText('Hover')
+    .waitFor();
   await page.keyboard.press('ControlOrMeta+i');
   await page.locator('.cm-tooltip').getByText('Fake hover for thing').waitFor();
   await page.keyboard.press('F12');
