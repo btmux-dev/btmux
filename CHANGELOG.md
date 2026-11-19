@@ -8,6 +8,8 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+## [0.0.213] - 2026-11-19
+
 ### Added
 
 - `Ctrl-n` and `Ctrl-p` (as in Vim) and `Ctrl-j` and `Ctrl-k` (as in fzf,
