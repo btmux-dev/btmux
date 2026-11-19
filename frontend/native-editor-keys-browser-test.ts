@@ -31,7 +31,8 @@ writeFileSync(wrap, Array.from({ length: 30 }, () => 'word').join(' ') + '\n');
 mkdirSync(lspDir, { recursive: true });
 mkdirSync(join(configHome, 'btmux'), { recursive: true });
 const config = join(configHome, 'btmux', 'config.toml');
-const lsp = '[language-server.fake]\ncommand = "fake-lsp"\n[[language]]\nname = "fake"\nfile-types = ["fake"]\nlanguage-servers = ["fake"]\n';
+const lsp =
+  '[language-server.fake]\ncommand = "fake-lsp"\n[[language]]\nname = "fake"\nfile-types = ["fake"]\nlanguage-servers = ["fake"]\n';
 writeFileSync(config, `[native-editor]\nvim = true\n${lsp}`);
 const log = () => {
   try {
@@ -104,6 +105,38 @@ try {
   const at = (text: string) => pane.getByText(text, { exact: true }).waitFor();
   const popup = pane.getByRole('status', { name: /^Keys after/ });
   const row = (key: string) => popup.locator(`[data-which-key="${key}"]`);
+  /** The editor keys the palette shows for `query`'s first result. */
+  const paletteKeys = async (query: string) => {
+    await page.keyboard.press('Control+a');
+    await page.keyboard.type(':');
+    const palette = page.getByRole('dialog');
+    await palette.getByRole('combobox').first().fill(query);
+    const keys = palette.getByRole('option').first().locator('[data-editor-keys]');
+    await keys.waitFor();
+    const value = await keys.getAttribute('data-editor-keys');
+    await page.keyboard.press('Escape');
+    await palette.waitFor({ state: 'detached' });
+    return value;
+  };
+  /** The key help's native editor rows, label to keys. */
+  const helpKeys = async () => {
+    await page.keyboard.press('Control+a');
+    await page.keyboard.type('?');
+    const section = page.locator('[data-editor-key-help]');
+    await section.waitFor();
+    const rows = await section
+      .locator('li')
+      .evaluateAll((items) =>
+        items.map((li) => [
+          li.querySelector('[data-editor-keys]')?.closest('li')?.textContent ?? '',
+          li.querySelector('[data-editor-keys]')?.getAttribute('data-editor-keys') ?? '',
+        ]),
+      );
+    await page.keyboard.press('Escape');
+    await section.waitFor({ state: 'detached' });
+    return rows;
+  };
+  const helpRow = (rows: string[][], label: string) => rows.find(([text]) => text.startsWith(label))?.[1];
   await pane.getByLabel('Language server fake').waitFor();
   await until('the file', async () => (await lines(page, paneId)) === MAIN);
   await content.click();
@@ -144,7 +177,14 @@ try {
   await page.keyboard.type('K');
   await page.locator('.cm-tooltip').getByText('Fake hover for thing').waitFor();
   await page.keyboard.type('grn');
-  await until('the name', async () => (await pane.getByLabel('New name').inputValue().catch(() => '')) === 'thing');
+  await until(
+    'the name',
+    async () =>
+      (await pane
+        .getByLabel('New name')
+        .inputValue()
+        .catch(() => '')) === 'thing',
+  );
   await page.keyboard.press('Escape');
   await content.click();
   await page.keyboard.type('ggw');
@@ -191,6 +231,30 @@ try {
   await at('Ln 300, Col 1');
   console.log('PASS CTRL-O and CTRL-I follow jumps across files');
 
+  // Panels float over the text but leave the cursor's line clear of them,
+  // even with nowhere left to scroll: at the end of the file, and at the top.
+  const clearOf = (panel: 'top' | 'bottom') =>
+    page.waitForFunction(
+      ({ id, panel }) => {
+        const editor = document.querySelector(`[data-native-editor][data-pane-id="${id}"]`)?.closest('.cm-editor');
+        const box = editor?.querySelector(`:scope > .cm-panels-${panel}`)?.getBoundingClientRect();
+        const line = editor?.querySelector('.cm-activeLine')?.getBoundingClientRect();
+        if (!box || !line) return false;
+        return panel === 'bottom' ? line.bottom <= box.top : line.top >= box.bottom;
+      },
+      { id: paneId, panel },
+    );
+  await page.keyboard.type(':');
+  await clearOf('bottom');
+  await page.keyboard.press('Escape');
+  await page.keyboard.type('gg');
+  await at('Ln 1, Col 1');
+  await page.keyboard.press('ControlOrMeta+p');
+  await clearOf('top');
+  await page.keyboard.press('Escape');
+  await content.click();
+  console.log('PASS panels leave the cursor clear at either end of the file');
+
   // Without a server, gq hard wraps.
   await open(wrap);
   await until('the long line', async () => (await lines(page, paneId))?.startsWith('word word') ?? false);
@@ -215,6 +279,7 @@ try {
       '"<leader>z" = { keys = "0" }',
       '"<leader>zz" = { keys = "$" }',
       '"jk" = { keys = "<Esc>", modes = ["insert"] }',
+      '"<C-y>" = { action = "editor-quick-open", modes = ["visual", "insert"] }',
       '[native-editor.vim-groups]',
       '"<leader>h" = "git"',
       lsp,
@@ -251,7 +316,7 @@ try {
   await until('jx typed', async () => (await lines(page, paneId))!.split('\n')[1].startsWith('jx'));
   // Ctrl+S (Cmd+S) saves in insert mode too.
   await page.keyboard.press('ControlOrMeta+s');
-  await until('saved', () => readFileSync(main, 'utf8').split('\n')[1].startsWith('jx'));
+  await until('saved', () => readFileSync(main, 'utf8').split('\n')[1]?.startsWith('jx') ?? false);
   await page.keyboard.type('jk');
   await mode('NORMAL');
   await until('jk not typed', async () => (await lines(page, paneId))!.split('\n')[1].startsWith('jxuse'));
@@ -263,6 +328,23 @@ try {
   await page.keyboard.press('Escape');
   console.log('PASS the config moves the leader and changes mappings');
 
+  // The palette and key help show vim's mappings, the user's included.
+  assert.equal(await paletteKeys('Problems'), ',x');
+  assert.equal(await paletteKeys('Go to definition'), 'gd | ctrl+]');
+  assert.equal(await paletteKeys('Expand selection'), 'an (visual)');
+  // A mapping in several modes shows them all.
+  assert.equal(await paletteKeys('Quick open'), 'ctrl+y (visual, insert)');
+  // Without a mapping, the keys without vim, but not VS Code's chords,
+  // which vim doesn't take.
+  assert.equal(await paletteKeys('Incoming calls'), 'shift+alt+h');
+  let help = await helpKeys();
+  assert.equal(helpRow(help, 'Save'), ':w');
+  assert.equal(helpRow(help, 'Problems'), ',x');
+  assert.equal(helpRow(help, 'Palette'), ',p');
+  assert.equal(helpRow(help, 'Types <Esc>'), 'jk (insert)');
+  assert.equal(helpRow(help, 'Fold all'), undefined);
+  console.log('PASS vim keys in the palette and key help');
+
   // Without vim: VS Code's Mod-k chords, F8, and Go Back.
   writeFileSync(config, lsp);
   await configured(page, false);
@@ -273,7 +355,9 @@ try {
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ControlOrMeta+k');
-  await row(process.platform === 'darwin' ? '<M-i>' : '<C-i>').getByText('Hover').waitFor();
+  await row(process.platform === 'darwin' ? '<M-i>' : '<C-i>')
+    .getByText('Hover')
+    .waitFor();
   await page.keyboard.press('ControlOrMeta+i');
   await page.locator('.cm-tooltip').getByText('Fake hover for thing').waitFor();
   await page.keyboard.press('F12');
@@ -296,6 +380,40 @@ try {
   assert.equal(await page.getByRole('dialog', { name: /^Save changes/ }).count(), 0);
   assert.equal(await pane.getByRole('tab', { name: 'main.fake' }).count(), 1);
   console.log('PASS VS Code chords, F8, and Go Back without vim');
+
+  // Without vim, VS Code's keys, which the editor's keymaps bind.
+  assert.equal(await paletteKeys('Go to definition'), 'F12');
+  assert.equal(await paletteKeys('Hover'), 'mod+k mod+i');
+  help = await helpKeys();
+  assert.equal(helpRow(help, 'Save'), 'mod+s');
+  assert.equal(helpRow(help, 'Format'), 'shift+alt+f | mod+k mod+f');
+  assert.equal(helpRow(help, 'Palette'), undefined);
+  const unbound = await waitForAsync(
+    page,
+    async (id) => {
+      const { plainKeys, plainBasics } = await import('/src/lib/nativeEditor/keyHelp.ts' as string);
+      // The app's own module instance, by the URL Vite rewrote its import to.
+      const source = await (await fetch('/src/lib/nativeEditor/paneEditor.ts')).text();
+      const { EditorView, keymap } = await import(source.match(/from "([^"]*@codemirror_view[^"]*)"/)![1]);
+      const content = document.querySelector(`[data-native-editor][data-pane-id="${id}"]`)!;
+      const view = EditorView.findFromDOM(content.closest('.cm-editor') as HTMLElement);
+      const mac = /Mac/.test(navigator.platform);
+      const bound = new Set(
+        view.state
+          .facet(keymap)
+          .flat()
+          .map((b: { key?: string; mac?: string; linux?: string }) => (mac ? (b.mac ?? b.key) : (b.linux ?? b.key))),
+      );
+      const keys: string[] = [
+        ...Object.values(plainKeys() as Record<string, string[]>).flat(),
+        ...(plainBasics() as { keys: string[] }[]).flatMap((row) => row.keys),
+      ];
+      return keys.filter((key) => !bound.has(key)).join(', ') || 'none';
+    },
+    paneId,
+  );
+  assert.equal(unbound, 'none');
+  console.log('PASS VS Code keys in the palette and key help match the keymaps');
 } finally {
   await browser.close();
   await api(`/api/sessions/${session.id}`, 'DELETE').catch(() => {});
