@@ -66,10 +66,10 @@ export function plainBasics(): { label: string; keys: string[] }[] {
   ];
 }
 
-/** One way to type something: key caps in order, and the vim mode it needs. */
+/** One way to type something: key caps in order, and the vim modes it needs if not normal mode. */
 export interface EditorKey {
   caps: string[];
-  mode?: VimMode;
+  modes?: VimMode[];
 }
 
 const CM_MODIFIERS: Record<string, string> = {
@@ -121,25 +121,35 @@ const chordKeys = (action: string): EditorKey[] =>
   PLAIN_CHORDS.filter(([, a]) => a === action).map(([keys]) => ({ caps: vimKeyCaps(keys) }));
 
 /**
- * The keys that run `action` in the editor: with vim, its mappings (normal
- * mode first), else the keys without vim.
+ * Vim mappings, one per key sequence and target, with every mode it's in;
+ * those in normal mode first.
+ */
+function vimKeys(binds: readonly VimBind[]): { bind: VimBind; key: EditorKey }[] {
+  const byKeys = new Map<string, { bind: VimBind; modes: VimMode[] }>();
+  for (const bind of binds) {
+    const id = [bind.keys, bind.action, bind.rhs].map((part) => JSON.stringify(part)).join(' ');
+    const entry = byKeys.get(id) ?? byKeys.set(id, { bind, modes: [] }).get(id)!;
+    entry.modes.push(bind.mode);
+  }
+  return [...byKeys.values()]
+    .map(({ bind, modes }) => ({
+      bind,
+      // Normal mode is where keys are typed unless said otherwise.
+      key: { caps: vimKeyCaps(bind.keys), modes: modes.includes('normal') ? undefined : modes },
+    }))
+    .sort((a, b) => Number(!!a.key.modes) - Number(!!b.key.modes));
+}
+
+/**
+ * The keys that run `action` in the editor: with vim, its mappings, else
+ * the keys without vim. Without a mapping, vim takes the keys without vim
+ * except VS Code's chords, whose table is only for the editor without vim.
  */
 export function editorKeys(action: string, vim: { binds: readonly VimBind[] } | null): EditorKey[] {
-  if (vim) {
-    const mapped = vim.binds
-      .filter((b) => b.action === action)
-      .sort((a, b) => Number(a.mode !== 'normal') - Number(b.mode !== 'normal'));
-    // A mapping in several modes shows once, in the first.
-    const seen = new Set<string>();
-    const keys = mapped.flatMap((b) => {
-      const id = b.keys.join('\u0000');
-      if (seen.has(id)) return [];
-      seen.add(id);
-      return [{ caps: vimKeyCaps(b.keys), mode: b.mode === 'normal' ? undefined : b.mode }];
-    });
-    if (keys.length) return keys;
-  }
-  return [...(plainKeys()[action] ?? []).map((key) => ({ caps: [cmKeyCap(key)] })), ...chordKeys(action)];
+  const plain = (plainKeys()[action] ?? []).map((key) => ({ caps: [cmKeyCap(key)] }));
+  if (!vim) return [...plain, ...chordKeys(action)];
+  const mapped = vimKeys(vim.binds.filter((b) => b.action === action)).map(({ key }) => key);
+  return mapped.length ? mapped : plain;
 }
 
 /** Vim's commands for the editor. */
@@ -179,11 +189,11 @@ export function editorKeyRows(config: {
     return keys.length ? [{ label: rowLabel(action, config.popups), keys }] : [];
   });
   // The rest of the vim mappings: other btmux actions, and keys for vim.
-  const other = (vim?.binds ?? [])
-    .filter((b) => !b.action || !EDITOR_COMMANDS.includes(b.action))
-    .map((b) => ({
+  const other = vimKeys((vim?.binds ?? []).filter((b) => !b.action || !EDITOR_COMMANDS.includes(b.action))).map(
+    ({ bind: b, key }) => ({
       label: b.desc ?? (b.action ? rowLabel(b.action, config.popups) : `Types ${showKeys(b.rhs ?? [])}`),
-      keys: [{ caps: vimKeyCaps(b.keys), mode: b.mode === 'normal' ? undefined : b.mode }],
-    }));
+      keys: [key],
+    }),
+  );
   return [...basics, ...actions, ...other];
 }

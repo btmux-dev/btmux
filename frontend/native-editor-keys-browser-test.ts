@@ -255,6 +255,7 @@ try {
       '"<leader>z" = { keys = "0" }',
       '"<leader>zz" = { keys = "$" }',
       '"jk" = { keys = "<Esc>", modes = ["insert"] }',
+      '"<C-y>" = { action = "editor-quick-open", modes = ["visual", "insert"] }',
       '[native-editor.vim-groups]',
       '"<leader>h" = "git"',
       lsp,
@@ -307,13 +308,17 @@ try {
   assert.equal(await paletteKeys('Problems'), ',x');
   assert.equal(await paletteKeys('Go to definition'), 'gd | ctrl+]');
   assert.equal(await paletteKeys('Expand selection'), 'an (visual)');
-  // Without a mapping, the keys without vim.
-  assert.equal(await paletteKeys('Quick open'), 'mod+p');
+  // A mapping in several modes shows them all.
+  assert.equal(await paletteKeys('Quick open'), 'ctrl+y (visual, insert)');
+  // Without a mapping, the keys without vim, but not VS Code's chords,
+  // which vim doesn't take.
+  assert.equal(await paletteKeys('Incoming calls'), 'shift+alt+h');
   let help = await helpKeys();
   assert.equal(helpRow(help, 'Save'), ':w');
   assert.equal(helpRow(help, 'Problems'), ',x');
   assert.equal(helpRow(help, 'Palette'), ',p');
   assert.equal(helpRow(help, 'Types <Esc>'), 'jk (insert)');
+  assert.equal(helpRow(help, 'Fold all'), undefined);
   console.log('PASS vim keys in the palette and key help');
 
   // Without vim: VS Code's Mod-k chords, F8, and Go Back.

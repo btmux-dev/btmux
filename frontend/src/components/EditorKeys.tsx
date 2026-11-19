@@ -11,7 +11,9 @@ export function EditorKeys({ keys }: { keys: EditorKey[] }) {
       gap={2}
       vAlign="center"
       className="btm-mono"
-      data-editor-keys={keys.map((key) => key.caps.join(' ') + (key.mode ? ` (${key.mode})` : '')).join(' | ')}
+      data-editor-keys={keys
+        .map((key) => key.caps.join(' ') + (key.modes ? ` (${key.modes.join(', ')})` : ''))
+        .join(' | ')}
     >
       {keys.map((key, i) => (
         <Fragment key={i}>
@@ -26,9 +28,9 @@ export function EditorKeys({ keys }: { keys: EditorKey[] }) {
               <KeyCap key={j} keys={cap} />
             ))}
           </HStack>
-          {key.mode && (
+          {key.modes && (
             <Text size="sm" color="secondary">
-              ({key.mode})
+              ({key.modes.join(', ')})
             </Text>
           )}
         </Fragment>
