@@ -49,7 +49,9 @@ pub(crate) struct PaneInputRequest {
     keys: Vec<String>,
     /// Only used if the PTY hasn't been spawned yet (no browser has attached
     /// to this pane). Ignored once a shell is already running.
+    #[cfg_attr(test, schema(maximum = 65535))]
     cols: Option<u16>,
+    #[cfg_attr(test, schema(maximum = 65535))]
     rows: Option<u16>,
 }
 
@@ -98,7 +100,9 @@ pub(crate) async fn api_pane_input(
 #[cfg_attr(test, derive(utoipa::IntoParams))]
 #[cfg_attr(test, into_params(parameter_in = Query))]
 pub(crate) struct PaneOutputQuery {
+    #[cfg_attr(test, param(maximum = 65535))]
     cols: Option<u16>,
+    #[cfg_attr(test, param(maximum = 65535))]
     rows: Option<u16>,
 }
 
@@ -279,7 +283,7 @@ pub(crate) struct PaneWaitQuery {
     ),
     responses(
         (status = 200, description = "The agent's status once it settles, exits, or the wait times out", body = automation::AgentWait),
-        (status = 400, description = "An unknown state", body = String, content_type = "text/plain"),
+        (status = 400, description = "An unknown state, or no states", body = String, content_type = "text/plain"),
         (status = 404, description = "No such pane", body = String, content_type = "text/plain"),
         (status = 500, description = "The server is shutting down", body = String, content_type = "text/plain"),
     ),

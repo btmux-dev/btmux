@@ -598,7 +598,7 @@ impl utoipa::ToSchema for Environment {}
     ),
     responses(
         (status = 200, description = "Started in a client", body = PopupOpened),
-        (status = 400, description = "No command", body = String, content_type = "text/plain"),
+        (status = 400, description = "An empty command, a `cwd` that isn't a directory, or an `id` already in use", body = String, content_type = "text/plain"),
         (status = 404, description = "No such pane", body = String, content_type = "text/plain"),
         (status = 409, description = "No client is showing the pane", body = String, content_type = "text/plain"),
         (status = 410, description = "The popup closed before it started", body = String, content_type = "text/plain"),

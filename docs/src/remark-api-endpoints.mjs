@@ -19,6 +19,16 @@ function tables() {
       ...operation,
     })),
   );
+  // starlight-openapi's page for an operation is its ID slugged by
+  // github-slugger, and a method more when the ID repeats in a path: IDs
+  // like these are their own slug and get no method.
+  const ids = new Set();
+  for (const { operationId: id } of operations) {
+    if (!/^[a-z0-9-]+$/.test(id) || ids.has(id)) {
+      throw new Error(`openapi.json: operation ID ${id} isn't unique kebab-case`);
+    }
+    ids.add(id);
+  }
   return spec.tags.flatMap(({ name }) => {
     const rows = operations
       .filter((operation) => operation.tags.includes(name))

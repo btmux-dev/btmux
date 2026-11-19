@@ -144,18 +144,27 @@ impl Modify for Errors {
                 let responses = &mut operation.responses.responses;
                 if !malformed.is_empty() {
                     let cause = format!("a malformed {}", join_or(&malformed));
-                    add_cause(responses, "400", &cause);
+                    add_cause(responses, "400", &cause, true);
                 }
                 if body {
-                    add_cause(responses, "413", "a body over the size limit");
-                    add_cause(responses, "415", "no `Content-Type: application/json`");
-                    add_cause(responses, "422", "a body that doesn't match its schema");
+                    add_cause(responses, "413", "a body over the size limit", true);
+                    add_cause(
+                        responses,
+                        "415",
+                        "no `Content-Type: application/json`",
+                        true,
+                    );
+                    add_cause(
+                        responses,
+                        "422",
+                        "a body that doesn't match its schema",
+                        true,
+                    );
                 }
-                add_cause(responses, "401", "missing or wrong access token");
-                responses.insert(
-                    "403".into(),
-                    Response::new("The request's `Host` or `Origin` isn't allowed").into(),
-                );
+                add_cause(responses, "401", "missing or wrong access token", true);
+                let forbidden = "the request's `Host` or `Origin` isn't allowed, or the caller \
+                                 can't use this route (a guest token, or btmux connect)";
+                add_cause(responses, "403", forbidden, false);
             }
         }
         let components = openapi.components.get_or_insert_with(Default::default);
@@ -184,12 +193,13 @@ fn join_or(causes: &[&str]) -> String {
     }
 }
 
-/// Documents a rejection, which has a plain-text body, adding its cause to
-/// the response's description if the handler sends that status too.
+/// Documents a rejection, with a plain-text body if `text`, adding its cause
+/// to the response's description if the handler sends that status too.
 fn add_cause(
     responses: &mut std::collections::BTreeMap<String, RefOr<Response>>,
     status: &str,
     cause: &str,
+    text_body: bool,
 ) {
     let text = || {
         ContentBuilder::new()
@@ -199,19 +209,22 @@ fn add_cause(
     match responses.get_mut(status) {
         Some(RefOr::T(response)) => {
             response.description = format!("{}; or {cause}", response.description);
-            response
-                .content
-                .entry("text/plain".into())
-                .or_insert_with(|| text().into());
+            if text_body {
+                response
+                    .content
+                    .entry("text/plain".into())
+                    .or_insert_with(|| text().into());
+            }
         }
         Some(RefOr::Ref(_)) => unreachable!("responses are inline"),
         None => {
             let mut description = cause.to_string();
             description[..1].make_ascii_uppercase();
-            let response = ResponseBuilder::new()
-                .description(description)
-                .content("text/plain", text())
-                .build();
+            let mut response = ResponseBuilder::new().description(description);
+            if text_body {
+                response = response.content("text/plain", text());
+            }
+            let response = response.build();
             responses.insert(status.into(), response.into());
         }
     }
@@ -268,8 +281,109 @@ fn openapi_is_current() {
     );
 }
 
-/// Each `/api` route in the sources (outside tests) is documented or in
-/// `UNDOCUMENTED`, so a new one needs a decision.
+/// `text` without its inline `#[cfg(test)] mod name { … }` blocks.
+fn without_test_modules(text: &str) -> String {
+    const CFG: &str = "#[cfg(test)]";
+    let mut kept = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find(CFG) {
+        kept.push_str(&rest[..start + CFG.len()]);
+        rest = &rest[start + CFG.len()..];
+        let item = rest.trim_start();
+        let Some(module) = item.strip_prefix("mod ") else {
+            continue;
+        };
+        let name = module
+            .find(|c: char| !c.is_alphanumeric() && c != '_')
+            .unwrap_or(module.len());
+        if module[name..].trim_start().starts_with('{') {
+            let open = rest.find('{').unwrap();
+            rest = &rest[open + block_len(&rest[open..])..];
+        }
+    }
+    kept + rest
+}
+
+/// The length of the block `text` starts with, through its closing brace,
+/// skipping braces in comments, strings, and chars.
+fn block_len(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let ident = |i: usize| i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
+    let mut depth = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let next =
+            |from: usize, end: &str| text[from..].find(end).map_or(bytes.len(), |n| from + n);
+        match bytes[i] {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return i + 1;
+                }
+            }
+            b'/' if bytes.get(i + 1) == Some(&b'/') => i = next(i, "\n"),
+            b'/' if bytes.get(i + 1) == Some(&b'*') => i = next(i + 2, "*/") + 1,
+            // Raw strings, after `r` or `br`.
+            b'r' if (!ident(i) || (bytes[i - 1] == b'b' && !ident(i - 1)))
+                && matches!(bytes.get(i + 1), Some(b'"' | b'#')) =>
+            {
+                let hashes = text[i + 1..].bytes().take_while(|&b| b == b'#').count();
+                if bytes.get(i + 1 + hashes) == Some(&b'"') {
+                    let end = format!("\"{}", "#".repeat(hashes));
+                    i = next(i + 2 + hashes, &end) + end.len() - 1;
+                }
+            }
+            b'"' => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    i += if bytes[i] == b'\\' { 2 } else { 1 };
+                }
+            }
+            // A char, not a lifetime.
+            b'\'' => {
+                if bytes.get(i + 1) == Some(&b'\\') {
+                    i = next(i + 2, "'");
+                } else if let Some(c) = text[i + 1..].chars().next() {
+                    if text[i + 1 + c.len_utf8()..].starts_with('\'') {
+                        i += c.len_utf8() + 1;
+                    }
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    bytes.len()
+}
+
+#[test]
+fn test_modules_are_skipped() {
+    let text = r##"
+a
+#[cfg(test)]
+mod helpers;
+b
+#[cfg(test)]
+mod tests {
+    // }
+    /* } */
+    fn f<'a>(x: &'a str) { let _ = ('}', '\'', "}\"", r#"}"#, br"}"); }
+}
+c
+#[cfg(test)]
+fn g() {}
+"##;
+    let kept = without_test_modules(text);
+    assert!(["a", "b", "c", "mod helpers;", "fn g() {}"]
+        .iter()
+        .all(|line| kept.contains(line)));
+    assert!(!kept.contains("fn f"), "{kept}");
+}
+
+/// Each `/api` route in the sources (outside test modules) is documented or
+/// in `UNDOCUMENTED`, so a new one needs a decision. It sees `.route` calls
+/// with a literal path, as every `/api` route is declared.
 #[test]
 fn api_routes_are_documented() {
     fn sources(dir: &std::path::Path, files: &mut Vec<String>) {
@@ -279,8 +393,7 @@ fn api_routes_are_documented() {
                 sources(&path, files);
             } else if path.extension().is_some_and(|ext| ext == "rs") {
                 let text = std::fs::read_to_string(&path).unwrap();
-                let end = text.find("\n#[cfg(test)]\nmod ").unwrap_or(text.len());
-                files.push(text[..end].to_owned());
+                files.push(without_test_modules(&text));
             }
         }
     }
@@ -867,8 +980,10 @@ mod tests {
                 None,
             )
             .await;
+        let mut expected = doc();
+        expected.as_object_mut().unwrap().remove("servers");
         assert!(
-            served == doc(),
+            served == expected,
             "/api/openapi.json serves a stale document; run `just protocol`"
         );
     }

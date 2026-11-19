@@ -65,8 +65,9 @@ trailer or `claude.ai/code/session_…` URL) in commit messages or PR descriptio
 
 The site in `docs/` is Starlight; pages are in `docs/src/content/docs`, one
 directory per sidebar group, ordered by `sidebar.order`. `just docs-dev` serves
-it and `just docs-build` also checks links. Four parts are generated, so
-regenerate rather than edit them: `just docs-config` (All options, from
+it and `just docs-build` also checks links. Five parts are generated, so
+regenerate rather than edit them: `just protocol` (the API reference, from
+`docs/public/openapi.json`), `just docs-config` (All options, from
 `generate-config`), `just docs-cli` (All commands, from `--help`; a new command
 needs a group in `docs/scripts/cli-reference.mjs`), and `just docs-screenshots`
 (`frontend/docs-screenshots.ts`, demo sessions on a browser-test stack; it

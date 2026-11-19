@@ -47,7 +47,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           }
         }
       },
@@ -99,7 +99,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "413": {
             "description": "A body over the size limit",
@@ -165,7 +165,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           }
         }
       }
@@ -221,7 +221,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such session"
@@ -271,7 +271,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such session"
@@ -350,7 +350,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such session"
@@ -449,7 +449,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such session"
@@ -542,7 +542,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such session"
@@ -642,7 +642,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such session"
@@ -725,7 +725,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such session"
@@ -787,7 +787,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such window"
@@ -849,7 +849,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such window"
@@ -918,7 +918,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such window"
@@ -988,7 +988,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           }
         }
       }
@@ -1054,7 +1054,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such pane"
@@ -1137,7 +1137,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such pane"
@@ -1200,7 +1200,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such pane"
@@ -1253,7 +1253,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such pane"
@@ -1316,7 +1316,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such pane"
@@ -1416,7 +1416,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such pane, or the native editor can't open the file",
@@ -1535,7 +1535,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such session"
@@ -1630,7 +1630,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such session"
@@ -1695,7 +1695,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such session"
@@ -1760,7 +1760,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such session"
@@ -1826,7 +1826,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such session"
@@ -1919,7 +1919,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such session"
@@ -2012,7 +2012,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such session"
@@ -2105,7 +2105,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such session"
@@ -2187,7 +2187,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such session"
@@ -2257,7 +2257,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such pane",
@@ -2338,6 +2338,7 @@
             "schema": {
               "type": "integer",
               "format": "int32",
+              "maximum": 65535,
               "minimum": 0
             }
           },
@@ -2348,6 +2349,7 @@
             "schema": {
               "type": "integer",
               "format": "int32",
+              "maximum": 65535,
               "minimum": 0
             }
           }
@@ -2385,7 +2387,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such pane"
@@ -2474,7 +2476,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such pane",
@@ -2531,7 +2533,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           }
         }
       }
@@ -2598,7 +2600,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such pane",
@@ -2714,7 +2716,7 @@
             }
           },
           "400": {
-            "description": "An unknown state; or a malformed ID or query parameter",
+            "description": "An unknown state, or no states; or a malformed ID or query parameter",
             "content": {
               "text/plain": {
                 "schema": {
@@ -2734,7 +2736,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such pane",
@@ -2810,7 +2812,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such pane"
@@ -2871,7 +2873,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such pane"
@@ -2951,7 +2953,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such pane"
@@ -2992,7 +2994,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           }
         }
       }
@@ -3030,7 +3032,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           }
         }
       }
@@ -3097,7 +3099,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such pane",
@@ -3212,7 +3214,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such pane",
@@ -3289,7 +3291,7 @@
             }
           },
           "400": {
-            "description": "No command; or a malformed ID or JSON body",
+            "description": "An empty command, a `cwd` that isn't a directory, or an `id` already in use; or a malformed ID or JSON body",
             "content": {
               "text/plain": {
                 "schema": {
@@ -3309,7 +3311,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such pane",
@@ -3445,7 +3447,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such popup"
@@ -3519,7 +3521,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "413": {
             "description": "A body over the size limit",
@@ -3609,7 +3611,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such pane"
@@ -3689,7 +3691,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "404": {
             "description": "No such pane"
@@ -3726,7 +3728,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           }
         }
       }
@@ -3760,7 +3762,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           }
         }
       }
@@ -3794,7 +3796,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           }
         }
       }
@@ -3842,7 +3844,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           },
           "409": {
             "description": "This server can't hand off to that binary; only a restart can",
@@ -3919,7 +3921,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           }
         }
       }
@@ -3953,7 +3955,7 @@
             }
           },
           "403": {
-            "description": "The request's `Host` or `Origin` isn't allowed"
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
           }
         }
       }
@@ -4771,7 +4773,8 @@
               "integer",
               "null"
             ],
-            "format": "int32",
+            "format": "int64",
+            "maximum": 4294967295,
             "minimum": 0
           },
           "editor": {
@@ -5013,6 +5016,7 @@
             ],
             "format": "int32",
             "description": "Only used if the PTY hasn't been spawned yet (no browser has attached\nto this pane). Ignored once a shell is already running.",
+            "maximum": 65535,
             "minimum": 0
           },
           "rows": {
@@ -5021,6 +5025,7 @@
               "null"
             ],
             "format": "int32",
+            "maximum": 65535,
             "minimum": 0
           }
         }

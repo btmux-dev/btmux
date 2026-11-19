@@ -82,8 +82,14 @@ pub(crate) async fn api_info(State(info): State<Arc<ServerInfo>>) -> Json<InfoRe
     })
 }
 
-/// `docs/public/openapi.json`, which `just protocol` regenerates.
-const OPENAPI: &str = include_str!("../docs/public/openapi.json");
+/// `docs/public/openapi.json`, which `just protocol` regenerates, without
+/// its `servers`, so clients resolve paths against the server they asked.
+static OPENAPI: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    let mut document: serde_json::Value =
+        serde_json::from_str(include_str!("../docs/public/openapi.json")).unwrap();
+    document.as_object_mut().unwrap().remove("servers");
+    document.to_string()
+});
 
 #[cfg_attr(test, utoipa::path(
     get,
@@ -96,7 +102,11 @@ const OPENAPI: &str = include_str!("../docs/public/openapi.json");
     ),
 ))]
 pub(crate) async fn api_openapi() -> Response {
-    ([(header::CONTENT_TYPE, "application/json")], OPENAPI).into_response()
+    (
+        [(header::CONTENT_TYPE, "application/json")],
+        OPENAPI.as_str(),
+    )
+        .into_response()
 }
 
 pub fn create_app(state: AppState) -> Router {
@@ -931,6 +941,7 @@ pub(crate) async fn api_open_file_browser(
 pub(crate) struct OpenEditorRequest {
     /// The file to open; without one, the editor is just shown.
     path: Option<String>,
+    #[cfg_attr(test, schema(format = Int64, maximum = 4294967295_u64))]
     line: Option<u32>,
     /// Overrides the `editor` setting.
     editor: Option<crate::config::Editor>,
