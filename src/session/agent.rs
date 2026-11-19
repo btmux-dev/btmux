@@ -319,6 +319,8 @@ pub struct AgentLifecycle {
     waiting_from: Option<Instant>,
     /// When the agent was first shown waiting, in Unix seconds.
     waiting_since: Option<u64>,
+    /// When the screen alone stopped showing waiting.
+    waiting_gone: Option<Instant>,
 }
 
 impl AgentLifecycle {
@@ -365,6 +367,7 @@ impl AgentLifecycle {
             lifecycle.screen_floor = previous.screen_floor;
             lifecycle.waiting_from = previous.waiting_from;
             lifecycle.waiting_since = previous.waiting_since;
+            lifecycle.waiting_gone = previous.waiting_gone;
             lifecycle.settle_waiting(now);
         }
         lifecycle
@@ -430,6 +433,7 @@ impl AgentLifecycle {
             background_gone: None,
             waiting_from: None,
             waiting_since: None,
+            waiting_gone: None,
         }
     }
 
@@ -571,10 +575,20 @@ impl AgentLifecycle {
     }
 
     /// Shows waiting once its evidence held for `SCREEN_SETTLE`, as screen
-    /// transitions to idle do; leaving it starts a new age.
+    /// transitions to idle do, and stops once a screen alone has stopped
+    /// showing it for as long, since a redraw can catch it half drawn.
+    /// Leaving it starts a new age.
     fn settle_waiting(&mut self, now: Instant) {
         if !self.waits() {
             self.waiting_from = None;
+            let redraw = self.waiting_since.is_some()
+                && matches!(self.status.state, AgentState::Working | AgentState::Idle)
+                && self.screen_floor.is_none()
+                && self.detection.is_some();
+            if redraw && now.duration_since(*self.waiting_gone.get_or_insert(now)) < SCREEN_SETTLE {
+                return;
+            }
+            self.waiting_gone = None;
             if self.waiting_since.take().is_some() {
                 self.since = unix_now();
             }
@@ -586,6 +600,7 @@ impl AgentLifecycle {
             }
             return;
         }
+        self.waiting_gone = None;
         let from = *self.waiting_from.get_or_insert(now);
         if self.waiting_since.is_none() && now.duration_since(from) >= SCREEN_SETTLE {
             self.waiting_since = Some(match self.handed.take() {
@@ -628,7 +643,8 @@ impl AgentLifecycle {
             && (self.screen_revision != Some(revision)
                 || self.pending_screen.is_some()
                 || self.background_gone.is_some()
-                || (self.waiting_from.is_some() && self.waiting_since.is_none()))
+                || (self.waiting_from.is_some() && self.waiting_since.is_none())
+                || self.waiting_gone.is_some())
     }
 
     /// A suspended or background agent's activity is unknown, and the screen
@@ -646,7 +662,10 @@ impl AgentLifecycle {
         let previous = self.shown();
         self.status.background = None;
         self.waiting_from = None;
-        self.waiting_since = None;
+        self.waiting_gone = None;
+        if self.waiting_since.take().is_some() {
+            self.since = unix_now();
+        }
         self.program_suspended |= self.authority == Authority::Program;
         if self.authority != Authority::Explicit {
             self.set_state(AgentState::Unknown);
@@ -1122,6 +1141,7 @@ impl AgentLifecycle {
         self.background_gone = None;
         self.waiting_from = None;
         self.waiting_since = None;
+        self.waiting_gone = None;
     }
 
     pub fn is_active(&self) -> bool {
@@ -1309,29 +1329,43 @@ mod tests {
         assert_eq!(agent.shown_since(), agent.waiting_since.unwrap());
         assert!(!agent.wants_screen(2));
 
-        // Resuming by itself, it works again.
-        assert!(agent.scan_screen(&detector, &screen(&busy, "", 3), ms(900)));
+        // A redraw that drops it doesn't end it; resuming by itself does.
+        assert!(!agent.scan_screen(&detector, &screen(&busy, "", 3), ms(900)));
+        assert!(agent.wants_screen(3));
+        assert!(!agent.scan_screen(&detector, &screen(&waiting, "", 4), ms(1000)));
+        assert_eq!(agent.waiting_gone, None);
+        let resumed = screen(&busy, "", 5);
+        assert!(!agent.scan_screen(&detector, &resumed, ms(1100)));
+        assert_eq!(agent.shown().state, AgentState::Waiting);
+        assert!(agent.scan_screen(&detector, &resumed, ms(1800)));
         assert_eq!(agent.shown().state, AgentState::Working);
         assert_eq!(agent.waiting_from, None);
 
-        // Idle waits too; a flicker doesn't, and done stays unread.
-        assert!(agent.observe_program(Some(&summary(State::Idle)), ms(1000)));
-        agent.scan_screen(&detector, &screen(&waiting, "", 4), ms(1000));
-        assert!(agent.scan_screen(&detector, &screen(&waiting, "", 4), ms(1700)));
+        // Idle waits too, and done stays unread.
+        assert!(agent.observe_program(Some(&summary(State::Idle)), ms(2000)));
+        agent.scan_screen(&detector, &screen(&waiting, "", 6), ms(2000));
+        assert!(agent.scan_screen(&detector, &screen(&waiting, "", 6), ms(2700)));
         assert_eq!(agent.shown().state, AgentState::Waiting);
-        assert!(agent.observe_program(Some(&summary(State::Done)), ms(1800)));
+        assert!(agent.observe_program(Some(&summary(State::Done)), ms(2800)));
         assert_eq!(agent.shown().state, AgentState::Done);
-        agent.scan_screen(&detector, &screen(&waiting, "", 5), ms(3000));
+        agent.scan_screen(&detector, &screen(&waiting, "", 7), ms(4000));
         assert_eq!(agent.shown().state, AgentState::Done);
 
         // Seen, and without background work, an idle prompt is idle.
         agent.set_state(AgentState::Idle);
-        for (revision, at) in [(6, 3100), (6, 4000), (6, 5000)] {
+        for (revision, at) in [(8, 4100), (8, 5000), (8, 6000)] {
             agent.scan_screen(&detector, &screen(CLAUDE_IDLE, "", revision), ms(at));
         }
         assert_eq!(agent.shown().state, AgentState::Idle);
-        assert!(agent.observe_background(7));
+
+        // Leaving the foreground while waiting starts a new age.
+        agent.scan_screen(&detector, &screen(&waiting, "", 9), ms(7000));
+        agent.scan_screen(&detector, &screen(&waiting, "", 9), ms(7700));
+        assert_eq!(agent.shown().state, AgentState::Waiting);
+        agent.since = 1;
+        assert!(agent.observe_background(10));
         assert_eq!(agent.waiting_since, None);
+        assert!(agent.shown_since() > 1);
     }
 
     #[test]

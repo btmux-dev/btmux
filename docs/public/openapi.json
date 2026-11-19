@@ -2544,7 +2544,7 @@
           "Agents"
         ],
         "summary": "Prompt an agent",
-        "description": "Pastes `prompt` into the pane's agent and submits it. With `wait` (the default), replies once the agent has started and settled (idle, done, or blocked).",
+        "description": "Pastes `prompt` into the pane's agent and submits it. With `wait` (the default), replies once the agent has started and settled (idle, done, blocked, or waiting on background work).",
         "operationId": "prompt-an-agent",
         "parameters": [
           {

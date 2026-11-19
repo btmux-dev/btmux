@@ -509,7 +509,7 @@ impl BtmuxMcpServer {
     }
 
     #[tool(
-        description = "Submit a prompt to the agent in a pane: pastes it, then presses Enter. By default waits until the agent starts and then settles (idle, done, or blocked) and returns its status and rendered screen; started=false means no turn was seen starting. With wait=false, returns {submitted: true} once Enter is sent. Refuses while the agent is blocked or a dialog is on screen, since typing would answer it; while its state is unknown or detection has stalled; and, when waiting, while it is working, since the turn that ends would not be this one. A dialog seen just before the Enter leaves the prompt pasted but not submitted."
+        description = "Submit a prompt to the agent in a pane: pastes it, then presses Enter. By default waits until the agent starts and then settles (idle, done, blocked, or waiting on background work) and returns its status and rendered screen; started=false means no turn was seen starting. With wait=false, returns {submitted: true} once Enter is sent. Refuses while the agent is blocked or a dialog is on screen, since typing would answer it; while its state is unknown or detection has stalled; and, when waiting, while it is working or waiting on background work, since the turn that ends would not be this one. A dialog seen just before the Enter leaves the prompt pasted but not submitted."
     )]
     async fn send_prompt(
         &self,

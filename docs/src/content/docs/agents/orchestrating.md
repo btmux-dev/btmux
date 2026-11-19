@@ -59,15 +59,17 @@ input box has time to process the paste.
 
 By default it then waits for the turn to start (up to 15 s) and to finish, and
 returns `{status, started, timed_out, screen}`. `screen` is the rendered screen
-once output has paused, or null if the pane closed. With `--no-wait`
+once output has paused, or null if the pane closed. A turn that ends with
+background work still running counts as finished (`waiting`), since that work
+may never end. With `--no-wait`
 (`wait: false`) it returns `{submitted: true}` once Enter is sent.
 
 ### When it refuses
 
 - **The agent is blocked.** Typed text would answer its dialog. To answer one
   on purpose, use `send-keys`.
-- **The agent is working** and the caller requested a wait. The running
-  turn would finish first.
+- **The agent is working or waiting** and the caller requested a wait. The
+  running turn, or the one background work resumes, would finish first.
 - **A dialog is visible, or the state is unknown.** For agents tracked by
   their screen, btmux checks the screen again right before pasting and before
   Enter. Gemini CLI and OpenCode are exempt from the unknown-state rule, since

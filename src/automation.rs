@@ -301,7 +301,8 @@ fn turn_started(state: &AgentState) -> bool {
 }
 
 /// Pastes `prompt` into the pane's agent and submits it. With `wait`, waits
-/// for the agent to start and then settle (idle, done, or blocked); without,
+/// for the agent to start and then settle (idle, done, blocked, or waiting
+/// on background work); without,
 /// returns None once submitted.
 pub async fn send_prompt(
     state: &AppState,
@@ -337,6 +338,13 @@ pub async fn send_prompt(
             // The next settle could end the current turn, not this prompt's.
             return Err(Error::Conflict(
                 "the agent is busy; wait for it first, or submit without waiting to queue the prompt"
+                    .into(),
+            ));
+        }
+        if wait && status.state == AgentState::Waiting {
+            // Its own resumption would look like this prompt's turn.
+            return Err(Error::Conflict(
+                "the agent is waiting on background work and resumes by itself; wait for it first, or submit without waiting"
                     .into(),
             ));
         }
@@ -409,7 +417,9 @@ pub async fn send_prompt(
             pane_id,
             outcome.status,
             &mut events,
-            |s| SETTLED.contains(s),
+            // The turn ended even if background work will resume the agent,
+            // which may never end.
+            |s| SETTLED.contains(s) || *s == AgentState::Waiting,
             deadline,
         )
         .await?;
@@ -638,6 +648,11 @@ mod tests {
         set(&state, pane_id, AgentState::Working).await;
         let error = send_prompt(&state, pane_id, "hi", true, DEFAULT_WAIT).await;
         assert!(matches!(error, Err(Error::Conflict(message)) if message.contains("busy")));
+        set(&state, pane_id, AgentState::Waiting).await;
+        let error = send_prompt(&state, pane_id, "hi", true, DEFAULT_WAIT).await;
+        assert!(
+            matches!(error, Err(Error::Conflict(message)) if message.contains("resumes by itself"))
+        );
         set(&state, pane_id, AgentState::Idle).await;
         // /bin/sh doesn't enable bracketed paste.
         let error = send_prompt(&state, pane_id, "a\nb", false, DEFAULT_WAIT).await;
@@ -650,11 +665,12 @@ mod tests {
         tokio::time::sleep(SUBMIT_DELAY * 2).await;
         set(&state, pane_id, AgentState::Working).await;
         tokio::time::sleep(Duration::from_millis(50)).await;
-        set(&state, pane_id, AgentState::Idle).await;
+        // A turn ending with background work running counts as finished.
+        set(&state, pane_id, AgentState::Waiting).await;
         let outcome = prompt.await.unwrap().ok().unwrap().unwrap();
         assert!(outcome.started);
         assert!(!outcome.timed_out);
-        assert_eq!(outcome.status.unwrap().state, AgentState::Idle);
+        assert_eq!(outcome.status.unwrap().state, AgentState::Waiting);
         let screen = capture_pane(&state, pane_id, MAX_CAPTURE_HISTORY, None)
             .await
             .ok()

@@ -37,6 +37,9 @@ pub type HandoffExport = (
 
 /// How long a held completion alert waits for its agent to show waiting.
 const HELD_ALERT_GRACE: Duration = Duration::from_secs(2);
+/// How long it stays held while the agent waits, as background work such as
+/// a dev server may never end.
+const HELD_ALERT_MAX: Duration = Duration::from_secs(10 * 60);
 
 /// A finished turn's alert, held while its agent may be waiting on
 /// background work that resumes it.
@@ -632,6 +635,8 @@ impl SessionManager {
             .agent_status(pane_id)
             .is_some_and(|status| status.background.is_some())
         {
+            // A newer result supersedes a held one.
+            self.held_alerts.remove(&pane_id);
             return Some((event, alert));
         }
         let alert = HeldAlert {
@@ -649,27 +654,38 @@ impl SessionManager {
         self.held_alerts.remove(&pane_id);
     }
 
-    /// Held alerts to deliver now: an agent that waited and then works again
-    /// alerts with its next turn instead; one still waiting stays held; others
-    /// go out once the grace for waiting to show has passed.
+    /// Held alerts to deliver now. One stays held while its agent waits (up
+    /// to `HELD_ALERT_MAX`) and through the turn that resumes it, whose start
+    /// drops it and whose Stop alerts instead; without a turn start, it goes
+    /// out once that turn ends. Agents that never wait get theirs after
+    /// `HELD_ALERT_GRACE`.
     pub fn release_held_alerts(&mut self, now: Instant) -> Vec<(Uuid, HeldAlert)> {
         let mut released = Vec::new();
         for (pane_id, mut held) in std::mem::take(&mut self.held_alerts) {
             if self.find_pane(pane_id).is_none() {
                 continue;
             }
-            match self.agent_status(pane_id).map(|status| status.state) {
-                Some(AgentState::Waiting) => held.waited = true,
-                Some(AgentState::Working | AgentState::Blocked) if held.waited => continue,
-                _ if held.waited || now.duration_since(held.held) >= HELD_ALERT_GRACE => {
-                    released.push((pane_id, held));
-                    continue;
+            let age = now.duration_since(held.held);
+            let release = match self.agent_status(pane_id).map(|status| status.state) {
+                Some(AgentState::Waiting) => {
+                    held.waited = true;
+                    age >= HELD_ALERT_MAX
                 }
-                _ => {}
+                Some(AgentState::Working | AgentState::Blocked) if held.waited => false,
+                _ => held.waited || age >= HELD_ALERT_GRACE,
+            };
+            if release {
+                released.push((pane_id, held));
+            } else {
+                self.held_alerts.insert(pane_id, held);
             }
-            self.held_alerts.insert(pane_id, held);
         }
         released
+    }
+
+    /// Every held alert, for an upgrade, which doesn't hand them off.
+    pub fn take_held_alerts(&mut self) -> Vec<(Uuid, HeldAlert)> {
+        self.held_alerts.drain().collect()
     }
 
     pub fn alert_client(&self) -> Option<u32> {
@@ -1145,6 +1161,7 @@ impl SessionManager {
         };
         if agent.status.state == AgentState::Done {
             agent.acknowledge();
+            self.held_alerts.remove(&pane_id);
             // Seen, so later records can't bring the result back.
             if let Some(pane) = self.find_pane(pane_id) {
                 pane.pty.forget_program_results();
@@ -2769,11 +2786,20 @@ mod agent_tests {
             .hold_alert(pane_id, "Stop".into(), alert(), now)
             .is_some());
 
-        // Waiting holds it past the grace; resuming drops it.
+        let set = |mgr: &mut SessionManager, state, at| {
+            let agent = mgr.agents.get_mut(&pane_id).unwrap();
+            agent.observe_program(Some(&program(state)), at);
+        };
+        let hold = |mgr: &mut SessionManager, at| {
+            assert!(mgr
+                .hold_alert(pane_id, "Stop".into(), alert(), at)
+                .is_none());
+        };
+
+        // Held past the grace while waiting and through the turn that
+        // resumes it, then shown once that turn ends.
         scan(&mut mgr, &footer(" · esc to interrupt"), now);
-        assert!(mgr
-            .hold_alert(pane_id, "Stop".into(), alert(), now)
-            .is_none());
+        hold(&mut mgr, now);
         assert!(mgr.release_held_alerts(ms(100)).is_empty());
         scan(&mut mgr, &footer(""), ms(1000));
         assert_eq!(
@@ -2782,27 +2808,50 @@ mod agent_tests {
         );
         assert!(mgr.release_held_alerts(ms(5000)).is_empty());
         scan(&mut mgr, &footer(" · esc to interrupt"), ms(6000));
+        assert_eq!(
+            mgr.agent_status(pane_id).unwrap().state,
+            AgentState::Working
+        );
         assert!(mgr.release_held_alerts(ms(7000)).is_empty());
+        set(&mut mgr, State::Done, ms(7500));
+        assert_eq!(mgr.release_held_alerts(ms(7600)).len(), 1);
+
+        // A turn start drops it, as that turn's Stop alerts.
+        set(&mut mgr, State::Working, ms(8000));
+        hold(&mut mgr, ms(8000));
+        scan(&mut mgr, &footer(""), ms(8000));
+        assert!(mgr.release_held_alerts(ms(9000)).is_empty());
+        mgr.drop_held_alert(pane_id);
         assert!(mgr.held_alerts.is_empty());
 
-        // Waiting that ends in a result delivers it.
+        // Waiting on work that may never end holds it for a while only.
+        hold(&mut mgr, ms(9000));
         assert!(mgr
-            .hold_alert(pane_id, "Stop".into(), alert(), ms(7000))
-            .is_none());
-        scan(&mut mgr, &footer(""), ms(7000));
-        assert!(mgr.release_held_alerts(ms(8000)).is_empty());
-        mgr.agents
-            .get_mut(&pane_id)
-            .unwrap()
-            .observe_program(Some(&program(State::Done)), ms(8000));
-        assert_eq!(mgr.release_held_alerts(ms(8100)).len(), 1);
+            .release_held_alerts(ms(9000) + HELD_ALERT_MAX / 2)
+            .is_empty());
+        assert_eq!(mgr.release_held_alerts(ms(9000) + HELD_ALERT_MAX).len(), 1);
+
+        // Seeing the result drops it.
+        hold(&mut mgr, ms(10000));
+        set(&mut mgr, State::Done, ms(10000));
+        assert!(mgr.acknowledge_pane(pane_id));
+        assert!(mgr.held_alerts.is_empty());
+
+        // A result shown without background work supersedes a held one.
+        hold(&mut mgr, ms(10000));
+        let done = format!("{rule}\n❯\n{rule}\n  ⏵⏵ auto mode on");
+        scan(&mut mgr, &done, ms(10000));
+        assert!(mgr
+            .hold_alert(pane_id, "Stop".into(), alert(), ms(10000))
+            .is_some());
+        assert!(mgr.held_alerts.is_empty());
+        scan(&mut mgr, &footer(""), ms(10000));
 
         // An agent that never waits gets it after the grace.
-        assert!(mgr
-            .hold_alert(pane_id, "Stop".into(), alert(), ms(9000))
-            .is_none());
-        assert!(mgr.release_held_alerts(ms(10000)).is_empty());
-        assert_eq!(mgr.release_held_alerts(ms(11000)).len(), 1);
+        set(&mut mgr, State::Done, ms(11000));
+        hold(&mut mgr, ms(11000));
+        assert!(mgr.release_held_alerts(ms(12000)).is_empty());
+        assert_eq!(mgr.release_held_alerts(ms(13000)).len(), 1);
     }
 
     #[tokio::test]

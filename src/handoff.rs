@@ -367,6 +367,10 @@ async fn execute_frozen(
     }
     crate::vscode::shutdown().await;
     crate::browser::shutdown().await;
+    // Not handed off, so delivered now, into the handed-off unread marks.
+    for (pane_id, held) in manager.take_held_alerts() {
+        crate::server::deliver_pane_alert(manager, pane_id, held.event, held.alert);
+    }
     let (sessions, popups, panes) = match manager.export_handoff(Duration::from_secs(2)) {
         Ok(exported) => exported,
         Err(error) => {
