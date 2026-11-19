@@ -15,6 +15,7 @@ import { KeyCap, KeyHint, type Hint } from '../KeyHint';
 import { usePressHint } from '@/hooks/usePressHint';
 import { NARROW_QUERY } from '@/lib/touch';
 import type { GitBranchInfo, GitOp, GitRefsResult, GitWorktreeInfo, WorktreeOp } from '@/protocol/file-messages';
+import { smartCase } from '@/lib/smartCase';
 
 export type GitPopupKind = 'branch' | 'fetch' | 'pull' | 'push' | 'stash' | 'worktree';
 
@@ -504,9 +505,10 @@ function describeOp(op: PopupOp): string {
 }
 
 function filterOptions(options: PromptOption[], query: string): PromptOption[] {
-  const q = query.trim().toLowerCase();
+  const q = query.trim();
   if (!q) return options;
-  return options.filter((o) => o.label.toLowerCase().includes(q) || o.description?.toLowerCase().includes(q));
+  const matches = smartCase(q);
+  return options.filter((o) => matches(o.label) || (o.description != null && matches(o.description)));
 }
 
 function branchDescription(branch: GitBranchInfo): string {

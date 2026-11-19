@@ -68,6 +68,8 @@ test('the picker matches characters in order', () => {
   expect(fuzzyMatch('workspaceSymbols', 'wsym')).toBe(true);
   expect(fuzzyMatch('workspaceSymbols', 'mys')).toBe(false);
   expect(fuzzyMatch('Thing', 'thi')).toBe(true);
+  expect(fuzzyMatch('Thing', 'Thi')).toBe(true);
+  expect(fuzzyMatch('thing', 'Thi')).toBe(false);
 });
 
 const text = (s: string) => Text.of(s.split('\n'));

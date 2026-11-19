@@ -304,7 +304,7 @@ fn match_files(
     prefix: &str,
     boost: &HashMap<String, u32>,
 ) -> Vec<FileSearchResult> {
-    let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+    let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
     let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
     let mut buf = Vec::new();
     let mut matches: Vec<(u32, &String)> = files
@@ -417,6 +417,7 @@ pub async fn content_search(query: &str, root: &Path) -> Result<Vec<SearchResult
         "1M",
         "--max-columns",
         "200",
+        "--smart-case",
     ]);
     #[cfg(windows)]
     rg.args(["--path-separator", "/"]);
@@ -435,7 +436,11 @@ pub async fn content_search(query: &str, root: &Path) -> Result<Vec<SearchResult
     }
 
     let mut grep = Command::new("grep");
-    grep.args(["-R", "-n", "-H", "-I", "-e"])
+    grep.args(["-R", "-n", "-H", "-I"]);
+    if !has_uppercase_literal(query) {
+        grep.arg("-i");
+    }
+    grep.arg("-e")
         .arg(query)
         .arg(".")
         .current_dir(root)
@@ -447,6 +452,20 @@ pub async fn content_search(query: &str, root: &Path) -> Result<Vec<SearchResult
         .spawn()
         .map_err(|error| format!("Failed to run ripgrep or grep: {}", error))?;
     collect_grep_results(child, root).await
+}
+
+/// Whether a pattern has an uppercase letter outside escapes like `\W`, as
+/// ripgrep's `--smart-case` decides.
+fn has_uppercase_literal(pattern: &str) -> bool {
+    let mut chars = pattern.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            chars.next();
+        } else if c.is_uppercase() {
+            return true;
+        }
+    }
+    false
 }
 
 async fn collect_rg_results(
@@ -760,6 +779,21 @@ mod tests {
         assert_eq!(match_files(&files, "x", "/r/", &boost)[0].path, "/r/b/x.rs");
     }
 
+    #[test]
+    fn file_search_uses_smart_case() {
+        let files = vec!["src/Main.rs".to_string(), "src/main.c".to_string()];
+        let found = |query| match_files(&files, query, "/r/", &no_boost()).len();
+        assert_eq!(found("main"), 2);
+        assert_eq!(found("Main"), 1);
+    }
+
+    #[test]
+    fn uppercase_literals_ignore_escapes() {
+        assert!(super::has_uppercase_literal("fooBar"));
+        assert!(!super::has_uppercase_literal("foo\\Wbar\\S"));
+        assert!(super::has_uppercase_literal("\\\\X"));
+    }
+
     #[tokio::test]
     async fn file_search_boosts_by_result_path() {
         if !can_list() {
@@ -856,6 +890,11 @@ mod tests {
         );
         assert_eq!(results[0].line, Some(2));
         assert_eq!(results[0].text.as_deref(), Some("needle with context"));
+
+        // Smart case.
+        fs::write(root.join("upper.txt"), "Needle\n").unwrap();
+        assert_eq!(content_search("needle", &root).await.unwrap().len(), 2);
+        assert_eq!(content_search("Needle", &root).await.unwrap().len(), 1);
         fs::remove_dir_all(root).unwrap();
     }
 }

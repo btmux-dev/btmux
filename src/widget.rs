@@ -295,11 +295,15 @@ fn matches_query(item: &PickItem, query: &str) -> bool {
     let label = item.label.to_lowercase();
     let description = item.description.as_deref().map(str::to_lowercase);
     query.split_whitespace().all(|term| {
-        let term = term.to_lowercase();
-        label.contains(&term)
-            || description
-                .as_ref()
-                .is_some_and(|text| text.contains(&term))
+        // Smart case, per term.
+        if term.chars().any(char::is_uppercase) {
+            return item.label.contains(term)
+                || item
+                    .description
+                    .as_deref()
+                    .is_some_and(|text| text.contains(term));
+        }
+        label.contains(term) || description.as_ref().is_some_and(|text| text.contains(term))
     })
 }
 
@@ -537,15 +541,16 @@ mod tests {
     }
 
     #[test]
-    fn queries_match_every_term_in_label_or_description() {
+    fn queries_match_every_term_in_label_or_description_in_smart_case() {
         let item = PickItem {
             label: "Alpha".into(),
             description: Some("First Note".into()),
         };
-        for query in ["", "  ", "alpha", "ALP note", "first"] {
+        for query in ["", "  ", "alpha", "Alp note", "first", "First"] {
             assert!(matches_query(&item, query), "{query}");
         }
-        for query in ["beta", "alpha beta"] {
+        // Smart case, per term.
+        for query in ["beta", "alpha beta", "ALP", "alpha NOTE"] {
             assert!(!matches_query(&item, query), "{query}");
         }
     }

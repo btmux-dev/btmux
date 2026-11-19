@@ -17,6 +17,13 @@ actions, saved state, and API types can change in any release.
 
 ### Changed
 
+- Searches and filters use smart case, as pane search already did: a query
+  with an uppercase letter matches case, any other ignores it. This covers the
+  file browser's search and filters, Git mode, quick open and the native
+  editor's pickers, the session switcher, the command palette, the process
+  viewer, and `btmux pick` menus. Content search used to always match case.
+  ([#175](https://github.com/btmux-dev/btmux/pull/175))
+
 - The native editor's completions use the editor's font and show a colored
   icon for each kind (field, struct, module, …), the ones the Neovim surface
   shows, instead of CodeMirror's symbols, which gave fields and properties an

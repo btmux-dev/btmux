@@ -35,6 +35,7 @@ import {
 import { sumGitCounts, type GitCounts } from '../lib/gitStatus';
 import { useWorktreeStatuses } from '../hooks/useWorktreeStatuses';
 import { GitIndicators } from './GitIndicators';
+import { smartCase } from '../lib/smartCase';
 
 interface Props {
   send: (msg: ClientMessage) => void;
@@ -109,7 +110,7 @@ export function SessionSwitcher({ send }: Props) {
   const activeSession = activeSessionName ? allSessions.find((s) => s.name === activeSessionName) : null;
   const activeWindowId = activeSession?.windows[activeSession.active_window]?.id ?? null;
 
-  const query = filterQuery.trim().toLowerCase();
+  const query = filterQuery.trim();
   const sortedSessions = useMemo(
     () => sortSessions(allSessions, getSessionSort(config)),
     [allSessions, config?.session_sort],
@@ -117,6 +118,7 @@ export function SessionSwitcher({ send }: Props) {
   const windowSort = getWindowSort(config);
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
+    const matches = smartCase(query);
     for (const sess of sortedSessions) {
       // Windows in display order (`window_sort`); each carries its backend index
       // (for switch_window/preview) while its sorted position is the number badge.
@@ -128,13 +130,10 @@ export function SessionSwitcher({ send }: Props) {
       // A session shows if it matches by name, or if any of its windows match
       // by name, repo, branch, or worktree. While filtering, matching sessions
       // auto-expand so the matches are visible.
-      const sessMatch = !query || sess.name.toLowerCase().includes(query);
+      const sessMatch = !query || matches(sess.name);
       const matchingWindows = query
         ? ordered.filter(
-            ({ win }) =>
-              sessMatch ||
-              win.name.toLowerCase().includes(query) ||
-              windowWorktrees(win).some((git) => gitMatches(git, query)),
+            ({ win }) => sessMatch || matches(win.name) || windowWorktrees(win).some((git) => gitMatches(git, matches)),
           )
         : ordered;
       if (query && !sessMatch && matchingWindows.length === 0) continue;

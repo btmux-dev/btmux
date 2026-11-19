@@ -97,8 +97,10 @@ test('filters flat rows by PID and command details', () => {
   const filtered = (query: string) =>
     buildProcessRows(processes, new Set(), 'pid', false, query).map((row) => row.process.pid);
 
-  expect(filtered('PROCESS-2')).toEqual([2]);
+  expect(filtered('process-2')).toEqual([2]);
   expect(filtered('3')).toEqual([3]);
+  // Smart case.
+  expect(filtered('PROCESS-2')).toEqual([]);
 });
 
 test('tree filtering keeps ancestors as context and finds matches in folded subtrees', () => {

@@ -30,6 +30,7 @@ import { editorKeyRows, editorKeys, type EditorKey } from '../lib/nativeEditor/k
 import { EditorKeys } from './EditorKeys';
 import { usePressHint } from '../hooks/usePressHint';
 import { smoothScrollBy } from '../lib/smoothScroll';
+import { smartCase } from '../lib/smartCase';
 import { isDesktopApp, openDesktopWindow, switchDesktopServer } from '../lib/desktopApp';
 
 /** Ordered keybinding-help sections, each matching a set of action names. */
@@ -241,7 +242,19 @@ export function Overlay({ sessionId, send, config }: Props) {
         : [],
     [overlay, config],
   );
-  const source = useMemo(() => createStaticSource(commands), [commands]);
+  const source = useMemo(() => {
+    const base = createStaticSource(commands);
+    return {
+      ...base,
+      // Smart case, unlike `createStaticSource`.
+      search: (query: string) => {
+        const q = query.trim();
+        if (!q) return commands;
+        const matches = smartCase(q);
+        return commands.filter((command) => matches(command.label));
+      },
+    };
+  }, [commands]);
   useEffect(() => {
     if (overlay?.mode !== 'picker') return;
     setPickerIndex(

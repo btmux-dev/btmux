@@ -40,11 +40,13 @@ test('sorts ports numerically and retains sockets with unavailable owners', () =
 
 test('filters ports by socket fields and process details', () => {
   const ports = [port(8004), { ...port(53, null), protocol: 'UDP', state: 'BOUND' }];
-  for (const query of ['8004', 'BTMUX', 'dev', 'alice', 'LISTEN', '42', '127.0.0.1']) {
+  for (const query of ['8004', 'btmux', 'dev', 'alice', 'LISTEN', 'listen', '42', '127.0.0.1']) {
     expect(buildPortRows(ports, [owner], 'port', query)).toHaveLength(query === '127.0.0.1' ? 2 : 1);
   }
   expect(buildPortRows(ports, [owner], 'port', 'udp')[0]?.port.local_port).toBe(53);
   expect(buildPortRows(ports, [owner], 'port', 'nonexistent')).toHaveLength(0);
+  // Smart case.
+  expect(buildPortRows(ports, [owner], 'port', 'BTMUX')).toHaveLength(0);
 });
 
 test('group keys remain stable across addresses, protocols and remote peers', () => {

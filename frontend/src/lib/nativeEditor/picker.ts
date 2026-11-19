@@ -1,5 +1,6 @@
 import { StateEffect, StateField } from '@codemirror/state';
 import { EditorView, showPanel, type Panel } from '@codemirror/view';
+import { matchesCase } from '../smartCase';
 
 /** A choice in the editor's picker. */
 export interface PickItem {
@@ -26,11 +27,11 @@ export interface PickerSpec {
 
 const setPicker = StateEffect.define<PickerSpec | null>();
 
-/** Whether `query`'s characters appear in `text` in order, ignoring case. */
+/** Whether `query`'s characters appear in `text` in order, in smart case. */
 export function fuzzyMatch(text: string, query: string): boolean {
-  const t = text.toLowerCase();
+  const t = matchesCase(query) ? text : text.toLowerCase();
   let at = 0;
-  for (const c of query.toLowerCase()) {
+  for (const c of query) {
     at = t.indexOf(c, at);
     if (at < 0) return false;
     at++;
