@@ -8,6 +8,8 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+## [0.0.214] - 2026-11-19
+
 ### Added
 
 - A **waiting** agent state: an agent at its prompt with background shells or
