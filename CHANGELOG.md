@@ -8,6 +8,13 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Added
+
+- The key help (`<prefix> + ?`) lists the native editor's keys, and the
+  command palette shows them beside each editor command, for Vim mode and
+  your own mappings too.
+  ([#173](https://github.com/btmux-dev/btmux/pull/173))
+
 ### Changed
 
 - The native editor's popups (quick open, pickers, completions, hovers, the

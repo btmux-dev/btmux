@@ -26,6 +26,8 @@ import { KeyCap, KeyHint } from './KeyHint';
 import { actionLabel } from '../lib/actionLabel';
 import { runAction } from '../hooks/useKeybindings';
 import { EDITOR_COMMANDS } from '../lib/nativeEditor/registry';
+import { editorKeyRows, editorKeys, type EditorKey } from '../lib/nativeEditor/keyHelp';
+import { EditorKeys } from './EditorKeys';
 import { usePressHint } from '../hooks/usePressHint';
 import { smoothScrollBy } from '../lib/smoothScroll';
 import { isDesktopApp, openDesktopWindow, switchDesktopServer } from '../lib/desktopApp';
@@ -158,12 +160,16 @@ const UNAVAILABLE_EDITOR: Record<string, (config: ClientConfig | null) => boolea
   browser: (config) => !config?.browser,
 };
 
+/** A palette entry, with the native editor's keys for its action. */
+type PaletteItem = Command & { editorKeys?: EditorKey[] };
+
 /** Keybinding actions as palette entries, after the server's own commands. */
-function actionCommands(commands: Command[], config: ClientConfig | null): Command[] {
+function actionCommands(commands: Command[], config: ClientConfig | null): PaletteItem[] {
   const keys = new Map<string, string[]>();
   for (const bind of config?.binds ?? []) keys.set(bind.action, [...(keys.get(bind.action) ?? []), bind.key]);
   const actions = new Set([...KEY_SECTIONS.flatMap((section) => section.actions), ...keys.keys()]);
   const prefix = getPrefix(config);
+  const vim = config?.vim_mode ? { binds: config.vim_binds } : null;
   return [...actions]
     .filter((action) => action !== 'command-palette' && !commands.some((command) => command.id === action))
     .filter((action) => !UNAVAILABLE_EDITOR[action]?.(config))
@@ -174,6 +180,7 @@ function actionCommands(commands: Command[], config: ClientConfig | null): Comma
         label: actionLabel(action, config?.popups),
         description: bound ? `${prefix}, then ${bound.join(' or ')}` : '',
         confirm: null,
+        editorKeys: EDITOR_COMMANDS.includes(action) ? editorKeys(action, vim) : undefined,
       };
     });
 }
@@ -223,7 +230,7 @@ export function Overlay({ sessionId, send, config }: Props) {
   // The palette or picker dialog, for hint taps.
   const dialogRef = useRef<HTMLDialogElement>(null);
   const pressHint = usePressHint(dialogRef);
-  const commands = useMemo(
+  const commands = useMemo<PaletteItem[]>(
     () =>
       overlay?.mode === 'command'
         ? [
@@ -357,10 +364,17 @@ export function Overlay({ sessionId, send, config }: Props) {
           }
         }}
         renderItem={(item) => (
-          <VStack gap={0.5}>
-            <Text className="btm-mono">{item.label}</Text>
-            {item.description && <Text color="secondary">{item.description}</Text>}
-          </VStack>
+          <HStack gap={2} vAlign="center" className="w-full">
+            <VStack gap={0.5} className="min-w-0 flex-1">
+              <Text className="btm-mono">{item.label}</Text>
+              {item.description && <Text color="secondary">{item.description}</Text>}
+            </VStack>
+            {!!item.editorKeys?.length && (
+              <span className="flex-none">
+                <EditorKeys keys={item.editorKeys} />
+              </span>
+            )}
+          </HStack>
         )}
       />
     );
@@ -620,6 +634,21 @@ export function Overlay({ sessionId, send, config }: Props) {
                   </Section>
                 ) : null;
               })}
+              {config && (
+                <Section variant="transparent" data-editor-key-help>
+                  <Heading level={3}>Native editor</Heading>
+                  <Text color="secondary">
+                    {config.vim_mode
+                      ? 'In the editor, without the prefix. Vim mode is on.'
+                      : 'In the editor, without the prefix. Vim mode is off.'}
+                  </Text>
+                  <List density="compact" hasDividers>
+                    {editorKeyRows(config).map((row, i) => (
+                      <ListItem key={i} label={row.label} endContent={<EditorKeys keys={row.keys} />} />
+                    ))}
+                  </List>
+                </Section>
+              )}
             </VStack>
           </LayoutContent>
         }

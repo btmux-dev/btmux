@@ -13,26 +13,15 @@ import {
   type KeyEntry,
   type KeyMode,
 } from './keyLayer';
+import { PLAIN_CHORDS } from './keyHelp';
 import { vimPresets, whichKeyRows, type WhichKeyRow } from './whichKey';
 
 /** How long keys wait before the which-key popup shows what can follow. */
 export const WHICH_KEY_DELAY_MS = 300;
 
-const MOD = IS_MAC ? 'M' : 'C';
-const chord = (...keys: string[]) => keys.map((k) => `<${MOD}-${k}>`);
-
 /** VS Code's `Mod-k` chords, without vim. */
-const PLAIN = new KeyTable(
-  (
-    [
-      [chord('k', 'i'), 'editor-hover'],
-      [chord('k', 'f'), 'editor-format'],
-      [chord('k', '0'), 'editor-fold-all'],
-      [chord('k', 'j'), 'editor-unfold-all'],
-    ] as const
-  ).map(([keys, action]) => ({ keys: [...keys], action, rhs: null, desc: null })),
-);
-const PLAIN_GROUPS = new Map([[chord('k').join('\u0000'), 'chord']]);
+const PLAIN = new KeyTable(PLAIN_CHORDS.map(([keys, action]) => ({ keys, action, rhs: null, desc: null })));
+const PLAIN_GROUPS = new Map([[PLAIN_CHORDS[0][0][0], 'chord']]);
 
 export interface SequenceHost {
   /** Where mappings apply now: null while vim is midway through a command. */

@@ -29,6 +29,10 @@ Keys follow VS Code's defaults. These are the ones to know first:
 | `Mod-k`, then another key   | VS Code's chords; a popup lists them, and other keys type   |
 | Esc twice                   | Hides the editor                                            |
 
+`<prefix> + ?` lists every key the editor has, under Native editor, and the
+command palette shows each editor command's keys beside it. Both follow Vim
+mode and your own mappings.
+
 Mod is Cmd on macOS and Ctrl elsewhere. Go back and forward are `Alt-←` and
 `Alt-→` on Windows, and `Ctrl-Alt--` and `Ctrl-Shift--` on Linux. Browsers
 keep `Mod-w` and `Mod-t`, so the editor takes them only in the desktop app:
@@ -229,7 +233,8 @@ the buffer, so undo brings the change back.
 ## Actions
 
 The command palette has every command on this page as an `editor-*` action,
-such as `editor-quick-open`, `editor-go-to-definition`, `editor-format`,
+shown with the keys that run it in the editor. They include
+`editor-quick-open`, `editor-go-to-definition`, `editor-format`,
 `editor-stage-hunk`, and `editor-go-back`, plus the symbol's outgoing calls,
 supertypes, and subtypes. Bind them after the prefix in
 [`[keys]`](../configuration/keybindings.md), or in Vim mode in

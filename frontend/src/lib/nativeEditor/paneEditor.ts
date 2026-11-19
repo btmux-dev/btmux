@@ -32,6 +32,7 @@ import { keyboardTooltips } from './hover';
 import { noteOpened, quickOpen } from './quickOpen';
 import { EDITOR_COMMANDS, LSP_COMMANDS, QUICK_OPEN_NEEDS_FOLDER } from './registry';
 import { Sequences } from './sequences';
+import { NAVIGATION_KEYS } from './keyHelp';
 import { JumpList, type Jump } from './jumps';
 import { vscodeKeys } from './vscodeKeys';
 import { isDesktopApp } from '../desktopApp';
@@ -96,15 +97,6 @@ export interface PaneEditorEvents {
   /** Run a btmux action (a mapping to one that isn't the editor's). */
   action(name: string): void;
 }
-
-const IS_WINDOWS = typeof navigator !== 'undefined' && /^Win/.test(navigator.platform);
-
-/** VS Code's Go Back and Go Forward. */
-const NAVIGATION_KEYS = IS_MAC
-  ? { back: 'Ctrl--', forward: 'Ctrl-Shift--' }
-  : IS_WINDOWS
-    ? { back: 'Alt-ArrowLeft', forward: 'Alt-ArrowRight' }
-    : { back: 'Ctrl-Alt--', forward: 'Ctrl-Shift--' };
 
 /** Actions run from visual mode that keep it: they change the selection. */
 const KEEPS_VISUAL = new Set(['editor-expand-selection', 'editor-shrink-selection']);
