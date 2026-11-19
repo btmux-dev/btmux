@@ -3,6 +3,7 @@ import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
 import type { Extension } from '@codemirror/state';
 import type { Theme } from '../../generated/protocol';
+import { readableColor } from '../astryx-theme';
 
 export interface EditorAppearance {
   theme: Theme;
@@ -89,7 +90,17 @@ function completionIcons(theme: Theme) {
     '.cm-completionIcon': { width: '1em', opacity: '1' },
   };
   for (const [type, glyph, role] of KIND_ICONS) {
-    rules[`.cm-completionIcon-${type}:after`] = { content: `'${glyph}'`, color: theme[role] };
+    // CodeMirror's `abc` for text is half size and centered.
+    rules[`.cm-completionIcon-${type}:after`] = {
+      content: `'${glyph}'`,
+      color: theme[role],
+      fontSize: '100%',
+      verticalAlign: 'baseline',
+    };
+    // The glyph is the row's only kind cue: keep it legible on the selection.
+    rules[`.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionIcon-${type}:after`] = {
+      color: readableColor(theme[role], theme.selectionBackground, 3),
+    };
   }
   return rules;
 }

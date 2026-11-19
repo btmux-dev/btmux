@@ -21,7 +21,8 @@ import {
   closeBracketsKeymap,
   completionKeymap,
   currentCompletions,
-  moveCompletionSelection,
+  selectedCompletionIndex,
+  setSelectedCompletion,
 } from '@codemirror/autocomplete';
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
 import { forEachDiagnostic, lintKeymap } from '@codemirror/lint';
@@ -60,15 +61,20 @@ const EARLY_SCOPE = 'btmux-early';
 
 /**
  * Ctrl-N/Ctrl-P as in vim and Ctrl-J/Ctrl-K as in fzf (browsers off macOS keep
- * Ctrl-N) through open completions, ahead of Mod-k chords, vim, and Mod-p
- * (Ctrl-P off macOS). Taken even before CodeMirror's interaction delay lets
- * the move happen, so a quick Ctrl-P never opens quick open instead.
+ * Ctrl-N) through shown completions, ahead of Mod-k chords, vim, and Mod-p
+ * (Ctrl-P off macOS). Unlike arrows, they move during CodeMirror's interaction
+ * delay, and a list waiting for refreshed results keeps them, doing nothing.
  */
 function cycleCompletion(e: KeyboardEvent, view: EditorView): boolean {
   if (!e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return false;
-  const forward = e.key === 'n' || e.key === 'j' ? true : e.key === 'p' || e.key === 'k' ? false : null;
-  if (forward === null || !currentCompletions(view.state).length) return false;
-  moveCompletionSelection(forward)(view);
+  // Caps Lock gives uppercase without Shift.
+  const key = e.key.toLowerCase();
+  const step = key === 'n' || key === 'j' ? 1 : key === 'p' || key === 'k' ? -1 : 0;
+  if (!step) return false;
+  const n = currentCompletions(view.state).length;
+  if (!n) return !!view.dom.querySelector('.cm-tooltip-autocomplete-disabled');
+  const i = selectedCompletionIndex(view.state);
+  view.dispatch({ effects: setSelectedCompletion(i === null ? (step > 0 ? 0 : n - 1) : (i + step + n) % n) });
   return true;
 }
 
