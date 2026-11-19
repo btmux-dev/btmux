@@ -251,6 +251,30 @@ try {
   await editorPane.locator('.cm-activeLine', { hasText: /^line two$/ }).waitFor();
   console.log('PASS quick open goes to file:line and :line');
 
+  // Ctrl-N and Ctrl-P move through the results, wrapping, as in vim.
+  await page.keyboard.press('ControlOrMeta+p');
+  await page.keyboard.type('.');
+  const options = editorPane.locator('.cm-btmux-picker [role=option]');
+  await options.nth(2).waitFor();
+  const selectedOption = () =>
+    options.evaluateAll((items) => items.findIndex((li) => li.getAttribute('aria-selected') === 'true'));
+  const optionCount = await options.count();
+  await page.keyboard.press('Control+n');
+  assert.equal(await selectedOption(), 1);
+  await page.keyboard.press('Control+p');
+  await page.keyboard.press('Control+p');
+  assert.equal(await selectedOption(), optionCount - 1);
+  await page.keyboard.press('Control+n');
+  assert.equal(await selectedOption(), 0);
+  // Ctrl-J and Ctrl-K too, as in fzf (browsers off macOS keep Ctrl-N).
+  await page.keyboard.press('Control+j');
+  assert.equal(await selectedOption(), 1);
+  await page.keyboard.press('Control+k');
+  assert.equal(await selectedOption(), 0);
+  await page.keyboard.press('Escape');
+  await goToFile.waitFor({ state: 'detached' });
+  console.log('PASS Ctrl-N/P and Ctrl-J/K move through quick open results');
+
   // A file created after the first search shows up for the query typed once
   // the stale index (over 5 s old) is listed again.
   const late = join(dir, 'late-arrival.txt');

@@ -13,6 +13,8 @@
 //   on line 1); "slowImport" resolves 700 ms late, importing "use slow;"
 // - postfix completion after "NAME.": "if NAME {}", deleting "NAME." as an
 //   additional edit
+// - completion in incomplete.fake: "incOne", "incTwo", and "incText" (a text
+//   item), incomplete, and 1 s late for words of four characters or more
 // - signature help: in "sig(", the parameter after as many commas
 // - hover: "Fake hover for WORD", 700 ms late for "slow", 200 paragraphs for "use"
 // - definition and type definition: WORD's first line in other.fake beside the document
@@ -195,6 +197,15 @@ function handle(msg: any): unknown {
           ],
         };
       }
+      if (p.textDocument.uri.endsWith('/incomplete.fake'))
+        return {
+          isIncomplete: true,
+          items: [
+            { label: 'incOne', kind: 6 },
+            { label: 'incTwo', kind: 6 },
+            { label: 'incText', kind: 1 },
+          ],
+        };
       return {
         isIncomplete: false,
         itemDefaults: { data: { from: 'defaults' } },
@@ -653,6 +664,16 @@ process.stdin.on('data', (chunk: Buffer) => {
       else if (msg.method === 'textDocument/formatting' && text(msg.params.textDocument.uri).includes('slow'))
         setTimeout(reply, 700);
       else if (msg.method === 'completionItem/resolve' && msg.params.label === 'slowImport') setTimeout(reply, 700);
+      else if (
+        msg.method === 'textDocument/completion' &&
+        msg.params.textDocument.uri.endsWith('/incomplete.fake') &&
+        /\w{4}$/.test(
+          text(msg.params.textDocument.uri)
+            .split('\n')
+            [msg.params.position.line]?.slice(0, msg.params.position.character) ?? '',
+        )
+      )
+        setTimeout(reply, 1000);
       else if (
         msg.method === 'textDocument/inlineCompletion' &&
         text(msg.params.textDocument.uri)

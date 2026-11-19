@@ -15,7 +15,15 @@ import {
 import { Compartment, EditorSelection, EditorState, Prec, type Extension } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { bracketMatching, foldGutter, foldKeymap, indentOnInput, indentUnit } from '@codemirror/language';
-import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
+import {
+  autocompletion,
+  closeBrackets,
+  closeBracketsKeymap,
+  completionKeymap,
+  currentCompletions,
+  selectedCompletionIndex,
+  setSelectedCompletion,
+} from '@codemirror/autocomplete';
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
 import { forEachDiagnostic, lintKeymap } from '@codemirror/lint';
 import { Doc, type DocStatus } from './doc';
@@ -50,6 +58,25 @@ let vimLoader: Promise<Vim> | null = null;
 
 /** The keymap scope of chords run ahead of vim (`keydown`). */
 const EARLY_SCOPE = 'btmux-early';
+
+/**
+ * Ctrl-N/Ctrl-P as in vim and Ctrl-J/Ctrl-K as in fzf (browsers off macOS keep
+ * Ctrl-N) through shown completions, ahead of Mod-k chords, vim, and Mod-p
+ * (Ctrl-P off macOS). Unlike arrows, they move during CodeMirror's interaction
+ * delay, and a list waiting for refreshed results keeps them, doing nothing.
+ */
+function cycleCompletion(e: KeyboardEvent, view: EditorView): boolean {
+  if (!e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return false;
+  // Caps Lock gives uppercase without Shift.
+  const key = e.key.toLowerCase();
+  const step = key === 'n' || key === 'j' ? 1 : key === 'p' || key === 'k' ? -1 : 0;
+  if (!step) return false;
+  const n = currentCompletions(view.state).length;
+  if (!n) return !!view.dom.querySelector('.cm-tooltip-autocomplete-disabled');
+  const i = selectedCompletionIndex(view.state);
+  view.dispatch({ effects: setSelectedCompletion(i === null ? (step > 0 ? 0 : n - 1) : (i + step + n) % n) });
+  return true;
+}
 
 /** Longest wait for formatting before a save goes ahead without it. */
 const FORMAT_TIMEOUT_MS = 3000;
@@ -351,6 +378,10 @@ export class PaneEditor {
       return true;
     }
     this.esc = { last: -Infinity, armed: false };
+    if (cycleCompletion(e, view)) {
+      e.preventDefault();
+      return true;
+    }
     if (this.docs.get(this.active ?? '')?.view && this.keys.keydown(e)) {
       e.preventDefault();
       return true;

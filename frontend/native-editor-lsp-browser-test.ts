@@ -431,8 +431,89 @@ try {
   for (const [text, tokenColor] of selected.tokens)
     if (tokenColor) assert.equal(tokenColor, selected.row, `${text}: ${JSON.stringify(selected)}`);
   assert.equal(await signature.evaluate((el) => getComputedStyle(el).fontStyle), 'normal');
-  await page.keyboard.press('Escape');
   console.log('PASS highlighted completion details');
+
+  // Ctrl-N and Ctrl-P move through completions, wrapping, as in vim; Ctrl-P
+  // isn't quick open (Mod-p off macOS) while they're open.
+  const selectedLabel = () => completions.locator('li[aria-selected] .cm-completionLabel').textContent();
+  const first = await selectedLabel();
+  await page.keyboard.press('Control+n');
+  await until('Ctrl-N moved', async () => (await selectedLabel()) !== first);
+  await page.keyboard.press('Control+n');
+  await until('Ctrl-N wrapped', async () => (await selectedLabel()) === first);
+  await page.keyboard.press('Control+p');
+  await until('Ctrl-P wrapped', async () => (await selectedLabel()) !== first);
+  assert.equal(await pane.getByRole('combobox', { name: 'Go to file' }).count(), 0);
+  // Ctrl-J and Ctrl-K too, as in fzf; Ctrl-K doesn't start a Mod-k chord off macOS.
+  await page.keyboard.press('Control+j');
+  await until('Ctrl-J moved', async () => (await selectedLabel()) === first);
+  await page.keyboard.press('Control+k');
+  await until('Ctrl-K moved', async () => (await selectedLabel()) !== first);
+  await page.keyboard.press('Control+j');
+  await until('Ctrl-J after Ctrl-K', async () => (await selectedLabel()) === first);
+  // Each kind has its own Nerd Font icon.
+  const fieldIcon = completions.locator('li', { hasText: 'fakeField' }).locator('.cm-completionIcon-field');
+  assert.equal(await fieldIcon.evaluate((el) => getComputedStyle(el, '::after').content), JSON.stringify('\ueb5f'));
+  await page.keyboard.press('Escape');
+  console.log('PASS Ctrl-N/P and Ctrl-J/K move through completions');
+
+  // They move as soon as a list shows (before autocomplete's interaction
+  // delay) and with Caps Lock; a list waiting for refreshed results keeps
+  // them, so Ctrl-P neither opens quick open nor moves the cursor.
+  const incomplete = join(dir, 'incomplete.fake');
+  writeFileSync(incomplete, '\n');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: incomplete, line: 1, editor: 'native' });
+  await until('incomplete.fake', async () => (await lines(page, paneId)) === '\n');
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+  // Sent from the page as the list appears, well inside the 75 ms delay.
+  const pressedOnOpen = page.evaluate(
+    (id) =>
+      new Promise<void>((resolve) => {
+        const content = document.querySelector(`[data-native-editor][data-pane-id="${id}"]`)!;
+        const editor = content.closest('.cm-editor')!;
+        const observer = new MutationObserver(() => {
+          if (!editor.querySelector('.cm-tooltip-autocomplete li')) return;
+          observer.disconnect();
+          const init = { key: 'n', code: 'KeyN', ctrlKey: true, bubbles: true, cancelable: true };
+          content.dispatchEvent(new KeyboardEvent('keydown', init));
+          resolve();
+        });
+        observer.observe(editor, { childList: true, subtree: true });
+      }),
+    paneId,
+  );
+  await page.keyboard.type('i');
+  await pressedOnOpen;
+  const selectedIndex = () =>
+    completions.locator('li').evaluateAll((items) => items.findIndex((li) => li.hasAttribute('aria-selected')));
+  assert.equal(await selectedIndex(), 1);
+  // Uppercase without Shift, as Caps Lock sends.
+  await page.keyboard.press('Control+K');
+  await until('Ctrl-K moved with Caps Lock', async () => (await selectedIndex()) === 0);
+  await page.keyboard.type('nco');
+  // Only "inco" is answered late; earlier queries disable the list briefly too.
+  await until('inco', async () => (await lines(page, paneId)) === '\ninco');
+  await page.locator('.cm-tooltip-autocomplete-disabled').waitFor();
+  await page.keyboard.press('Control+p');
+  await page.locator('.cm-tooltip-autocomplete:not(.cm-tooltip-autocomplete-disabled)').waitFor();
+  await completions.locator('.cm-completionLabel', { hasText: 'incOne' }).waitFor();
+  assert.equal(await pane.getByRole('combobox', { name: 'Go to file' }).count(), 0);
+  assert.equal(await lines(page, paneId), '\ninco');
+  console.log('PASS completion keys during the interaction delay, with Caps Lock, and while refreshing');
+
+  // The text kind's icon is as large as the others (CodeMirror halves its `abc`).
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('i');
+  await completions.locator('.cm-completionLabel', { hasText: 'incText' }).waitFor();
+  const iconSize = (label: string) =>
+    completions
+      .locator('li', { hasText: label })
+      .locator('.cm-completionIcon')
+      .evaluate((el) => getComputedStyle(el, '::after').fontSize);
+  assert.equal(await iconSize('incText'), await iconSize('incOne'));
+  await page.keyboard.press('Escape');
+  console.log('PASS text completion icons are full size');
 
   // File operations: a file created and edited, the shown one moved with its tab.
   const moving = join(dir, 'move.fake');

@@ -3,6 +3,7 @@ import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
 import type { Extension } from '@codemirror/state';
 import type { Theme } from '../../generated/protocol';
+import { readableColor } from '../astryx-theme';
 
 export interface EditorAppearance {
   theme: Theme;
@@ -42,6 +43,66 @@ export function highlightSpecs(theme: Theme) {
     { tag: t.link, textDecoration: 'underline' },
     { tag: t.invalid, color: theme.red, textDecoration: 'underline wavy' },
   ];
+}
+
+type IconRole = 'blue' | 'cyan' | 'green' | 'brightRed' | 'magenta' | 'red' | 'yellow';
+
+/**
+ * Completion kind icons: mini.icons' LSP codicons, as the Neovim surface shows
+ * them, in base16 roles for its highlight groups (Azure/Blue=blue, Orange=brightRed,
+ * Purple=magenta). Types are completion types (`KIND_TYPES` in
+ * completion.ts, plus CodeMirror's own `namespace` and `type`).
+ */
+const KIND_ICONS: [type: string, glyph: string, role: IconRole][] = [
+  ['text', '\uea93', 'green'],
+  ['method', '\uea8c', 'blue'],
+  ['function', '\ueabe', 'blue'],
+  ['constructor', '\ueaf8', 'blue'],
+  ['field', '\ueb5f', 'yellow'],
+  ['variable', '\uea88', 'cyan'],
+  ['class', '\ueb5b', 'magenta'],
+  ['interface', '\ueb61', 'magenta'],
+  ['module', '\uea8b', 'magenta'],
+  ['namespace', '\uea8b', 'red'],
+  ['property', '\ueb65', 'yellow'],
+  ['unit', '\uea96', 'cyan'],
+  ['value', '\ueaac', 'blue'],
+  ['enum', '\uea95', 'magenta'],
+  ['keyword', '\ueb62', 'cyan'],
+  ['snippet', '\ueb66', 'green'],
+  ['color', '\ueb5c', 'red'],
+  ['file', '\ueb60', 'blue'],
+  ['reference', '\ueb36', 'cyan'],
+  ['folder', '\uea83', 'blue'],
+  ['enumMember', '\ueb5e', 'yellow'],
+  ['constant', '\ueb5d', 'brightRed'],
+  ['struct', '\uea91', 'magenta'],
+  ['event', '\uea86', 'red'],
+  ['operator', '\ueb64', 'cyan'],
+  ['typeParameter', '\uea92', 'cyan'],
+  ['type', '\uea92', 'cyan'],
+];
+
+function completionIcons(theme: Theme) {
+  const rules: Record<string, Record<string, string>> = {
+    // CodeMirror's list is plain `monospace`; the editor font falls back to the bundled Nerd Font.
+    '.cm-tooltip.cm-tooltip-autocomplete > ul': { fontFamily: 'inherit' },
+    '.cm-completionIcon': { width: '1em', opacity: '1' },
+  };
+  for (const [type, glyph, role] of KIND_ICONS) {
+    // CodeMirror's `abc` for text is half size and centered.
+    rules[`.cm-completionIcon-${type}:after`] = {
+      content: `'${glyph}'`,
+      color: theme[role],
+      fontSize: '100%',
+      verticalAlign: 'baseline',
+    };
+    // The glyph is the row's only kind cue: keep it legible on the selection.
+    rules[`.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionIcon-${type}:after`] = {
+      color: readableColor(theme[role], theme.selectionBackground, 3),
+    };
+  }
+  return rules;
 }
 
 /** The native editor's popups: half translucent, blurred by `backdrop-blur`. */
@@ -144,6 +205,7 @@ export function editorTheme(a: EditorAppearance): Extension {
         // Token colors aren't checked against the selected row's background.
         '.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-btmux-completionCode *': { color: 'inherit' },
         '.cm-completionMatchedText': { textDecoration: 'none', color: theme.blue, fontWeight: 'bold' },
+        ...completionIcons(theme),
         // Semantic tokens, in the roles `highlightSpecs` uses.
         '.cm-sem-namespace, .cm-sem-type, .cm-sem-class, .cm-sem-enum, .cm-sem-interface, .cm-sem-struct, .cm-sem-typeParameter':
           { color: theme.yellow },

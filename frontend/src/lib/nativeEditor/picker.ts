@@ -171,10 +171,14 @@ function pickerPanel(view: EditorView, spec: PickerSpec): Panel {
     );
   });
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    // Ctrl-N/Ctrl-P as in vim's menus, Ctrl-J/Ctrl-K as in fzf (browsers off macOS keep Ctrl-N).
+    // Caps Lock gives uppercase without Shift.
+    const ctrl = e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey ? e.key.toLowerCase() : '';
+    const down = e.key === 'ArrowDown' || ctrl === 'n' || ctrl === 'j';
+    if (down || e.key === 'ArrowUp' || ctrl === 'p' || ctrl === 'k') {
       e.preventDefault();
       const n = Math.min(shown.length, 200);
-      if (n) selected = (selected + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
+      if (n) selected = (selected + (down ? 1 : n - 1)) % n;
       render();
     } else if (e.key === 'Enter') {
       e.preventDefault();

@@ -8,6 +8,21 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Added
+
+- `Ctrl-n` and `Ctrl-p` (as in Vim) and `Ctrl-j` and `Ctrl-k` (as in fzf,
+  for browsers that keep `Ctrl-n`) move through the native editor's
+  completions, quick open, and other pickers.
+  ([#174](https://github.com/btmux-dev/btmux/pull/174))
+
+### Changed
+
+- The native editor's completions use the editor's font and show a colored
+  icon for each kind (field, struct, module, …), the ones the Neovim surface
+  shows, instead of CodeMirror's symbols, which gave fields and properties an
+  empty-looking square.
+  ([#174](https://github.com/btmux-dev/btmux/pull/174))
+
 ## [0.0.212] - 2026-11-19
 
 ### Added
