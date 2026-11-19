@@ -5,6 +5,7 @@ import { clsx } from 'clsx';
 import { useFileStore } from '@/state/fileStore';
 import type { GitStatusResult, FileStatus, LineStats } from '@/protocol/file-messages';
 import { Placeholder } from './Placeholder';
+import { smartCase } from '@/lib/smartCase';
 
 export interface GitItem {
   kind: 'section-header' | 'file';
@@ -103,7 +104,7 @@ export function computeGitItems(gitStatus: GitStatusResult, expandedSections: Se
 /** Drops non-matching file items and any section header left with no matches. */
 export function filterGitItems(items: GitItem[], query: string): GitItem[] {
   if (!query) return items;
-  const q = query.toLowerCase();
+  const matches = smartCase(query);
   const result: GitItem[] = [];
   let headerIndex = -1;
   let matched = false;
@@ -121,7 +122,7 @@ export function filterGitItems(items: GitItem[], query: string): GitItem[] {
       commitHeader();
       result.push(item);
       headerIndex = result.length - 1;
-    } else if (item.path?.toLowerCase().includes(q)) {
+    } else if (item.path && matches(item.path)) {
       result.push(item);
       matched = true;
     }

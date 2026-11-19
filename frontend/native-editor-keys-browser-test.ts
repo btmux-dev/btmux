@@ -329,14 +329,14 @@ try {
   console.log('PASS the config moves the leader and changes mappings');
 
   // The palette and key help show vim's mappings, the user's included.
-  assert.equal(await paletteKeys('Problems'), ',x');
-  assert.equal(await paletteKeys('Go to definition'), 'gd | ctrl+]');
-  assert.equal(await paletteKeys('Expand selection'), 'an (visual)');
+  assert.equal(await paletteKeys('problems'), ',x');
+  assert.equal(await paletteKeys('go to definition'), 'gd | ctrl+]');
+  assert.equal(await paletteKeys('expand selection'), 'an (visual)');
   // A mapping in several modes shows them all.
-  assert.equal(await paletteKeys('Quick open'), 'ctrl+y (visual, insert)');
+  assert.equal(await paletteKeys('quick open'), 'ctrl+y (visual, insert)');
   // Without a mapping, the keys without vim, but not VS Code's chords,
   // which vim doesn't take.
-  assert.equal(await paletteKeys('Incoming calls'), 'shift+alt+h');
+  assert.equal(await paletteKeys('incoming calls'), 'shift+alt+h');
   let help = await helpKeys();
   assert.equal(helpRow(help, 'Save'), ':w');
   assert.equal(helpRow(help, 'Problems'), ',x');
@@ -382,8 +382,8 @@ try {
   console.log('PASS VS Code chords, F8, and Go Back without vim');
 
   // Without vim, VS Code's keys, which the editor's keymaps bind.
-  assert.equal(await paletteKeys('Go to definition'), 'F12');
-  assert.equal(await paletteKeys('Hover'), 'mod+k mod+i');
+  assert.equal(await paletteKeys('go to definition'), 'F12');
+  assert.equal(await paletteKeys('hover'), 'mod+k mod+i');
   help = await helpKeys();
   assert.equal(helpRow(help, 'Save'), 'mod+s');
   assert.equal(helpRow(help, 'Format'), 'shift+alt+f | mod+k mod+f');

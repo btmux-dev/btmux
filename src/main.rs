@@ -44,6 +44,7 @@ mod server;
 mod service;
 mod session;
 mod shell;
+mod smart_case;
 mod system_info;
 mod tailscale;
 mod telemetry;

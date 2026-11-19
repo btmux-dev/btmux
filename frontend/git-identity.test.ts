@@ -9,6 +9,7 @@ import {
   worktreeLabel,
 } from './src/lib/gitIdentity';
 import { gitIndicators, sameGitCounts, sumGitCounts } from './src/lib/gitStatus';
+import { smartCase } from './src/lib/smartCase';
 import type { PaneGit } from './src/state/types';
 
 const main: PaneGit = {
@@ -49,9 +50,9 @@ test('repos get distinct colors while there are enough', () => {
 test('labels and filter matches', () => {
   expect(worktreeLabel(feat)).toBe('feat');
   expect(worktreeLabel({ ...feat, branch: null })).toBe('proj-feat');
-  expect(gitMatches(feat, 'fea')).toBe(true);
-  expect(gitMatches(feat, 'proj-f')).toBe(true);
-  expect(gitMatches(main, 'feat')).toBe(false);
+  expect(gitMatches(feat, smartCase('fea'))).toBe(true);
+  expect(gitMatches(feat, smartCase('proj-f'))).toBe(true);
+  expect(gitMatches(main, smartCase('feat'))).toBe(false);
 });
 
 test('session worktrees are distinct across windows', () => {

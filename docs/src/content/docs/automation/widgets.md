@@ -27,8 +27,10 @@ git switch "$(git branch --format='%(refname:short)' | btmux pick --prompt Branc
 ```
 
 Each line of stdin supplies an item. Text after a tab is a searchable
-description and is omitted from the output. Type to filter, move with Up,
-Down, Tab, `Ctrl+N`, or `Ctrl+P`, and select with Enter or a click.
+description and is omitted from the output. Type to filter (each
+space-separated term ignores case unless it has an uppercase letter, as in
+fzf), move with Up, Down, Tab, `Ctrl+N`, or `Ctrl+P`, and select with Enter or
+a click.
 
 | Flag                | Effect                                                                                  |
 | ------------------- | --------------------------------------------------------------------------------------- |

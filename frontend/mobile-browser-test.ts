@@ -415,6 +415,8 @@ try {
   });
   assert.equal(focusedInTap, 'INPUT');
   const search = page.getByRole('textbox', { name: 'Search files' });
+  // Smart case: the keyboard mustn't capitalize queries.
+  assert.equal(await search.getAttribute('autocapitalize'), 'off');
   await page.keyboard.type('b.t');
   const result = page.getByLabel('Search results').locator('[data-index]', { hasText: 'b.txt' });
   await result.tap();

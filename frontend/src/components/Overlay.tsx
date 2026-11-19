@@ -30,6 +30,8 @@ import { editorKeyRows, editorKeys, type EditorKey } from '../lib/nativeEditor/k
 import { EditorKeys } from './EditorKeys';
 import { usePressHint } from '../hooks/usePressHint';
 import { smoothScrollBy } from '../lib/smoothScroll';
+import { smartCase } from '../lib/smartCase';
+import { plainTextInput } from '../lib/touch';
 import { isDesktopApp, openDesktopWindow, switchDesktopServer } from '../lib/desktopApp';
 
 /** Ordered keybinding-help sections, each matching a set of action names. */
@@ -209,6 +211,7 @@ function TopHighlightedInput() {
   }, [search, resultsKey, count, setHighlightedIndex]);
   return (
     <CommandPaletteInput
+      ref={plainTextInput}
       onKeyDown={(event) => {
         if (!palette || !count || !event.ctrlKey || (event.key !== 'n' && event.key !== 'p')) return;
         event.preventDefault();
@@ -241,7 +244,19 @@ export function Overlay({ sessionId, send, config }: Props) {
         : [],
     [overlay, config],
   );
-  const source = useMemo(() => createStaticSource(commands), [commands]);
+  const source = useMemo(() => {
+    const base = createStaticSource(commands);
+    return {
+      ...base,
+      // Smart case, unlike `createStaticSource`.
+      search: (query: string) => {
+        const q = query.trim();
+        if (!q) return commands;
+        const matches = smartCase(q);
+        return commands.filter((command) => matches(command.label));
+      },
+    };
+  }, [commands]);
   useEffect(() => {
     if (overlay?.mode !== 'picker') return;
     setPickerIndex(

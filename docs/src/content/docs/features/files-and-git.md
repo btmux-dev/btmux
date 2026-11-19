@@ -43,7 +43,9 @@ A directory previews as a tree. Binary files open with the server machine's
 default app instead of the editor.
 
 Name search uses `fd` and content search uses `rg` when they are installed,
-falling back to `find` and `grep`. Both show at most 100 results.
+falling back to `find` and `grep`. Both show at most 100 results. Searches
+and filters here, as elsewhere in btmux, ignore case unless the query has an
+uppercase letter.
 
 ## Git mode
 

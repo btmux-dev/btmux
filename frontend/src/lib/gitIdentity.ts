@@ -63,9 +63,9 @@ export function worktreeLabel(git: PaneGit): string {
   return git.branch ?? basename(git.worktree_root);
 }
 
-/** Whether a lowercase filter query matches a repo, branch, or worktree folder. */
-export function gitMatches(git: PaneGit, query: string): boolean {
-  return [git.repo_name, git.branch ?? '', basename(git.worktree_root)].some((s) => s.toLowerCase().includes(query));
+/** Whether a filter (`smartCase`) matches a repo, branch, or worktree folder. */
+export function gitMatches(git: PaneGit, matches: (text: string) => boolean): boolean {
+  return [git.repo_name, git.branch ?? '', basename(git.worktree_root)].some(matches);
 }
 
 function worktreeKey(git: PaneGit): string {

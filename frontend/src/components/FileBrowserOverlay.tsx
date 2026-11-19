@@ -48,6 +48,7 @@ import type {
 import type { ClientMessage } from '@/protocol/messages';
 import { openInEditor } from '../lib/openInEditor';
 import { isHtmlFile } from './files/previews/HtmlPreview';
+import { smartCase } from '@/lib/smartCase';
 
 const MEDIA_EXTENSIONS = new Set([
   'pdf',
@@ -740,7 +741,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       if (!showDotFiles && entry.name.startsWith('.')) return false;
       if (!showIgnored && entry.is_ignored) return false;
       if (isFilterActive && filterQuery) {
-        return entry.name.toLowerCase().includes(filterQuery.toLowerCase());
+        return smartCase(filterQuery)(entry.name);
       }
       return true;
     });
@@ -1213,7 +1214,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             if (!showDotFiles && entry.name.startsWith('.')) return false;
             if (!showIgnored && entry.is_ignored) return false;
             if (filterQuery) {
-              return entry.name.toLowerCase().includes(filterQuery.toLowerCase());
+              return smartCase(filterQuery)(entry.name);
             }
             return true;
           });
@@ -1241,7 +1242,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           const vis = entries.filter((entry) => {
             if (!showDotFiles && entry.name.startsWith('.')) return false;
             if (!showIgnored && entry.is_ignored) return false;
-            if (filterQuery) return entry.name.toLowerCase().includes(filterQuery.toLowerCase());
+            if (filterQuery) return smartCase(filterQuery)(entry.name);
             return true;
           });
           const next = step(focusedIndex, down ? 1 : -1, vis.length);
@@ -1255,7 +1256,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
         if (!showDotFiles && entry.name.startsWith('.')) return false;
         if (!showIgnored && entry.is_ignored) return false;
         if (isFilterActive && filterQuery) {
-          return entry.name.toLowerCase().includes(filterQuery.toLowerCase());
+          return smartCase(filterQuery)(entry.name);
         }
         return true;
       });
@@ -1507,7 +1508,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     const visible = entries.filter((entry) => {
       if (!showDotFiles && entry.name.startsWith('.')) return false;
       if (!showIgnored && entry.is_ignored) return false;
-      if (isFilterActive && filterQuery) return entry.name.toLowerCase().includes(filterQuery.toLowerCase());
+      if (isFilterActive && filterQuery) return smartCase(filterQuery)(entry.name);
       return true;
     });
     return visible[focusedIndex]?.is_dir ?? false;

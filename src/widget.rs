@@ -290,16 +290,19 @@ fn parse_whole_items(input: &[u8]) -> Vec<(&[u8], PickItem)> {
         .collect()
 }
 
-/// As `filterPick` in the frontend: contains every whitespace-separated term, ignoring case.
+/// As `filterPick` in the frontend: contains every whitespace-separated term, each in smart case.
 fn matches_query(item: &PickItem, query: &str) -> bool {
     let label = item.label.to_lowercase();
     let description = item.description.as_deref().map(str::to_lowercase);
     query.split_whitespace().all(|term| {
-        let term = term.to_lowercase();
-        label.contains(&term)
-            || description
-                .as_ref()
-                .is_some_and(|text| text.contains(&term))
+        if crate::smart_case::matches_case(term) {
+            return item.label.contains(term)
+                || item
+                    .description
+                    .as_deref()
+                    .is_some_and(|text| text.contains(term));
+        }
+        label.contains(term) || description.as_ref().is_some_and(|text| text.contains(term))
     })
 }
 
@@ -536,16 +539,31 @@ mod tests {
         assert!(parsed[0].1.description.is_none());
     }
 
+    #[tokio::test]
+    async fn select_1_takes_a_titlecase_query_as_the_menu_does() {
+        let args = PickArgs {
+            query: Some("ǅ".into()),
+            select_1: true,
+            exit_0: true,
+            ..PickArgs::default()
+        };
+        assert_eq!(
+            pick_from("0", &args, parse_items(b"\xc7\x85uro\n")).await,
+            Ok(0)
+        );
+    }
+
     #[test]
-    fn queries_match_every_term_in_label_or_description() {
+    fn queries_match_every_term_in_label_or_description_in_smart_case() {
         let item = PickItem {
             label: "Alpha".into(),
             description: Some("First Note".into()),
         };
-        for query in ["", "  ", "alpha", "ALP note", "first"] {
+        for query in ["", "  ", "alpha", "Alp note", "first", "First"] {
             assert!(matches_query(&item, query), "{query}");
         }
-        for query in ["beta", "alpha beta"] {
+        // Smart case, per term.
+        for query in ["beta", "alpha beta", "ALP", "alpha NOTE"] {
             assert!(!matches_query(&item, query), "{query}");
         }
     }

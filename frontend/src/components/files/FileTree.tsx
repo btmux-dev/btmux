@@ -8,6 +8,7 @@ import type { FileEntry, GitStatusResult, ServerFileMessage } from '@/protocol/f
 import { gitCounts } from '@/lib/gitStatus';
 import { GitIndicators } from '../GitIndicators';
 import { Placeholder } from './Placeholder';
+import { smartCase } from '@/lib/smartCase';
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
@@ -45,7 +46,7 @@ export function FileTree({ fileSend, onNavigate, onPreview }: FileTreeProps) {
         if (!showDotFiles && e.name.startsWith('.')) return false;
         if (!showIgnored && e.is_ignored) return false;
         if (isFilterActive && filterQuery) {
-          return e.name.toLowerCase().includes(filterQuery.toLowerCase());
+          return smartCase(filterQuery)(e.name);
         }
         return true;
       }),

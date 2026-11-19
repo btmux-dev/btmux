@@ -1,6 +1,7 @@
 import { resolveFocusedRow } from './utils';
 import type { ProcessInfo } from '../protocol/process-messages';
 import { hasStartTime } from './processFormat';
+import { smartCase } from './smartCase';
 
 export interface ProcessTreeRow {
   process: ProcessInfo;
@@ -78,10 +79,10 @@ export function sortProcesses(processes: ProcessInfo[], sortMode: ProcessSortMod
 }
 
 export function processMatches(process: ProcessInfo, query: string): boolean {
-  const normalized = query.trim().toLowerCase();
+  const normalized = query.trim();
   if (!normalized) return true;
-  return [String(process.pid), process.name, process.command, process.status, process.user ?? ''].some((value) =>
-    value.toLowerCase().includes(normalized),
+  return [String(process.pid), process.name, process.command, process.status, process.user ?? ''].some(
+    smartCase(normalized),
   );
 }
 

@@ -1,4 +1,5 @@
 import type { PortInfo, ProcessInfo } from '../protocol/process-messages';
+import { smartCase } from './smartCase';
 
 export const PORT_SORT_MODES = [
   'listeners',
@@ -42,7 +43,7 @@ export function portKey(port: PortInfo): string {
   return JSON.stringify([port.local_port, port.pid]);
 }
 
-function socketMatches(port: PortInfo, process: ProcessInfo | null, query: string): boolean {
+function socketMatches(port: PortInfo, process: ProcessInfo | null, matches: (text: string) => boolean): boolean {
   return [
     String(port.local_port),
     port.protocol,
@@ -53,7 +54,7 @@ function socketMatches(port: PortInfo, process: ProcessInfo | null, query: strin
     process?.name ?? '',
     process?.command ?? '',
     process?.user ?? '',
-  ].some((value) => value.toLowerCase().includes(query));
+  ].some(matches);
 }
 
 export function buildPortRows(
@@ -81,9 +82,10 @@ export function buildPortRows(
     group.sockets.push(port);
     if (port.remote_address !== null) group.connectionCount++;
   }
-  const normalized = query.trim().toLowerCase();
+  const normalized = query.trim();
+  const matches = smartCase(normalized);
   const rows = [...groups.values()].filter(
-    (group) => !normalized || group.sockets.some((socket) => socketMatches(socket, group.process, normalized)),
+    (group) => !normalized || group.sockets.some((socket) => socketMatches(socket, group.process, matches)),
   );
   for (const group of rows) {
     group.sockets.sort(
