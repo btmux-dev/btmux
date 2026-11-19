@@ -30,6 +30,7 @@ pub const GUEST_BIN: &str = "/usr/local/bin/btmux";
 )]
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub enum GuestShell {
     #[default]
     Bash,

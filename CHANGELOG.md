@@ -10,6 +10,10 @@ actions, saved state, and API types can change in any release.
 
 ### Added
 
+- An [API reference](https://btmux-dev.github.io/btmux/automation/api/) for the
+  REST API, generated from its OpenAPI document, which servers serve at
+  `/api/openapi.json`.
+  ([#171](https://github.com/btmux-dev/btmux/pull/171))
 - The key help (`<prefix> + ?`) lists the native editor's keys, and the
   command palette shows them beside each editor command, for Vim mode and
   your own mappings too.

@@ -13,6 +13,7 @@ use tokio::sync::mpsc::UnboundedSender;
 /// A pane's place in a git repo.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct PaneGit {
     /// The repo's common git dir, shared by all its worktrees.
     pub repo_id: String,

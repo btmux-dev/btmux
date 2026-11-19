@@ -50,6 +50,7 @@ const EXIT_NOT_FOUND: i32 = 127;
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub enum PopupCommand {
     /// A program and its arguments.
     Exec(Vec<String>),
@@ -524,7 +525,21 @@ pub async fn close(state: &AppState, id: Uuid) {
     });
 }
 
+#[derive(Serialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
+pub struct PopupOpened {
+    pub id: Uuid,
+}
+
+#[derive(Serialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
+pub struct PopupExited {
+    /// The program's exit status, if known.
+    pub status: Option<i32>,
+}
+
 #[derive(Deserialize, Serialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct PopupRequest {
     /// Chosen by the caller, so a request retried across an upgrade finds
     /// its popup rather than running the program again.
@@ -533,14 +548,64 @@ pub struct PopupRequest {
     pub command: PopupCommand,
     #[serde(default)]
     pub cwd: Option<String>,
+    // Replaces the server's environment; see `Environment`.
     #[serde(default)]
+    #[cfg_attr(test, schema(value_type = Environment, inline))]
     pub env: Option<Vec<(String, String)>>,
     #[serde(default)]
     pub title: Option<String>,
 }
 
+/// `PopupRequest::env`: utoipa's tuple schema leaves out `minItems`.
+#[cfg(test)]
+struct Environment;
+
+#[cfg(test)]
+impl utoipa::PartialSchema for Environment {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        serde_json::from_value(serde_json::json!({
+            "type": ["array", "null"],
+            "description": "Replaces the server's environment.",
+            "items": {
+                "type": "array",
+                "prefixItems": [
+                    {"type": "string", "description": "Name"},
+                    {"type": "string", "description": "Value"},
+                ],
+                "items": false,
+                "minItems": 2,
+            },
+            "examples": [[["NAME", "value"]]],
+        }))
+        .unwrap()
+    }
+}
+
+#[cfg(test)]
+impl utoipa::ToSchema for Environment {}
+
 /// Opens a popup and replies `{"id": ...}` once a tab started it: 409 if no
 /// tab does, 422 if its program can't start.
+#[cfg_attr(test, utoipa::path(
+    post,
+    path = "/api/panes/{pane_id}/popup",
+    tag = "Popups",
+    operation_id = "open-popup",
+    summary = "Open a popup",
+    description = "Runs a program in a popup over the pane. Replies once a client started it; then wait for its exit status.",
+    params(
+        ("pane_id", description = "Pane ID"),
+    ),
+    responses(
+        (status = 200, description = "Started in a client", body = PopupOpened),
+        (status = 400, description = "An empty command, a `cwd` that isn't a directory, or an `id` already in use", body = String, content_type = "text/plain"),
+        (status = 404, description = "No such pane", body = String, content_type = "text/plain"),
+        (status = 409, description = "No client is showing the pane", body = String, content_type = "text/plain"),
+        (status = 410, description = "The popup closed before it started", body = String, content_type = "text/plain"),
+        (status = 422, description = "The program can't start", body = String, content_type = "text/plain"),
+        (status = 423, description = "The pane already has a popup open", body = String, content_type = "text/plain"),
+    ),
+))]
 pub async fn api_popup(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
@@ -602,7 +667,7 @@ pub async fn api_popup(
     };
     match progress {
         Progress::Running | Progress::Ended(Outcome::Exited(_)) => {
-            Json(serde_json::json!({ "id": id })).into_response()
+            Json(PopupOpened { id }).into_response()
         }
         Progress::Ended(Outcome::Failed(error)) => {
             (StatusCode::UNPROCESSABLE_ENTITY, error).into_response()
@@ -615,6 +680,24 @@ pub async fn api_popup(
 }
 
 /// Replies `{"status": ...}` once the popup's program exits.
+#[cfg_attr(test, utoipa::path(
+    get,
+    path = "/api/panes/{pane_id}/popup/{id}",
+    tag = "Popups",
+    operation_id = "wait-for-popup",
+    summary = "Wait for a popup",
+    params(
+        ("pane_id", description = "Pane ID"),
+        ("id", description = "Popup ID"),
+    ),
+    responses(
+        (status = 200, description = "The program exited", body = PopupExited),
+        (status = 404, description = "No such popup"),
+        (status = 409, description = "No client showed the popup", body = String, content_type = "text/plain"),
+        (status = 410, description = "The server stopped waiting; ask again"),
+        (status = 422, description = "The program failed to start", body = String, content_type = "text/plain"),
+    ),
+))]
 pub async fn api_wait(
     State(state): State<AppState>,
     Path((pane_id, id)): Path<(Uuid, Uuid)>,
@@ -624,7 +707,7 @@ pub async fn api_wait(
             let mgr = state.read().await;
             match mgr.popups.progress(id, pane_id) {
                 Progress::Ended(Outcome::Exited(status)) => {
-                    return Json(serde_json::json!({ "status": status })).into_response()
+                    return Json(PopupExited { status }).into_response()
                 }
                 Progress::Ended(Outcome::Failed(error)) => {
                     return (StatusCode::UNPROCESSABLE_ENTITY, error).into_response()

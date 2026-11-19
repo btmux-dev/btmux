@@ -35,6 +35,7 @@ const MAX_VALUE: f64 = 1e15;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct AgentUsage {
     /// Input includes cache reads and writes; cached tokens are a subset.
     pub input_tokens: f64,
@@ -68,6 +69,7 @@ impl AgentUsage {
 
 #[derive(Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct UsageBucket {
     /// Unix seconds, rounded down to a minute.
     pub timestamp: f64,
@@ -76,6 +78,7 @@ pub struct UsageBucket {
 
 #[derive(Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct ModelTelemetry {
     pub agent: String,
     /// `None` is usage reported without a model, such as Claude's tool calls.
@@ -87,6 +90,7 @@ pub struct ModelTelemetry {
 
 #[derive(Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct AgentTelemetry {
     pub pane_id: Uuid,
     pub updated_at: f64,
@@ -375,7 +379,18 @@ fn accepts(mgr: &crate::session::manager::SessionManager, id: Uuid) -> bool {
     mgr.find_pane(id).is_some() || mgr.telemetry.accepts_closed(id)
 }
 
-async fn snapshot(State(state): State<AppState>) -> Json<Vec<AgentTelemetry>> {
+#[cfg_attr(test, utoipa::path(
+    get,
+    path = "/api/telemetry",
+    tag = "Agents",
+    operation_id = "agent-usage",
+    summary = "Agent usage",
+    description = "Tokens, cost, requests, and tool calls per agent and model, per minute, for the last 24 hours, as agent view's Usage tab shows them.",
+    responses(
+        (status = 200, description = "Each agent's usage", body = Vec<AgentTelemetry>),
+    ),
+))]
+pub(crate) async fn snapshot(State(state): State<AppState>) -> Json<Vec<AgentTelemetry>> {
     let mgr = state.read().await;
     Json(snapshots(&mgr))
 }

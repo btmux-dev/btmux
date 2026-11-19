@@ -1,0 +1,6092 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "btmux REST API",
+    "description": "Manage sessions, windows, and panes, drive pane input and output, and coordinate coding agents. Every request sends the access token as `Authorization: Bearer <token>`.",
+    "license": {
+      "name": "MIT"
+    },
+    "version": "unstable"
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:8004",
+      "description": "Default local server"
+    }
+  ],
+  "paths": {
+    "/api/sessions": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "List sessions",
+        "operationId": "list-sessions",
+        "responses": {
+          "200": {
+            "description": "Every session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SessionSummary"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Create a session",
+        "operationId": "create-a-session",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The new session and its first pane",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateSessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid runtime; or a malformed JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Clear sessions",
+        "description": "Kills every session and starts one fresh default session, as `btmux clear-sessions` does.",
+        "operationId": "clear-sessions",
+        "responses": {
+          "200": {
+            "description": "The single fresh session left",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SessionSummary"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Get a session",
+        "operationId": "get-a-session",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The session with its windows, panes, and layouts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such session"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Kill a session",
+        "operationId": "kill-a-session",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "409": {
+            "description": "It is the last session",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/rename": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Rename a session",
+        "operationId": "rename-a-session",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The session's new name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RenameSessionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/windows": {
+      "post": {
+        "tags": [
+          "Windows"
+        ],
+        "summary": "Create a window",
+        "operationId": "create-a-window",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWindowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The new window's first pane",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateWindowResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/windows/switch": {
+      "post": {
+        "tags": [
+          "Windows"
+        ],
+        "summary": "Switch windows",
+        "description": "Makes another window active: `index` is absolute, or `-1` for the next window and `-2` for the previous.",
+        "operationId": "switch-windows",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SwitchWindowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/windows/rename": {
+      "post": {
+        "tags": [
+          "Windows"
+        ],
+        "summary": "Rename the active window",
+        "description": "Renames the session's active window. To rename another, use `POST /api/windows/{window_id}/rename`.",
+        "operationId": "rename-the-active-window",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameWindowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The window's new name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RenameWindowResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/windows/close": {
+      "post": {
+        "tags": [
+          "Windows"
+        ],
+        "summary": "Close the active window",
+        "description": "Closes the session's active window. To close another, use `DELETE /api/windows/{window_id}`.",
+        "operationId": "close-the-active-window",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "409": {
+            "description": "It is the session's last window",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/windows/{window_id}": {
+      "delete": {
+        "tags": [
+          "Windows"
+        ],
+        "summary": "Kill a window",
+        "operationId": "kill-a-window",
+        "parameters": [
+          {
+            "name": "window_id",
+            "in": "path",
+            "description": "Window ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such window"
+          },
+          "409": {
+            "description": "It is the session's last window",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/windows/{window_id}/select": {
+      "post": {
+        "tags": [
+          "Windows"
+        ],
+        "summary": "Select a window",
+        "operationId": "select-a-window",
+        "parameters": [
+          {
+            "name": "window_id",
+            "in": "path",
+            "description": "Window ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such window"
+          }
+        }
+      }
+    },
+    "/api/windows/{window_id}/rename": {
+      "post": {
+        "tags": [
+          "Windows"
+        ],
+        "summary": "Rename a window",
+        "operationId": "rename-a-window",
+        "parameters": [
+          {
+            "name": "window_id",
+            "in": "path",
+            "description": "Window ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameWindowRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The window's new name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RenameWindowResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Empty name; or a malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such window"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/panes": {
+      "get": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "List panes",
+        "operationId": "list-panes",
+        "responses": {
+          "200": {
+            "description": "Every pane, with its window and session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PaneInfo"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/split": {
+      "post": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Split a pane",
+        "operationId": "split-a-pane",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SplitPaneByIdRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The new pane",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SplitPaneResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid direction; or a malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}": {
+      "delete": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Kill a pane",
+        "description": "Kills a pane in any window; its last pane closes the window, and the last window the session.",
+        "operationId": "kill-a-pane",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane"
+          },
+          "409": {
+            "description": "The pane can't be closed",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/select": {
+      "post": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Select a pane",
+        "description": "Makes the pane active and its window the session's active window.",
+        "operationId": "select-a-pane",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane"
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/focus": {
+      "post": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Focus a pane",
+        "description": "Switches every client to the pane's window and session.",
+        "operationId": "focus-a-pane",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane"
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/open-file-browser": {
+      "post": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Open the file browser",
+        "description": "Switches every client to the pane, then opens the file browser, Git mode, or the process viewer there.",
+        "operationId": "open-the-file-browser",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenFileBrowserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/open-editor": {
+      "post": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Open an editor",
+        "description": "Opens `path`, if given, in `editor` (else the `editor` setting) and shows that editor over the pane in every client.",
+        "operationId": "open-an-editor",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenEditorRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Whether it opened; with the `pane` editor it doesn't, and the caller runs `$EDITOR` itself, as `btmux open-editor` does",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenEditorReply"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane, or the native editor can't open the file",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The built-in Neovim couldn't open the file",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/panes/{pane_id}/split": {
+      "post": {
+        "tags": [
+          "Session panes"
+        ],
+        "summary": "Split an active-window pane",
+        "operationId": "split-an-active-window-pane",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SplitPaneRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "Invalid direction; or a malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "409": {
+            "description": "The pane isn't in the session's active window"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/panes/{pane_id}": {
+      "delete": {
+        "tags": [
+          "Session panes"
+        ],
+        "summary": "Kill an active-window pane",
+        "operationId": "kill-an-active-window-pane",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "409": {
+            "description": "The pane isn't in the session's active window"
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/panes/{pane_id}/zoom": {
+      "post": {
+        "tags": [
+          "Session panes"
+        ],
+        "summary": "Zoom a pane",
+        "operationId": "zoom-a-pane",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "409": {
+            "description": "The pane isn't in the session's active window"
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/panes/{pane_id}/select": {
+      "post": {
+        "tags": [
+          "Session panes"
+        ],
+        "summary": "Select an active-window pane",
+        "operationId": "select-an-active-window-pane",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "409": {
+            "description": "The pane isn't in the session's active window"
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/panes/navigate": {
+      "post": {
+        "tags": [
+          "Session panes"
+        ],
+        "summary": "Move to a neighboring pane",
+        "description": "Selects the pane in `direction` (`left`, `right`, `up`, or `down`) from the active one.",
+        "operationId": "move-to-a-neighboring-pane",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NavigateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/panes/cycle": {
+      "post": {
+        "tags": [
+          "Session panes"
+        ],
+        "summary": "Cycle panes",
+        "description": "Selects the pane `delta` places on in layout order.",
+        "operationId": "cycle-panes",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeltaRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/panes/swap": {
+      "post": {
+        "tags": [
+          "Session panes"
+        ],
+        "summary": "Swap panes",
+        "description": "Swaps the active pane with the one `delta` places on in layout order.",
+        "operationId": "swap-panes",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeltaRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/layout": {
+      "post": {
+        "tags": [
+          "Session panes"
+        ],
+        "summary": "Select a layout",
+        "description": "Rearranges the active window's panes in a named preset.",
+        "operationId": "select-a-layout",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SelectLayoutRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "Unknown preset; or a malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{session_id}/layout/next": {
+      "post": {
+        "tags": [
+          "Session panes"
+        ],
+        "summary": "Next layout",
+        "operationId": "next-layout",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "description": "Session ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such session"
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/input": {
+      "post": {
+        "tags": [
+          "Pane I/O"
+        ],
+        "summary": "Send input",
+        "description": "Sends `text` verbatim, then tmux-style `keys`, starting the pane's shell if no client has yet.",
+        "operationId": "send-input",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaneInputRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaneInputResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown key name, no text or keys, or more than 64 KiB; or a malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The shell failed to start, or the pane closed",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/output": {
+      "get": {
+        "tags": [
+          "Pane I/O"
+        ],
+        "summary": "Read raw output",
+        "description": "The pane's retained output as the terminal emulator receives it; `capture` renders it as text.",
+        "operationId": "read-raw-output",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "cols",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 65535,
+              "minimum": 0
+            }
+          },
+          {
+            "name": "rows",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 65535,
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw PTY bytes, escapes included",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The shell failed to start; or a malformed ID or query parameter",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane"
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/capture": {
+      "get": {
+        "tags": [
+          "Pane I/O"
+        ],
+        "summary": "Capture the screen",
+        "description": "The pane as rendered plain text, like `tmux capture-pane -pJ`.",
+        "operationId": "capture-the-screen",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "scrollback",
+            "in": "query",
+            "description": "Include retained scrollback above the screen.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "history",
+            "in": "query",
+            "description": "Include at most this many rows of history (`tmux capture-pane -S -N`).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "lines",
+            "in": "query",
+            "description": "Only the last N lines.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The rendered text",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed ID or query parameter",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The shell failed to start",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "List agents",
+        "operationId": "list-agents",
+        "responses": {
+          "200": {
+            "description": "Every pane running an agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AgentPane"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/prompt": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Prompt an agent",
+        "description": "Pastes `prompt` into the pane's agent and submits it. With `wait` (the default), replies once the agent has started and settled (idle, done, or blocked).",
+        "operationId": "prompt-an-agent",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PanePromptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "With `wait`, the turn's outcome; without, `{\"submitted\": true}`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PromptReply"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The prompt is more than 64 KiB; or a malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No agent, a dialog is waiting for an answer, the agent is busy (with `wait`), or the agent can't take a multi-line prompt",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Writing to the pane failed",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/wait": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Wait for an agent",
+        "operationId": "wait-for-an-agent",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "states",
+            "in": "query",
+            "description": "Comma-separated agent states; default `idle,done,blocked`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "timeout_ms",
+            "in": "query",
+            "description": "Milliseconds: 10 minutes by default, at most an hour.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The agent's status once it settles, exits, or the wait times out",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentWait"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An unknown state, or no states; or a malformed ID or query parameter",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server is shutting down",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/agent-status": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Explain an agent's status",
+        "operationId": "explain-agent-status",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The pane's agent status and what it was derived from",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Set an agent's status",
+        "description": "Sets the pane's agent status explicitly, above what hooks and the screen report.",
+        "operationId": "set-agent-status",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaneAgentStatusRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Clear an agent's status",
+        "operationId": "clear-agent-status",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane"
+          }
+        }
+      }
+    },
+    "/api/telemetry": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Agent usage",
+        "description": "Tokens, cost, requests, and tool calls per agent and model, per minute, for the last 24 hours, as agent view's Usage tab shows them.",
+        "operationId": "agent-usage",
+        "responses": {
+          "200": {
+            "description": "Each agent's usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AgentTelemetry"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          }
+        }
+      }
+    },
+    "/api/agent-limits": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Subscription limits",
+        "description": "How much of each subscription limit Claude Code and Codex accounts on the server have used, and when each resets. Agents using an API key, or not logged in, aren't listed.",
+        "operationId": "agent-limits",
+        "responses": {
+          "200": {
+            "description": "Each logged-in agent's limits",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AgentLimits"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/worktree": {
+      "post": {
+        "tags": [
+          "Worktrees"
+        ],
+        "summary": "Create a worktree",
+        "description": "Creates a Git worktree for `branch` beside the pane's repository (the `worktree-path` setting) and opens a window in it.",
+        "operationId": "create-a-worktree",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWorktreeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The new worktree and its window's pane",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Created"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An invalid branch name, or no such remote branch; or a malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The pane isn't in a local Git repository, the worktree's path exists, or the branch tracks another remote branch",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Git failed",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Worktrees"
+        ],
+        "summary": "Remove a worktree",
+        "description": "Removes the Git worktree the pane is in, closing every pane in it.",
+        "operationId": "remove-a-worktree",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The removed worktree and the panes it closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Removed"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The pane isn't in a linked worktree, the worktree is locked, or a pane in it is running a program",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Git failed",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/popup": {
+      "post": {
+        "tags": [
+          "Popups"
+        ],
+        "summary": "Open a popup",
+        "description": "Runs a program in a popup over the pane. Replies once a client started it; then wait for its exit status.",
+        "operationId": "open-popup",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PopupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Started in a client",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PopupOpened"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "An empty command, a `cwd` that isn't a directory, or an `id` already in use; or a malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No client is showing the pane",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "The popup closed before it started",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The program can't start; or a body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "The pane already has a popup open",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/popup/{id}": {
+      "get": {
+        "tags": [
+          "Popups"
+        ],
+        "summary": "Wait for a popup",
+        "operationId": "wait-for-popup",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Popup ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The program exited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PopupExited"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such popup"
+          },
+          "409": {
+            "description": "No client showed the popup",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "The server stopped waiting; ask again"
+          },
+          "422": {
+            "description": "The program failed to start",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/notify": {
+      "post": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Show a notification",
+        "description": "Shows a notification, not tied to a pane, in every client.",
+        "operationId": "notify",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Empty title; or a body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/notify": {
+      "post": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Report an agent event",
+        "description": "Takes an agent hook's JSON payload as is (Claude Code, Codex, Gemini CLI), or `event`, `title`, and `body` from other callers. Updates the pane's agent status and, for events worth attention, marks the pane and notifies every client.",
+        "operationId": "notify-pane",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaneNotifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID or JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Notifications"
+        ],
+        "summary": "Clear a pane's notification",
+        "operationId": "clear-pane-notification",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done"
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane"
+          }
+        }
+      }
+    },
+    "/api/info": {
+      "get": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "Describe the server",
+        "operationId": "server-info",
+        "responses": {
+          "200": {
+            "description": "Version, files, and listening address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InfoReply"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          }
+        }
+      }
+    },
+    "/api/system": {
+      "get": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "Describe the server host",
+        "operationId": "system-info",
+        "responses": {
+          "200": {
+            "description": "OS, CPU, memory, disks, and shell",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemInfo"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "Check optional programs",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Which optional programs the server found and whether they run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthReport"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          }
+        }
+      }
+    },
+    "/api/server/upgrade": {
+      "post": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "Upgrade in place",
+        "description": "Re-executes the server as another btmux binary, as `btmux upgrade` does, keeping sessions, shells, and scrollback. `GET /api/info` then reports the new version, or `upgrade_error` if the exec failed.",
+        "operationId": "upgrade",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpgradeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Upgrading; clients reconnect to the new binary"
+          },
+          "400": {
+            "description": "A malformed JSON body",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "409": {
+            "description": "This server can't hand off to that binary; only a restart can",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "No `Content-Type: application/json`",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A body that doesn't match its schema",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "423": {
+            "description": "An upgrade is in progress, or the built-in Neovim has unsaved changes",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/server/shutdown": {
+      "post": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "Shut down the server",
+        "operationId": "shut-down",
+        "responses": {
+          "202": {
+            "description": "Stopping; every shell closes"
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          }
+        }
+      }
+    },
+    "/api/openapi.json": {
+      "get": {
+        "tags": [
+          "Server"
+        ],
+        "summary": "This API's OpenAPI document",
+        "operationId": "openapi",
+        "responses": {
+          "200": {
+            "description": "The OpenAPI document for this server's version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Address": {
+        "type": "object",
+        "required": [
+          "interface",
+          "address"
+        ],
+        "properties": {
+          "interface": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string",
+            "description": "CIDR notation."
+          }
+        }
+      },
+      "AgentLimit": {
+        "type": "object",
+        "required": [
+          "label",
+          "percent",
+          "severity"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "percent": {
+            "type": "number",
+            "format": "double"
+          },
+          "resets_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Unix seconds."
+          },
+          "severity": {
+            "$ref": "#/components/schemas/LimitSeverity"
+          }
+        }
+      },
+      "AgentLimits": {
+        "type": "object",
+        "required": [
+          "agent",
+          "updated_at",
+          "limits"
+        ],
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "plan": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "As the CLI reports it, e.g. `max` or `prolite`."
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Unix seconds of the last successful read."
+          },
+          "limits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentLimit"
+            }
+          }
+        }
+      },
+      "AgentPane": {
+        "type": "object",
+        "description": "A pane running an agent, as listed to automation.",
+        "required": [
+          "pane_id",
+          "session_id",
+          "session_name",
+          "window_index",
+          "window_name",
+          "status"
+        ],
+        "properties": {
+          "pane_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "session_name": {
+            "type": "string"
+          },
+          "window_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "window_name": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/AgentStatus"
+          }
+        }
+      },
+      "AgentState": {
+        "type": "string",
+        "description": "Lifecycle states for an agent occupying a pane.\n\nThis intentionally follows Herdr's small semantic vocabulary. Failure and\npermission details belong in the accompanying message/notification instead\nof multiplying lifecycle states.",
+        "enum": [
+          "unknown",
+          "idle",
+          "working",
+          "blocked",
+          "done"
+        ]
+      },
+      "AgentStatus": {
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/AgentState"
+          },
+          "agent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "background": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Background work the agent's screen shows, such as \"2 shells, 1 monitor\"."
+          }
+        }
+      },
+      "AgentTelemetry": {
+        "type": "object",
+        "required": [
+          "pane_id",
+          "updated_at",
+          "totals",
+          "models"
+        ],
+        "properties": {
+          "pane_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/AgentUsage",
+            "description": "Over all retained history and models."
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelTelemetry"
+            },
+            "description": "Most tokens first; an update holds only models with changed minutes."
+          }
+        }
+      },
+      "AgentUsage": {
+        "type": "object",
+        "required": [
+          "input_tokens",
+          "output_tokens",
+          "cached_tokens",
+          "cache_write_tokens",
+          "reasoning_tokens",
+          "requests",
+          "tool_calls",
+          "duration_ms"
+        ],
+        "properties": {
+          "input_tokens": {
+            "type": "number",
+            "format": "double",
+            "description": "Input includes cache reads and writes; cached tokens are a subset."
+          },
+          "output_tokens": {
+            "type": "number",
+            "format": "double"
+          },
+          "cached_tokens": {
+            "type": "number",
+            "format": "double"
+          },
+          "cache_write_tokens": {
+            "type": "number",
+            "format": "double"
+          },
+          "reasoning_tokens": {
+            "type": "number",
+            "format": "double",
+            "description": "Reasoning is a subset of output tokens."
+          },
+          "requests": {
+            "type": "number",
+            "format": "double"
+          },
+          "tool_calls": {
+            "type": "number",
+            "format": "double"
+          },
+          "duration_ms": {
+            "type": "number",
+            "format": "double"
+          },
+          "cost_usd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "AgentWait": {
+        "type": "object",
+        "required": [
+          "timed_out"
+        ],
+        "properties": {
+          "status": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AgentStatus",
+                "description": "None once the agent has exited."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timed_out": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CpuInfo": {
+        "type": "object",
+        "required": [
+          "brand",
+          "threads",
+          "mhz"
+        ],
+        "properties": {
+          "brand": {
+            "type": "string"
+          },
+          "threads": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "cores": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "mhz": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "CreateSessionRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "window_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/Runtime"
+          }
+        }
+      },
+      "CreateSessionResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "pane_id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pane_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "CreateWindowRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "select": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Make it the active window.",
+            "default": true
+          }
+        }
+      },
+      "CreateWindowResponse": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "pane_id"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "pane_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "CreateWorktreeRequest": {
+        "type": "object",
+        "required": [
+          "branch"
+        ],
+        "properties": {
+          "branch": {
+            "type": "string"
+          },
+          "select": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Make its window the active one.",
+            "default": true
+          }
+        }
+      },
+      "Created": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "pane_id",
+          "path",
+          "branch"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "pane_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "path": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          }
+        }
+      },
+      "DeltaRequest": {
+        "type": "object",
+        "required": [
+          "delta"
+        ],
+        "properties": {
+          "delta": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "DiskInfo": {
+        "type": "object",
+        "required": [
+          "mount",
+          "file_system",
+          "usage",
+          "removable"
+        ],
+        "properties": {
+          "mount": {
+            "type": "string"
+          },
+          "file_system": {
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "removable": {
+            "type": "boolean"
+          }
+        }
+      },
+      "Editor": {
+        "type": "string",
+        "description": "The editor `prefix + e`, `prefix + [`, the file browser, Git mode, and\n`btmux open-editor` open. Unset, it is the native editor.",
+        "enum": [
+          "native",
+          "pane",
+          "neovim",
+          "vscode"
+        ]
+      },
+      "FileBrowserMode": {
+        "type": "string",
+        "enum": [
+          "files",
+          "git",
+          "process"
+        ]
+      },
+      "GuestShell": {
+        "type": "string",
+        "enum": [
+          "bash",
+          "zsh",
+          "fish"
+        ]
+      },
+      "HealthCheck": {
+        "type": "object",
+        "required": [
+          "name",
+          "status",
+          "value",
+          "purpose"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/HealthStatus"
+          },
+          "value": {
+            "type": "string",
+            "description": "A version, or a word such as \"Not found\"."
+          },
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What is wrong, or what happens without it."
+          }
+        }
+      },
+      "HealthGroup": {
+        "type": "object",
+        "required": [
+          "title",
+          "checks"
+        ],
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HealthCheck"
+            }
+          }
+        }
+      },
+      "HealthReport": {
+        "type": "object",
+        "required": [
+          "groups",
+          "path"
+        ],
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HealthGroup"
+            }
+          },
+          "path": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The server's `PATH`, where programs are looked up."
+          }
+        }
+      },
+      "HealthStatus": {
+        "type": "string",
+        "enum": [
+          "ok",
+          "missing",
+          "warning",
+          "error"
+        ]
+      },
+      "InfoReply": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ServerInfo"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "upgrade_error": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Why the last `btmux upgrade` failed, if it did."
+              },
+              "tailscale": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/TailscaleStatus",
+                    "description": "With `--tailscale`, whether the tailnet URL is served yet."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "description": "`GET /api/info`: the fixed `ServerInfo` and what changes while it runs."
+      },
+      "Layout": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "pane_id",
+              "type"
+            ],
+            "properties": {
+              "pane_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "leaf"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "ratio",
+              "left",
+              "right",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "ratio": {
+                "type": "number",
+                "format": "float"
+              },
+              "left": {
+                "$ref": "#/components/schemas/Layout"
+              },
+              "right": {
+                "$ref": "#/components/schemas/Layout"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "v_split"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "ratio",
+              "top",
+              "bottom",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "ratio": {
+                "type": "number",
+                "format": "float"
+              },
+              "top": {
+                "$ref": "#/components/schemas/Layout"
+              },
+              "bottom": {
+                "$ref": "#/components/schemas/Layout"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "h_split"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "LimitSeverity": {
+        "type": "string",
+        "enum": [
+          "normal",
+          "warning",
+          "critical"
+        ]
+      },
+      "ModelTelemetry": {
+        "type": "object",
+        "required": [
+          "agent",
+          "totals",
+          "buckets"
+        ],
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`None` is usage reported without a model, such as Claude's tool calls."
+          },
+          "totals": {
+            "$ref": "#/components/schemas/AgentUsage",
+            "description": "Over all retained history, even when `buckets` holds only changed minutes."
+          },
+          "buckets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UsageBucket"
+            }
+          }
+        }
+      },
+      "NavigateRequest": {
+        "type": "object",
+        "required": [
+          "direction"
+        ],
+        "properties": {
+          "direction": {
+            "type": "string"
+          }
+        }
+      },
+      "NotificationLevel": {
+        "type": "string",
+        "enum": [
+          "info",
+          "attention",
+          "success",
+          "error"
+        ]
+      },
+      "NotifyRequest": {
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "properties": {
+          "level": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NotificationLevel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "OpenEditorReply": {
+        "type": "object",
+        "required": [
+          "opened"
+        ],
+        "properties": {
+          "opened": {
+            "type": "boolean",
+            "description": "False when the caller should run `$EDITOR` itself."
+          }
+        }
+      },
+      "OpenEditorRequest": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file to open; without one, the editor is just shown."
+          },
+          "line": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "maximum": 4294967295,
+            "minimum": 0
+          },
+          "editor": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Editor",
+                "description": "Overrides the `editor` setting."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "OpenFileBrowserRequest": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "mode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FileBrowserMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "focus_file": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PaneAgentStatusRequest": {
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/AgentState"
+          },
+          "agent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PaneAlert": {
+        "type": "object",
+        "description": "A pane notification nobody has viewed yet.",
+        "required": [
+          "level"
+        ],
+        "properties": {
+          "level": {
+            "$ref": "#/components/schemas/NotificationLevel"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PaneEditor": {
+        "type": "object",
+        "description": "The native editor over a pane, the same in every tab.",
+        "required": [
+          "shown",
+          "files"
+        ],
+        "properties": {
+          "shown": {
+            "type": "boolean"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Open files (absolute paths), in tab order."
+          },
+          "active": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PaneGit": {
+        "type": "object",
+        "description": "A pane's place in a git repo.",
+        "required": [
+          "repo_id",
+          "repo_name",
+          "worktree_root",
+          "main_worktree"
+        ],
+        "properties": {
+          "repo_id": {
+            "type": "string",
+            "description": "The repo's common git dir, shared by all its worktrees."
+          },
+          "repo_name": {
+            "type": "string"
+          },
+          "worktree_root": {
+            "type": "string"
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`None` when HEAD is detached."
+          },
+          "main_worktree": {
+            "type": "boolean",
+            "description": "The repo's main worktree rather than a linked one."
+          }
+        }
+      },
+      "PaneInfo": {
+        "type": "object",
+        "description": "One pane with its window and session, for `GET /api/panes` and the tmux-style\nCLI. Fields are named like tmux format variables.",
+        "required": [
+          "session_id",
+          "session_name",
+          "window_id",
+          "window_index",
+          "window_name",
+          "window_active",
+          "window_zoomed_flag",
+          "pane_id",
+          "pane_index",
+          "pane_active"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "session_name": {
+            "type": "string"
+          },
+          "window_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "window_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "window_name": {
+            "type": "string"
+          },
+          "window_active": {
+            "type": "boolean"
+          },
+          "window_zoomed_flag": {
+            "type": "boolean"
+          },
+          "pane_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "pane_index": {
+            "type": "integer",
+            "description": "Layout order, as `prefix + q` numbers panes.",
+            "minimum": 0
+          },
+          "pane_active": {
+            "type": "boolean"
+          },
+          "pane_current_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pane_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PaneInputRequest": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Sent verbatim, before `keys`."
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "tmux-style key names, e.g. `[\"Enter\"]` or `[\"C-c\"]`."
+          },
+          "cols": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Only used if the PTY hasn't been spawned yet (no browser has attached\nto this pane). Ignored once a shell is already running.",
+            "maximum": 65535,
+            "minimum": 0
+          },
+          "rows": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "maximum": 65535,
+            "minimum": 0
+          }
+        }
+      },
+      "PaneInputResponse": {
+        "type": "object",
+        "required": [
+          "newly_spawned"
+        ],
+        "properties": {
+          "newly_spawned": {
+            "type": "boolean",
+            "description": "True if this call caused the shell to spawn. Callers polling\n`/output` afterward should expect a short delay before the shell\nprints its first prompt."
+          }
+        }
+      },
+      "PaneNotifyRequest": {
+        "type": "object",
+        "properties": {
+          "hook_event_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Agent harness hook event name (e.g. \"Stop\", \"AfterAgent\")."
+          },
+          "session_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Harness identity; shared by every event in one agent session."
+          },
+          "turn_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Turn identity, when the harness provides one."
+          },
+          "prompt_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Claude Code: shared by every event of one turn."
+          },
+          "tool_use_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Explicit event field (custom callers)."
+          },
+          "level": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NotificationLevel",
+                "description": "Severity level for UI treatment."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Explicit title (custom callers or Notification event)."
+          },
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Explicit body (custom callers)."
+          },
+          "last_assistant_message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Claude Code/Codex Stop and SubagentStop: last assistant message."
+          },
+          "prompt_response": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Gemini CLI AfterAgent: final response."
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Notification event message."
+          },
+          "notification_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Gemini CLI Notification category."
+          },
+          "task_subject": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "CC TaskCompleted: task subject line."
+          },
+          "task_description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "CC TaskCompleted: task description."
+          },
+          "tool_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "CC PermissionRequest: tool name."
+          },
+          "tool_input": {
+            "description": "CC PermissionRequest: tool input object."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "CC StopFailure: error category."
+          },
+          "agent_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "CC SubagentStop: agent type."
+          },
+          "agent": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional agent name for semantic status reporting."
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional reporter identity for semantic status reporting. SessionStart\nhooks may use this field for their start reason instead."
+          }
+        }
+      },
+      "PanePromptRequest": {
+        "type": "object",
+        "required": [
+          "prompt"
+        ],
+        "properties": {
+          "prompt": {
+            "type": "string"
+          },
+          "wait": {
+            "type": "boolean",
+            "default": true
+          },
+          "timeout_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "How long to wait, in milliseconds: 10 minutes by default, at most an\nhour.",
+            "minimum": 0
+          }
+        }
+      },
+      "PaneSnapshot": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cwd_remote": {
+            "type": "boolean",
+            "description": "`cwd` is on another host."
+          },
+          "agent_status": {
+            "$ref": "#/components/schemas/AgentStatus"
+          },
+          "agent_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Names the running agent instance, so a client can target it.",
+            "minimum": 0
+          },
+          "agent_since": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the agent entered its current state, in Unix seconds.",
+            "minimum": 0
+          },
+          "unread": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PaneAlert"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "git": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PaneGit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "editor": {
+            "$ref": "#/components/schemas/PaneEditor"
+          }
+        }
+      },
+      "PopupCommand": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "A program and its arguments.",
+            "required": [
+              "exec"
+            ],
+            "properties": {
+              "exec": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "A program and its arguments."
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A command line for the pane's shell.",
+            "required": [
+              "shell"
+            ],
+            "properties": {
+              "shell": {
+                "type": "string",
+                "description": "A command line for the pane's shell."
+              }
+            }
+          }
+        ]
+      },
+      "PopupExited": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The program's exit status, if known."
+          }
+        }
+      },
+      "PopupOpened": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "PopupRequest": {
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Chosen by the caller, so a request retried across an upgrade finds\nits popup rather than running the program again."
+          },
+          "command": {
+            "$ref": "#/components/schemas/PopupCommand"
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "env": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "array",
+              "items": false,
+              "prefixItems": [
+                {
+                  "type": "string",
+                  "description": "Name"
+                },
+                {
+                  "type": "string",
+                  "description": "Value"
+                }
+              ],
+              "minItems": 2
+            },
+            "description": "Replaces the server's environment.",
+            "examples": [
+              [
+                [
+                  "NAME",
+                  "value"
+                ]
+              ]
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PromptOutcome": {
+        "type": "object",
+        "required": [
+          "started",
+          "timed_out"
+        ],
+        "properties": {
+          "status": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AgentStatus",
+                "description": "None once the agent has exited."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "started": {
+            "type": "boolean",
+            "description": "Whether the agent was seen working on the prompt."
+          },
+          "timed_out": {
+            "type": "boolean"
+          },
+          "screen": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The rendered screen once output went quiet; None once the pane has\nclosed."
+          }
+        }
+      },
+      "PromptReply": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/PromptOutcome"
+          },
+          {
+            "type": "object",
+            "required": [
+              "submitted"
+            ],
+            "properties": {
+              "submitted": {
+                "type": "boolean"
+              }
+            }
+          }
+        ],
+        "description": "With `wait`, the turn's outcome; without, `{\"submitted\": true}`."
+      },
+      "Removed": {
+        "type": "object",
+        "required": [
+          "path",
+          "closed_panes"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "closed_panes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        }
+      },
+      "RenameSessionRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "RenameSessionResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "RenameWindowRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "RenameWindowResponse": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "Runtime": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "local"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The shared Multipass instance, with these host directories mounted\nat the same paths.",
+            "required": [
+              "mounts",
+              "shell",
+              "type"
+            ],
+            "properties": {
+              "mounts": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "shell": {
+                "$ref": "#/components/schemas/GuestShell"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "multipass"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Where a session's shells run."
+      },
+      "SelectLayoutRequest": {
+        "type": "object",
+        "required": [
+          "preset"
+        ],
+        "properties": {
+          "preset": {
+            "type": "string",
+            "enum": [
+              "even-horizontal",
+              "even-vertical",
+              "main-vertical",
+              "main-horizontal",
+              "tiled"
+            ]
+          }
+        }
+      },
+      "ServerInfo": {
+        "type": "object",
+        "required": [
+          "version",
+          "token_source",
+          "listen_address",
+          "instance",
+          "pid"
+        ],
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "profile": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "config_file": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state_file": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "token_file": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "token_source": {
+            "type": "string"
+          },
+          "listen_address": {
+            "type": "string"
+          },
+          "executable": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "log_files": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Daily log files; `None` when file logging is off."
+          },
+          "instance": {
+            "type": "string",
+            "description": "Changes on every start, including an in-place upgrade."
+          },
+          "pid": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Kept by an in-place upgrade.",
+            "minimum": 0
+          }
+        }
+      },
+      "SessionSnapshot": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "windows",
+          "active_window"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/Runtime"
+          },
+          "windows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WindowSnapshot"
+            }
+          },
+          "active_window": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "SessionSummary": {
+        "type": "object",
+        "description": "One entry per session for the StatusBar and the session picker.",
+        "required": [
+          "id",
+          "name",
+          "runtime"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/Runtime"
+          }
+        }
+      },
+      "SplitPaneByIdRequest": {
+        "type": "object",
+        "required": [
+          "direction"
+        ],
+        "properties": {
+          "direction": {
+            "type": "string",
+            "description": "Where the new pane goes: left, right, up, or down."
+          },
+          "cwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "select": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Make the new pane active.",
+            "default": true
+          }
+        }
+      },
+      "SplitPaneRequest": {
+        "type": "object",
+        "required": [
+          "direction"
+        ],
+        "properties": {
+          "direction": {
+            "type": "string"
+          }
+        }
+      },
+      "SplitPaneResponse": {
+        "type": "object",
+        "required": [
+          "pane_id"
+        ],
+        "properties": {
+          "pane_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "SwitchWindowRequest": {
+        "type": "object",
+        "required": [
+          "index"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Absolute window index, or the sentinels `-1` (next) / `-2` (prev) also\nused by the `/ws/control` protocol."
+          }
+        }
+      },
+      "SystemInfo": {
+        "type": "object",
+        "required": [
+          "os_id",
+          "arch",
+          "uptime",
+          "shell",
+          "memory",
+          "swap",
+          "disks",
+          "addresses",
+          "processes"
+        ],
+        "properties": {
+          "user": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "host_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "os": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "\"macOS 26.0 Tahoe\", \"Ubuntu 24.04 LTS\"."
+          },
+          "os_id": {
+            "type": "string",
+            "description": "`ID` from os-release, or \"macos\"/\"windows\"."
+          },
+          "arch": {
+            "type": "string"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Hardware vendor and model."
+          },
+          "kernel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "uptime": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "shell": {
+            "type": "string",
+            "description": "The shell new panes run, with its version when it reports one."
+          },
+          "cpu": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CpuInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "memory": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "swap": {
+            "$ref": "#/components/schemas/Usage"
+          },
+          "disks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiskInfo"
+            }
+          },
+          "addresses": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Address"
+            }
+          },
+          "load": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "description": "1, 5, and 15 minute load; `null` where the OS has none."
+          },
+          "processes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "locale": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "TailscaleStatus": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "starting"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "url",
+              "state"
+            ],
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "serving"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The last attempt failed; btmux keeps retrying.",
+            "required": [
+              "message",
+              "state"
+            ],
+            "properties": {
+              "message": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "error"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Whether `--tailscale` serves the tailnet URL yet."
+      },
+      "UpgradeRequest": {
+        "type": "object",
+        "required": [
+          "executable"
+        ],
+        "properties": {
+          "executable": {
+            "type": "string",
+            "description": "The btmux binary to run, an absolute path on the server."
+          }
+        }
+      },
+      "Usage": {
+        "type": "object",
+        "description": "Bytes.",
+        "required": [
+          "used",
+          "total"
+        ],
+        "properties": {
+          "used": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "UsageBucket": {
+        "type": "object",
+        "required": [
+          "timestamp",
+          "usage"
+        ],
+        "properties": {
+          "timestamp": {
+            "type": "number",
+            "format": "double",
+            "description": "Unix seconds, rounded down to a minute."
+          },
+          "usage": {
+            "$ref": "#/components/schemas/AgentUsage"
+          }
+        }
+      },
+      "WindowSnapshot": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "panes",
+          "active_pane",
+          "layout"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "panes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PaneSnapshot"
+            }
+          },
+          "active_pane": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "layout": {
+            "$ref": "#/components/schemas/Layout"
+          },
+          "zoomed_pane": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "token": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The profile's access token (`state.token`)."
+      }
+    }
+  },
+  "security": [
+    {
+      "token": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Sessions"
+    },
+    {
+      "name": "Windows"
+    },
+    {
+      "name": "Panes",
+      "description": "Panes in any window, by ID."
+    },
+    {
+      "name": "Session panes",
+      "description": "Panes in a session's active window."
+    },
+    {
+      "name": "Pane I/O",
+      "description": "Type into panes and read their screens."
+    },
+    {
+      "name": "Agents",
+      "description": "Coding agents running in panes."
+    },
+    {
+      "name": "Worktrees",
+      "description": "Git worktrees, each with its own window."
+    },
+    {
+      "name": "Popups",
+      "description": "Programs in a popup over a pane."
+    },
+    {
+      "name": "Notifications"
+    },
+    {
+      "name": "Server"
+    }
+  ]
+}

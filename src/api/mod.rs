@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod openapi;
 mod pane_io;
 mod panes;
 mod sessions;

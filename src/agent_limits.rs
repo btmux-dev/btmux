@@ -56,6 +56,7 @@ const CODEX_ARGS: &[&str] = &["app-server"];
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub enum LimitSeverity {
     Normal,
     Warning,
@@ -64,6 +65,7 @@ pub enum LimitSeverity {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct AgentLimit {
     pub label: String,
     pub percent: f64,
@@ -74,6 +76,7 @@ pub struct AgentLimit {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct AgentLimits {
     pub agent: String,
     /// As the CLI reports it, e.g. `max` or `prolite`.
@@ -134,7 +137,18 @@ pub fn routes() -> Router<AppState> {
     Router::new().route("/api/agent-limits", get(limits))
 }
 
-async fn limits(State(state): State<AppState>) -> Json<Vec<AgentLimits>> {
+#[cfg_attr(test, utoipa::path(
+    get,
+    path = "/api/agent-limits",
+    tag = "Agents",
+    operation_id = "agent-limits",
+    summary = "Subscription limits",
+    description = "How much of each subscription limit Claude Code and Codex accounts on the server have used, and when each resets. Agents using an API key, or not logged in, aren't listed.",
+    responses(
+        (status = 200, description = "Each logged-in agent's limits", body = Vec<AgentLimits>),
+    ),
+))]
+pub(crate) async fn limits(State(state): State<AppState>) -> Json<Vec<AgentLimits>> {
     let mut cache = CACHE.lock().await;
     if cache.fetched_at.is_none_or(|at| at.elapsed() >= CACHE_FOR) {
         let shell = state.read().await.shell().to_owned();

@@ -87,6 +87,7 @@ pub struct Pane {
 /// The native editor over a pane, the same in every tab.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct PaneEditor {
     pub shown: bool,
     /// Open files (absolute paths), in tab order.
@@ -249,6 +250,7 @@ impl Pane {
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub enum NotificationLevel {
     Info,
     Attention,
@@ -270,6 +272,7 @@ impl NotificationLevel {
 /// A pane notification nobody has viewed yet.
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct PaneAlert {
     pub level: NotificationLevel,
     pub title: Option<String>,
@@ -284,6 +287,7 @@ pub struct PaneAlert {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub enum AgentState {
     Unknown,
     Idle,
@@ -294,6 +298,7 @@ pub enum AgentState {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct AgentStatus {
     pub state: AgentState,
     pub agent: Option<String>,
@@ -317,6 +322,7 @@ impl Default for AgentStatus {
 
 #[derive(Serialize, Deserialize, Clone)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct PaneSnapshot {
     pub id: Uuid,
     pub title: Option<String>,
@@ -344,6 +350,7 @@ pub struct PaneSnapshot {
 
 /// A pane running an agent, as listed to automation.
 #[derive(Serialize, Clone)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct AgentPane {
     pub pane_id: Uuid,
     pub session_id: Uuid,
@@ -357,6 +364,7 @@ pub struct AgentPane {
 /// One entry per session for the StatusBar and the session picker.
 #[derive(Serialize, Clone)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct SessionSummary {
     pub id: Uuid,
     pub name: String,
@@ -367,6 +375,7 @@ pub struct SessionSummary {
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub enum Runtime {
     #[default]
     Local,
@@ -406,6 +415,7 @@ impl Runtime {
 /// One pane with its window and session, for `GET /api/panes` and the tmux-style
 /// CLI. Fields are named like tmux format variables.
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct PaneInfo {
     pub session_id: Uuid,
     pub session_name: String,

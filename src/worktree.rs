@@ -16,6 +16,7 @@ use crate::AppState;
 pub const DEFAULT_PATH: &str = "{repo}-{branch}";
 
 #[derive(Serialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct Created {
     pub session_id: Uuid,
     pub pane_id: Uuid,
@@ -24,6 +25,7 @@ pub struct Created {
 }
 
 #[derive(Serialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct Removed {
     pub path: String,
     pub branch: Option<String>,
