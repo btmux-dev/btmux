@@ -292,6 +292,8 @@ pub enum AgentState {
     Unknown,
     Idle,
     Working,
+    /// Turn over, but background work (shells, monitors) will resume it.
+    Waiting,
     Blocked,
     Done,
 }

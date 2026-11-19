@@ -280,7 +280,8 @@
 [data-agent-state='blocked'] {
   --btm-agent: var(--color-warning);
 }
-[data-agent-state='working'] {
+[data-agent-state='working'],
+[data-agent-state='waiting'] {
   --btm-agent: var(--color-accent);
 }
 [data-agent-state='done'] {
@@ -292,6 +293,11 @@
 .btm-agent-dot {
   position: relative;
   background: var(--btm-agent);
+}
+/* Waiting resumes by itself: the working color, hollow and still. */
+.btm-agent-dot[data-agent-state='waiting'] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--btm-agent);
 }
 .btm-agent-dot::after {
   content: '';

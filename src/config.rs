@@ -425,7 +425,7 @@ pub enum SubCommand {
     Wait {
         /// Pane ID, as `btmux agents` lists it.
         pane: String,
-        /// Agent state to wait for: idle, working, blocked, done, or unknown. Repeatable.
+        /// Agent state to wait for: idle, working, waiting, blocked, done, or unknown. Repeatable.
         #[arg(long = "state")]
         states: Vec<String>,
         /// Seconds to wait, at most 3600.

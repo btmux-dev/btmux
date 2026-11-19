@@ -280,7 +280,7 @@ fn status_of(mgr: &SessionManager, pane_id: Uuid) -> Result<Option<AgentStatus>,
     if mgr.find_pane(pane_id).is_none() {
         return Err(Error::PaneNotFound(pane_id));
     }
-    Ok(mgr.agent_status(pane_id).cloned())
+    Ok(mgr.agent_status(pane_id))
 }
 
 #[derive(Serialize)]

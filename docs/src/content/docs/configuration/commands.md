@@ -586,7 +586,7 @@ Arguments:
   <PANE>  Pane ID, as `btmux agents` lists it
 
 Options:
-      --state <STATES>     Agent state to wait for: idle, working, blocked, done, or unknown. Repeatable
+      --state <STATES>     Agent state to wait for: idle, working, waiting, blocked, done, or unknown. Repeatable
       --timeout <TIMEOUT>  Seconds to wait, at most 3600 [default: 600]
 ```
 

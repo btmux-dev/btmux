@@ -4086,6 +4086,7 @@
           "unknown",
           "idle",
           "working",
+          "waiting",
           "blocked",
           "done"
         ]

@@ -188,7 +188,7 @@ impl SessionManager {
             .flat_map(|window| &window.panes);
         std::sync::Arc::new(
             panes
-                .map(|pane| (pane.id, self.agent_status(pane.id).cloned()))
+                .map(|pane| (pane.id, self.agent_status(pane.id)))
                 .collect(),
         )
     }
@@ -222,7 +222,7 @@ impl SessionManager {
                             window_index,
                             window_name: window.name.clone(),
                             cwd: pane.pty.effective_cwd(),
-                            status: status.clone(),
+                            status,
                         });
                     }
                 }
@@ -231,11 +231,11 @@ impl SessionManager {
         panes
     }
 
-    pub fn agent_status(&self, pane_id: Uuid) -> Option<&AgentStatus> {
+    pub fn agent_status(&self, pane_id: Uuid) -> Option<AgentStatus> {
         self.agents
             .get(&pane_id)
             .filter(|agent| agent.is_active())
-            .map(|agent| &agent.status)
+            .map(AgentLifecycle::shown)
     }
 
     /// Identifies the pane's active agent instance, including explicitly reported ones.
@@ -526,7 +526,7 @@ impl SessionManager {
     pub fn agent_diagnostics(&self, pane_id: Uuid) -> serde_json::Value {
         let agent = self.agents.get(&pane_id).filter(|agent| agent.is_active());
         serde_json::json!({
-            "status": agent.map(|agent| &agent.status),
+            "status": agent.map(AgentLifecycle::shown),
             "authority": agent.map(AgentLifecycle::authority),
             "process": agent.and_then(AgentLifecycle::process),
             "detection": agent.and_then(|agent| agent.detection.as_ref()),
@@ -1078,6 +1078,8 @@ impl SessionManager {
         if agent.status.state == AgentState::Done {
             agent.set_state(AgentState::Idle);
             agent.status.message = None;
+            // Idle with background work may be waiting; the next scan says.
+            agent.invalidate_screen();
             // Seen, so later records can't bring the result back.
             if let Some(pane) = self.find_pane(pane_id) {
                 pane.pty.forget_program_results();
@@ -1766,7 +1768,7 @@ impl SessionManager {
         self.agents
             .get(&pane_id)
             .filter(|agent| agent.is_active())
-            .map(|agent| agent.since)
+            .map(AgentLifecycle::shown_since)
     }
 
     /// Rebuild the session tree from saved snapshots. Process state is *not*
@@ -2055,7 +2057,7 @@ impl SessionManager {
                             cwd: p.pty.effective_cwd(),
                             cwd_remote: p.pty.effective_cwd().is_some()
                                 && p.pty.local_cwd().is_none(),
-                            agent_status: self.agent_status(p.id).cloned().unwrap_or_default(),
+                            agent_status: self.agent_status(p.id).unwrap_or_default(),
                             agent_id: self.agent_id(p.id),
                             agent_since: self.agent_since(p.id),
                             unread: p.unread.clone(),
@@ -2781,7 +2783,7 @@ mod agent_tests {
         pane.pty.input_tx.send(report.to_vec()).unwrap();
         let state = |mgr: &mut SessionManager| {
             mgr.sync_program_status(Instant::now());
-            mgr.agent_status(pane_id).cloned()
+            mgr.agent_status(pane_id)
         };
         let deadline = Instant::now() + Duration::from_secs(5);
         while state(&mut mgr).is_none() && Instant::now() < deadline {

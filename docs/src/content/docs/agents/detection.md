@@ -57,7 +57,12 @@ btmux uses these rules to resolve conflicting reports.
   that a previous program left behind.
 - Screen rules also update `background`, which lists work left running
   between turns, such as `"2 shells, 1 monitor"`. This field clears after
-  700 ms without a match and leaves the agent's state alone.
+  700 ms without a match.
+- A `working` or `idle` agent whose screen shows its idle prompt and
+  background work for 700 ms is shown as `waiting`, whatever reported the
+  state: Claude Code reports such turns as working over OSC 7501. The
+  lifecycle keeps its own state underneath, so the agent is `working` again
+  once its screen shows a turn.
 
 States are not saved: they reset when the server restarts.
 
@@ -85,7 +90,7 @@ curl -H "Authorization: Bearer $BTMUX_AUTH_TOKEN" \
   -d '{"state":"working","agent":"codex","source":"hook"}'
 ```
 
-The states are `unknown`, `idle`, `working`, `blocked`, and `done`. Use
+The states are `unknown`, `idle`, `working`, `waiting`, `blocked`, and `done`. Use
 `DELETE` on the same endpoint when the reporter no longer knows which agent is
 in the pane. Reports without a process identity expire after 12 hours unless
 renewed, and need a state other than `unknown` to appear in the agent view.

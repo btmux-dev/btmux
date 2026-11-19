@@ -1,4 +1,4 @@
-// handoff version 21
+// handoff version 22
 type Header = { version: number, listener: number, lock: number | null, sessions: Array<SessionSnapshot>, popups: PopupsHandoff, panes: Array<PaneHeader>, telemetry: TelemetryStore, editor: EditorHandoff, captures: Captures, };
 type PaneHeader = { id: string, fd: number, pid: number, cols: number, rows: number,
 journal: Array<Event>, title: string | null, cwd: string | null, cwd_remote: boolean, spawn_cwd: string | null, color_reports: boolean, colors: Array<[number, number, number] | null>, kitty: KittyKeyboard,
@@ -40,7 +40,7 @@ main_worktree: boolean, };
 type PaneAlert = { level: NotificationLevel, title: string | null, body: string | null, };
 type AgentStatus = { state: AgentState, agent: string | null, source: string | null, message: string | null,
 background: string | null, };
-type AgentState = "unknown" | "idle" | "working" | "blocked" | "done";
+type AgentState = "unknown" | "idle" | "working" | "waiting" | "blocked" | "done";
 type NotificationLevel = "info" | "attention" | "success" | "error";
 type Layout = { "type": "leaf", pane_id: string, } | { "type": "v_split", id: string, ratio: number, left: Layout, right: Layout, } | { "type": "h_split", id: string, ratio: number, top: Layout, bottom: Layout, };
 type TelemetryStore = { panes: { [key in string]: PaneTelemetry },

@@ -123,7 +123,7 @@ struct ReadPaneOutputParams {
 #[derive(Deserialize, JsonSchema)]
 struct WaitForAgentParams {
     pane_id: String,
-    /// Agent states to wait for: idle, working, blocked, done, unknown. Default ["idle", "done", "blocked"].
+    /// Agent states to wait for: idle, working, waiting, blocked, done, unknown. Default ["idle", "done", "blocked"].
     states: Option<Vec<String>>,
     /// Default 600000 (10 minutes), at most 3600000.
     timeout_ms: Option<u64>,
@@ -471,7 +471,7 @@ impl BtmuxMcpServer {
     }
 
     #[tool(
-        description = "List panes running a coding agent (Claude Code, Codex, Gemini CLI, ...) across all sessions, with each agent's state: working, blocked (waiting for approval or input), done (finished a turn nobody has looked at yet), idle, or unknown."
+        description = "List panes running a coding agent (Claude Code, Codex, Gemini CLI, ...) across all sessions, with each agent's state: working, waiting (its turn ended, but background shells or monitors will resume it), blocked (waiting for approval or input), done (finished a turn nobody has looked at yet), idle, or unknown."
     )]
     async fn list_agents(&self) -> Result<CallToolResult, ErrorData> {
         ok_json(self.state.read().await.agent_panes())
