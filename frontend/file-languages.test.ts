@@ -15,6 +15,8 @@ test('the editor matches added file names ignoring case', async () => {
     ['/a/flake.lock', 'JSON'],
     ['/a/.gitconfig', 'Properties files'],
     ['/a/b.jsonc', 'JSONC'],
+    ['C:\\a\\.bashrc', 'Shell'],
+    ['C:\\a\\justfile', 'Just'],
   ]) {
     expect((await languageFor(path))?.name).toBe(name);
   }
@@ -24,6 +26,7 @@ test('previews ignore inherited names', () => {
   expect(fileSyntaxLanguage('/a/.BASHRC')).toBe('bash');
   expect(fileSyntaxLanguage('/a/Cargo.lock')).toBe('ini');
   expect(fileSyntaxLanguage('/a/b.mts')).toBe('typescript');
+  expect(fileSyntaxLanguage('C:\\a.b\\Cargo.lock')).toBe('ini');
   for (const name of ['constructor', '__proto__', 'toString', 'a.constructor']) {
     expect(fileSyntaxLanguage(`/a/${name}`)).toBe('plaintext');
   }

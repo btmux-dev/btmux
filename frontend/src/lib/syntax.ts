@@ -122,7 +122,7 @@ export function syntaxLanguage(name: string): string {
 
 /** The registered highlight.js language for a file path, else `plaintext`. */
 export function fileSyntaxLanguage(path: string): string {
-  const name = path.slice(path.lastIndexOf('/') + 1).toLowerCase();
+  const name = (path.split(/[\\/]/).pop() ?? path).toLowerCase();
   if (own(FILE_NAMES, name)) return FILE_NAMES[name];
   return syntaxLanguage(name.slice(name.lastIndexOf('.') + 1));
 }

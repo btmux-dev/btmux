@@ -69,7 +69,7 @@ export const languages = [
 
 /** The language for a file name, loaded on first use. */
 export async function languageFor(path: string): Promise<{ name: string; support: LanguageSupport } | null> {
-  const name = path.slice(path.lastIndexOf('/') + 1);
+  const name = path.split(/[\\/]/).pop() ?? path;
   const description = LanguageDescription.matchFilename(languages, name);
   if (!description) return null;
   try {
