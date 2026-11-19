@@ -1,9 +1,44 @@
-import { LanguageDescription, type LanguageSupport } from '@codemirror/language';
+import { LanguageDescription, LanguageSupport, StreamLanguage } from '@codemirror/language';
 import { languages as dataLanguages } from '@codemirror/language-data';
+import { tags } from '@lezer/highlight';
+
+/** Extensions and whole file names language-data's languages lack. */
+const EXTRA: Record<string, { extensions?: string[]; filenames?: string[] }> = {
+  Python: { extensions: ['pyi'] },
+  Shell: { extensions: ['zsh'], filenames: ['.bashrc', '.bash_profile', '.zshrc', '.zshenv', '.zprofile'] },
+  TOML: { filenames: ['Cargo.lock'] },
+  JSON: { filenames: ['flake.lock'] },
+  'Properties files': { filenames: ['.gitconfig'] },
+};
+
+const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function extend(d: LanguageDescription): LanguageDescription {
+  const extra = EXTRA[d.name];
+  if (!extra) return d;
+  const names = extra.filenames?.map(escape).join('|');
+  const patterns = [d.filename?.source, names && `^(?:${names})$`].filter(Boolean);
+  return LanguageDescription.of({
+    name: d.name,
+    alias: d.alias,
+    extensions: [...d.extensions, ...(extra.extensions ?? [])],
+    filename: patterns.length ? new RegExp(patterns.join('|')) : undefined,
+    load: () => d.load(),
+  });
+}
 
 /** language-data's languages plus ones it lacks. */
 export const languages = [
-  ...dataLanguages,
+  ...dataLanguages.map(extend),
+  LanguageDescription.of({
+    name: 'JSONC',
+    extensions: ['jsonc'],
+    // Lezer's JSON grammar has no comments.
+    load: () =>
+      import('@codemirror/legacy-modes/mode/javascript').then(
+        (m) => new LanguageSupport(StreamLanguage.define({ ...m.json, tokenTable: { property: tags.propertyName } })),
+      ),
+  }),
   LanguageDescription.of({
     name: 'Nix',
     extensions: ['nix'],
