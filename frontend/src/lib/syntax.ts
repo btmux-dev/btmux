@@ -11,6 +11,7 @@ import java from 'react-syntax-highlighter/dist/esm/languages/hljs/java';
 import javascript from 'react-syntax-highlighter/dist/esm/languages/hljs/javascript';
 import json from 'react-syntax-highlighter/dist/esm/languages/hljs/json';
 import kotlin from 'react-syntax-highlighter/dist/esm/languages/hljs/kotlin';
+import less from 'react-syntax-highlighter/dist/esm/languages/hljs/less';
 import lua from 'react-syntax-highlighter/dist/esm/languages/hljs/lua';
 import makefile from 'react-syntax-highlighter/dist/esm/languages/hljs/makefile';
 import markdown from 'react-syntax-highlighter/dist/esm/languages/hljs/markdown';
@@ -40,6 +41,7 @@ const LANGUAGES = {
   javascript,
   json,
   kotlin,
+  less,
   lua,
   makefile,
   markdown,
@@ -62,6 +64,8 @@ for (const [name, language] of Object.entries(LANGUAGES)) SyntaxHighlighter.regi
 const ALIASES: Record<string, string> = {
   rs: 'rust',
   ts: 'typescript',
+  mts: 'typescript',
+  cts: 'typescript',
   tsx: 'typescript',
   typescriptreact: 'typescript',
   js: 'javascript',
@@ -70,9 +74,14 @@ const ALIASES: Record<string, string> = {
   cjs: 'javascript',
   javascriptreact: 'javascript',
   py: 'python',
+  pyi: 'python',
   h: 'c',
   cc: 'cpp',
   hpp: 'cpp',
+  cxx: 'cpp',
+  hh: 'cpp',
+  hxx: 'cpp',
+  'h++': 'cpp',
   'c++': 'cpp',
   rb: 'ruby',
   sh: 'bash',
@@ -82,6 +91,7 @@ const ALIASES: Record<string, string> = {
   toml: 'ini',
   yml: 'yaml',
   html: 'xml',
+  htm: 'xml',
   vue: 'xml',
   svelte: 'xml',
   kt: 'kotlin',
@@ -89,11 +99,32 @@ const ALIASES: Record<string, string> = {
   md: 'markdown',
 };
 
+/** Whole file names (lowercase) their extension doesn't identify. */
+const FILE_NAMES: Record<string, string> = {
+  '.bashrc': 'bash',
+  '.bash_profile': 'bash',
+  '.zshrc': 'bash',
+  '.zshenv': 'bash',
+  '.zprofile': 'bash',
+  '.gitconfig': 'ini',
+  'cargo.lock': 'ini',
+  'flake.lock': 'json',
+};
+
+const own = (o: object, key: string) => Object.prototype.hasOwnProperty.call(o, key);
+
 /** The registered highlight.js language for a file extension or fence name, else `plaintext`. */
 export function syntaxLanguage(name: string): string {
   const key = name.toLowerCase();
-  if (Object.prototype.hasOwnProperty.call(LANGUAGES, key)) return key;
-  return ALIASES[key] ?? 'plaintext';
+  if (own(LANGUAGES, key)) return key;
+  return own(ALIASES, key) ? ALIASES[key] : 'plaintext';
+}
+
+/** The registered highlight.js language for a file path, else `plaintext`. */
+export function fileSyntaxLanguage(path: string): string {
+  const name = (path.split(/[\\/]/).pop() ?? path).toLowerCase();
+  if (own(FILE_NAMES, name)) return FILE_NAMES[name];
+  return syntaxLanguage(name.slice(name.lastIndexOf('.') + 1));
 }
 
 type HljsStyle = Record<string, CSSProperties>;

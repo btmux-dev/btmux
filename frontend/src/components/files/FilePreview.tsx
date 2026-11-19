@@ -93,10 +93,16 @@ const EXTENSION_MAP: Record<string, PreviewType> = {
   wma: 'audio',
 };
 
-function getPreviewType(path: string, mimeType: string): PreviewType {
+function getPreviewType(path: string, mimeType: string, encoding: string): PreviewType {
+  const type = previewTypeOf(path, mimeType);
+  // Text with a media extension, like TypeScript's `.mts`.
+  if ((type === 'video' || type === 'audio') && encoding === 'utf-8') return 'code';
+  return type;
+}
+
+function previewTypeOf(path: string, mimeType: string): PreviewType {
   const ext = path.split('.').pop()?.toLowerCase() || '';
-  const mapped = EXTENSION_MAP[ext];
-  if (mapped) return mapped;
+  if (Object.prototype.hasOwnProperty.call(EXTENSION_MAP, ext)) return EXTENSION_MAP[ext];
 
   if (mimeType.startsWith('text/')) return 'code';
   if (mimeType.startsWith('image/')) return 'image';
@@ -154,7 +160,7 @@ export function FilePreview({ fileSend }: FilePreviewProps) {
     return <HtmlPreview key={selectedFile} />;
   }
 
-  const previewType = getPreviewType(selectedFile, fileContent.mime_type);
+  const previewType = getPreviewType(selectedFile, fileContent.mime_type, fileContent.encoding);
 
   if (previewType === 'pdf') {
     return <PdfPreview />;

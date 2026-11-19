@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { Light as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { atomOneDark } from 'react-syntax-highlighter/dist/esm/styles/hljs';
-import { buildSyntaxStyle, syntaxLanguage } from '@/lib/syntax';
+import { buildSyntaxStyle, fileSyntaxLanguage } from '@/lib/syntax';
 import { useFileStore } from '@/state/fileStore';
 import { useStore } from '@/state/store';
 
@@ -19,8 +19,7 @@ export function CodePreview() {
 
   if (!fileContent) return null;
 
-  const ext = selectedFile?.split('.').pop()?.toLowerCase() || '';
-  const language = syntaxLanguage(ext);
+  const language = fileSyntaxLanguage(selectedFile ?? '');
 
   const style = useMemo(() => (theme ? buildSyntaxStyle(theme) : atomOneDark), [theme]);
 

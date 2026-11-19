@@ -8,6 +8,14 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Fixed
+
+- The native editor highlights Python stubs (`.pyi`), JSONC with comments,
+  zsh files, shell startup files (`.bashrc`, `.zshrc`, …), `.gitconfig`,
+  `Cargo.lock`, and `flake.lock`; file previews highlight these too, as well
+  as `.mts`, `.cts`, `.htm`, LESS, and more C++ extensions.
+  ([#177](https://github.com/btmux-dev/btmux/pull/177))
+
 ## [0.0.214] - 2026-11-19
 
 ### Added

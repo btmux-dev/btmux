@@ -31,6 +31,8 @@ writeFileSync(path.join(dir, 'b.html'), '<!doctype html><p id="second">Second</p
 writeFileSync(path.join(dir, 'style.css'), '#title { color: rgb(1, 2, 3); }');
 writeFileSync(path.join(dir, 'pixel.png'), pixel);
 writeFileSync(path.join(dir, 'z.txt'), 'plain\n');
+// `.mts` is also MPEG transport stream video.
+writeFileSync(path.join(dir, 'zzz.mts'), 'export const probeMts: number = 1;\n');
 writeFileSync(path.join(dir, 'zz-child.html'), '<!doctype html><p id="child">Child</p><a id="onward" href="b.html">on</a>');
 writeFileSync(
   path.join(dir, 'zz-nested.html'),
@@ -178,6 +180,13 @@ try {
       // Their links still work.
       await child.locator('#onward').click();
       await child.locator('#second').waitFor();
+
+      // A text file with a media extension previews as code.
+      await page
+        .getByRole('button', { name: 'Close file browser' })
+        .evaluate((button) => (button.closest('[tabindex="-1"]') as HTMLElement).focus());
+      await page.keyboard.press('j');
+      await page.locator('[data-preview-viewport] code.language-typescript').getByText('probeMts').waitFor();
       assert.deepEqual(errors, []);
     } finally {
       await browser.close();

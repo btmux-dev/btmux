@@ -1,9 +1,59 @@
-import { LanguageDescription, type LanguageSupport } from '@codemirror/language';
+import { LanguageDescription, LanguageSupport, StreamLanguage } from '@codemirror/language';
 import { languages as dataLanguages } from '@codemirror/language-data';
+import { tags } from '@lezer/highlight';
+
+/** Extensions and whole file names language-data's languages lack. */
+const EXTRA: Record<string, { extensions?: string[]; filenames?: string[] }> = {
+  Python: { extensions: ['pyi'] },
+  Shell: { extensions: ['zsh'], filenames: ['.bashrc', '.bash_profile', '.zshrc', '.zshenv', '.zprofile'] },
+  TOML: { filenames: ['Cargo.lock'] },
+  JSON: { filenames: ['flake.lock'] },
+  'Properties files': { filenames: ['.gitconfig'] },
+};
+
+const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * A description adding `EXTRA`'s extensions and names to `d`, loading `d`'s
+ * support. Names match ignoring case, as the backend's do.
+ */
+function extra(d: LanguageDescription): LanguageDescription[] {
+  const added = EXTRA[d.name];
+  if (!added) return [];
+  const names = added.filenames?.map(escape).join('|');
+  return [
+    LanguageDescription.of({
+      name: d.name,
+      extensions: added.extensions,
+      filename: names ? new RegExp(`^(?:${names})$`, 'i') : undefined,
+      load: () => d.load(),
+    }),
+  ];
+}
 
 /** language-data's languages plus ones it lacks. */
 export const languages = [
   ...dataLanguages,
+  ...dataLanguages.flatMap(extra),
+  LanguageDescription.of({
+    name: 'JSONC',
+    extensions: ['jsonc'],
+    // Lezer's JSON grammar has no comments.
+    load: () =>
+      import('@codemirror/legacy-modes/mode/javascript').then(
+        (m) =>
+          new LanguageSupport(
+            StreamLanguage.define({
+              ...m.json,
+              tokenTable: { property: tags.propertyName },
+              languageData: {
+                ...m.json.languageData,
+                commentTokens: { line: '//', block: { open: '/*', close: '*/' } },
+              },
+            }),
+          ),
+      ),
+  }),
   LanguageDescription.of({
     name: 'Nix',
     extensions: ['nix'],
@@ -19,7 +69,7 @@ export const languages = [
 
 /** The language for a file name, loaded on first use. */
 export async function languageFor(path: string): Promise<{ name: string; support: LanguageSupport } | null> {
-  const name = path.slice(path.lastIndexOf('/') + 1);
+  const name = path.split(/[\\/]/).pop() ?? path;
   const description = LanguageDescription.matchFilename(languages, name);
   if (!description) return null;
   try {
