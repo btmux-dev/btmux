@@ -509,7 +509,7 @@ dependencies = [
 
 [[package]]
 name = "btmux"
-version = "0.0.211"
+version = "0.0.212"
 dependencies = [
  "aws-lc-rs",
  "axum",
