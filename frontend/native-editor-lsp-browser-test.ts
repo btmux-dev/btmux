@@ -27,7 +27,8 @@ mkdirSync(lspDir, { recursive: true });
 mkdirSync(join(configHome, 'btmux'), { recursive: true });
 writeFileSync(
   join(configHome, 'btmux', 'config.toml'),
-  '[language-server.fake]\ncommand = "fake-lsp"\n[[language]]\nname = "fake"\nfile-types = ["fake"]\nlanguage-servers = ["fake"]\n',
+  '[language-server.fake]\ncommand = "fake-lsp"\n[[language]]\nname = "fake"\nfile-types = ["fake"]\nlanguage-servers = ["fake"]\n' +
+    '[[language]]\nname = "rust"\nfile-types = ["rs"]\nlanguage-servers = ["fake"]\n',
 );
 const log = () => {
   try {
@@ -399,6 +400,25 @@ try {
   await acceptCompletion();
   await until('the postfix completion', async () => (await lines(page, paneId))?.endsWith('\nif foo {}') ?? false);
   console.log('PASS postfix completions');
+
+  // A signature is highlighted in the buffer's language; Rust's `fn(…)` too.
+  const rust = join(dir, 'detail.rs');
+  writeFileSync(rust, '\n');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: rust, line: 1, editor: 'native' });
+  await until('detail.rs', async () => (await lines(page, paneId)) === '\n');
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+  await page.keyboard.type('fa');
+  const signature = completions.locator('.cm-completionDetail', { hasText: 'fn(&str) -> Response<Body>' });
+  await signature.waitFor();
+  const tokens = await signature.evaluate((el) =>
+    [...el.childNodes].map((n) => [n.textContent, n instanceof Element ? getComputedStyle(n).color : null]),
+  );
+  assert.equal(tokens.map(([text]) => text).join(''), 'fn(&str) -> Response<Body>');
+  const color = (text: string) => tokens.find(([t]) => t === text)?.[1];
+  assert(color('fn') && color('Response') && color('fn') !== color('Response'), JSON.stringify(tokens));
+  assert.equal(await signature.evaluate((el) => getComputedStyle(el).fontStyle), 'normal');
+  await page.keyboard.press('Escape');
+  console.log('PASS highlighted completion details');
 
   // File operations: a file created and edited, the shown one moved with its tab.
   const moving = join(dir, 'move.fake');

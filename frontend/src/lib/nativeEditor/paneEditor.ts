@@ -22,6 +22,7 @@ import { Doc, type DocStatus } from './doc';
 import { editorConnection } from './connection';
 import { editorTheme, type EditorAppearance } from './theme';
 import { detectIndent, languageFor } from './languages';
+import { codeDetail } from './completion';
 import { format, lspExtension, serverFailed, setDisplay } from './lsp';
 import { serverFoldsChanged } from './features';
 import { gitSigns, gitSummary } from './gitSigns';
@@ -279,7 +280,7 @@ export class PaneEditor {
       indentOnInput(),
       bracketMatching(),
       closeBrackets(),
-      autocompletion(),
+      autocompletion({ addToOptions: [codeDetail] }),
       rectangularSelection(),
       crosshairCursor(),
       highlightActiveLine(),

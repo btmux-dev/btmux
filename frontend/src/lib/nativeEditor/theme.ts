@@ -44,6 +44,12 @@ export function highlightSpecs(theme: Theme) {
   ];
 }
 
+/** The native editor's popups: half translucent, blurred by `backdrop-blur`. */
+export const POPUP_GLASS = {
+  backgroundColor: 'color-mix(in srgb, var(--color-background-popover) 50%, transparent)',
+  backdropFilter: 'blur(var(--btm-backdrop-blur, 2px))',
+} as const;
+
 /** The editor's look, from the terminal palette and font. */
 export function editorTheme(a: EditorAppearance): Extension {
   const { theme } = a;
@@ -67,8 +73,19 @@ export function editorTheme(a: EditorAppearance): Extension {
           outline: `1px solid ${theme.cursor}`,
           color: 'transparent !important',
         },
+        // A `:` or `/` prompt leaves vim's status pending, which halves the
+        // cursor (the bottom half of the line); keep the whole cell outlined.
+        '&:has(.cm-vim-panel):not(.cm-focused) .cm-vimCursorLayer .cm-fat-cursor[style*="transparent"]': {
+          outline: 'none',
+        },
+        '&:has(.cm-vim-panel):not(.cm-focused) .cm-vimCursorLayer .cm-fat-cursor[style*="transparent"]::before': {
+          content: '""',
+          position: 'absolute',
+          inset: '-100% 0 0 0',
+          outline: `1px solid ${theme.cursor}`,
+        },
         '.cm-vim-panel': { fontFamily: 'inherit', padding: '2px 8px' },
-        '.cm-vim-panel input': { font: 'inherit', color: 'inherit' },
+        '.cm-vim-panel input': { font: 'inherit', color: 'inherit', backgroundColor: 'transparent' },
         '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, ::selection':
           { backgroundColor: theme.selectionBackground },
         '.cm-activeLine': { backgroundColor: 'color-mix(in srgb, var(--btm-editor-fg) 5%, transparent)' },
@@ -91,12 +108,19 @@ export function editorTheme(a: EditorAppearance): Extension {
           border: `1px solid ${theme.brightBlack}`,
           color: theme.brightBlack,
         },
+        // Popups are translucent, blurring what's behind them like Neovim's
+        // floats (`POPUP_GLASS`).
         '.cm-tooltip, .cm-panels': {
-          backgroundColor: 'var(--color-background-popover, ' + theme.background + ')',
+          ...POPUP_GLASS,
           color: theme.foreground,
           border: '1px solid var(--color-border)',
           borderRadius: '6px',
         },
+        // Panels (quick open, pickers, `:` and `/`) float over the text, so
+        // it shows through; scroll margins keep the cursor clear of them.
+        '.cm-panels': { position: 'absolute' },
+        // Close buttons inherit the background, which would stack.
+        '.cm-panels [name=close]': { backgroundColor: 'transparent' },
         // CodeMirror shrinks a tooltip that doesn't fit to the space left;
         // its documentation scrolls there rather than spilling out.
         '.cm-tooltip.cm-tooltip-hover, .cm-tooltip.cm-lsp-hover-tooltip': {
@@ -115,6 +139,8 @@ export function editorTheme(a: EditorAppearance): Extension {
           backgroundColor: theme.selectionBackground,
           color: theme.foreground,
         },
+        // Highlighted as code (`codeDetail`), not set apart by italics.
+        '.cm-completionDetail.cm-btmux-completionCode': { fontStyle: 'normal' },
         '.cm-completionMatchedText': { textDecoration: 'none', color: theme.blue, fontWeight: 'bold' },
         // Semantic tokens, in the roles `highlightSpecs` uses.
         '.cm-sem-namespace, .cm-sem-type, .cm-sem-class, .cm-sem-enum, .cm-sem-interface, .cm-sem-struct, .cm-sem-typeParameter':
