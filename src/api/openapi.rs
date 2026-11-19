@@ -117,8 +117,9 @@ impl utoipa::PartialSchema for Binary {
 
 impl utoipa::ToSchema for Binary {}
 
-/// Bearer authentication, and the errors every handler shares: 401, and
-/// axum's rejections of malformed IDs, query parameters, and JSON bodies.
+/// Bearer authentication, and the errors every handler shares: `auth.rs`'s
+/// 401 and 403, and axum's rejections of malformed IDs, query parameters,
+/// and JSON bodies, and of bodies over the size limit.
 struct Errors;
 
 impl Modify for Errors {
@@ -146,12 +147,14 @@ impl Modify for Errors {
                     add_cause(responses, "400", &cause);
                 }
                 if body {
+                    add_cause(responses, "413", "a body over the size limit");
                     add_cause(responses, "415", "no `Content-Type: application/json`");
                     add_cause(responses, "422", "a body that doesn't match its schema");
                 }
+                add_cause(responses, "401", "missing or wrong access token");
                 responses.insert(
-                    "401".into(),
-                    Response::new("Missing or wrong access token").into(),
+                    "403".into(),
+                    Response::new("The request's `Host` or `Origin` isn't allowed").into(),
                 );
             }
         }
@@ -322,6 +325,7 @@ mod tests {
     use tower::ServiceExt;
 
     const NIL: &str = "00000000-0000-0000-0000-000000000000";
+    const TOKEN: &str = "test-token";
 
     /// The routes `main` serves, minus sign-in.
     fn app() -> Router {
@@ -350,6 +354,15 @@ mod tests {
                 pid: 0,
             }),
         )
+    }
+
+    /// Behind `auth.rs`, as `main` serves it.
+    fn protected(app: Router) -> Router {
+        let auth = crate::auth::Auth::new(TOKEN.into(), "127.0.0.1", 8004, &[]).unwrap();
+        app.layer(middleware::from_fn_with_state(
+            std::sync::Arc::new(auth),
+            crate::auth::protect,
+        ))
     }
 
     pub(super) fn doc() -> Value {
@@ -433,6 +446,15 @@ mod tests {
         Untyped(String),
     }
 
+    /// Who sends a request: with the token, without it, or with the token
+    /// from a page on another origin.
+    #[derive(Clone, Copy)]
+    enum Caller {
+        Owner,
+        Anonymous,
+        OtherOrigin,
+    }
+
     impl Checker {
         async fn call(
             &self,
@@ -441,9 +463,28 @@ mod tests {
             uri: &str,
             body: Option<Sent>,
         ) -> (StatusCode, Value) {
+            self.call_as(Caller::Owner, method, template, uri, body)
+                .await
+        }
+
+        async fn call_as(
+            &self,
+            caller: Caller,
+            method: &Method,
+            template: &str,
+            uri: &str,
+            body: Option<Sent>,
+        ) -> (StatusCode, Value) {
             let mut request = axum::http::Request::builder()
                 .method(method.clone())
-                .uri(uri);
+                .uri(uri)
+                .header(header::HOST, "127.0.0.1:8004");
+            if !matches!(caller, Caller::Anonymous) {
+                request = request.header(header::AUTHORIZATION, format!("Bearer {TOKEN}"));
+            }
+            if matches!(caller, Caller::OtherOrigin) {
+                request = request.header(header::ORIGIN, "https://example.com");
+            }
             let body = match body {
                 Some(Sent::Json(body)) => {
                     request = request.header(header::CONTENT_TYPE, "application/json");
@@ -504,6 +545,15 @@ mod tests {
             (status, value)
         }
 
+        /// Whether `body` matches the operation's request schema.
+        fn accepts(&self, method: &Method, template: &str, body: &Value) -> bool {
+            let operation = &self.doc["paths"][template][method.as_str().to_lowercase()];
+            let mut schema =
+                operation["requestBody"]["content"]["application/json"]["schema"].clone();
+            schema["components"] = self.doc["components"].clone();
+            jsonschema::validator_for(&schema).unwrap().is_valid(body)
+        }
+
         /// Like `call`, expecting `expected`.
         async fn expect(
             &self,
@@ -526,7 +576,7 @@ mod tests {
         use Method as M;
         use StatusCode as S;
         let check = Checker {
-            app: app(),
+            app: protected(app()),
             doc: doc(),
         };
 
@@ -728,17 +778,85 @@ mod tests {
                 format!("/api/sessions/{session}/windows/close"),
                 None,
             ),
-            (
-                S::OK,
-                M::DELETE,
-                "/api/sessions",
-                "/api/sessions".into(),
-                None,
-            ),
         ];
         for (status, method, template, uri, body) in calls {
             check.expect(status, method, template, &uri, body).await;
         }
+
+        for (caller, status) in [
+            (Caller::Anonymous, S::UNAUTHORIZED),
+            (Caller::OtherOrigin, S::FORBIDDEN),
+        ] {
+            let (got, _) = check
+                .call_as(caller, &M::GET, "/api/sessions", "/api/sessions", None)
+                .await;
+            assert_eq!(got, status);
+        }
+
+        // Over the default limit, and the popup route's own.
+        let big = "x".repeat(2 << 20);
+        check
+            .expect(
+                S::PAYLOAD_TOO_LARGE,
+                M::POST,
+                "/api/notify",
+                "/api/notify",
+                Some(json!({"title": big})),
+            )
+            .await;
+        let popup = format!("/api/panes/{pane}/popup");
+        let template = "/api/panes/{pane_id}/popup";
+        check
+            .expect(
+                S::PAYLOAD_TOO_LARGE,
+                M::POST,
+                template,
+                &popup,
+                Some(json!({"command": {"shell": "true"}, "title": big})),
+            )
+            .await;
+
+        // Each environment entry is a name and a value.
+        for (env, valid) in [
+            (json!([["NAME", "value"]]), true),
+            (json!([["NAME"]]), false),
+        ] {
+            let body = json!({"command": {"shell": "true"}, "env": env});
+            assert_eq!(check.accepts(&M::POST, template, &body), valid, "{env}");
+        }
+        let body = json!({"command": {"shell": "true"}, "env": [["NAME"]]});
+        check
+            .expect(
+                S::UNPROCESSABLE_ENTITY,
+                M::POST,
+                template,
+                &popup,
+                Some(body),
+            )
+            .await;
+
+        // Every documented preset is one the handler takes.
+        let preset = &check.doc["components"]["schemas"]["SelectLayoutRequest"]["properties"]
+            ["preset"]["enum"];
+        let presets = preset.as_array().unwrap();
+        assert_eq!(
+            presets.len(),
+            crate::session::layout::LayoutPreset::ALL.len()
+        );
+        for preset in presets {
+            check
+                .expect(
+                    S::NO_CONTENT,
+                    M::POST,
+                    "/api/sessions/{session_id}/layout",
+                    &format!("/api/sessions/{session}/layout"),
+                    Some(json!({ "preset": preset })),
+                )
+                .await;
+        }
+        check
+            .expect(S::OK, M::DELETE, "/api/sessions", "/api/sessions", None)
+            .await;
 
         let served = check
             .expect(

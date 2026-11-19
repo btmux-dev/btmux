@@ -469,6 +469,7 @@ pub(crate) async fn api_swap_pane(
 #[derive(Deserialize)]
 #[cfg_attr(test, derive(utoipa::ToSchema))]
 pub(crate) struct SelectLayoutRequest {
+    #[cfg_attr(test, schema(value_type = LayoutPreset, inline))]
     preset: String,
 }
 

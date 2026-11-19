@@ -54,9 +54,10 @@ too: a server serves the one for its version at `/api/openapi.json`, and this
 site [the latest](/openapi.json). Endpoints the btmux app uses for itself,
 such as file previews and editors, aren't listed.
 
-Every endpoint can reply 401 for a missing or wrong token. Error bodies, if
-any, are plain text. Malformed IDs and JSON bodies get 400, a body without
-`Content-Type: application/json` 415, and one that doesn't match its schema
-422.
+Every endpoint can reply 401 for a missing or wrong token, and 403 for a
+`Host` or `Origin` the server doesn't allow. Error bodies, if any, are plain
+text. Malformed IDs and JSON bodies get 400, a body over the size limit 413,
+one without `Content-Type: application/json` 415, and one that doesn't match
+its schema 422.
 
 <!-- api-endpoints -->

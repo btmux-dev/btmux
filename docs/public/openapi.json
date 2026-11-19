@@ -37,7 +37,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           }
         }
       },
@@ -79,7 +89,27 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "415": {
             "description": "No `Content-Type: application/json`",
@@ -125,7 +155,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           }
         }
       }
@@ -171,7 +211,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such session"
@@ -211,7 +261,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such session"
@@ -280,10 +340,30 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such session"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "415": {
             "description": "No `Content-Type: application/json`",
@@ -359,10 +439,30 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such session"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "415": {
             "description": "No `Content-Type: application/json`",
@@ -432,10 +532,30 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such session"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "415": {
             "description": "No `Content-Type: application/json`",
@@ -512,10 +632,30 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such session"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "415": {
             "description": "No `Content-Type: application/json`",
@@ -575,7 +715,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such session"
@@ -627,7 +777,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such window"
@@ -679,7 +839,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such window"
@@ -738,10 +908,30 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such window"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "415": {
             "description": "No `Content-Type: application/json`",
@@ -788,7 +978,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           }
         }
       }
@@ -844,10 +1044,30 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such pane"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "415": {
             "description": "No `Content-Type: application/json`",
@@ -907,7 +1127,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such pane"
@@ -960,7 +1190,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such pane"
@@ -1003,7 +1243,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such pane"
@@ -1056,10 +1306,30 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such pane"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "415": {
             "description": "No `Content-Type: application/json`",
@@ -1136,10 +1406,30 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such pane, or the native editor can't open the file",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "A body over the size limit",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1235,13 +1525,33 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such session"
           },
           "409": {
             "description": "The pane isn't in the session's active window"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "415": {
             "description": "No `Content-Type: application/json`",
@@ -1310,7 +1620,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such session"
@@ -1365,7 +1685,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such session"
@@ -1420,7 +1750,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such session"
@@ -1476,10 +1816,30 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such session"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "415": {
             "description": "No `Content-Type: application/json`",
@@ -1549,10 +1909,30 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such session"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "415": {
             "description": "No `Content-Type: application/json`",
@@ -1622,10 +2002,30 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such session"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "415": {
             "description": "No `Content-Type: application/json`",
@@ -1695,10 +2095,30 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such session"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "415": {
             "description": "No `Content-Type: application/json`",
@@ -1757,7 +2177,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such session"
@@ -1817,10 +2247,30 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such pane",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "A body over the size limit",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1925,7 +2375,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such pane"
@@ -2004,7 +2464,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such pane",
@@ -2051,7 +2521,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           }
         }
       }
@@ -2108,7 +2588,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such pane",
@@ -2122,6 +2612,16 @@
           },
           "409": {
             "description": "No agent, a dialog is waiting for an answer, the agent is busy (with `wait`), or the agent can't take a multi-line prompt",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "A body over the size limit",
             "content": {
               "text/plain": {
                 "schema": {
@@ -2224,7 +2724,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such pane",
@@ -2290,7 +2800,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such pane"
@@ -2341,10 +2861,30 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such pane"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "415": {
             "description": "No `Content-Type: application/json`",
@@ -2401,7 +2941,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such pane"
@@ -2432,7 +2982,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           }
         }
       }
@@ -2460,7 +3020,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           }
         }
       }
@@ -2517,7 +3087,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such pane",
@@ -2531,6 +3111,16 @@
           },
           "409": {
             "description": "The pane isn't in a local Git repository, the worktree's path exists, or the branch tracks another remote branch",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "A body over the size limit",
             "content": {
               "text/plain": {
                 "schema": {
@@ -2612,7 +3202,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such pane",
@@ -2699,7 +3299,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such pane",
@@ -2723,6 +3333,16 @@
           },
           "410": {
             "description": "The popup closed before it started",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "A body over the size limit",
             "content": {
               "text/plain": {
                 "schema": {
@@ -2815,7 +3435,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such popup"
@@ -2879,7 +3509,27 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "415": {
             "description": "No `Content-Type: application/json`",
@@ -2949,10 +3599,30 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such pane"
+          },
+          "413": {
+            "description": "A body over the size limit",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           },
           "415": {
             "description": "No `Content-Type: application/json`",
@@ -3009,7 +3679,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "404": {
             "description": "No such pane"
@@ -3036,7 +3716,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           }
         }
       }
@@ -3060,7 +3750,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           }
         }
       }
@@ -3084,7 +3784,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           }
         }
       }
@@ -3122,10 +3832,30 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           },
           "409": {
             "description": "This server can't hand off to that binary; only a restart can",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "A body over the size limit",
             "content": {
               "text/plain": {
                 "schema": {
@@ -3179,7 +3909,17 @@
             "description": "Stopping; every shell closes"
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           }
         }
       }
@@ -3203,7 +3943,17 @@
             }
           },
           "401": {
-            "description": "Missing or wrong access token"
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed"
           }
         }
       }
@@ -4625,13 +5375,25 @@
               "items": false,
               "prefixItems": [
                 {
-                  "type": "string"
+                  "type": "string",
+                  "description": "Name"
                 },
                 {
-                  "type": "string"
+                  "type": "string",
+                  "description": "Value"
                 }
+              ],
+              "minItems": 2
+            },
+            "description": "Replaces the server's environment.",
+            "examples": [
+              [
+                [
+                  "NAME",
+                  "value"
+                ]
               ]
-            }
+            ]
           },
           "title": {
             "type": [
@@ -4820,7 +5582,14 @@
         ],
         "properties": {
           "preset": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "even-horizontal",
+              "even-vertical",
+              "main-vertical",
+              "main-horizontal",
+              "tiled"
+            ]
           }
         }
       },

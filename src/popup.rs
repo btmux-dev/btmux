@@ -548,11 +548,41 @@ pub struct PopupRequest {
     pub command: PopupCommand,
     #[serde(default)]
     pub cwd: Option<String>,
+    // Replaces the server's environment; see `Environment`.
     #[serde(default)]
+    #[cfg_attr(test, schema(value_type = Environment, inline))]
     pub env: Option<Vec<(String, String)>>,
     #[serde(default)]
     pub title: Option<String>,
 }
+
+/// `PopupRequest::env`: utoipa's tuple schema leaves out `minItems`.
+#[cfg(test)]
+struct Environment;
+
+#[cfg(test)]
+impl utoipa::PartialSchema for Environment {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        serde_json::from_value(serde_json::json!({
+            "type": ["array", "null"],
+            "description": "Replaces the server's environment.",
+            "items": {
+                "type": "array",
+                "prefixItems": [
+                    {"type": "string", "description": "Name"},
+                    {"type": "string", "description": "Value"},
+                ],
+                "items": false,
+                "minItems": 2,
+            },
+            "examples": [[["NAME", "value"]]],
+        }))
+        .unwrap()
+    }
+}
+
+#[cfg(test)]
+impl utoipa::ToSchema for Environment {}
 
 /// Opens a popup and replies `{"id": ...}` once a tab started it: 409 if no
 /// tab does, 422 if its program can't start.

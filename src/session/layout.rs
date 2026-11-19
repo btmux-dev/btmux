@@ -36,6 +36,21 @@ pub enum LayoutPreset {
     Tiled,
 }
 
+/// Its name, for the OpenAPI document.
+#[cfg(test)]
+impl utoipa::PartialSchema for LayoutPreset {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        use utoipa::openapi::schema::{ObjectBuilder, Type};
+        ObjectBuilder::new()
+            .schema_type(Type::String)
+            .enum_values(Some(LayoutPreset::ALL.map(LayoutPreset::name)))
+            .into()
+    }
+}
+
+#[cfg(test)]
+impl utoipa::ToSchema for LayoutPreset {}
+
 impl LayoutPreset {
     /// Cycle order for `next-layout`, matching tmux's M-1..M-5 / Space order.
     pub const ALL: [LayoutPreset; 5] = [
@@ -46,16 +61,21 @@ impl LayoutPreset {
         LayoutPreset::Tiled,
     ];
 
-    /// Parse the kebab-case name used in palette command ids / the wire.
-    pub fn from_name(name: &str) -> Option<LayoutPreset> {
-        match name {
-            "even-horizontal" => Some(LayoutPreset::EvenHorizontal),
-            "even-vertical" => Some(LayoutPreset::EvenVertical),
-            "main-vertical" => Some(LayoutPreset::MainVertical),
-            "main-horizontal" => Some(LayoutPreset::MainHorizontal),
-            "tiled" => Some(LayoutPreset::Tiled),
-            _ => None,
+    /// The kebab-case name used in palette command ids / the wire.
+    pub fn name(self) -> &'static str {
+        match self {
+            LayoutPreset::EvenHorizontal => "even-horizontal",
+            LayoutPreset::EvenVertical => "even-vertical",
+            LayoutPreset::MainVertical => "main-vertical",
+            LayoutPreset::MainHorizontal => "main-horizontal",
+            LayoutPreset::Tiled => "tiled",
         }
+    }
+
+    pub fn from_name(name: &str) -> Option<LayoutPreset> {
+        LayoutPreset::ALL
+            .into_iter()
+            .find(|preset| preset.name() == name)
     }
 
     /// The next preset in cycle order (wraps around).

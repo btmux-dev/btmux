@@ -63,6 +63,9 @@ export default defineConfig({
           {
             base: "automation/api",
             schema: "./public/openapi.json",
+            // Fetch samples parse every reply as JSON, which breaks on 204s
+            // and on text and byte replies.
+            snippets: { operation: { clients: { shell: ["curl"] } } },
             sidebar: {
               label: "API reference",
               group: apiReference,
