@@ -31,6 +31,7 @@ import { EditorKeys } from './EditorKeys';
 import { usePressHint } from '../hooks/usePressHint';
 import { smoothScrollBy } from '../lib/smoothScroll';
 import { smartCase } from '../lib/smartCase';
+import { plainTextInput } from '../lib/touch';
 import { isDesktopApp, openDesktopWindow, switchDesktopServer } from '../lib/desktopApp';
 
 /** Ordered keybinding-help sections, each matching a set of action names. */
@@ -210,6 +211,7 @@ function TopHighlightedInput() {
   }, [search, resultsKey, count, setHighlightedIndex]);
   return (
     <CommandPaletteInput
+      ref={plainTextInput}
       onKeyDown={(event) => {
         if (!palette || !count || !event.ctrlKey || (event.key !== 'n' && event.key !== 'p')) return;
         event.preventDefault();

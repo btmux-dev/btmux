@@ -8,6 +8,7 @@ import { Placeholder } from './Placeholder';
 import { ScrollableArea } from '@astryxdesign/core/ScrollableArea';
 import { clsx } from 'clsx';
 import { useFileStore } from '@/state/fileStore';
+import { plainTextInput } from '@/lib/touch';
 import {
   searchFiles,
   type FileSearchResponse,
@@ -119,7 +120,10 @@ export function FileSearch({ fileSend, currentPath, focusedIndex, onPreview }: F
       <VStack gap={1} className="flex-none border-b border-border px-2 py-1">
         <HStack gap={2} vAlign="center">
           <TextInput
-            ref={inputRef}
+            ref={(input) => {
+              inputRef.current = input;
+              plainTextInput(input);
+            }}
             label={searchMode === 'files' ? 'Search files' : 'Search content'}
             isLabelHidden
             size="sm"

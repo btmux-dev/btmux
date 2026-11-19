@@ -25,6 +25,8 @@ test('every term must match, each in smart case', () => {
   expect(filterPick(mixed, 'check', 10).indices).toEqual([0, 1]);
   expect(filterPick(mixed, 'Check', 10).indices).toEqual([0]);
   expect(filterPick(mixed, 'Check out', 10).indices).toEqual([0]);
+  // Titlecase (U+01C5) matches case, as in `btmux pick --select-1`.
+  expect(filterPick(haystacks(['ǅuro', 'ǆuro']), 'ǅ', 10).indices).toEqual([0]);
 });
 
 test('descriptions match but do not count as prefixes', () => {

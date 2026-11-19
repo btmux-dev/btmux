@@ -1,5 +1,6 @@
 import { StateEffect, StateField } from '@codemirror/state';
 import { EditorView, showPanel, type Panel } from '@codemirror/view';
+import { plainTextInput } from '../touch';
 import { matchesCase } from '../smartCase';
 
 /** A choice in the editor's picker. */
@@ -79,6 +80,8 @@ function pickerPanel(view: EditorView, spec: PickerSpec): Panel {
   input.setAttribute('role', 'combobox');
   input.setAttribute('aria-expanded', 'true');
   input.setAttribute('aria-controls', id);
+  // Smart case: phones mustn't capitalize the query.
+  plainTextInput(input);
   const list = document.createElement('ul');
   list.id = id;
   list.setAttribute('role', 'listbox');

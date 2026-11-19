@@ -304,7 +304,13 @@ fn match_files(
     prefix: &str,
     boost: &HashMap<String, u32>,
 ) -> Vec<FileSearchResult> {
-    let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
+    // One case rule for the whole query, rather than nucleo's per term.
+    let case = if crate::smart_case::matches_case(query) {
+        CaseMatching::Respect
+    } else {
+        CaseMatching::Ignore
+    };
+    let pattern = Pattern::parse(query, case, Normalization::Smart);
     let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
     let mut buf = Vec::new();
     let mut matches: Vec<(u32, &String)> = files
@@ -434,10 +440,14 @@ pub async fn content_search(query: &str, root: &Path) -> Result<Vec<SearchResult
         Err(error) if error.kind() == ErrorKind::NotFound => {}
         Err(error) => return Err(format!("Failed to run ripgrep: {}", error)),
     }
+    grep_search(query, root).await
+}
 
+/// `content_search` without ripgrep.
+async fn grep_search(query: &str, root: &Path) -> Result<Vec<SearchResult>, String> {
     let mut grep = Command::new("grep");
     grep.args(["-R", "-n", "-H", "-I"]);
-    if !has_uppercase_literal(query) {
+    if smart_case_ignores(query) {
         grep.arg("-i");
     }
     grep.arg("-e")
@@ -454,18 +464,29 @@ pub async fn content_search(query: &str, root: &Path) -> Result<Vec<SearchResult
     collect_grep_results(child, root).await
 }
 
-/// Whether a pattern has an uppercase letter outside escapes like `\W`, as
-/// ripgrep's `--smart-case` decides.
-fn has_uppercase_literal(pattern: &str) -> bool {
-    let mut chars = pattern.chars();
-    while let Some(c) = chars.next() {
+/// Whether ripgrep's `--smart-case` ignores case in `pattern`: it has a
+/// letter and no uppercase one. Escapes (`\W`) and POSIX classes
+/// (`[[:upper:]]`) aren't letters, and a pattern of only those keeps case.
+fn smart_case_ignores(pattern: &str) -> bool {
+    let mut letter = false;
+    let mut rest = pattern;
+    while let Some(c) = rest.chars().next() {
+        rest = &rest[c.len_utf8()..];
         if c == '\\' {
-            chars.next();
+            let mut escaped = rest.chars();
+            escaped.next();
+            rest = escaped.as_str();
+        } else if c == '[' && rest.starts_with(':') {
+            if let Some(end) = rest.find(":]") {
+                rest = &rest[end + 2..];
+            }
         } else if c.is_uppercase() {
-            return true;
+            return false;
+        } else if c.is_alphabetic() {
+            letter = true;
         }
     }
-    false
+    letter
 }
 
 async fn collect_rg_results(
@@ -785,13 +806,24 @@ mod tests {
         let found = |query| match_files(&files, query, "/r/", &no_boost()).len();
         assert_eq!(found("main"), 2);
         assert_eq!(found("Main"), 1);
+        // For the whole query, not per term.
+        let files = vec!["Main-README.txt".to_string(), "Main-readme.md".to_string()];
+        let found = |query| match_files(&files, query, "/r/", &no_boost()).len();
+        assert_eq!(found("Main readme"), 1);
+        assert_eq!(found("main readme"), 2);
     }
 
     #[test]
-    fn uppercase_literals_ignore_escapes() {
-        assert!(super::has_uppercase_literal("fooBar"));
-        assert!(!super::has_uppercase_literal("foo\\Wbar\\S"));
-        assert!(super::has_uppercase_literal("\\\\X"));
+    fn smart_case_ignores_escapes_and_classes() {
+        use super::smart_case_ignores as ignores;
+        assert!(ignores("foo"));
+        assert!(!ignores("fooBar"));
+        assert!(ignores("foo\\Wbar\\S"));
+        assert!(!ignores("\\\\X"));
+        assert!(!ignores("[[:upper:]]"));
+        assert!(!ignores("[0-9]+"));
+        assert!(ignores("[[:upper:]]x"));
+        assert!(!ignores("[A-Z]"));
     }
 
     #[tokio::test]
@@ -895,6 +927,35 @@ mod tests {
         fs::write(root.join("upper.txt"), "Needle\n").unwrap();
         assert_eq!(content_search("needle", &root).await.unwrap().len(), 2);
         assert_eq!(content_search("Needle", &root).await.unwrap().len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn grep_fallback_uses_smart_case_as_ripgrep_does() {
+        if std::process::Command::new("grep")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("btmux-grep-search-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("cases.txt"), "ABC\nabc\n123\n").unwrap();
+        let lines = |results: Vec<super::SearchResult>| {
+            let mut lines: Vec<_> = results.into_iter().filter_map(|r| r.line).collect();
+            lines.sort();
+            lines
+        };
+        let grep = |query| super::grep_search(query, &root);
+        assert_eq!(lines(grep("abc").await.unwrap()), [1, 2]);
+        assert_eq!(lines(grep("ABC").await.unwrap()), [1]);
+        // A class alone keeps case, as in ripgrep.
+        assert_eq!(lines(grep("[[:upper:]]").await.unwrap()), [1]);
+        assert_eq!(
+            lines(content_search("[[:upper:]]", &root).await.unwrap()),
+            [1]
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

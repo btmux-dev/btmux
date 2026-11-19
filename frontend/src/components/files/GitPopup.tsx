@@ -13,7 +13,7 @@ import { clsx } from 'clsx';
 import { useStore } from '@/state/store';
 import { KeyCap, KeyHint, type Hint } from '../KeyHint';
 import { usePressHint } from '@/hooks/usePressHint';
-import { NARROW_QUERY } from '@/lib/touch';
+import { NARROW_QUERY, plainTextInput } from '@/lib/touch';
 import type { GitBranchInfo, GitOp, GitRefsResult, GitWorktreeInfo, WorktreeOp } from '@/protocol/file-messages';
 import { smartCase } from '@/lib/smartCase';
 
@@ -985,7 +985,10 @@ function GitPopupDialog({
               ) : prompt ? (
                 <VStack gap={2}>
                   <TextInput
-                    ref={inputRef}
+                    ref={(input) => {
+                      inputRef.current = input;
+                      plainTextInput(input);
+                    }}
                     label={prompt.label}
                     value={query}
                     onChange={(value) => {

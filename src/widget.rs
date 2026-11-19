@@ -290,13 +290,12 @@ fn parse_whole_items(input: &[u8]) -> Vec<(&[u8], PickItem)> {
         .collect()
 }
 
-/// As `filterPick` in the frontend: contains every whitespace-separated term, ignoring case.
+/// As `filterPick` in the frontend: contains every whitespace-separated term, each in smart case.
 fn matches_query(item: &PickItem, query: &str) -> bool {
     let label = item.label.to_lowercase();
     let description = item.description.as_deref().map(str::to_lowercase);
     query.split_whitespace().all(|term| {
-        // Smart case, per term.
-        if term.chars().any(char::is_uppercase) {
+        if crate::smart_case::matches_case(term) {
             return item.label.contains(term)
                 || item
                     .description
@@ -538,6 +537,20 @@ mod tests {
         assert_eq!(values, [&b"one\ntwo\tthree"[..], b"four"]);
         assert_eq!(parsed[0].1.label, "one\ntwo\tthree");
         assert!(parsed[0].1.description.is_none());
+    }
+
+    #[tokio::test]
+    async fn select_1_takes_a_titlecase_query_as_the_menu_does() {
+        let args = PickArgs {
+            query: Some("ǅ".into()),
+            select_1: true,
+            exit_0: true,
+            ..PickArgs::default()
+        };
+        assert_eq!(
+            pick_from("0", &args, parse_items(b"\xc7\x85uro\n")).await,
+            Ok(0)
+        );
     }
 
     #[test]
