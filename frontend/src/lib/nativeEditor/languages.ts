@@ -13,30 +13,45 @@ const EXTRA: Record<string, { extensions?: string[]; filenames?: string[] }> = {
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-function extend(d: LanguageDescription): LanguageDescription {
-  const extra = EXTRA[d.name];
-  if (!extra) return d;
-  const names = extra.filenames?.map(escape).join('|');
-  const patterns = [d.filename?.source, names && `^(?:${names})$`].filter(Boolean);
-  return LanguageDescription.of({
-    name: d.name,
-    alias: d.alias,
-    extensions: [...d.extensions, ...(extra.extensions ?? [])],
-    filename: patterns.length ? new RegExp(patterns.join('|')) : undefined,
-    load: () => d.load(),
-  });
+/**
+ * A description adding `EXTRA`'s extensions and names to `d`, loading `d`'s
+ * support. Names match ignoring case, as the backend's do.
+ */
+function extra(d: LanguageDescription): LanguageDescription[] {
+  const added = EXTRA[d.name];
+  if (!added) return [];
+  const names = added.filenames?.map(escape).join('|');
+  return [
+    LanguageDescription.of({
+      name: d.name,
+      extensions: added.extensions,
+      filename: names ? new RegExp(`^(?:${names})$`, 'i') : undefined,
+      load: () => d.load(),
+    }),
+  ];
 }
 
 /** language-data's languages plus ones it lacks. */
 export const languages = [
-  ...dataLanguages.map(extend),
+  ...dataLanguages,
+  ...dataLanguages.flatMap(extra),
   LanguageDescription.of({
     name: 'JSONC',
     extensions: ['jsonc'],
     // Lezer's JSON grammar has no comments.
     load: () =>
       import('@codemirror/legacy-modes/mode/javascript').then(
-        (m) => new LanguageSupport(StreamLanguage.define({ ...m.json, tokenTable: { property: tags.propertyName } })),
+        (m) =>
+          new LanguageSupport(
+            StreamLanguage.define({
+              ...m.json,
+              tokenTable: { property: tags.propertyName },
+              languageData: {
+                ...m.json.languageData,
+                commentTokens: { line: '//', block: { open: '/*', close: '*/' } },
+              },
+            }),
+          ),
       ),
   }),
   LanguageDescription.of({

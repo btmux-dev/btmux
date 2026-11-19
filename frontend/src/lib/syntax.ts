@@ -111,17 +111,20 @@ const FILE_NAMES: Record<string, string> = {
   'flake.lock': 'json',
 };
 
+const own = (o: object, key: string) => Object.prototype.hasOwnProperty.call(o, key);
+
 /** The registered highlight.js language for a file extension or fence name, else `plaintext`. */
 export function syntaxLanguage(name: string): string {
   const key = name.toLowerCase();
-  if (Object.prototype.hasOwnProperty.call(LANGUAGES, key)) return key;
-  return ALIASES[key] ?? 'plaintext';
+  if (own(LANGUAGES, key)) return key;
+  return own(ALIASES, key) ? ALIASES[key] : 'plaintext';
 }
 
 /** The registered highlight.js language for a file path, else `plaintext`. */
 export function fileSyntaxLanguage(path: string): string {
   const name = path.slice(path.lastIndexOf('/') + 1).toLowerCase();
-  return FILE_NAMES[name] ?? syntaxLanguage(name.slice(name.lastIndexOf('.') + 1));
+  if (own(FILE_NAMES, name)) return FILE_NAMES[name];
+  return syntaxLanguage(name.slice(name.lastIndexOf('.') + 1));
 }
 
 type HljsStyle = Record<string, CSSProperties>;
