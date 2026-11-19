@@ -444,11 +444,18 @@ try {
   await page.keyboard.press('Control+p');
   await until('Ctrl-P wrapped', async () => (await selectedLabel()) !== first);
   assert.equal(await pane.getByRole('combobox', { name: 'Go to file' }).count(), 0);
+  // Ctrl-J and Ctrl-K too, as in fzf; Ctrl-K doesn't start a Mod-k chord off macOS.
+  await page.keyboard.press('Control+j');
+  await until('Ctrl-J moved', async () => (await selectedLabel()) === first);
+  await page.keyboard.press('Control+k');
+  await until('Ctrl-K moved', async () => (await selectedLabel()) !== first);
+  await page.keyboard.press('Control+j');
+  await until('Ctrl-J after Ctrl-K', async () => (await selectedLabel()) === first);
   // Each kind has its own Nerd Font icon.
   const fieldIcon = completions.locator('li', { hasText: 'fakeField' }).locator('.cm-completionIcon-field');
   assert.equal(await fieldIcon.evaluate((el) => getComputedStyle(el, '::after').content), JSON.stringify('\ueb5f'));
   await page.keyboard.press('Escape');
-  console.log('PASS Ctrl-N and Ctrl-P move through completions');
+  console.log('PASS Ctrl-N/P and Ctrl-J/K move through completions');
 
   // File operations: a file created and edited, the shown one moved with its tab.
   const moving = join(dir, 'move.fake');

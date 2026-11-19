@@ -59,15 +59,18 @@ let vimLoader: Promise<Vim> | null = null;
 const EARLY_SCOPE = 'btmux-early';
 
 /**
- * Vim's Ctrl-N and Ctrl-P through open completions, ahead of vim and of Mod-p
+ * Ctrl-N/Ctrl-P as in vim and Ctrl-J/Ctrl-K as in fzf (browsers off macOS keep
+ * Ctrl-N) through open completions, ahead of Mod-k chords, vim, and Mod-p
  * (Ctrl-P off macOS). Taken even before CodeMirror's interaction delay lets
  * the move happen, so a quick Ctrl-P never opens quick open instead.
  */
-const cycleCompletion = (forward: boolean) => (view: EditorView) => {
-  if (!currentCompletions(view.state).length) return false;
+function cycleCompletion(e: KeyboardEvent, view: EditorView): boolean {
+  if (!e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return false;
+  const forward = e.key === 'n' || e.key === 'j' ? true : e.key === 'p' || e.key === 'k' ? false : null;
+  if (forward === null || !currentCompletions(view.state).length) return false;
   moveCompletionSelection(forward)(view);
   return true;
-};
+}
 
 /** Longest wait for formatting before a save goes ahead without it. */
 const FORMAT_TIMEOUT_MS = 3000;
@@ -235,8 +238,6 @@ export class PaneEditor {
         blur: () => this.keys.reset(),
       }),
       keymap.of([
-        { key: 'Ctrl-n', run: cycleCompletion(true), preventDefault: true, scope: EARLY_SCOPE },
-        { key: 'Ctrl-p', run: cycleCompletion(false), preventDefault: true, scope: EARLY_SCOPE },
         { key: 'Mod-p', run: () => this.quickOpen(), preventDefault: true, scope: EARLY_SCOPE },
         // Mod-W closes the browser tab.
         { key: 'Alt-w', run: () => this.close(false), preventDefault: true, scope: EARLY_SCOPE },
@@ -371,6 +372,10 @@ export class PaneEditor {
       return true;
     }
     this.esc = { last: -Infinity, armed: false };
+    if (cycleCompletion(e, view)) {
+      e.preventDefault();
+      return true;
+    }
     if (this.docs.get(this.active ?? '')?.view && this.keys.keydown(e)) {
       e.preventDefault();
       return true;

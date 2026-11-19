@@ -10,8 +10,9 @@ actions, saved state, and API types can change in any release.
 
 ### Added
 
-- `Ctrl-n` and `Ctrl-p` move through the native editor's completions, quick
-  open, and other pickers, as in Vim.
+- `Ctrl-n` and `Ctrl-p` (as in Vim) and `Ctrl-j` and `Ctrl-k` (as in fzf,
+  for browsers that keep `Ctrl-n`) move through the native editor's
+  completions, quick open, and other pickers.
   ([#174](https://github.com/btmux-dev/btmux/pull/174))
 
 ### Changed

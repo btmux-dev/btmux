@@ -266,9 +266,14 @@ try {
   assert.equal(await selectedOption(), optionCount - 1);
   await page.keyboard.press('Control+n');
   assert.equal(await selectedOption(), 0);
+  // Ctrl-J and Ctrl-K too, as in fzf (browsers off macOS keep Ctrl-N).
+  await page.keyboard.press('Control+j');
+  assert.equal(await selectedOption(), 1);
+  await page.keyboard.press('Control+k');
+  assert.equal(await selectedOption(), 0);
   await page.keyboard.press('Escape');
   await goToFile.waitFor({ state: 'detached' });
-  console.log('PASS Ctrl-N and Ctrl-P move through quick open results');
+  console.log('PASS Ctrl-N/P and Ctrl-J/K move through quick open results');
 
   // A file created after the first search shows up for the query typed once
   // the stale index (over 5 s old) is listed again.
