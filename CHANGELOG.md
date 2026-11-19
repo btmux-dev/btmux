@@ -8,6 +8,12 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Added
+
+- The key help (`<prefix> + ?`) lists the native editor's keys, and the
+  command palette shows them beside each editor command, for Vim mode and
+  your own mappings too.
+
 ## [0.0.211] - 2026-11-18
 
 ### Added
