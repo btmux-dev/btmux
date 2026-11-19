@@ -231,6 +231,30 @@ try {
   await at('Ln 300, Col 1');
   console.log('PASS CTRL-O and CTRL-I follow jumps across files');
 
+  // Panels float over the text but leave the cursor's line clear of them,
+  // even with nowhere left to scroll: at the end of the file, and at the top.
+  const clearOf = (panel: 'top' | 'bottom') =>
+    page.waitForFunction(
+      ({ id, panel }) => {
+        const editor = document.querySelector(`[data-native-editor][data-pane-id="${id}"]`)?.closest('.cm-editor');
+        const box = editor?.querySelector(`:scope > .cm-panels-${panel}`)?.getBoundingClientRect();
+        const line = editor?.querySelector('.cm-activeLine')?.getBoundingClientRect();
+        if (!box || !line) return false;
+        return panel === 'bottom' ? line.bottom <= box.top : line.top >= box.bottom;
+      },
+      { id: paneId, panel },
+    );
+  await page.keyboard.type(':');
+  await clearOf('bottom');
+  await page.keyboard.press('Escape');
+  await page.keyboard.type('gg');
+  await at('Ln 1, Col 1');
+  await page.keyboard.press('ControlOrMeta+p');
+  await clearOf('top');
+  await page.keyboard.press('Escape');
+  await content.click();
+  console.log('PASS panels leave the cursor clear at either end of the file');
+
   // Without a server, gq hard wraps.
   await open(wrap);
   await until('the long line', async () => (await lines(page, paneId))?.startsWith('word word') ?? false);

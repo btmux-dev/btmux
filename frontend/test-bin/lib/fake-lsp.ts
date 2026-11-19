@@ -202,11 +202,13 @@ function handle(msg: any): unknown {
           {
             label: 'fakeCompletion',
             kind: 3,
+            detail: 'fn(&str) -> Response<Body>',
             documentation: {
               kind: 'markdown',
               value: Array.from({ length: 100 }, (_, i) => `Completion paragraph ${i}.`).join('\n\n'),
             },
           },
+          { label: 'fakeField', kind: 5, detail: 'usize' },
           { label: 'importedThing', kind: 6, labelDetails: { description: 'lib' } },
           { label: 'slowImport', kind: 6 },
         ],

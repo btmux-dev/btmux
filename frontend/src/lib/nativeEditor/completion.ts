@@ -13,7 +13,9 @@ import {
 } from '@codemirror/autocomplete';
 import { LSPPlugin, type WorkspaceMapping } from '@codemirror/lsp-client';
 import { ChangeSet, EditorState, StateEffect, StateField, type ChangeDesc } from '@codemirror/state';
+import { highlightingFor, language } from '@codemirror/language';
 import { ViewPlugin, type EditorView } from '@codemirror/view';
+import { highlightTree } from '@lezer/highlight';
 import { viewDocs, type Doc } from './doc';
 import { lspToSnippet, offsetChecked, type Range, type TextEdit } from './lspText';
 
@@ -188,7 +190,7 @@ const source: CompletionSource = async (context) => {
   const resolvable = !!plugin.client.serverCapabilities?.completionProvider?.resolveProvider;
   const language = plugin.client.workspace.getFile(uri)?.languageId ?? '';
 
-  const options = list.items.map((original): Completion => {
+  const options = list.items.map((original): ServerCompletion => {
     const item: Item =
       defaults?.data !== undefined && original.data === undefined ? { ...original, data: defaults.data } : original;
     let resolved: Promise<Item> | null = null;
@@ -230,7 +232,7 @@ const source: CompletionSource = async (context) => {
       label: item.filterText || item.label,
       displayLabel: item.label + (item.labelDetails?.detail ?? ''),
       type: item.kind ? KIND_TYPES[item.kind] : undefined,
-      detail,
+      code: detail,
       sortText: item.sortText,
       commitCharacters:
         item.commitCharacters && item.commitCharacters !== defaults?.commitCharacters
@@ -274,6 +276,53 @@ const source: CompletionSource = async (context) => {
     validFor: list.isIncomplete ? undefined : validFor(list.items),
   };
   return completions;
+};
+
+/** A signature or type in place of `detail`, which `codeDetail` highlights. */
+type ServerCompletion = Completion & { code?: string };
+
+/**
+ * Highlight `text` with the buffer's language. Rust's are anonymous `fn(…)`
+ * types, which parse as a function once named, as Zed does.
+ */
+function highlightCode(state: EditorState, text: string): HTMLElement {
+  const dom = document.createElement('span');
+  dom.className = 'cm-completionDetail cm-btmux-completionCode';
+  const lang = state.facet(language);
+  if (!lang) {
+    dom.textContent = text;
+    return dom;
+  }
+  const at = lang.name === 'rust' ? (/^[\w ]*\bfn(?=\()/.exec(text)?.[0].length ?? -1) : -1;
+  const pad = at < 0 ? '' : ' f';
+  const source = at < 0 ? text : text.slice(0, at) + pad + text.slice(at);
+  const back = (pos: number) => (at < 0 || pos <= at ? pos : Math.max(at, pos - pad.length));
+  let pos = 0;
+  const add = (to: number, cls: string) => {
+    if (to <= pos) return;
+    const piece = text.slice(pos, to);
+    if (cls) {
+      const span = dom.appendChild(document.createElement('span'));
+      span.className = cls;
+      span.textContent = piece;
+    } else dom.append(piece);
+    pos = to;
+  };
+  highlightTree(lang.parser.parse(source), { style: (tags) => highlightingFor(state, tags) }, (from, to, cls) => {
+    add(back(from), '');
+    add(back(to), cls);
+  });
+  add(text.length, '');
+  return dom;
+}
+
+/** Shows server completions' `code`. */
+export const codeDetail = {
+  render: (completion: Completion, state: EditorState) => {
+    const code = (completion as ServerCompletion).code;
+    return code ? highlightCode(state, code) : null;
+  },
+  position: 80,
 };
 
 /** Completions from the view's language server. */
