@@ -117,7 +117,7 @@ export function editorTheme(a: EditorAppearance): Extension {
           borderRadius: '6px',
         },
         // Panels (quick open, pickers, `:` and `/`) float over the text, so
-        // it shows through; scroll margins keep the cursor clear of them.
+        // it shows through; `panelSpace` keeps the cursor clear of them.
         '.cm-panels': { position: 'absolute' },
         // Close buttons inherit the background, which would stack.
         '.cm-panels [name=close]': { backgroundColor: 'transparent' },
@@ -141,6 +141,8 @@ export function editorTheme(a: EditorAppearance): Extension {
         },
         // Highlighted as code (`codeDetail`), not set apart by italics.
         '.cm-completionDetail.cm-btmux-completionCode': { fontStyle: 'normal' },
+        // Token colors aren't checked against the selected row's background.
+        '.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-btmux-completionCode *': { color: 'inherit' },
         '.cm-completionMatchedText': { textDecoration: 'none', color: theme.blue, fontWeight: 'bold' },
         // Semantic tokens, in the roles `highlightSpecs` uses.
         '.cm-sem-namespace, .cm-sem-type, .cm-sem-class, .cm-sem-enum, .cm-sem-interface, .cm-sem-struct, .cm-sem-typeParameter':

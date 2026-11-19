@@ -407,15 +407,29 @@ try {
   await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: rust, line: 1, editor: 'native' });
   await until('detail.rs', async () => (await lines(page, paneId)) === '\n');
   await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+  // Two options, so the signature's row is selected in one state and not the other.
   await page.keyboard.type('fa');
   const signature = completions.locator('.cm-completionDetail', { hasText: 'fn(&str) -> Response<Body>' });
   await signature.waitFor();
-  const tokens = await signature.evaluate((el) =>
-    [...el.childNodes].map((n) => [n.textContent, n instanceof Element ? getComputedStyle(n).color : null]),
-  );
-  assert.equal(tokens.map(([text]) => text).join(''), 'fn(&str) -> Response<Body>');
-  const color = (text: string) => tokens.find(([t]) => t === text)?.[1];
-  assert(color('fn') && color('Response') && color('fn') !== color('Response'), JSON.stringify(tokens));
+  await completions.locator('.cm-completionLabel', { hasText: 'fakeField' }).waitFor();
+  const detailColors = () =>
+    signature.evaluate((el) => ({
+      selected: el.closest('li')!.getAttribute('aria-selected') === 'true',
+      row: getComputedStyle(el.closest('li')!).color,
+      tokens: [...el.childNodes].map((n) => [n.textContent, n instanceof Element ? getComputedStyle(n).color : null]),
+    }));
+  const states = [await detailColors()];
+  await page.keyboard.press('ArrowDown');
+  await until('the selection moved', async () => (await detailColors()).selected !== states[0].selected);
+  states.push(await detailColors());
+  const unselected = states.find((state) => !state.selected)!;
+  assert.equal(unselected.tokens.map(([text]) => text).join(''), 'fn(&str) -> Response<Body>');
+  const color = (text: string) => unselected.tokens.find(([t]) => t === text)?.[1];
+  assert(color('fn') && color('Response') && color('fn') !== color('Response'), JSON.stringify(unselected));
+  // The selected row's own color, as token colors aren't checked against its background.
+  const selected = states.find((state) => state.selected)!;
+  for (const [text, tokenColor] of selected.tokens)
+    if (tokenColor) assert.equal(tokenColor, selected.row, `${text}: ${JSON.stringify(selected)}`);
   assert.equal(await signature.evaluate((el) => getComputedStyle(el).fontStyle), 'normal');
   await page.keyboard.press('Escape');
   console.log('PASS highlighted completion details');

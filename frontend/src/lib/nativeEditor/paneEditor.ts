@@ -23,6 +23,7 @@ import { editorConnection } from './connection';
 import { editorTheme, type EditorAppearance } from './theme';
 import { detectIndent, languageFor } from './languages';
 import { codeDetail } from './completion';
+import { panelSpace } from './panelSpace';
 import { format, lspExtension, serverFailed, setDisplay } from './lsp';
 import { serverFoldsChanged } from './features';
 import { gitSigns, gitSummary } from './gitSigns';
@@ -281,6 +282,7 @@ export class PaneEditor {
       bracketMatching(),
       closeBrackets(),
       autocompletion({ addToOptions: [codeDetail] }),
+      panelSpace,
       rectangularSelection(),
       crosshairCursor(),
       highlightActiveLine(),
