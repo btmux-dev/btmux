@@ -491,6 +491,8 @@ try {
   await page.keyboard.press('Control+K');
   await until('Ctrl-K moved with Caps Lock', async () => (await selectedIndex()) === 0);
   await page.keyboard.type('nco');
+  // Only "inco" is answered late; earlier queries disable the list briefly too.
+  await until('inco', async () => (await lines(page, paneId)) === '\ninco');
   await page.locator('.cm-tooltip-autocomplete-disabled').waitFor();
   await page.keyboard.press('Control+p');
   await page.locator('.cm-tooltip-autocomplete:not(.cm-tooltip-autocomplete-disabled)').waitFor();

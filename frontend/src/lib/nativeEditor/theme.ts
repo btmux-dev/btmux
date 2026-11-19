@@ -45,12 +45,12 @@ export function highlightSpecs(theme: Theme) {
   ];
 }
 
-type IconRole = 'blue' | 'cyan' | 'green' | 'brightRed' | 'magenta' | 'red' | 'yellow' | 'foreground';
+type IconRole = 'blue' | 'cyan' | 'green' | 'brightRed' | 'magenta' | 'red' | 'yellow';
 
 /**
  * Completion kind icons: mini.icons' LSP codicons, as the Neovim surface shows
  * them, in base16 roles for its highlight groups (Azure/Blue=blue, Orange=brightRed,
- * Purple=magenta, Grey=foreground). Types are completion types (`KIND_TYPES` in
+ * Purple=magenta). Types are completion types (`KIND_TYPES` in
  * completion.ts, plus CodeMirror's own `namespace` and `type`).
  */
 const KIND_ICONS: [type: string, glyph: string, role: IconRole][] = [
