@@ -123,7 +123,7 @@ struct ReadPaneOutputParams {
 #[derive(Deserialize, JsonSchema)]
 struct WaitForAgentParams {
     pane_id: String,
-    /// Agent states to wait for: idle, working, blocked, done, unknown. Default ["idle", "done", "blocked"].
+    /// Agent states to wait for: idle, working, waiting, blocked, done, unknown. Default ["idle", "done", "blocked"].
     states: Option<Vec<String>>,
     /// Default 600000 (10 minutes), at most 3600000.
     timeout_ms: Option<u64>,
@@ -471,7 +471,7 @@ impl BtmuxMcpServer {
     }
 
     #[tool(
-        description = "List panes running a coding agent (Claude Code, Codex, Gemini CLI, ...) across all sessions, with each agent's state: working, blocked (waiting for approval or input), done (finished a turn nobody has looked at yet), idle, or unknown."
+        description = "List panes running a coding agent (Claude Code, Codex, Gemini CLI, ...) across all sessions, with each agent's state: working, waiting (its turn ended, but background shells or monitors will resume it), blocked (waiting for approval or input), done (finished a turn nobody has looked at yet), idle, or unknown."
     )]
     async fn list_agents(&self) -> Result<CallToolResult, ErrorData> {
         ok_json(self.state.read().await.agent_panes())
@@ -509,7 +509,7 @@ impl BtmuxMcpServer {
     }
 
     #[tool(
-        description = "Submit a prompt to the agent in a pane: pastes it, then presses Enter. By default waits until the agent starts and then settles (idle, done, or blocked) and returns its status and rendered screen; started=false means no turn was seen starting. With wait=false, returns {submitted: true} once Enter is sent. Refuses while the agent is blocked or a dialog is on screen, since typing would answer it; while its state is unknown or detection has stalled; and, when waiting, while it is working, since the turn that ends would not be this one. A dialog seen just before the Enter leaves the prompt pasted but not submitted."
+        description = "Submit a prompt to the agent in a pane: pastes it, then presses Enter. By default waits until the agent starts and then settles (idle, done, blocked, or waiting on background work) and returns its status and rendered screen; started=false means no turn was seen starting. With wait=false, returns {submitted: true} once Enter is sent. Refuses while the agent is blocked or a dialog is on screen, since typing would answer it; while its state is unknown or detection has stalled; and, when waiting, while it is working or waiting on background work, since the turn that ends would not be this one. A dialog seen just before the Enter leaves the prompt pasted but not submitted."
     )]
     async fn send_prompt(
         &self,

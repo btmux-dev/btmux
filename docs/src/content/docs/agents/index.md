@@ -35,6 +35,7 @@ pane that started it. Run `codex --no-daemon` to report to the right pane.
 | State       | Meaning                                                       |
 | ----------- | ------------------------------------------------------------- |
 | **working** | A turn is running                                             |
+| **waiting** | The turn ended, but background work will resume it            |
 | **blocked** | Waiting for you: a permission request or a question           |
 | **done**    | The turn finished and you haven't looked yet                  |
 | **idle**    | Waiting for a prompt                                          |
@@ -43,12 +44,16 @@ pane that started it. Run `codex --no-daemon` to report to the right pane.
 The state appears as a badge on the pane, and the status bar marks windows
 with a working agent. `done` becomes `idle` once you view the pane. Work an
 agent leaves running between turns, such as Claude Code's background shells,
-is shown beside the state: `idle · 2 shells, 1 monitor`.
+is shown beside the state. An agent at its prompt with such work is
+**waiting**, since it starts again by itself once the work ends: `waiting on
+2 shells, 1 monitor`. `btmux wait` and `wait_for_agent` keep waiting through
+it.
 
 ## Agent view
 
 `<prefix> + a` lists every agent on the server, grouped by state with the most
-urgent first: **blocked**, then **done**, **working**, and **idle**. Within a
+urgent first: **blocked**, then **done**, **working**, **waiting**, and
+**idle**. Within a
 group, the agent that has waited longest comes first.
 
 Each row shows the pane title, agent message, time in state, session, window,
@@ -73,7 +78,10 @@ tile with GitHub status and reported cost. Each client remembers its tiles.
 
 ## Notifications
 
-btmux notifies you when an agent gets blocked, fails, or finishes.
+btmux notifies you when an agent gets blocked, fails, or finishes. A turn
+that ends with background work running notifies only if the agent doesn't
+start again by itself: while it is **waiting**, the notification is held (up
+to 10 minutes), and the turn it resumes notifies instead.
 
 - **A dot** on the pane and its window, in every connected client. Viewing the
   pane clears it everywhere.

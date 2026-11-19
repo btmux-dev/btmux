@@ -159,6 +159,7 @@ export function PaneCorner({
 const AGENT_TOKEN_COLORS: Record<Exclude<AgentState, 'unknown'>, TokenProps['color']> = {
   blocked: 'yellow',
   working: 'blue',
+  waiting: 'blue',
   done: 'green',
   idle: 'gray',
 };
@@ -169,7 +170,11 @@ export function AgentStatusBadge({ status, className }: { status?: AgentStatus; 
   if (!status || status.state === 'unknown') return null;
   const agent = status.agent ? AGENTS.get(status.agent) : undefined;
   const state = agent || !status.agent ? status.state : `${status.agent} ${status.state}`;
-  const label = status.background ? `${state} · ${status.background}` : state;
+  const label = !status.background
+    ? state
+    : status.state === 'waiting'
+      ? `${state} on ${status.background}`
+      : `${state} · ${status.background}`;
   const tooltip = [status.message, status.background].filter(Boolean).join(' · ');
   const token = (
     <Token

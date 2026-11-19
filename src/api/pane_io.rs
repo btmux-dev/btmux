@@ -228,7 +228,7 @@ pub(crate) enum PromptReply {
     tag = "Agents",
     operation_id = "prompt-an-agent",
     summary = "Prompt an agent",
-    description = "Pastes `prompt` into the pane's agent and submits it. With `wait` (the default), replies once the agent has started and settled (idle, done, or blocked).",
+    description = "Pastes `prompt` into the pane's agent and submits it. With `wait` (the default), replies once the agent has started and settled (idle, done, blocked, or waiting on background work).",
     params(
         ("pane_id", description = "Pane ID"),
     ),

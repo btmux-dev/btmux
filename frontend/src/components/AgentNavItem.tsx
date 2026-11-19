@@ -9,7 +9,13 @@ import { useStore } from '../state/store';
 import { getAnimations } from '../state/configDefaults';
 import { AGENT_GROUPS, agentGroup, type AgentGroup } from '../lib/agentGroups';
 
-export const AGENT_DOT_VARIANT = { blocked: 'warning', working: 'accent', done: 'success', idle: 'neutral' } as const;
+export const AGENT_DOT_VARIANT = {
+  blocked: 'warning',
+  working: 'accent',
+  waiting: 'accent',
+  done: 'success',
+  idle: 'neutral',
+} as const;
 const RAIL_DOTS_PER_ROW = 4;
 
 /** Agents nav entry with live per-state agent indicators. */

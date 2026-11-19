@@ -4,7 +4,7 @@
 export type Layout = { "type": "leaf", pane_id: string, } | { "type": "v_split", id: string, ratio: number, left: Layout, right: Layout, } | { "type": "h_split", id: string, ratio: number, top: Layout, bottom: Layout, };
 
 // prettier-ignore
-export type AgentState = "unknown" | "idle" | "working" | "blocked" | "done";
+export type AgentState = "unknown" | "idle" | "working" | "waiting" | "blocked" | "done";
 
 // prettier-ignore
 export type AgentStatus = { state: AgentState, agent: string | null, source: string | null, message: string | null,

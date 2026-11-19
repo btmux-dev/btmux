@@ -20,6 +20,10 @@ import { runAction } from '../hooks/useKeybindings';
 import { TailscaleButton } from './TailscaleButton';
 import { MultipassButton } from './MultipassButton';
 import { EditorMenu } from './EditorMenu';
+import type { AgentState } from '../state/types';
+
+/** A window shows its most urgent agent; a result to read outranks one that resumes by itself. */
+const AGENT_ORDER: readonly AgentState[] = ['blocked', 'working', 'done', 'waiting', 'idle', 'unknown'];
 
 let mruVersion = 0;
 window.addEventListener(WINDOW_MRU_EVENT, () => mruVersion++);
@@ -105,15 +109,14 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
                 ['error', 'attention', 'success', 'info'].indexOf(b.level),
             )[0];
           const agent = [...win.panes].sort(
-            (a, b) =>
-              ['blocked', 'working', 'done', 'idle', 'unknown'].indexOf(a.agent_status.state) -
-              ['blocked', 'working', 'done', 'idle', 'unknown'].indexOf(b.agent_status.state),
+            (a, b) => AGENT_ORDER.indexOf(a.agent_status.state) - AGENT_ORDER.indexOf(b.agent_status.state),
           )[0];
+          const waiting = !notification && agent?.agent_status.state === 'waiting';
           const level =
             notification?.level ??
             (agent?.agent_status.state === 'blocked'
               ? 'attention'
-              : agent?.agent_status.state === 'working'
+              : agent?.agent_status.state === 'working' || agent?.agent_status.state === 'waiting'
                 ? 'info'
                 : agent?.agent_status.state === 'done'
                   ? 'success'
@@ -131,6 +134,9 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
                     label={notification?.body ?? `Agent ${agent?.agent_status.state}`}
                     variant={level === 'attention' ? 'warning' : level === 'info' ? 'accent' : level}
                     isPulsing={animations && (level === 'attention' || level === 'error')}
+                    // Hollow like other waiting dots, else it reads as working with animations off.
+                    className={waiting ? 'btm-agent-dot' : undefined}
+                    data-agent-state={waiting ? 'waiting' : undefined}
                   />
                 ) : undefined
               }

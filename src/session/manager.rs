@@ -7,7 +7,7 @@ use uuid::Uuid;
 use super::{
     agent::{AgentEvent, AgentLifecycle, AgentProcess, AgentReport, Authority, ToolCall},
     layout::{Layout, LayoutPreset},
-    AgentPane, AgentState, AgentStatus, Pane, PaneInfo, PaneSnapshot, Runtime, Session,
+    AgentPane, AgentState, AgentStatus, Pane, PaneAlert, PaneInfo, PaneSnapshot, Runtime, Session,
     SessionSummary, Window,
 };
 use crate::config::{ClientConfig, ColorMode, ConfigUpdate, FileConfig};
@@ -34,6 +34,21 @@ pub type HandoffExport = (
     crate::popup::PopupsHandoff,
     Vec<HandoffPane>,
 );
+
+/// How long a held completion alert waits for its agent to show waiting.
+const HELD_ALERT_GRACE: Duration = Duration::from_secs(2);
+/// How long it stays held while the agent waits, as background work such as
+/// a dev server may never end.
+const HELD_ALERT_MAX: Duration = Duration::from_secs(10 * 60);
+
+/// A finished turn's alert, held while its agent may be waiting on
+/// background work that resumes it.
+pub struct HeldAlert {
+    pub event: String,
+    pub alert: PaneAlert,
+    held: Instant,
+    waited: bool,
+}
 
 /// How long after an upgrade a pane's next agent can take its handed-off age.
 #[cfg_attr(not(unix), allow(dead_code))]
@@ -95,6 +110,7 @@ pub struct SessionManager {
     clients: usize,
     /// The control client the user focused most recently; it alone shows OS notifications.
     alert_client: Option<u32>,
+    held_alerts: HashMap<Uuid, HeldAlert>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -165,6 +181,7 @@ impl SessionManager {
             next_client: 0,
             clients: 0,
             alert_client: None,
+            held_alerts: HashMap::new(),
             widgets: Default::default(),
             popups: Default::default(),
             git: GitTracker::new(pty_env.meta_tx.clone()),
@@ -188,7 +205,7 @@ impl SessionManager {
             .flat_map(|window| &window.panes);
         std::sync::Arc::new(
             panes
-                .map(|pane| (pane.id, self.agent_status(pane.id).cloned()))
+                .map(|pane| (pane.id, self.agent_status(pane.id)))
                 .collect(),
         )
     }
@@ -222,7 +239,7 @@ impl SessionManager {
                             window_index,
                             window_name: window.name.clone(),
                             cwd: pane.pty.effective_cwd(),
-                            status: status.clone(),
+                            status,
                         });
                     }
                 }
@@ -231,11 +248,11 @@ impl SessionManager {
         panes
     }
 
-    pub fn agent_status(&self, pane_id: Uuid) -> Option<&AgentStatus> {
+    pub fn agent_status(&self, pane_id: Uuid) -> Option<AgentStatus> {
         self.agents
             .get(&pane_id)
             .filter(|agent| agent.is_active())
-            .map(|agent| &agent.status)
+            .map(AgentLifecycle::shown)
     }
 
     /// Identifies the pane's active agent instance, including explicitly reported ones.
@@ -526,7 +543,7 @@ impl SessionManager {
     pub fn agent_diagnostics(&self, pane_id: Uuid) -> serde_json::Value {
         let agent = self.agents.get(&pane_id).filter(|agent| agent.is_active());
         serde_json::json!({
-            "status": agent.map(|agent| &agent.status),
+            "status": agent.map(AgentLifecycle::shown),
             "authority": agent.map(AgentLifecycle::authority),
             "process": agent.and_then(AgentLifecycle::process),
             "detection": agent.and_then(|agent| agent.detection.as_ref()),
@@ -602,6 +619,73 @@ impl SessionManager {
         if self.alert_client == Some(client) {
             self.alert_client = None;
         }
+    }
+
+    /// Holds a finished turn's alert when the agent shows background work, as
+    /// Claude Code's Stop hook fires for turns that background work resumes.
+    /// Returns the alert when it isn't held.
+    pub fn hold_alert(
+        &mut self,
+        pane_id: Uuid,
+        event: String,
+        alert: PaneAlert,
+        now: Instant,
+    ) -> Option<(String, PaneAlert)> {
+        if !self
+            .agent_status(pane_id)
+            .is_some_and(|status| status.background.is_some())
+        {
+            // A newer result supersedes a held one.
+            self.held_alerts.remove(&pane_id);
+            return Some((event, alert));
+        }
+        let alert = HeldAlert {
+            event,
+            alert,
+            held: now,
+            waited: false,
+        };
+        self.held_alerts.insert(pane_id, alert);
+        None
+    }
+
+    /// A new turn makes a held alert stale.
+    pub fn drop_held_alert(&mut self, pane_id: Uuid) {
+        self.held_alerts.remove(&pane_id);
+    }
+
+    /// Held alerts to deliver now. One stays held while its agent waits (up
+    /// to `HELD_ALERT_MAX`) and through the turn that resumes it, whose start
+    /// drops it and whose Stop alerts instead; without a turn start, it goes
+    /// out once that turn ends. Agents that never wait get theirs after
+    /// `HELD_ALERT_GRACE`.
+    pub fn release_held_alerts(&mut self, now: Instant) -> Vec<(Uuid, HeldAlert)> {
+        let mut released = Vec::new();
+        for (pane_id, mut held) in std::mem::take(&mut self.held_alerts) {
+            if self.find_pane(pane_id).is_none() {
+                continue;
+            }
+            let age = now.duration_since(held.held);
+            let release = match self.agent_status(pane_id).map(|status| status.state) {
+                Some(AgentState::Waiting) => {
+                    held.waited = true;
+                    age >= HELD_ALERT_MAX
+                }
+                Some(AgentState::Working | AgentState::Blocked) if held.waited => false,
+                _ => held.waited || age >= HELD_ALERT_GRACE,
+            };
+            if release {
+                released.push((pane_id, held));
+            } else {
+                self.held_alerts.insert(pane_id, held);
+            }
+        }
+        released
+    }
+
+    /// Every held alert, for an upgrade, which doesn't hand them off.
+    pub fn take_held_alerts(&mut self) -> Vec<(Uuid, HeldAlert)> {
+        self.held_alerts.drain().collect()
     }
 
     pub fn alert_client(&self) -> Option<u32> {
@@ -1076,8 +1160,8 @@ impl SessionManager {
             return unread;
         };
         if agent.status.state == AgentState::Done {
-            agent.set_state(AgentState::Idle);
-            agent.status.message = None;
+            agent.acknowledge();
+            self.held_alerts.remove(&pane_id);
             // Seen, so later records can't bring the result back.
             if let Some(pane) = self.find_pane(pane_id) {
                 pane.pty.forget_program_results();
@@ -1766,7 +1850,7 @@ impl SessionManager {
         self.agents
             .get(&pane_id)
             .filter(|agent| agent.is_active())
-            .map(|agent| agent.since)
+            .map(AgentLifecycle::shown_since)
     }
 
     /// Rebuild the session tree from saved snapshots. Process state is *not*
@@ -2055,7 +2139,7 @@ impl SessionManager {
                             cwd: p.pty.effective_cwd(),
                             cwd_remote: p.pty.effective_cwd().is_some()
                                 && p.pty.local_cwd().is_none(),
-                            agent_status: self.agent_status(p.id).cloned().unwrap_or_default(),
+                            agent_status: self.agent_status(p.id).unwrap_or_default(),
                             agent_id: self.agent_id(p.id),
                             agent_since: self.agent_since(p.id),
                             unread: p.unread.clone(),
@@ -2642,6 +2726,135 @@ mod agent_tests {
     }
 
     #[tokio::test]
+    async fn finished_turn_alerts_wait_for_background_work() {
+        use crate::pty::program_status::{State, Summary};
+        use crate::pty::screen::ScreenSnapshot;
+        let (exit_tx, _) = mpsc::unbounded_channel();
+        let (meta_tx, _) = mpsc::unbounded_channel();
+        let mut mgr = SessionManager::new(
+            "/bin/sh".into(),
+            FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8044,
+            None,
+        );
+        let session = mgr.create_session(None).await;
+        let pane_id = mgr.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        let detector = crate::session::detection::Detector::new(None);
+        let now = Instant::now();
+        let ms = |ms| now + Duration::from_millis(ms);
+        let rule = "─".repeat(10);
+        let footer = |busy: &str| format!("{rule}\n❯\n{rule}\n  ⏵⏵ auto mode on{busy} · 1 shell");
+        let mut revision = 0;
+        let mut scan = |mgr: &mut SessionManager, text: &str, at| {
+            revision += 1;
+            let screen = ScreenSnapshot {
+                text: text.into(),
+                revision,
+                title_revision: revision,
+                ..Default::default()
+            };
+            let agent = mgr.agents.get_mut(&pane_id).unwrap();
+            agent.scan_screen(&detector, &screen, at);
+            agent.scan_screen(&detector, &screen, at + Duration::from_millis(700));
+        };
+        let program = |state| Summary {
+            state,
+            kind: None,
+            app: None,
+            text: None,
+        };
+        let alert = || PaneAlert {
+            level: crate::ws::control::NotificationLevel::Attention,
+            title: Some("Done".into()),
+            body: None,
+        };
+        let mut agent = AgentLifecycle::detected(
+            AgentProcess {
+                pid: 10,
+                start_time: 5,
+            },
+            "claude".into(),
+            now,
+        );
+        agent.observe_program(Some(&program(State::Working)), now);
+        mgr.agents.insert(pane_id, agent);
+
+        // Without background work, the alert goes out.
+        assert!(mgr
+            .hold_alert(pane_id, "Stop".into(), alert(), now)
+            .is_some());
+
+        let set = |mgr: &mut SessionManager, state, at| {
+            let agent = mgr.agents.get_mut(&pane_id).unwrap();
+            agent.observe_program(Some(&program(state)), at);
+        };
+        let hold = |mgr: &mut SessionManager, at| {
+            assert!(mgr
+                .hold_alert(pane_id, "Stop".into(), alert(), at)
+                .is_none());
+        };
+
+        // Held past the grace while waiting and through the turn that
+        // resumes it, then shown once that turn ends.
+        scan(&mut mgr, &footer(" · esc to interrupt"), now);
+        hold(&mut mgr, now);
+        assert!(mgr.release_held_alerts(ms(100)).is_empty());
+        scan(&mut mgr, &footer(""), ms(1000));
+        assert_eq!(
+            mgr.agent_status(pane_id).unwrap().state,
+            AgentState::Waiting
+        );
+        assert!(mgr.release_held_alerts(ms(5000)).is_empty());
+        scan(&mut mgr, &footer(" · esc to interrupt"), ms(6000));
+        assert_eq!(
+            mgr.agent_status(pane_id).unwrap().state,
+            AgentState::Working
+        );
+        assert!(mgr.release_held_alerts(ms(7000)).is_empty());
+        set(&mut mgr, State::Done, ms(7500));
+        assert_eq!(mgr.release_held_alerts(ms(7600)).len(), 1);
+
+        // A turn start drops it, as that turn's Stop alerts.
+        set(&mut mgr, State::Working, ms(8000));
+        hold(&mut mgr, ms(8000));
+        scan(&mut mgr, &footer(""), ms(8000));
+        assert!(mgr.release_held_alerts(ms(9000)).is_empty());
+        mgr.drop_held_alert(pane_id);
+        assert!(mgr.held_alerts.is_empty());
+
+        // Waiting on work that may never end holds it for a while only.
+        hold(&mut mgr, ms(9000));
+        assert!(mgr
+            .release_held_alerts(ms(9000) + HELD_ALERT_MAX / 2)
+            .is_empty());
+        assert_eq!(mgr.release_held_alerts(ms(9000) + HELD_ALERT_MAX).len(), 1);
+
+        // Seeing the result drops it.
+        hold(&mut mgr, ms(10000));
+        set(&mut mgr, State::Done, ms(10000));
+        assert!(mgr.acknowledge_pane(pane_id));
+        assert!(mgr.held_alerts.is_empty());
+
+        // A result shown without background work supersedes a held one.
+        hold(&mut mgr, ms(10000));
+        let done = format!("{rule}\n❯\n{rule}\n  ⏵⏵ auto mode on");
+        scan(&mut mgr, &done, ms(10000));
+        assert!(mgr
+            .hold_alert(pane_id, "Stop".into(), alert(), ms(10000))
+            .is_some());
+        assert!(mgr.held_alerts.is_empty());
+        scan(&mut mgr, &footer(""), ms(10000));
+
+        // An agent that never waits gets it after the grace.
+        set(&mut mgr, State::Done, ms(11000));
+        hold(&mut mgr, ms(11000));
+        assert!(mgr.release_held_alerts(ms(12000)).is_empty());
+        assert_eq!(mgr.release_held_alerts(ms(13000)).len(), 1);
+    }
+
+    #[tokio::test]
     async fn agent_since_changes_only_with_the_state() {
         let (exit_tx, _) = mpsc::unbounded_channel();
         let (meta_tx, _) = mpsc::unbounded_channel();
@@ -2781,7 +2994,7 @@ mod agent_tests {
         pane.pty.input_tx.send(report.to_vec()).unwrap();
         let state = |mgr: &mut SessionManager| {
             mgr.sync_program_status(Instant::now());
-            mgr.agent_status(pane_id).cloned()
+            mgr.agent_status(pane_id)
         };
         let deadline = Instant::now() + Duration::from_secs(5);
         while state(&mut mgr).is_none() && Instant::now() < deadline {

@@ -1,14 +1,15 @@
 import type { AgentState } from '../state/types';
 
-export type AgentGroup = 'blocked' | 'done' | 'working' | 'idle';
+export type AgentGroup = 'blocked' | 'done' | 'working' | 'waiting' | 'idle';
 
 /** Most urgent first: waiting on you, then results to read, then the rest. */
-export const AGENT_GROUPS: readonly AgentGroup[] = ['blocked', 'done', 'working', 'idle'];
+export const AGENT_GROUPS: readonly AgentGroup[] = ['blocked', 'done', 'working', 'waiting', 'idle'];
 
 export const AGENT_GROUP_LABELS: Record<AgentGroup, string> = {
   blocked: 'Blocked',
   done: 'Done',
   working: 'Working',
+  waiting: 'Waiting',
   idle: 'Idle',
 };
 
