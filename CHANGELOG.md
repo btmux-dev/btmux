@@ -14,6 +14,7 @@ actions, saved state, and API types can change in any release.
   icon for each kind (field, struct, module, …), the ones the Neovim surface
   shows, instead of CodeMirror's symbols, which gave fields and properties an
   empty-looking square.
+  ([#174](https://github.com/btmux-dev/btmux/pull/174))
 
 ## [0.0.212] - 2026-11-19
 
