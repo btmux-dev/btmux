@@ -13,8 +13,10 @@ actions, saved state, and API types can change in any release.
 - `popup-opacity` and `popup-blur` set the native editor's popups (completions,
   hovers, pickers); `popup-blur` also blurs behind Neovim floats. Popups are
   now 85% opaque, up from 50%.
+  ([#178](https://github.com/btmux-dev/btmux/pull/178))
 - The native editor's status line marks each language server with a dot:
   green when ready, pulsing while starting or working, red when it failed.
+  ([#178](https://github.com/btmux-dev/btmux/pull/178))
 
 ### Fixed
 
