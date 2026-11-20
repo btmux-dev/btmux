@@ -28,7 +28,13 @@ mkdirSync(join(configHome, 'btmux'), { recursive: true });
 writeFileSync(
   join(configHome, 'btmux', 'config.toml'),
   '[language-server.fake]\ncommand = "fake-lsp"\n[[language]]\nname = "fake"\nfile-types = ["fake"]\nlanguage-servers = ["fake"]\n' +
-    '[[language]]\nname = "rust"\nfile-types = ["rs"]\nlanguage-servers = ["fake"]\n',
+    '[[language]]\nname = "rust"\nfile-types = ["rs"]\nlanguage-servers = ["fake"]\n' +
+    // Two servers for one file, started only by the last test.
+    '[language-server.first]\ncommand = "fake-lsp"\nargs = ["--no-format", "--slow-publish"]\n' +
+    '[language-server.second]\ncommand = "fake-lsp"\nargs = ["--second"]\n' +
+    '[[language]]\nname = "duo"\nfile-types = ["duo"]\nlanguage-servers = ["first", "second"]\n' +
+    '[language-server.late]\ncommand = "fake-lsp"\nargs = ["--second", "--slow-init"]\n' +
+    '[[language]]\nname = "late"\nfile-types = ["late"]\nlanguage-servers = ["late"]\n',
 );
 const log = () => {
   try {
@@ -751,6 +757,90 @@ try {
   writeFileSync(join(dir, 'after.fake'), 'x\n');
   await until('the watched file after the restart', () => /watched .*after\.fake/.test(log()));
   console.log('PASS watched files after a restart');
+
+  // Two servers for one file: each one's diagnostics, hovers, and code
+  // actions, and formatting from the only one that can.
+  const duo = join(dir, 'main.duo');
+  writeFileSync(duo, 'bad lint fmt\n');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: duo, line: 1, editor: 'native' });
+  await pane.locator('[aria-label^="Language server first"][data-lsp-state="ready"]').waitFor();
+  await pane.locator('[aria-label^="Language server second"][data-lsp-state="ready"]').waitFor();
+  await until('the file', async () => (await lines(page, paneId)) === 'bad lint fmt\n');
+  await pane.getByText('1 error, 1 warning').waitFor();
+  console.log('PASS diagnostics from two servers');
+
+  // Lenses move text as they arrive; hover the mark itself.
+  await pane.locator('.cm-lsp-code-lens').first().waitFor();
+  const lintMark = pane.locator('.cm-lintRange-warning').first();
+  await lintMark.hover();
+  const hover = page.locator('.cm-lsp-hover-tooltip');
+  await hover.getByText('Fake hover for lint').waitFor();
+  await hover.getByText('Second hover for lint').waitFor();
+  console.log('PASS hovers from two servers');
+
+  await lintMark.click();
+  await page.keyboard.press('ControlOrMeta+.');
+  const fix = pane.getByRole('option', { name: /Fix lint/ });
+  await fix.waitFor();
+  assert.match((await fix.textContent()) ?? '', /second/);
+  await fix.click();
+  await until('the fix', async () => (await lines(page, paneId)) === 'bad clean fmt\n');
+  await pane.getByText('1 error, 0 warnings').waitFor();
+  console.log('PASS code actions from the second server');
+
+  await page.keyboard.press('Shift+Alt+f');
+  await until('the format', async () => (await lines(page, paneId)) === 'bad clean FMT\n');
+  console.log('PASS formatting from the server that can');
+
+  // A line added above: the second server's warning on it comes after the
+  // editor synced (1 s), the first server's update 2 s late. Meanwhile its
+  // error stays on its text. Its late update for formatting comes first.
+  await page.waitForTimeout(2500);
+  await page.keyboard.press('ControlOrMeta+Home');
+  await page.keyboard.type('lint\n');
+  await until('the new warning', async () => (await pane.locator('.cm-lintRange-warning').count()) === 1);
+  const error = pane.locator('.cm-lintRange-error');
+  assert.equal(await error.textContent(), 'bad');
+  await until('the first server', () => /version \d+ "lint\\nbad clean FMT\\n"/.test(log()));
+  await page.waitForTimeout(2500);
+  assert.equal(await error.textContent(), 'bad');
+  console.log("PASS a server's diagnostics stay on their text while another publishes");
+
+  // One server's failed completion leaves the other's suggestions.
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.type(' fa');
+  const suggestion = completions.locator('.cm-completionLabel', { hasText: 'fakeCompletion' });
+  await suggestion.waitFor();
+  await page.waitForTimeout(1000);
+  assert(await suggestion.isVisible(), 'the failed request closed completion');
+  await page.keyboard.press('Escape');
+  console.log("PASS one server's failed completion keeps the other's");
+
+  // A slow server doesn't hold back the other's hover: the first sends
+  // nothing for 6 s on "stall".
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('stall');
+  await page.keyboard.press('Escape');
+  await page.mouse.move(0, 0);
+  const stall = await wordRect(page, paneId, 3, 'stall');
+  const stalledAt = Date.now();
+  await page.mouse.move(stall.x, stall.y);
+  await page.locator('.cm-lsp-hover-tooltip').getByText('Second hover for stall').waitFor({ timeout: 4000 });
+  assert(Date.now() - stalledAt < 4000);
+  await page.mouse.move(0, 0);
+  console.log("PASS a slow server doesn't hold back another's hover");
+
+  // A command run while the server starts waits for it.
+  const late = join(dir, 'start.late');
+  writeFileSync(late, 'fmt\n');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: late, line: 1, editor: 'native' });
+  await until('the late file', async () => (await lines(page, paneId)) === 'fmt\n');
+  await pane.locator('[aria-label^="Language server late"][data-lsp-state="starting"]').waitFor();
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+  await page.keyboard.press('Shift+Alt+f');
+  await until('the format', async () => (await lines(page, paneId)) === 'FMT\n');
+  console.log('PASS a command run while the server starts waits for it');
 } catch (error) {
   const shot = process.env.TEST_SHOT;
   if (shot) for (const context of browser.contexts()) await context.pages()[0]?.screenshot({ path: shot });

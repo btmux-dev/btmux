@@ -55,11 +55,14 @@ const LANGUAGES: &[Builtin] = &[
         &["py", "pyi"],
         &[
             "pyproject.toml",
+            "ty.toml",
+            "ruff.toml",
+            ".ruff.toml",
             "setup.py",
             "setup.cfg",
             "requirements.txt",
         ],
-        &["pyright"],
+        &["ty", "ruff"],
     ),
     ("go", "go", &["go"], &["go.mod", "go.work"], &["gopls"]),
     ("c", "c", &["c", "h"], C_ROOTS, &["clangd"]),
@@ -146,7 +149,8 @@ const SERVERS: &[(&str, &str, &[&str])] = &[
         "typescript-language-server",
         &["--stdio"],
     ),
-    ("pyright", "pyright-langserver", &["--stdio"]),
+    ("ty", "ty", &["server"]),
+    ("ruff", "ruff", &["server"]),
     ("gopls", "gopls", &[]),
     ("clangd", "clangd", &[]),
     ("lua-language-server", "lua-language-server", &[]),
@@ -394,7 +398,10 @@ mod tests {
         }
         assert!(config.language(Path::new("/x/notes.justfile")).is_none());
         assert!(config.language(Path::new("/x/notes.txt")).is_none());
-        assert_eq!(config.servers["pyright"].command, "pyright-langserver");
+        assert_eq!(config.servers["ty"].args, ["server"]);
+        let builtin = LspConfig::resolve(&FileConfig::default(), "/bin/sh");
+        let python = builtin.language(Path::new("/x/a.py")).unwrap();
+        assert_eq!(python.language_servers, ["ty", "ruff"]);
     }
 
     #[test]

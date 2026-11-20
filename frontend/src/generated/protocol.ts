@@ -498,6 +498,10 @@ format_on_save: boolean,
  */
 vim_mode: boolean,
 /**
+ * `[native-editor] virtual-text`.
+ */
+virtual_text: boolean,
+/**
  * Vim mappings in the native editor: defaults and `[native-editor.vim-keys]`.
  */
 vim_binds: Array<VimBind>,
@@ -865,7 +869,11 @@ export type ConfigUpdate = { prefix?: string, shell?: string, show_pane_titles?:
 /**
  * `[native-editor] vim`.
  */
-vim_mode?: boolean, window_grid_count?: number, appearance?: Appearance, colors_dark?: string, colors_light?: string, font_family?: string, font_weight?: number, font_size?: number, cursor_blink?: boolean, scrollback?: number, allow_transparency?: boolean, disable_stdin?: boolean, macos_edit_keys?: boolean, smooth_scroll_duration?: number, cursor_animation_duration?: number, cell_background_opacity?: number, animations?: boolean, console_level?: string, file_level?: string, os_notifications?: boolean, os_notification_level?: NotificationLevel, wallpaper?: string, wallpaper_shaders?: ShaderLayers, wallpaper_opacity?: number, desktop_background_opacity?: number, wallpaper_blur?: number, wallpaper_saturate?: number, wallpaper_speed?: number, wallpaper_fps?: number, wallpaper_resolution?: number, wallpaper_shader_follows_mouse_cursor?: boolean, wallpaper_shader_follows_keyboard_input?: boolean, backdrop_blur?: number, backdrop_dim?: number, popup_opacity?: number, popup_blur?: number, toolbar_opacity?: number, toolbar_blur?: number, toolbar_saturate?: number,
+vim_mode?: boolean,
+/**
+ * `[native-editor] virtual-text`.
+ */
+virtual_text?: boolean, window_grid_count?: number, appearance?: Appearance, colors_dark?: string, colors_light?: string, font_family?: string, font_weight?: number, font_size?: number, cursor_blink?: boolean, scrollback?: number, allow_transparency?: boolean, disable_stdin?: boolean, macos_edit_keys?: boolean, smooth_scroll_duration?: number, cursor_animation_duration?: number, cell_background_opacity?: number, animations?: boolean, console_level?: string, file_level?: string, os_notifications?: boolean, os_notification_level?: NotificationLevel, wallpaper?: string, wallpaper_shaders?: ShaderLayers, wallpaper_opacity?: number, desktop_background_opacity?: number, wallpaper_blur?: number, wallpaper_saturate?: number, wallpaper_speed?: number, wallpaper_fps?: number, wallpaper_resolution?: number, wallpaper_shader_follows_mouse_cursor?: boolean, wallpaper_shader_follows_keyboard_input?: boolean, backdrop_blur?: number, backdrop_dim?: number, popup_opacity?: number, popup_blur?: number, toolbar_opacity?: number, toolbar_blur?: number, toolbar_saturate?: number,
 /**
  * Border-draw style name; `"none"` (or the empty string) disables it.
  */

@@ -129,7 +129,13 @@ try {
   await page.locator('.cm-git-change').first().click();
   const preview = page.locator('.cm-git-preview');
   await preview.waitFor();
-  assert.equal(await preview.locator('.cm-git-removed-line').allTextContents().then((l) => l.join('|')), 'two');
+  assert.equal(
+    await preview
+      .locator('.cm-git-removed-line')
+      .allTextContents()
+      .then((l) => l.join('|')),
+    'two',
+  );
   assert.match((await preview.locator('.cm-git-preview-bar span').textContent()) ?? '', /Hunk 1 of 3/);
   await page.locator('.cm-git-added-line').first().waitFor();
 
@@ -172,12 +178,20 @@ try {
   await page.keyboard.press('ArrowUp');
   await run('editor-blame-line');
   await page.locator('.cm-git-blame-message', { hasText: 'With a body' }).waitFor();
+  // CodeMirror places a tooltip off screen until it measures it.
+  await page.waitForFunction(() => {
+    const el = document.querySelector('.cm-git-blame-tooltip');
+    return !!el && el.getBoundingClientRect().top > -1000;
+  });
   const blameBox = await page.locator('.cm-git-blame-tooltip').evaluate((el) => {
     el.scrollTop = 100;
     const r = el.getBoundingClientRect();
     return { top: r.top, bottom: r.bottom, scrollTop: el.scrollTop, viewport: innerHeight };
   });
-  assert.ok(blameBox.scrollTop > 0 && blameBox.top >= 0 && blameBox.bottom <= blameBox.viewport, JSON.stringify(blameBox));
+  assert.ok(
+    blameBox.scrollTop > 0 && blameBox.top >= 0 && blameBox.bottom <= blameBox.viewport,
+    JSON.stringify(blameBox),
+  );
   await page.keyboard.press('ArrowDown');
   await page.locator('.cm-git-blame-tooltip').waitFor({ state: 'detached' });
   await run('editor-toggle-line-blame');

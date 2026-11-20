@@ -1,10 +1,16 @@
 // The native editor's named commands: palette actions, `[keys]` and vim mappings.
 import type { EditorView } from '@codemirror/view';
-import { findReferences, jumpToDefinition, LSPPlugin } from '@codemirror/lsp-client';
 import { foldAll, unfoldAll } from '@codemirror/language';
 import { forEachDiagnostic, openLintPanel } from '@codemirror/lint';
 import { useStore } from '../../state/store';
-import { canFormatRange, editorCommands as lspCommands, formatSelection } from './features';
+import {
+  canFormatRange,
+  findReferences,
+  jumpToDefinition,
+  editorCommands as lspCommands,
+  formatSelection,
+} from './features';
+import { plugins } from './servers';
 import { formatCommand, signatureHelpCommand, startRename } from './lsp';
 import { showDiagnostics, showHover } from './hover';
 import { gitCommands } from './gitSigns';
@@ -38,7 +44,7 @@ export function toDiagnostic(view: EditorView, which: Which): boolean {
   return true;
 }
 
-const needsServer = (run: (view: EditorView) => boolean) => (view: EditorView) => !!LSPPlugin.get(view) && run(view);
+const needsServer = (run: (view: EditorView) => boolean) => (view: EditorView) => plugins(view).length > 0 && run(view);
 
 /** Format the selection if there is one and the server can, else the file. */
 function format(view: EditorView) {

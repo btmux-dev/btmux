@@ -256,13 +256,14 @@ Every option with its default, as `btmux generate-config` prints it. Uncomment a
 # hosts = ["github.example.com"]   # GitHub Enterprise hosts to ask too; others never are
 
 # Language servers for the native editor. Built in: rust-analyzer,
-# typescript-language-server, pyright, gopls, clangd, lua-language-server, nil,
+# typescript-language-server, ty and ruff, gopls, clangd, lua-language-server, nil,
 # bash-language-server, taplo, just-lsp, yaml-language-server, and the
 # vscode-langservers-extracted servers (JSON, CSS, HTML), each used when found
 # on PATH. A table of the same name replaces a built-in one.
 # [native-editor]
 # format-on-save = false
 # vim = false   # Vim keybindings; :w saves, :q hides, a double Esc hides only from normal mode
+# virtual-text = false   # show diagnostics' messages at the end of their lines
 # leader = " "       # <leader> in vim-keys and vim-groups: one key, like "," or "<Space>"
 # timeout = 1000     # ms a vim mapping that is also a prefix waits for more keys
 # which-key = true   # show the keys that can follow a pending prefix

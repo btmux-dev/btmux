@@ -46,7 +46,13 @@
 // - progress: "Indexing" at 50% while any document contains "busy"
 // - hover on "stall": sends nothing for 6 s, then answers
 // - --no-init: never answers initialize; --crash-init: exits on the first
-//   initialize (once, with a marker in $BTMUX_FAKE_LSP)
+//   initialize (once, with a marker in $BTMUX_FAKE_LSP); --no-format: no
+//   formatting; --slow-publish: diagnostics only pushed, 2 s late after changes;
+//   --slow-init: answers initialize after 2 s
+// - --second: another server for the same files, with only a warning on every
+//   "lint", a code action replacing it with "clean", "Second hover for WORD",
+//   formatting that uppercases every "fmt", completion failing 500 ms late, and
+//   diagnostics 1 s late after changes (once the editor synced)
 import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
@@ -111,8 +117,25 @@ function send(message: unknown) {
   process.stdout.write(body);
 }
 
+const SECOND = process.argv.includes('--second');
+const SLOW_PUBLISH = process.argv.includes('--slow-publish');
+
 function publish(uri: string) {
   const doc = docs.get(uri)!;
+  if (SECOND) {
+    const diagnostics = occurrences(doc.text, 'lint').map((range) => ({
+      range,
+      severity: 2,
+      message: 'second lint',
+      source: 'second',
+    }));
+    send({
+      jsonrpc: '2.0',
+      method: 'textDocument/publishDiagnostics',
+      params: { uri, version: doc.version, diagnostics },
+    });
+    return;
+  }
   const diagnostics = [
     ...occurrences(doc.text, 'bad').map((range) => ({ range, severity: 1, message: 'bad word' })),
     ...occurrences(doc.text, 'unused').map((range) => ({ range, severity: 4, message: 'never used', tags: [1] })),
@@ -145,7 +168,47 @@ function text(uri: string) {
   return docs.get(uri)?.text ?? readFileSync(pathOf(uri), 'utf8');
 }
 
+function second(msg: any): unknown {
+  const p = msg.params;
+  switch (msg.method) {
+    case 'initialize':
+      return {
+        capabilities: {
+          textDocumentSync: { openClose: true, change: 2 },
+          hoverProvider: true,
+          documentFormattingProvider: true,
+          codeActionProvider: true,
+          completionProvider: {},
+        },
+      };
+    case 'textDocument/completion':
+      throw new Error('second completion failed');
+    case 'shutdown':
+      return null;
+    case 'textDocument/hover':
+      return {
+        contents: { kind: 'markdown', value: `Second hover for ${wordAt(text(p.textDocument.uri), p.position)}` },
+      };
+    case 'textDocument/formatting':
+      return occurrences(text(p.textDocument.uri), 'fmt').map((range) => ({ range, newText: 'FMT' }));
+    case 'textDocument/codeAction': {
+      const uri = p.textDocument.uri;
+      const ranges = occurrences(text(uri), 'lint').filter((r) => r.start.line === p.range.start.line);
+      if (!ranges.length) return [];
+      return [
+        {
+          title: 'Fix lint',
+          kind: 'quickfix',
+          edit: { changes: { [uri]: ranges.map((range) => ({ range, newText: 'clean' })) } },
+        },
+      ];
+    }
+  }
+  return undefined;
+}
+
 function handle(msg: any): unknown {
+  if (SECOND) return second(msg);
   const p = msg.params;
   switch (msg.method) {
     case 'initialize':
@@ -160,8 +223,8 @@ function handle(msg: any): unknown {
           referencesProvider: true,
           documentRangeFormattingProvider: true,
           renameProvider: { prepareProvider: true },
-          documentFormattingProvider: true,
-          diagnosticProvider: { interFileDependencies: true, workspaceDiagnostics: false },
+          documentFormattingProvider: !process.argv.includes('--no-format'),
+          diagnosticProvider: SLOW_PUBLISH ? undefined : { interFileDependencies: true, workspaceDiagnostics: false },
           implementationProvider: true,
           inlineCompletionProvider: true,
           semanticTokensProvider: { legend: { tokenTypes: ['function'], tokenModifiers: [] }, full: true },
@@ -594,7 +657,10 @@ function notify(msg: any) {
       }
       doc.version = p.textDocument.version;
       log(`version ${doc.version} ${JSON.stringify(doc.text)}`);
-      publish(p.textDocument.uri);
+      const late = SLOW_PUBLISH ? 2000 : SECOND ? 1000 : 0;
+      const uri = p.textDocument.uri;
+      if (late) setTimeout(() => docs.has(uri) && publish(uri), late);
+      else publish(uri);
       progress();
       break;
     }
@@ -643,7 +709,7 @@ process.stdin.on('data', (chunk: Buffer) => {
         process.exit(1);
       }
     }
-    if (msg.method === 'initialized')
+    if (msg.method === 'initialized' && !SECOND)
       request('client/registerCapability', {
         registrations: [
           {
@@ -676,8 +742,9 @@ process.stdin.on('data', (chunk: Buffer) => {
           writeFileSync(marker, '');
           process.exit(1);
         }
-        if (!process.argv.includes('--no-init')) setTimeout(reply, 300);
+        if (!process.argv.includes('--no-init')) setTimeout(reply, process.argv.includes('--slow-init') ? 2000 : 300);
       } else if (
+        !SECOND &&
         msg.method === 'textDocument/hover' &&
         wordAt(text(msg.params.textDocument.uri), msg.params.position) === 'stall'
       ) {
@@ -688,10 +755,10 @@ process.stdin.on('data', (chunk: Buffer) => {
           reply();
           for (const message of queued) send(message);
         }, 6000);
-      }
-      else if (msg.method === 'textDocument/formatting' && text(msg.params.textDocument.uri).includes('slow'))
+      } else if (msg.method === 'textDocument/formatting' && text(msg.params.textDocument.uri).includes('slow'))
         setTimeout(reply, 700);
       else if (msg.method === 'completionItem/resolve' && msg.params.label === 'slowImport') setTimeout(reply, 700);
+      else if (SECOND && msg.method === 'textDocument/completion') setTimeout(reply, 500);
       else if (
         msg.method === 'textDocument/completion' &&
         msg.params.textDocument.uri.endsWith('/incomplete.fake') &&

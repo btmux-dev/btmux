@@ -25,6 +25,7 @@ import {
   setSelectedCompletion,
 } from '@codemirror/autocomplete';
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
+import { virtualText } from './virtualText';
 import { forEachDiagnostic, lintKeymap } from '@codemirror/lint';
 import { Doc, type DocStatus } from './doc';
 import { editorConnection } from './connection';
@@ -32,7 +33,7 @@ import { editorTheme, type EditorAppearance } from './theme';
 import { detectIndent, languageFor } from './languages';
 import { codeDetail } from './completion';
 import { panelSpace } from './panelSpace';
-import { format, lspExtension, serverFailed, setDisplay } from './lsp';
+import { dropFailedDiagnostics, format, lspExtension, setDisplay, workingServers } from './lsp';
 import { serverFoldsChanged } from './features';
 import { gitSigns, gitSummary } from './gitSigns';
 import { editorCommands, toDiagnostic } from './actions';
@@ -149,8 +150,10 @@ export class PaneEditor {
   private readonly languageC = new Compartment();
   private readonly lspC = new Compartment();
   private readonly vimC = new Compartment();
-  /** Docs whose server had failed when last configured. */
-  private failed = new WeakMap<Doc, boolean>();
+  private readonly virtualTextC = new Compartment();
+  private virtualText = false;
+  /** Docs' working servers when last configured. */
+  private working = new WeakMap<Doc, string>();
   private stopStatus: () => void;
   /** The last Esc of a quick run, and whether the run can hide the editor. */
   private esc = { last: -Infinity, armed: false };
@@ -210,9 +213,10 @@ export class PaneEditor {
     // Drop a server's features once it fails, and add them back if it recovers.
     this.stopStatus = editorConnection.onLspStatus(() => {
       for (const doc of this.docs.values()) {
-        const failed = serverFailed(doc.servers[0]);
-        if (!doc.state || failed === (this.failed.get(doc) ?? false)) continue;
-        this.failed.set(doc, failed);
+        const working = workingServers(doc).join();
+        if (!doc.state || working === this.working.get(doc)) continue;
+        this.working.set(doc, working);
+        for (const spec of dropFailedDiagnostics(doc) ?? []) doc.update(spec);
         doc.update({ effects: this.lspC.reconfigure(lspExtension(doc)) });
       }
     });
@@ -288,6 +292,7 @@ export class PaneEditor {
       this.common(),
       // Ahead of the keymaps, so vim's chords win over theirs.
       this.vimC.of(this.vimExtension()),
+      this.virtualTextC.of(this.virtualText ? virtualText : []),
       lineNumbers(),
       gitSigns(() => doc.git),
       highlightActiveLineGutter(),
@@ -344,7 +349,7 @@ export class PaneEditor {
   }
 
   private lspFor(doc: Doc) {
-    this.failed.set(doc, serverFailed(doc.servers[0]));
+    this.working.set(doc, workingServers(doc).join());
     return lspExtension(doc);
   }
 
@@ -627,6 +632,13 @@ export class PaneEditor {
 
   private applyVim() {
     for (const doc of this.docs.values()) doc.update({ effects: this.vimC.reconfigure(this.vimExtension()) });
+  }
+
+  /** Show diagnostics' messages at the end of their lines, or not. */
+  setVirtualText(on: boolean) {
+    if (on === this.virtualText) return;
+    this.virtualText = on;
+    for (const doc of this.docs.values()) doc.update({ effects: this.virtualTextC.reconfigure(on ? virtualText : []) });
   }
 
   setAppearance(appearance: EditorAppearance) {

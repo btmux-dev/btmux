@@ -62,6 +62,52 @@ function serverDot(server: LspServerStatus): {
   return { state: 'ready', variant: 'success', pulsing: false, text: 'ready' };
 }
 
+// A tab's close control; a button can't hold a button, so it isn't one.
+// The unsaved dot gives way to it on hover.
+function TabClose({
+  name,
+  dirty,
+  selected,
+  onClose,
+}: {
+  name: string;
+  dirty: boolean;
+  selected: boolean;
+  onClose: () => void;
+}) {
+  // Touch screens have no hover: inactive tabs always show it, unsaved ones the dot.
+  const x = dirty
+    ? 'invisible group-hover:visible'
+    : selected
+      ? ''
+      : 'invisible group-hover:visible pointer-coarse:visible';
+  return (
+    <span
+      data-tab-close
+      title={`Close ${name} (Delete)`}
+      className="-mr-1 ml-1 grid size-4 place-items-center rounded-sm hover:bg-overlay-hover"
+      // Keeps the editor's focus.
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={(event) => {
+        // Not a tab activation.
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+      }}
+    >
+      {dirty && (
+        <Circle
+          aria-label="Unsaved"
+          size={8}
+          fill="currentColor"
+          className="col-start-1 row-start-1 group-hover:invisible"
+        />
+      )}
+      <X aria-hidden size={12} className={`col-start-1 row-start-1 ${x}`} />
+    </span>
+  );
+}
+
 /** The native editor over a pane, as the server's `PaneEditor` describes it. */
 export function NativeEditor({
   paneId,
@@ -185,6 +231,10 @@ export function NativeEditor({
   }, [editor, config?.vim_mode]);
 
   useEffect(() => {
+    editor?.setVirtualText(!!config?.virtual_text);
+  }, [editor, config?.virtual_text]);
+
+  useEffect(() => {
     editor?.setKeys(
       config?.vim_binds ?? [],
       config?.vim_groups ?? [],
@@ -220,6 +270,7 @@ export function NativeEditor({
   const lsp = status ? servers.filter((s) => status.servers.includes(s.id)) : [];
   const animations = getAnimations(config);
   const work = status ? progress.filter((p) => status.servers.includes(p.server)) : [];
+  /** Close `path`, asking about unsaved changes; true if it closes without asking. */
   const close = (path: string, force = false) => {
     // Another pane showing the file keeps its unsaved changes.
     const elsewhere = useStore
@@ -229,7 +280,11 @@ export function NativeEditor({
       );
     if (!editor?.status(path)?.dirty || elsewhere) op({ kind: 'close', path });
     else if (force) void editor.revert(path).then(() => op({ kind: 'close', path }));
-    else setClosing(path);
+    else {
+      setClosing(path);
+      return false;
+    }
+    return true;
   };
   const closeRef = useRef(close);
   closeRef.current = close;
@@ -262,14 +317,40 @@ export function NativeEditor({
       <HStack gap={1} vAlign="center" className="btm-sans shrink-0 pr-1">
         <TabList size="sm" role="tablist" value={active ?? ''} onChange={(path) => op({ kind: 'activate', path })}>
           {state.files.map((path) => {
-            const dirty = editor?.status(path)?.dirty;
+            const dirty = !!editor?.status(path)?.dirty;
             return (
               <Tab
                 key={path}
                 value={path}
                 label={basename(path)}
                 panelId={panelId}
-                endContent={dirty ? <Circle aria-label="Unsaved" size={8} fill="currentColor" /> : undefined}
+                className="group"
+                // Middle click closes, as in browsers.
+                onMouseDown={(event) => event.button === 1 && event.preventDefault()}
+                onAuxClick={(event) => event.button === 1 && close(path)}
+                // The X can't be a button inside the tab, so Delete closes the focused tab.
+                aria-keyshortcuts="Delete"
+                aria-description="Delete closes the file"
+                onKeyDown={(event) => {
+                  if (event.key !== 'Delete' || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey)
+                    return;
+                  event.preventDefault();
+                  const tab = event.currentTarget;
+                  const tabs = [
+                    ...(tab.closest('[role="tablist"]')?.querySelectorAll<HTMLElement>('[role="tab"]') ?? []),
+                  ];
+                  const at = tabs.indexOf(tab);
+                  // Focus stays in the strip once this tab goes; asking to save keeps it.
+                  if (close(path)) (tabs[at + 1] ?? tabs[at - 1])?.focus();
+                }}
+                endContent={
+                  <TabClose
+                    name={basename(path)}
+                    dirty={dirty}
+                    selected={path === active}
+                    onClose={() => close(path)}
+                  />
+                }
               />
             );
           })}
@@ -296,9 +377,6 @@ export function NativeEditor({
                 onClick: () => op({ kind: 'open', path: b.path, line: null }),
               }))}
             />
-          )}
-          {active && (
-            <IconButton label="Close file" size="sm" variant="ghost" icon={<X />} onClick={() => close(active)} />
           )}
         </HStack>
       </HStack>

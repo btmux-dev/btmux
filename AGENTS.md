@@ -558,6 +558,16 @@ frames: the router answers its `initialize` from the cached result, drops its
 sync notifications, rewrites request ids, and replies `ContentModified` when a
 request's stamped `version` (synced plus unconfirmed, since tabs push every
 unconfirmed update and the server skips ones it applied) isn't the buffer's.
+A file gets every server of its language that hasn't failed (Python: ty, then
+ruff). lsp-client allows one `LSPPlugin` per view, for the first; the rest get
+plugins of their own (`lib/nativeEditor/servers.ts`), and all clients sync
+together, since lsp-client maps positions with the first plugin's unsynced
+changes. Diagnostics, code actions, hovers, inlay hints, lenses, folds,
+completions, and workspace symbols merge across servers (each server's
+diagnostics map through edits until it publishes again, and a failed
+completion request yields nothing rather than ending the others); other features go to
+the first server with the capability, and edits and commands back to the one
+that gave them.
 The backend answers the server's requests (`workspace/configuration` from
 `config`, `applyEdit`, …), caches diagnostics for tabs connecting later, and
 keeps `$/progress` work in `lsp_status`, which editors show as progress toasts
@@ -1032,9 +1042,11 @@ transparent background). Keys are **kebab-case in TOML but camelCase on the wire
 so the same struct round-trips both ways. Unset fields serialize as `null`, and
 the frontend applies its `CONFIG_DEFAULTS` (`state/configDefaults.ts`).
 
-`[native-editor]` holds `format-on-save` and `vim` (both default off), sent
-flat as `ClientConfig.format_on_save` and `vim_mode`; only `vim` is in
-`ConfigUpdate`, so Settings can toggle it.
+`[native-editor]` holds `format-on-save`, `vim`, and `virtual-text` (all
+default off), sent flat as `ClientConfig.format_on_save`, `vim_mode`, and
+`virtual_text`; `vim` and `virtual-text` are in `ConfigUpdate`, so Settings
+can toggle them. Virtual text (`lib/nativeEditor/virtualText.ts`) shows each
+line's most severe diagnostic after it, leaving out hints.
 
 There are dark and light schemes. `appearance` (`auto`, `dark`, `light`)
 picks the shown one; `auto` uses the system color mode browsers report

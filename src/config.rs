@@ -684,6 +684,8 @@ pub struct NativeEditorConfig {
     pub format_on_save: bool,
     /// Vim keybindings.
     pub vim: bool,
+    /// Show diagnostics' messages at the end of their lines.
+    pub virtual_text: bool,
     /// How long a mapping that is also a prefix waits for more keys, in ms.
     pub timeout: u32,
     /// Show the keys that can follow a pending prefix.
@@ -698,6 +700,7 @@ pub struct NativeEditorConfig {
 struct RawNativeEditor {
     format_on_save: bool,
     vim: bool,
+    virtual_text: bool,
     leader: String,
     timeout: u32,
     which_key: bool,
@@ -710,6 +713,7 @@ impl Default for RawNativeEditor {
         Self {
             format_on_save: false,
             vim: false,
+            virtual_text: false,
             leader: vim_keys::DEFAULT_LEADER.into(),
             timeout: vim_keys::DEFAULT_TIMEOUT,
             which_key: true,
@@ -727,6 +731,7 @@ impl TryFrom<RawNativeEditor> for NativeEditorConfig {
         Ok(Self {
             format_on_save: raw.format_on_save,
             vim: raw.vim,
+            virtual_text: raw.virtual_text,
             timeout: raw.timeout,
             which_key: raw.which_key,
             vim_binds: vim_keys::resolve(&leader, &raw.vim_keys)?,
@@ -1588,6 +1593,8 @@ pub struct ClientConfig {
     pub format_on_save: bool,
     /// `[native-editor] vim`.
     pub vim_mode: bool,
+    /// `[native-editor] virtual-text`.
+    pub virtual_text: bool,
     /// Vim mappings in the native editor: defaults and `[native-editor.vim-keys]`.
     pub vim_binds: Vec<VimBind>,
     /// Which-key group names: defaults and `[native-editor.vim-groups]`.
@@ -2212,13 +2219,14 @@ pub fn generate_config_toml() -> String {
 # hosts = ["github.example.com"]   # GitHub Enterprise hosts to ask too; others never are
 
 # Language servers for the native editor. Built in: rust-analyzer,
-# typescript-language-server, pyright, gopls, clangd, lua-language-server, nil,
+# typescript-language-server, ty and ruff, gopls, clangd, lua-language-server, nil,
 # bash-language-server, taplo, just-lsp, yaml-language-server, and the
 # vscode-langservers-extracted servers (JSON, CSS, HTML), each used when found
 # on PATH. A table of the same name replaces a built-in one.
 # [native-editor]
 # format-on-save = false
 # vim = false   # Vim keybindings; :w saves, :q hides, a double Esc hides only from normal mode
+# virtual-text = false   # show diagnostics' messages at the end of their lines
 # leader = " "       # <leader> in vim-keys and vim-groups: one key, like "," or "<Space>"
 # timeout = {DEFAULT_VIM_TIMEOUT}     # ms a vim mapping that is also a prefix waits for more keys
 # which-key = true   # show the keys that can follow a pending prefix
@@ -2557,6 +2565,7 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         editor: file.editor.unwrap_or(Editor::Native),
         format_on_save: file.native_editor.format_on_save,
         vim_mode: file.native_editor.vim,
+        virtual_text: file.native_editor.virtual_text,
         vim_binds: file.native_editor.vim_binds.clone(),
         vim_groups: file.native_editor.vim_groups.clone(),
         vim_timeout: file.native_editor.timeout,
@@ -2622,6 +2631,8 @@ pub struct ConfigUpdate {
     pub editor: Option<Editor>,
     /// `[native-editor] vim`.
     pub vim_mode: Option<bool>,
+    /// `[native-editor] virtual-text`.
+    pub virtual_text: Option<bool>,
     pub window_grid_count: Option<u32>,
     pub appearance: Option<Appearance>,
     pub colors_dark: Option<String>,
@@ -2700,6 +2711,9 @@ impl ConfigUpdate {
         }
         if other.vim_mode.is_some() {
             self.vim_mode = other.vim_mode;
+        }
+        if other.virtual_text.is_some() {
+            self.virtual_text = other.virtual_text;
         }
         if other.window_grid_count.is_some() {
             self.window_grid_count = other.window_grid_count;
@@ -2860,6 +2874,9 @@ pub fn resolve_with_overrides(
     }
     if let Some(vim) = overrides.vim_mode {
         file.native_editor.vim = vim;
+    }
+    if let Some(on) = overrides.virtual_text {
+        file.native_editor.virtual_text = on;
     }
     if let Some(window_grid_count) = overrides.window_grid_count {
         file.window_grid_count = Some(window_grid_count.clamp(1, 24));
@@ -3332,7 +3349,7 @@ palette:
     #[test]
     fn native_editor_settings_default_off_and_parse() {
         let defaults = FileConfig::default().native_editor;
-        assert!(!defaults.format_on_save && !defaults.vim);
+        assert!(!defaults.format_on_save && !defaults.vim && !defaults.virtual_text);
         assert!(!resolve_binds(&FileConfig::default(), ColorMode::Dark).vim_mode);
         let example = generate_config_toml();
         let table = example
@@ -3345,9 +3362,12 @@ palette:
         assert!(table.contains("vim = false"), "{table}");
         let file: FileConfig = toml::from_str(&table).unwrap();
         assert_eq!(file.native_editor, NativeEditorConfig::default());
-        let file: FileConfig =
-            toml::from_str("[native-editor]\nvim = true\nformat-on-save = true\n").unwrap();
+        let file: FileConfig = toml::from_str(
+            "[native-editor]\nvim = true\nformat-on-save = true\nvirtual-text = true\n",
+        )
+        .unwrap();
         assert!(file.native_editor.vim && file.native_editor.format_on_save);
+        assert!(resolve_binds(&file, ColorMode::Dark).virtual_text);
         assert!(resolve_binds(&file, ColorMode::Dark).vim_mode);
         assert!(toml::from_str::<FileConfig>("[native-editor]\nvim-mode = true\n").is_err());
     }
@@ -3513,6 +3533,7 @@ palette:
                 window_sort: Some(WindowSort::Created),
                 editor: Some(Editor::Pane),
                 vim_mode: Some(true),
+                virtual_text: Some(true),
                 window_grid_count: Some(9),
                 cursor_blink: Some(false),
                 scrollback: Some(42),
@@ -3542,6 +3563,7 @@ palette:
         assert_eq!(resolved.window_sort, WindowSort::Created);
         assert_eq!(resolved.editor, Editor::Pane);
         assert!(resolved.vim_mode);
+        assert!(resolved.virtual_text);
         assert_eq!(resolved.window_grid_count, 9);
         assert_eq!(resolved.terminal.cursor_blink, Some(false));
         assert_eq!(resolved.terminal.scrollback, Some(42));
