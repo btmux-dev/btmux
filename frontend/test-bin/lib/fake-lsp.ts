@@ -45,7 +45,8 @@
 // - opened documents: logged with their language id
 // - progress: "Indexing" at 50% while any document contains "busy"
 // - hover on "stall": sends nothing for 6 s, then answers
-// - --no-init: never answers initialize
+// - --no-init: never answers initialize; --crash-init: exits on the first
+//   initialize (once, with a marker in $BTMUX_FAKE_LSP)
 import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
@@ -670,6 +671,11 @@ process.stdin.on('data', (chunk: Buffer) => {
         );
       // Late capabilities: features must ask once they arrive.
       if (msg.method === 'initialize') {
+        const marker = join(process.env.BTMUX_FAKE_LSP ?? '/nonexistent', 'crashed-init');
+        if (process.argv.includes('--crash-init') && !existsSync(marker)) {
+          writeFileSync(marker, '');
+          process.exit(1);
+        }
         if (!process.argv.includes('--no-init')) setTimeout(reply, 300);
       } else if (
         msg.method === 'textDocument/hover' &&

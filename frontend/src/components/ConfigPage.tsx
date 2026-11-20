@@ -999,10 +999,10 @@ export function ConfigPage({ config, send, request }: Props) {
                   {tab === 'effects' && (
                     <VStack gap={4} id="settings-effects" role="tabpanel" aria-label={TAB_LABELS.effects}>
                       <FormLayout>
-                        {range('backdropBlur', 'Modal backdrop blur (px)', 0, 40, 0.5)}
+                        {range('backdropBlur', 'Modal backdrop blur (px)', 0, 50, 0.5)}
                         {range('backdropDim', 'Modal backdrop dimming', 0, 1, 0.05)}
                         {range('popupOpacity', 'Editor popup opacity', 0, 1, 0.05)}
-                        {range('popupBlur', 'Editor popup blur (px)', 0, 40, 0.5)}
+                        {range('popupBlur', 'Editor popup blur (px)', 0, 50, 0.5)}
                         {choose('paneSwitchBorderStyle', 'Pane switch border animation', [
                           none,
                           ...PANE_BORDER_STYLES.map((item) => ({ value: item.id, label: item.label })),

@@ -158,7 +158,8 @@ key isn't mapped. Esc drops keys typed so far, so it can't be mapped.
 The editor shares one instance of each language server per project root across
 clients. The root is the outermost directory in the Git worktree with a marker
 for that language, such as `Cargo.toml`. The status line shows each server
-with a dot. Hover it for details; narrow panes keep only the dot.
+with a dot. Hover, focus, or tap it for details; narrow panes keep only the
+dot. With `animations = false`, dots don't pulse.
 
 | Dot           | Server                                                       |
 | ------------- | ------------------------------------------------------------ |

@@ -1140,7 +1140,8 @@ impl super::Hub {
         let Some(server) = inner.lsp.servers.get_mut(&id) else {
             return;
         };
-        if server.generation != generation {
+        // A stopped process's messages, already on their way, are ignored.
+        if server.generation != generation || server.handle.is_none() {
             return;
         }
         server.heard = Instant::now();
@@ -1338,6 +1339,9 @@ impl Inner {
         let Some(server) = self.lsp.servers.get_mut(&id) else {
             return;
         };
+        if server.state != ServerState::Starting {
+            return;
+        }
         if let Some(e) = message.get("error") {
             server.state = ServerState::Failed;
             server.message = Some(format!(

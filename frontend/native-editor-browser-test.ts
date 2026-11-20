@@ -447,10 +447,10 @@ try {
     splits.push(await api(`/api/panes/${paneId}/split`, 'POST', { direction: 'right', select: false }));
     const statusLine = () =>
       page.getByLabel('Language server fake').evaluate((server) => {
-        const line = server.closest('[data-lsp-state]')!.parentElement!.parentElement!;
+        const line = server.closest('[data-editor-status]')!;
         return {
-          server: getComputedStyle(server).display,
-          dot: getComputedStyle(server.closest('[data-lsp-state]')!.firstElementChild!).display,
+          server: getComputedStyle(server.querySelector('[data-lsp-name]')!).display,
+          dot: getComputedStyle(server.firstElementChild!).display,
           // On one line, without clipping.
           fits: line.scrollWidth <= line.clientWidth && line.clientHeight < 30,
           width: line.clientWidth,
@@ -645,14 +645,15 @@ try {
     console.log('PASS formatting follows its file when the view switches');
 
     // A server that isn't installed shows in the status line, and its features stay off.
-    writeFileSync(
-      join(configHome, 'btmux', 'config.toml'),
-      [
-        '[language-server.missing]',
+    const lspConfig = [
+      '[language-server.missing]',
         'command = "btmux-missing-lsp"',
         '[language-server.stall]',
         'command = "fake-lsp"',
         'timeout = 2',
+        '[language-server.crashinit]',
+        'command = "fake-lsp"',
+        'args = ["--crash-init"]',
         '[language-server.noinit]',
         'command = "fake-lsp"',
         'args = ["--no-init"]',
@@ -666,12 +667,16 @@ try {
         'file-types = ["stall"]',
         'language-servers = ["stall"]',
         '[[language]]',
+        'name = "crashinit"',
+        'file-types = ["crashinit"]',
+        'language-servers = ["crashinit"]',
+        '[[language]]',
         'name = "noinit"',
         'file-types = ["noinit"]',
-        'language-servers = ["noinit"]',
-        '',
-      ].join('\n'),
-    );
+      'language-servers = ["noinit"]',
+      '',
+    ].join('\n');
+    writeFileSync(join(configHome, 'btmux', 'config.toml'), lspConfig);
     await waitForAsync(page, async () => {
       const { useStore } = await import('/src/state/store.tsx' as string);
       return useStore.getState().config?.format_on_save === false;
@@ -702,6 +707,44 @@ try {
     await page.getByLabel('Language server stall').getByText('stall: not responding').waitFor();
     await dot('ready').waitFor({ timeout: 8000 });
     console.log('PASS a silent language server shows as not responding until it answers');
+
+    // A tab whose initialization failed (the server crashed starting) initializes again once it's ready.
+    const crashinit = join(dir, 'x.crashinit');
+    writeFileSync(crashinit, 'hover\n');
+    await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: crashinit, line: null, editor: 'native' });
+    await waitForText(page, paneId, 'hover\n');
+    await dot('ready').waitFor();
+    const hovered = (await wordRect(0, 'hover'))!;
+    // The pointer is still there from the last file.
+    await page.mouse.move(0, 0);
+    await page.mouse.move(hovered.x, hovered.y);
+    await page.locator('.cm-tooltip').getByText('Fake hover for').waitFor();
+    await page.mouse.move(0, 0);
+    console.log('PASS a tab initializes again after its server restarts');
+
+    // A working server's dot pulses, unless animations are off.
+    const busy = join(dir, 'busy.stall');
+    writeFileSync(busy, 'busy\n');
+    await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: busy, line: null, editor: 'native' });
+    await waitForText(page, paneId, 'busy\n');
+    await dot('busy').waitFor();
+    const pulses = () => dot('busy').evaluate((button) => button.getAnimations({ subtree: true }).length);
+    assert.ok((await pulses()) > 0);
+    writeFileSync(join(configHome, 'btmux', 'config.toml'), `animations = false\n${lspConfig}`);
+    await waitForAsync(page, async () => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      return useStore.getState().config?.animations === false;
+    });
+    for (let i = 0; i < 50 && (await pulses()) > 0; i++) await page.waitForTimeout(20);
+    assert.equal(await pulses(), 0);
+    console.log('PASS dots pulse only with animations');
+
+    // The status is reachable by keyboard: focus shows its tooltip.
+    await page.keyboard.press('Shift');
+    await dot('busy').focus();
+    await page.getByRole('tooltip').filter({ hasText: 'stall: Indexing' }).waitFor();
+    await dot('busy').blur();
+    console.log("PASS a server's status shows on keyboard focus");
 
     // One that doesn't answer `initialize` in time fails.
     const noinit = join(dir, 'x.noinit');

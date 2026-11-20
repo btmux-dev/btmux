@@ -8,6 +8,7 @@ import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { Tab, TabList } from '@astryxdesign/core/TabList';
 import { StatusDot, type StatusDotProps } from '@astryxdesign/core/StatusDot';
 import { Text } from '@astryxdesign/core/Text';
+import { Tooltip } from '@astryxdesign/core/Tooltip';
 import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
 import { Circle, FileWarning, X } from 'lucide-react';
 import type { EditorViewOp, PaneEditor as PaneEditorState } from '../generated/protocol';
@@ -24,7 +25,12 @@ import { useStore } from '../state/store';
 import { runAction } from '../hooks/useKeybindings';
 import { WhichKey } from './WhichKey';
 import { STARTUP_THEME } from '../state/startupTheme';
-import { getTerminalFontFamily, getTerminalFontSize, getTerminalFontWeight } from '../state/configDefaults';
+import {
+  getAnimations,
+  getTerminalFontFamily,
+  getTerminalFontSize,
+  getTerminalFontWeight,
+} from '../state/configDefaults';
 import { buildFontFamily, terminalTransparency } from './TerminalPane';
 import { Spinner } from './Spinner';
 import { ProgressCard } from './ProgressCard';
@@ -212,6 +218,7 @@ export function NativeEditor({
   const panelId = `native-editor-${paneId}`;
   const status = active && editor ? editor.status(active) : null;
   const lsp = status ? servers.filter((s) => status.servers.includes(s.id)) : [];
+  const animations = getAnimations(config);
   const work = status ? progress.filter((p) => status.servers.includes(p.server)) : [];
   const close = (path: string, force = false) => {
     // Another pane showing the file keeps its unsaved changes.
@@ -368,7 +375,7 @@ export function NativeEditor({
       </div>
       {active && (
         // A container, so narrow panes drop the least useful items.
-        <HStack gap={3} vAlign="center" className="@container shrink-0 px-2 py-0.5">
+        <HStack gap={3} vAlign="center" className="@container shrink-0 px-2 py-0.5" data-editor-status>
           {editor?.vimMode && (
             <Text size="sm" weight="semibold" maxLines={1} className="shrink-0" aria-label="Vim mode">
               {editor.vimMode}
@@ -409,31 +416,30 @@ export function NativeEditor({
             )}
             {lsp.map((server) => {
               const dot = serverDot(server);
+              const summary = `${server.name}: ${dot.text}`;
               return (
-                <HStack key={server.id} gap={1} vAlign="center" className="min-w-0" data-lsp-state={dot.state}>
-                  {/* Narrow panes keep the dot; its tooltip names the server. */}
-                  <StatusDot
-                    variant={dot.variant}
-                    isPulsing={dot.pulsing}
-                    label={`${server.name}: ${dot.text}`}
-                    tooltip={`${server.name}: ${dot.text}`}
-                  />
-                  <Text
-                    size="sm"
-                    color="secondary"
-                    maxLines={1}
-                    className="min-w-0 @max-md:hidden"
-                    aria-label={`Language server ${server.name}`}
+                // Narrow panes keep the dot; focus, hover, or a tap shows its tooltip.
+                <Tooltip key={server.id} content={summary} touchTrigger="tap">
+                  <button
+                    type="button"
+                    aria-label={`Language server ${summary}`}
+                    data-lsp-state={dot.state}
+                    className="flex min-w-0 items-center gap-1 rounded-sm"
+                    // A click keeps the editor's focus.
+                    onMouseDown={(event) => event.preventDefault()}
                   >
-                    {server.state === 'failed'
-                      ? `${server.name}: ${server.message ?? 'failed'}`
-                      : server.state === 'starting'
-                        ? `${server.name}…`
-                        : server.unresponsive
-                          ? `${server.name}: not responding`
-                          : server.name}
-                  </Text>
-                </HStack>
+                    <StatusDot variant={dot.variant} isPulsing={animations && dot.pulsing} label={summary} />
+                    <Text size="sm" color="secondary" maxLines={1} className="min-w-0 @max-md:hidden" data-lsp-name>
+                      {server.state === 'failed'
+                        ? `${server.name}: ${server.message ?? 'failed'}`
+                        : server.state === 'starting'
+                          ? `${server.name}…`
+                          : server.unresponsive
+                            ? `${server.name}: not responding`
+                            : server.name}
+                    </Text>
+                  </button>
+                </Tooltip>
               );
             })}
             {status?.language && (
