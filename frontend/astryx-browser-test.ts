@@ -774,6 +774,12 @@ try {
   await dialog.getByRole('textbox', { name: 'Generated TOML', exact: true }).focus();
   await page.keyboard.press('ArrowDown');
   assert.equal(await page.evaluate(() => document.activeElement?.tagName), 'TEXTAREA');
+  // Home Manager users get the same settings as Nix.
+  await dialog.getByRole('radio', { name: 'Home Manager', exact: true }).click();
+  const nix = await dialog.getByRole('textbox', { name: 'Generated Nix', exact: true }).inputValue();
+  assert.match(nix, /^programs\.btmux\.settings = \{$/m);
+  assert.match(nix, /^  keys = \{\n    .+ = "F9";$/m);
+  await dialog.getByRole('radio', { name: 'config.toml', exact: true }).click();
   await dialog.getByRole('switch', { name: 'Show TOML', exact: true }).click();
   await page.keyboard.press('Escape');
   if (await dialog.count()) await page.keyboard.press('Escape');

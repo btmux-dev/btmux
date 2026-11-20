@@ -17,7 +17,8 @@ import { APPEARANCES } from '../lib/appearance';
 import { systemColorMode } from '../state/startupTheme';
 import { PANE_BORDER_STYLES } from '../lib/paneSwitchBorder';
 import type { ShaderLayer } from '../generated/protocol';
-import { hasShaderWallpaper, wallpaperLayersToml } from '../lib/wallpaperCatalog';
+import { hasShaderWallpaper, wallpaperLayerSettings, wallpaperLayersToml } from '../lib/wallpaperCatalog';
+import { homeManagerSettings, NumberText, type SettingValue } from '../lib/nixSettings';
 import { ShaderLayerStack } from './ShaderLayerStack';
 import { useWallpaperCheck, type WallpaperStatus } from '../hooks/useWallpaperCheck';
 import {
@@ -52,6 +53,7 @@ import { NumberInput } from '@astryxdesign/core/NumberInput';
 import { TextArea } from '@astryxdesign/core/TextArea';
 import { Selector } from '@astryxdesign/core/Selector';
 import { Switch } from '@astryxdesign/core/Switch';
+import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
 import { Slider } from '@astryxdesign/core/Slider';
 import { FormLayout } from '@astryxdesign/core/FormLayout';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
@@ -260,112 +262,142 @@ const TOML_DEFAULTS = {
   osNotificationLevel: 'attention',
 } as const;
 
-function optLine(name: string, value: string): string | null {
-  return value ? `${name} = ${quote(value)}` : null;
+type Pair = readonly [string, SettingValue];
+
+function optSetting(name: string, value: string): Pair | null {
+  return value ? [name, value] : null;
 }
 
-function strLine(name: string, value: string, fallback: string): string | null {
-  return value === fallback ? null : `${name} = ${quote(value)}`;
+function strSetting(name: string, value: string, fallback: string): Pair | null {
+  return value === fallback ? null : [name, value];
 }
 
-function boolLine(name: string, value: boolean, fallback: boolean): string | null {
-  return value === fallback ? null : `${name} = ${value}`;
+function boolSetting(name: string, value: boolean, fallback: boolean): Pair | null {
+  return value === fallback ? null : [name, value];
 }
 
-function intLine(name: string, value: number, fallback: number): string | null {
-  return value === fallback ? null : `${name} = ${value}`;
+function intSetting(name: string, value: number, fallback: number): Pair | null {
+  return value === fallback ? null : [name, value];
 }
 
-function numLine(name: string, value: number, fallback: number, decimals: number): string | null {
+function numSetting(name: string, value: number, fallback: number, decimals: number): Pair | null {
   const formatted = value.toFixed(decimals);
-  return formatted === fallback.toFixed(decimals) ? null : `${name} = ${formatted}`;
+  return formatted === fallback.toFixed(decimals) ? null : [name, new NumberText(formatted)];
 }
 
-function toToml(draft: Draft): string {
-  const keyLines = Object.entries(draft.keyOverrides)
+const isPair = (pair: Pair | null): pair is Pair => pair !== null;
+
+/** The draft's non-default settings, as config.toml's top level, `[[wallpaper-shader]]` tables, and tables. */
+function settingsModel(draft: Draft) {
+  const keySettings = Object.entries(draft.keyOverrides)
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([action, key]) => `${action} = ${quote(key)}`);
+    .map(([action, key]): Pair => [action, key]);
 
   // `allow-transparency` has no fixed default: an unset value inherits
   // whichever behavior a wallpaper being present would already imply.
   const defaultAllowTransparency = draft.wallpaper !== '' || hasShaderWallpaper(draft.wallpaperShaders);
 
-  const topLines = [
-    strLine('prefix', draft.prefix, TOML_DEFAULTS.prefix),
-    draft.shell ? `shell = ${quote(draft.shell)}` : null,
-    boolLine('animations', draft.animations, TOML_DEFAULTS.animations),
-    boolLine('show-pane-titles', draft.showPaneTitles, TOML_DEFAULTS.showPaneTitles),
-    strLine('session-sort', draft.sessionSort, TOML_DEFAULTS.sessionSort),
-    strLine('window-sort', draft.windowSort, TOML_DEFAULTS.windowSort),
-    strLine('editor', draft.editor, TOML_DEFAULTS.editor),
-    intLine('window-grid-count', draft.windowGridCount, TOML_DEFAULTS.windowGridCount),
-    strLine('appearance', draft.appearance, TOML_DEFAULTS.appearance),
-    optLine('colors-dark', draft.colorsDark),
-    optLine('colors-light', draft.colorsLight),
-    optLine('wallpaper', draft.wallpaper),
-    numLine('wallpaper-opacity', draft.wallpaperOpacity, TOML_DEFAULTS.wallpaperOpacity, 2),
-    numLine('desktop-background-opacity', draft.desktopBackgroundOpacity, TOML_DEFAULTS.desktopBackgroundOpacity, 2),
-    numLine('wallpaper-blur', draft.wallpaperBlur, TOML_DEFAULTS.wallpaperBlur, 1),
-    numLine('wallpaper-saturate', draft.wallpaperSaturate, TOML_DEFAULTS.wallpaperSaturate, 2),
-    numLine('wallpaper-speed', draft.wallpaperSpeed, TOML_DEFAULTS.wallpaperSpeed, 2),
-    intLine('wallpaper-fps', draft.wallpaperFps, TOML_DEFAULTS.wallpaperFps),
-    numLine('wallpaper-resolution', draft.wallpaperResolution, TOML_DEFAULTS.wallpaperResolution, 2),
-    boolLine('wallpaper-shader-follows-mouse-cursor', draft.wallpaperFollowsMouse, TOML_DEFAULTS.wallpaperFollowsMouse),
-    boolLine(
+  const topSettings = [
+    strSetting('prefix', draft.prefix, TOML_DEFAULTS.prefix),
+    optSetting('shell', draft.shell),
+    boolSetting('animations', draft.animations, TOML_DEFAULTS.animations),
+    boolSetting('show-pane-titles', draft.showPaneTitles, TOML_DEFAULTS.showPaneTitles),
+    strSetting('session-sort', draft.sessionSort, TOML_DEFAULTS.sessionSort),
+    strSetting('window-sort', draft.windowSort, TOML_DEFAULTS.windowSort),
+    strSetting('editor', draft.editor, TOML_DEFAULTS.editor),
+    intSetting('window-grid-count', draft.windowGridCount, TOML_DEFAULTS.windowGridCount),
+    strSetting('appearance', draft.appearance, TOML_DEFAULTS.appearance),
+    optSetting('colors-dark', draft.colorsDark),
+    optSetting('colors-light', draft.colorsLight),
+    optSetting('wallpaper', draft.wallpaper),
+    numSetting('wallpaper-opacity', draft.wallpaperOpacity, TOML_DEFAULTS.wallpaperOpacity, 2),
+    numSetting('desktop-background-opacity', draft.desktopBackgroundOpacity, TOML_DEFAULTS.desktopBackgroundOpacity, 2),
+    numSetting('wallpaper-blur', draft.wallpaperBlur, TOML_DEFAULTS.wallpaperBlur, 1),
+    numSetting('wallpaper-saturate', draft.wallpaperSaturate, TOML_DEFAULTS.wallpaperSaturate, 2),
+    numSetting('wallpaper-speed', draft.wallpaperSpeed, TOML_DEFAULTS.wallpaperSpeed, 2),
+    intSetting('wallpaper-fps', draft.wallpaperFps, TOML_DEFAULTS.wallpaperFps),
+    numSetting('wallpaper-resolution', draft.wallpaperResolution, TOML_DEFAULTS.wallpaperResolution, 2),
+    boolSetting(
+      'wallpaper-shader-follows-mouse-cursor',
+      draft.wallpaperFollowsMouse,
+      TOML_DEFAULTS.wallpaperFollowsMouse,
+    ),
+    boolSetting(
       'wallpaper-shader-follows-keyboard-input',
       draft.wallpaperFollowsKeyboard,
       TOML_DEFAULTS.wallpaperFollowsKeyboard,
     ),
-    numLine('backdrop-blur', draft.backdropBlur, TOML_DEFAULTS.backdropBlur, 1),
-    numLine('backdrop-dim', draft.backdropDim, TOML_DEFAULTS.backdropDim, 2),
-    numLine('popup-opacity', draft.popupOpacity, TOML_DEFAULTS.popupOpacity, 2),
-    numLine('popup-blur', draft.popupBlur, TOML_DEFAULTS.popupBlur, 1),
-    numLine('toolbar-opacity', draft.toolbarOpacity, TOML_DEFAULTS.toolbarOpacity, 2),
-    numLine('toolbar-blur', draft.toolbarBlur, TOML_DEFAULTS.toolbarBlur, 1),
-    numLine('toolbar-saturate', draft.toolbarSaturate, TOML_DEFAULTS.toolbarSaturate, 2),
-    strLine('pane-switch-border', draft.paneSwitchBorderStyle, TOML_DEFAULTS.paneSwitchBorderStyle),
-    numLine('pane-switch-border-speed', draft.paneSwitchBorderSpeed, TOML_DEFAULTS.paneSwitchBorderSpeed, 2),
-  ].filter((line): line is string => line !== null);
+    numSetting('backdrop-blur', draft.backdropBlur, TOML_DEFAULTS.backdropBlur, 1),
+    numSetting('backdrop-dim', draft.backdropDim, TOML_DEFAULTS.backdropDim, 2),
+    numSetting('popup-opacity', draft.popupOpacity, TOML_DEFAULTS.popupOpacity, 2),
+    numSetting('popup-blur', draft.popupBlur, TOML_DEFAULTS.popupBlur, 1),
+    numSetting('toolbar-opacity', draft.toolbarOpacity, TOML_DEFAULTS.toolbarOpacity, 2),
+    numSetting('toolbar-blur', draft.toolbarBlur, TOML_DEFAULTS.toolbarBlur, 1),
+    numSetting('toolbar-saturate', draft.toolbarSaturate, TOML_DEFAULTS.toolbarSaturate, 2),
+    strSetting('pane-switch-border', draft.paneSwitchBorderStyle, TOML_DEFAULTS.paneSwitchBorderStyle),
+    numSetting('pane-switch-border-speed', draft.paneSwitchBorderSpeed, TOML_DEFAULTS.paneSwitchBorderSpeed, 2),
+  ].filter(isPair);
 
-  const terminalLines = [
-    boolLine('cursor-blink', draft.cursorBlink, TOML_DEFAULTS.cursorBlink),
-    intLine('scrollback', draft.scrollback, TOML_DEFAULTS.scrollback),
-    strLine('font-family', draft.fontFamily.trim(), TOML_DEFAULTS.fontFamily),
-    numLine('font-size', draft.fontSize, TOML_DEFAULTS.fontSize, 1),
-    intLine('font-weight', draft.fontWeight, TOML_DEFAULTS.fontWeight),
-    boolLine('allow-transparency', draft.allowTransparency, defaultAllowTransparency),
-    boolLine('disable-stdin', draft.disableStdin, TOML_DEFAULTS.disableStdin),
-    boolLine('macos-edit-keys', draft.macosEditKeys, TOML_DEFAULTS.macosEditKeys),
-    numLine('smooth-scroll-duration', draft.smoothScrollDuration, TOML_DEFAULTS.smoothScrollDuration, 1),
-    numLine('cursor-animation-duration', draft.cursorAnimationDuration, TOML_DEFAULTS.cursorAnimationDuration, 1),
-    numLine('cell-background-opacity', draft.cellBackgroundOpacity, TOML_DEFAULTS.cellBackgroundOpacity, 2),
-  ].filter((line): line is string => line !== null);
+  const terminalSettings = [
+    boolSetting('cursor-blink', draft.cursorBlink, TOML_DEFAULTS.cursorBlink),
+    intSetting('scrollback', draft.scrollback, TOML_DEFAULTS.scrollback),
+    strSetting('font-family', draft.fontFamily.trim(), TOML_DEFAULTS.fontFamily),
+    numSetting('font-size', draft.fontSize, TOML_DEFAULTS.fontSize, 1),
+    intSetting('font-weight', draft.fontWeight, TOML_DEFAULTS.fontWeight),
+    boolSetting('allow-transparency', draft.allowTransparency, defaultAllowTransparency),
+    boolSetting('disable-stdin', draft.disableStdin, TOML_DEFAULTS.disableStdin),
+    boolSetting('macos-edit-keys', draft.macosEditKeys, TOML_DEFAULTS.macosEditKeys),
+    numSetting('smooth-scroll-duration', draft.smoothScrollDuration, TOML_DEFAULTS.smoothScrollDuration, 1),
+    numSetting('cursor-animation-duration', draft.cursorAnimationDuration, TOML_DEFAULTS.cursorAnimationDuration, 1),
+    numSetting('cell-background-opacity', draft.cellBackgroundOpacity, TOML_DEFAULTS.cellBackgroundOpacity, 2),
+  ].filter(isPair);
 
-  const logLines = [
-    strLine('console-level', draft.consoleLevel, TOML_DEFAULTS.consoleLevel),
-    strLine('file-level', draft.fileLevel, TOML_DEFAULTS.fileLevel),
-  ].filter((line): line is string => line !== null);
+  const logSettings = [
+    strSetting('console-level', draft.consoleLevel, TOML_DEFAULTS.consoleLevel),
+    strSetting('file-level', draft.fileLevel, TOML_DEFAULTS.fileLevel),
+  ].filter(isPair);
 
-  const nativeEditorLines = [boolLine('vim', draft.vimMode, TOML_DEFAULTS.vimMode)].filter(
-    (line): line is string => line !== null,
-  );
+  const nativeEditorSettings = [boolSetting('vim', draft.vimMode, TOML_DEFAULTS.vimMode)].filter(isPair);
 
-  const notificationLines = [
-    boolLine('os', draft.osNotifications, TOML_DEFAULTS.osNotifications),
-    strLine('os-level', draft.osNotificationLevel, TOML_DEFAULTS.osNotificationLevel),
-  ].filter((line): line is string => line !== null);
+  const notificationSettings = [
+    boolSetting('os', draft.osNotifications, TOML_DEFAULTS.osNotifications),
+    strSetting('os-level', draft.osNotificationLevel, TOML_DEFAULTS.osNotificationLevel),
+  ].filter(isPair);
 
+  const tables: [string, Pair[]][] = [
+    ['keys', keySettings],
+    ['terminal', terminalSettings],
+    ['log', logSettings],
+    ['notifications', notificationSettings],
+    ['native-editor', nativeEditorSettings],
+  ];
+  return { top: topSettings, layers: draft.wallpaperShaders, tables: tables.filter(([, pairs]) => pairs.length > 0) };
+}
+
+type SettingsModel = ReturnType<typeof settingsModel>;
+
+function tomlValue(value: SettingValue): string {
+  if (value instanceof NumberText) return value.text;
+  return typeof value === 'string' ? quote(value) : String(value);
+}
+
+function toToml({ top, layers, tables }: SettingsModel): string {
+  const lines = (pairs: Pair[]) => pairs.map(([name, value]) => `${name} = ${tomlValue(value)}`);
   const sections = [
-    ['# Settings generated by btmux', ...topLines],
-    wallpaperLayersToml(draft.wallpaperShaders),
-    keyLines.length ? ['[keys]', ...keyLines] : [],
-    terminalLines.length ? ['[terminal]', ...terminalLines] : [],
-    logLines.length ? ['[log]', ...logLines] : [],
-    notificationLines.length ? ['[notifications]', ...notificationLines] : [],
-    nativeEditorLines.length ? ['[native-editor]', ...nativeEditorLines] : [],
+    ['# Settings generated by btmux', ...lines(top)],
+    wallpaperLayersToml(layers),
+    ...tables.map(([name, pairs]) => [`[${name}]`, ...lines(pairs)]),
   ].filter((section) => section.length > 0);
 
   return sections.map((section) => section.join('\n')).join('\n\n');
+}
+
+function toNix({ top, layers, tables }: SettingsModel): string {
+  return homeManagerSettings({
+    ...Object.fromEntries(top),
+    ...(layers.length ? { 'wallpaper-shader': layers.map(wallpaperLayerSettings) } : {}),
+    ...Object.fromEntries(tables.map(([name, pairs]) => [name, Object.fromEntries(pairs)])),
+  });
 }
 
 function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
@@ -423,6 +455,18 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   if (dirty.has('paneSwitchBorderStyle')) update.pane_switch_border = draft.paneSwitchBorderStyle;
   if (dirty.has('paneSwitchBorderSpeed')) update.pane_switch_border_speed = draft.paneSwitchBorderSpeed;
   return update;
+}
+
+const FILE_FORMAT_NAMES = { toml: 'TOML', nix: 'Nix' };
+type FileFormat = keyof typeof FILE_FORMAT_NAMES;
+const FILE_FORMAT_KEY = 'btmux-settings-format';
+
+function storedFileFormat(): FileFormat {
+  try {
+    return localStorage.getItem(FILE_FORMAT_KEY) === 'nix' ? 'nix' : 'toml';
+  } catch {
+    return 'toml';
+  }
 }
 
 const COLORS_KEY = { dark: 'colorsDark', light: 'colorsLight' } as const satisfies Record<ColorMode, DraftKey>;
@@ -676,7 +720,9 @@ export function ConfigPage({ config, send, request }: Props) {
   const [query, setQuery] = useState('');
   const searchRef = useRef<HTMLInputElement | null>(null);
   const resultsRef = useRef<HTMLElement>(null);
-  const toml = useMemo(() => toToml(draft), [draft]);
+  const model = useMemo(() => settingsModel(draft), [draft]);
+  const [fileFormat, setFileFormat] = useState<FileFormat>(storedFileFormat);
+  const configText = useMemo(() => (fileFormat === 'nix' ? toNix(model) : toToml(model)), [model, fileFormat]);
 
   const knownFont = config.fonts.some((font) => font.family === draft.fontFamily);
   const fontChoice = customFont || !knownFont ? FONT_CUSTOM : draft.fontFamily;
@@ -1193,16 +1239,33 @@ export function ConfigPage({ config, send, request }: Props) {
       hasDivider={!isNarrow}
       isScrollable={false}
       role="region"
-      label="Generated TOML"
+      label="Generated config"
       className={isNarrow ? 'h-64 border-t border-border' : 'h-full'}
     >
       <Layout
+        header={
+          <LayoutHeader paddingBlockEnd={0}>
+            <SegmentedControl
+              label="Config format"
+              size="sm"
+              value={fileFormat}
+              onChange={(value) => {
+                const format = value as FileFormat;
+                setFileFormat(format);
+                localStorage.setItem(FILE_FORMAT_KEY, format);
+              }}
+            >
+              <SegmentedControlItem value="toml" label="config.toml" />
+              <SegmentedControlItem value="nix" label="Home Manager" />
+            </SegmentedControl>
+          </LayoutHeader>
+        }
         content={
           <LayoutContent padding={6} isScrollable={false} className="relative [&>.astryx-field]:h-full">
             <TextArea
-              label="Generated TOML"
+              label={`Generated ${FILE_FORMAT_NAMES[fileFormat]}`}
               isLabelHidden
-              value={toml}
+              value={configText}
               isReadOnly
               hasSpellCheck={false}
               statusVariant="detached"
@@ -1213,8 +1276,8 @@ export function ConfigPage({ config, send, request }: Props) {
               size="sm"
               icon={<Icon icon={isCopied ? 'check' : 'copy'} size="sm" color="inherit" />}
               tooltip="Copy"
-              label={isCopied ? 'Copied' : 'Copy TOML'}
-              onClick={() => void copy(toml)}
+              label={isCopied ? 'Copied' : `Copy ${FILE_FORMAT_NAMES[fileFormat]}`}
+              onClick={() => void copy(configText)}
               className="absolute top-8 right-8"
             />
           </LayoutContent>

@@ -40,6 +40,9 @@ Press `<prefix> + :` and choose `config: open settings` for live previews.
 **Apply** changes the running server until it restarts or reloads
 `config.toml`. **Save** edits the file and preserves comments and other
 settings. If the file is read-only, the dialog shows TOML you can copy.
+**Show TOML** shows the settings that differ from the defaults; switch it to
+**Home Manager** to get them as Nix for
+[`programs.btmux.settings`](../start/installation.mdx#nix).
 To find a setting, type its name: the search field above the tabs lists
 matches from every tab.
 
