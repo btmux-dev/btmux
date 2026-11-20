@@ -32,7 +32,9 @@ writeFileSync(
     // Two servers for one file, started only by the last test.
     '[language-server.first]\ncommand = "fake-lsp"\nargs = ["--no-format", "--slow-publish"]\n' +
     '[language-server.second]\ncommand = "fake-lsp"\nargs = ["--second"]\n' +
-    '[[language]]\nname = "duo"\nfile-types = ["duo"]\nlanguage-servers = ["first", "second"]\n',
+    '[[language]]\nname = "duo"\nfile-types = ["duo"]\nlanguage-servers = ["first", "second"]\n' +
+    '[language-server.late]\ncommand = "fake-lsp"\nargs = ["--second", "--slow-init"]\n' +
+    '[[language]]\nname = "late"\nfile-types = ["late"]\nlanguage-servers = ["late"]\n',
 );
 const log = () => {
   try {
@@ -813,6 +815,32 @@ try {
   assert(await suggestion.isVisible(), 'the failed request closed completion');
   await page.keyboard.press('Escape');
   console.log("PASS one server's failed completion keeps the other's");
+
+  // A slow server doesn't hold back the other's hover: the first sends
+  // nothing for 6 s on "stall".
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('stall');
+  await page.keyboard.press('Escape');
+  await page.mouse.move(0, 0);
+  const stall = await wordRect(page, paneId, 3, 'stall');
+  const stalledAt = Date.now();
+  await page.mouse.move(stall.x, stall.y);
+  await page.locator('.cm-lsp-hover-tooltip').getByText('Second hover for stall').waitFor({ timeout: 4000 });
+  assert(Date.now() - stalledAt < 4000);
+  await page.mouse.move(0, 0);
+  console.log("PASS a slow server doesn't hold back another's hover");
+
+  // A command run while the server starts waits for it.
+  const late = join(dir, 'start.late');
+  writeFileSync(late, 'fmt\n');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: late, line: 1, editor: 'native' });
+  await until('the late file', async () => (await lines(page, paneId)) === 'fmt\n');
+  await pane.locator('[aria-label^="Language server late"][data-lsp-state="starting"]').waitFor();
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+  await page.keyboard.press('Shift+Alt+f');
+  await until('the format', async () => (await lines(page, paneId)) === 'FMT\n');
+  console.log('PASS a command run while the server starts waits for it');
 } catch (error) {
   const shot = process.env.TEST_SHOT;
   if (shot) for (const context of browser.contexts()) await context.pages()[0]?.screenshot({ path: shot });

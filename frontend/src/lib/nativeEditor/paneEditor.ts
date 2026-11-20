@@ -33,7 +33,7 @@ import { editorTheme, type EditorAppearance } from './theme';
 import { detectIndent, languageFor } from './languages';
 import { codeDetail } from './completion';
 import { panelSpace } from './panelSpace';
-import { format, lspExtension, setDisplay, workingServers } from './lsp';
+import { dropFailedDiagnostics, format, lspExtension, setDisplay, workingServers } from './lsp';
 import { serverFoldsChanged } from './features';
 import { gitSigns, gitSummary } from './gitSigns';
 import { editorCommands, toDiagnostic } from './actions';
@@ -216,6 +216,7 @@ export class PaneEditor {
         const working = workingServers(doc).join();
         if (!doc.state || working === this.working.get(doc)) continue;
         this.working.set(doc, working);
+        for (const spec of dropFailedDiagnostics(doc) ?? []) doc.update(spec);
         doc.update({ effects: this.lspC.reconfigure(lspExtension(doc)) });
       }
     });

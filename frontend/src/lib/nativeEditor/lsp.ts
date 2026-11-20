@@ -32,7 +32,7 @@ import {
   refreshEffect,
   setRawDiagnostics,
 } from './features';
-import { otherServers, pluginFor, pluginOf, plugins, serverIds } from './servers';
+import { mayHave, otherServers, pluginFor, pluginOf, pluginReady, plugins, serverIds } from './servers';
 
 /** btmux's language server clients speak to the server through `/ws/editor`; it syncs documents itself. */
 
@@ -201,6 +201,8 @@ function reveal(uri: string, at: Position | null) {
 const diagnostics = new Map<LSPClient, Map<string, PublishParams>>();
 
 const setServerDiagnostics = StateEffect.define<{ client: LSPClient; list: Diagnostic[] }>();
+/** Drop the diagnostics of servers not in the set. */
+const keepServerDiagnostics = StateEffect.define<ReadonlySet<LSPClient>>();
 
 /**
  * Each server's diagnostics, mapped through edits since it published them: a
@@ -215,21 +217,46 @@ const serverDiagnosticsField = StateField.define<ReadonlyMap<LSPClient, Diagnost
       next = new Map(
         [...value].map(([client, list]) => [
           client,
-          list.map((d) => {
+          list.flatMap((d) => {
             const from = changes.mapPos(d.from, 1);
-            return { ...d, from, to: Math.max(from, changes.mapPos(d.to, -1)) };
+            const to = Math.max(from, changes.mapPos(d.to, -1));
+            // Its text was deleted, which lint drops it for too.
+            return d.to > d.from && to === from ? [] : [{ ...d, from, to }];
           }),
         ]),
       );
     }
     for (const e of tr.effects) {
-      if (!e.is(setServerDiagnostics)) continue;
-      if (next === value) next = new Map(value);
-      (next as Map<LSPClient, Diagnostic[]>).set(e.value.client, e.value.list);
+      if (e.is(setServerDiagnostics)) {
+        if (next === value) next = new Map(value);
+        (next as Map<LSPClient, Diagnostic[]>).set(e.value.client, e.value.list);
+      } else if (e.is(keepServerDiagnostics)) {
+        const keep = e.value;
+        next = new Map([...next].filter(([client]) => keep.has(client)));
+      }
     }
     return next;
   },
 });
+
+/**
+ * Before `doc`'s servers are reconfigured: drop the diagnostics of servers
+ * that failed since, which would otherwise stay until another publishes (or
+ * for good, with none left). Null if there are none.
+ */
+export function dropFailedDiagnostics(doc: Doc) {
+  const state = doc.state;
+  const shown = state?.field(serverDiagnosticsField, false);
+  if (!state || !shown) return null;
+  const working = new Set(
+    workingServers(doc)
+      .map((s) => clients.get(s))
+      .filter((c) => c !== undefined),
+  );
+  if ([...shown.keys()].every((c) => working.has(c))) return null;
+  const kept = [...shown].filter(([c]) => working.has(c)).flatMap(([, list]) => list);
+  return [setDiagnostics(state, kept), { effects: keepServerDiagnostics.of(working) }];
+}
 
 /** `client`'s latest diagnostics for the file `view` shows, with the other servers' as they are. */
 function showDiagnostics(view: EditorView, client: LSPClient) {
@@ -363,8 +390,12 @@ function wordTarget(view: EditorView, pos: number): RenameTarget | null {
 }
 
 export const startRename = (view: EditorView) => {
-  const plugin = pluginFor(view, 'renameProvider');
-  if (!plugin) return false;
+  if (!mayHave(view, 'renameProvider')) return false;
+  void pluginReady(view, 'renameProvider').then((plugin) => plugin && openRename(view, plugin));
+  return true;
+};
+
+function openRename(view: EditorView, plugin: LSPPlugin) {
   const head = view.state.selection.main.head;
   const provider = plugin.client.serverCapabilities?.renameProvider;
   if (typeof provider === 'object' && provider.prepareProvider) {
@@ -375,7 +406,7 @@ export const startRename = (view: EditorView) => {
   if (!target) return false;
   view.dispatch({ effects: setRename.of(target) });
   return true;
-};
+}
 
 /** Ask the server what's renamed at `head` and under which name, then open the panel. */
 async function prepareRename(view: EditorView, plugin: LSPPlugin, head: number) {
@@ -435,7 +466,7 @@ async function rename(view: EditorView, pos: number, newName: string) {
 
 /** Format with the first language server that can; resolves once applied. */
 export async function format(view: EditorView) {
-  const plugin = pluginFor(view, 'documentFormattingProvider');
+  const plugin = await pluginReady(view, 'documentFormattingProvider');
   const doc = viewDocs.get(view);
   if (!plugin || !doc) return;
   plugin.client.sync();

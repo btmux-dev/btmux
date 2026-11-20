@@ -4,7 +4,7 @@ import { StateEffect, StateField, type Extension } from '@codemirror/state';
 import { EditorView, ViewPlugin, showTooltip, type Tooltip } from '@codemirror/view';
 import { forEachDiagnostic, type Diagnostic } from '@codemirror/lint';
 import { ask } from './features';
-import { pluginsFor } from './servers';
+import { gather, mayHave, pluginsReady } from './servers';
 
 /** Keys that leave a tooltip up: modifiers alone, and Cmd chords such as copying from it. */
 const keepsTooltip = (e: KeyboardEvent) =>
@@ -45,20 +45,17 @@ const markdown = (m: Markup) =>
 
 /** Every server's hover for the symbol at the cursor, as a tooltip. */
 export function showHover(view: EditorView): boolean {
-  const ps = pluginsFor(view, 'hoverProvider');
   const counter = view.plugin(requests);
-  if (!ps.length || !counter) return false;
+  if (!mayHave(view, 'hoverProvider') || !counter) return false;
   const generation = ++counter.generation;
   const pos = view.state.selection.main.head;
   void (async () => {
-    const results = await Promise.all(
-      ps.map((p) =>
-        ask<Hover | null>(p, 'textDocument/hover', (p) => ({ position: p.toPosition(pos) })).then(
-          (result) => ({ p, result }),
-          () => ({ p, result: null }),
-        ),
-      ),
+    const ps = await pluginsReady(view, 'hoverProvider');
+    // A slow server's part is left out (`gather`).
+    const answers = await gather(
+      ps.map((p) => ask<Hover | null>(p, 'textDocument/hover', (p) => ({ position: p.toPosition(pos) }))),
     );
+    const results = answers.map((result, i) => ({ p: ps[i], result: result ?? null }));
     const current = view.plugin(requests) === counter && counter.generation === generation;
     if (!current || view.state.selection.main.head !== pos) return;
     const html = results

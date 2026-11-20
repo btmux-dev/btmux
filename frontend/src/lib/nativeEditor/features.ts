@@ -1,13 +1,16 @@
 // Language server features beyond @codemirror/lsp-client's: highlights,
 // inlay hints, semantic tokens, code lenses, folding, selection ranges,
 // range and on-type formatting, code actions, symbols, and hierarchies.
-import { LSPPlugin, findReferences as referencePanel } from '@codemirror/lsp-client';
+import { LSPPlugin, findReferences as referencePanel, type LSPClient } from '@codemirror/lsp-client';
 import {
   EditorSelection,
   Prec,
+  RangeSet,
   RangeSetBuilder,
+  type ChangeDesc,
   StateEffect,
   StateField,
+  type EditorState,
   type Extension,
   type Text,
 } from '@codemirror/state';
@@ -29,7 +32,7 @@ import { editorConnection } from './connection';
 import { viewDocs, type Doc } from './doc';
 import { offset, type Command, type Location, type Position, type Range, type TextEdit } from './lspText';
 import { openPicker, type PickItem } from './picker';
-import { has, plugins, pluginFor, pluginsFor, serverIds } from './servers';
+import { gather, has, mayHave, plugins, pluginFor, pluginReady, pluginsFor, pluginsReady, serverIds } from './servers';
 
 export { has };
 
@@ -57,17 +60,48 @@ export async function ask<T>(p: LSPPlugin, method: string, params: (p: LSPPlugin
   return view.state.doc === doc ? result : null;
 }
 
-/** Ask every server in `ps`, leaving out failures and stale results. */
+/** Ask every server in `ps`, leaving out failures, stale results, and servers too slow (`gather`). */
 async function askAll<T>(ps: LSPPlugin[], method: string, params: (p: LSPPlugin) => object) {
-  const results = await Promise.all(
+  const results = await gather(ps.map((p) => ask<T>(p, method, params)));
+  return results
+    .map((result, i) => ({ p: ps[i], result }))
+    .filter((r): r is { p: LSPPlugin; result: NonNullable<T> } => r.result != null);
+}
+
+/** Ask every server in `ps`, taking each one's result as it comes, unless the doc changed meanwhile. */
+function eachServer<T>(
+  ps: LSPPlugin[],
+  method: string,
+  params: (p: LSPPlugin) => object,
+  use: (p: LSPPlugin, result: T) => void | Promise<void>,
+) {
+  return Promise.all(
     ps.map((p) =>
       ask<T>(p, method, params).then(
-        (result) => ({ p, result }),
-        () => ({ p, result: null }),
+        (result) => (result == null ? undefined : use(p, result)),
+        () => {},
       ),
     ),
   );
-  return results.filter((r): r is { p: LSPPlugin; result: NonNullable<T> } => r.result != null);
+}
+
+/** Each server's `T`, set by `set` as its results come and mapped through changes. */
+function perServer<T>(map: (value: T, changes: ChangeDesc) => T) {
+  const set = StateEffect.define<{ client: LSPClient; value: T }>();
+  const field = StateField.define<ReadonlyMap<LSPClient, T>>({
+    create: () => new Map(),
+    update(value, tr) {
+      let next = value;
+      if (tr.docChanged && value.size) next = new Map([...value].map(([c, v]) => [c, map(v, tr.changes)]));
+      for (const e of tr.effects) {
+        if (!e.is(set)) continue;
+        if (next === value) next = new Map(value);
+        (next as Map<LSPClient, T>).set(e.value.client, e.value.value);
+      }
+      return next;
+    },
+  });
+  return { set, field };
 }
 
 /** Re-ask on changes (debounced), on the viewport for `viewport`, and on refreshes. */
@@ -308,7 +342,7 @@ const hovers = hoverTooltip(
       return { pos: at, end: at, above: true, create: () => tooltipDOM([[found.p, tooltip]], 'plaintext') };
     }
     const results = await askAll<{ contents: HoverContents; range?: Range } | null>(
-      pluginsFor(view, 'hoverProvider'),
+      await pluginsReady(view, 'hoverProvider'),
       'textDocument/hover',
       (p) => ({ position: p.toPosition(pos) }),
     );
@@ -348,29 +382,32 @@ function tooltipDOM(parts: [LSPPlugin, Markup][], kind: 'markdown' | 'plaintext'
   return { dom };
 }
 
-const hints = decorationField();
+// Each server's hints, shown as they come.
+const hints = perServer<DecorationSet>((set, changes) => set.map(changes));
+const showHints = EditorView.decorations.compute([hints.field], (state) =>
+  RangeSet.join([...state.field(hints.field).values()]),
+);
 const hintRequester = requester(
   300,
   async (view) => {
-    const ps = pluginsFor(view, 'inlayHintProvider');
-    if (!ps.length) return;
     const { from, to } = view.viewport;
-    const doc = view.state.doc;
-    const results = await askAll<InlayHint[]>(ps, 'textDocument/inlayHint', (p) => ({
-      range: { start: p.toPosition(from), end: p.toPosition(to) },
-    }));
-    if (view.state.doc !== doc) return;
-    const widgets = results
-      .flatMap(({ p, result }) =>
-        result.map((h) => ({
-          at: offset(doc, h.position),
-          deco: Decoration.widget({ widget: new HintWidget(h, doc, p), side: 1 }),
-        })),
-      )
-      .sort((a, b) => a.at - b.at);
-    const builder = new RangeSetBuilder<Decoration>();
-    for (const w of widgets) builder.add(w.at, w.at, w.deco);
-    view.dispatch({ effects: hints.set.of(builder.finish()) });
+    await eachServer<InlayHint[]>(
+      pluginsFor(view, 'inlayHintProvider'),
+      'textDocument/inlayHint',
+      (p) => ({ range: { start: p.toPosition(from), end: p.toPosition(to) } }),
+      (p, result) => {
+        const doc = view.state.doc;
+        const widgets = result
+          .map((h) => ({
+            at: offset(doc, h.position),
+            deco: Decoration.widget({ widget: new HintWidget(h, doc, p), side: 1 }),
+          }))
+          .sort((a, b) => a.at - b.at);
+        const builder = new RangeSetBuilder<Decoration>();
+        for (const w of widgets) builder.add(w.at, w.at, w.deco);
+        view.dispatch({ effects: hints.set.of({ client: p.client, value: builder.finish() }) });
+      },
+    );
   },
   { viewport: true, refresh: 'workspace/inlayHint/refresh' },
 );
@@ -466,45 +503,62 @@ class LensWidget extends WidgetType {
     return true;
   }
 }
-const lenses = decorationField();
+// Each server's lenses, at their line's start; a line's lenses from every server show together.
+type PlacedLens = { at: number; lens: Lens };
+const lenses = perServer<PlacedLens[]>((list, changes) => list.map((l) => ({ ...l, at: changes.mapPos(l.at) })));
+
+/** Every server's lenses by line start, in order. */
+function lensesByLine(state: EditorState) {
+  const byLine = new Map<number, Lens[]>();
+  for (const list of state.field(lenses.field, false)?.values() ?? [])
+    for (const { at, lens } of list) {
+      const line = state.doc.lineAt(Math.min(at, state.doc.length)).from;
+      byLine.set(line, [...(byLine.get(line) ?? []), lens]);
+    }
+  return [...byLine].sort((a, b) => a[0] - b[0]);
+}
+
+const showLenses = EditorView.decorations.compute([lenses.field], (state) => {
+  const builder = new RangeSetBuilder<Decoration>();
+  for (const [at, commands] of lensesByLine(state)) {
+    const indent = /^\s*/.exec(state.doc.lineAt(at).text)![0];
+    builder.add(at, at, Decoration.widget({ widget: new LensWidget(commands, indent), block: true, side: -1 }));
+  }
+  return builder.finish();
+});
+
 const lensRequester = requester(
   600,
   async (view) => {
-    const ps = pluginsFor(view, 'codeLensProvider');
-    if (!ps.length) return;
     type ServerLens = { range: Range; command?: Command; data?: unknown };
-    const doc = view.state.doc;
-    const results = await askAll<ServerLens[]>(ps, 'textDocument/codeLens', () => ({}));
-    const resolved = await Promise.all(
-      results.map(async ({ p, result }) => {
+    await eachServer<ServerLens[]>(
+      pluginsFor(view, 'codeLensProvider'),
+      'textDocument/codeLens',
+      () => ({}),
+      async (p, result) => {
+        const doc = view.state.doc;
         const resolves = (p.client.serverCapabilities as any)?.codeLensProvider?.resolveProvider;
-        const lenses = resolves
+        const resolved = resolves
           ? await Promise.all(
               result.map((lens) =>
                 lens.command ? lens : p.client.request<object, ServerLens>('codeLens/resolve', lens).catch(() => lens),
               ),
             )
           : result;
-        return lenses.map((lens) => ({ lens, p }));
-      }),
+        if (view.state.doc !== doc) return;
+        const placed = resolved.flatMap((lens) =>
+          lens.command?.title
+            ? [
+                {
+                  at: doc.line(Math.min(lens.range.start.line + 1, doc.lines)).from,
+                  lens: { command: lens.command, p },
+                },
+              ]
+            : [],
+        );
+        view.dispatch({ effects: lenses.set.of({ client: p.client, value: placed }) });
+      },
     );
-    if (view.state.doc !== doc) return;
-    const byLine = new Map<number, Lens[]>();
-    for (const { lens, p } of resolved.flat()) {
-      if (!lens.command?.title) continue;
-      const line = doc.line(Math.min(lens.range.start.line + 1, doc.lines));
-      byLine.set(line.from, [...(byLine.get(line.from) ?? []), { command: lens.command, p }]);
-    }
-    const builder = new RangeSetBuilder<Decoration>();
-    for (const at of [...byLine.keys()].sort((a, b) => a - b)) {
-      const indent = /^\s*/.exec(doc.lineAt(at).text)![0];
-      builder.add(
-        at,
-        at,
-        Decoration.widget({ widget: new LensWidget(byLine.get(at)!, indent), block: true, side: -1 }),
-      );
-    }
-    view.dispatch({ effects: lenses.set.of(builder.finish()) });
   },
   { refresh: 'workspace/codeLens/refresh' },
 );
@@ -512,11 +566,7 @@ const lensRequester = requester(
 /** Run the code lens on the cursor's line, or pick one of several. */
 function runCodeLens(view: EditorView) {
   const line = view.state.doc.lineAt(view.state.selection.main.head);
-  const commands: Lens[] = [];
-  view.state.field(lenses.field, false)?.between(line.from, line.from, (_from, _to, deco) => {
-    const widget = deco.spec.widget;
-    if (widget instanceof LensWidget) commands.push(...widget.commands);
-  });
+  const commands = lensesByLine(view.state).find(([at]) => at === line.from)?.[1] ?? [];
   if (!commands.length) {
     useStore.getState().showToast('No code lens on this line', 'info');
     return true;
@@ -531,47 +581,43 @@ function runCodeLens(view: EditorView) {
 }
 
 // Folding ranges from the server, besides the parser's.
-const setFolds = StateEffect.define<{ from: number; to: number }[]>();
+type Fold = { from: number; to: number };
+const folds = perServer<Fold[]>((list, changes) =>
+  list.map(({ from, to }) => ({ from: changes.mapPos(from), to: changes.mapPos(to) })),
+);
 /** For `foldGutter`, which redraws only on its own triggers. */
 export const serverFoldsChanged = (u: ViewUpdate) =>
-  u.transactions.some((tr) => tr.effects.some((e) => e.is(setFolds)));
-const foldsField = StateField.define<{ from: number; to: number }[]>({
-  create: () => [],
-  update: (value, tr) => {
-    for (const e of tr.effects) if (e.is(setFolds)) return e.value;
-    if (!tr.docChanged) return value;
-    return value.map(({ from, to }) => ({ from: tr.changes.mapPos(from), to: tr.changes.mapPos(to) }));
-  },
-});
+  u.transactions.some((tr) => tr.effects.some((e) => e.is(folds.set)));
 const foldRequester = requester(
   800,
   async (view) => {
-    const ps = pluginsFor(view, 'foldingRangeProvider');
-    if (!ps.length) return;
-    const doc = view.state.doc;
-    const results = await askAll<{ startLine: number; endLine: number; startCharacter?: number }[]>(
-      ps,
+    await eachServer<{ startLine: number; endLine: number; startCharacter?: number }[]>(
+      pluginsFor(view, 'foldingRangeProvider'),
       'textDocument/foldingRange',
       () => ({}),
+      (p, result) => {
+        const doc = view.state.doc;
+        const value = result
+          .filter((r) => r.endLine > r.startLine && r.endLine < doc.lines)
+          .map((r) => {
+            const start = doc.line(r.startLine + 1);
+            return {
+              from: r.startCharacter !== undefined ? Math.min(start.from + r.startCharacter, start.to) : start.to,
+              to: doc.line(r.endLine + 1).to,
+            };
+          });
+        view.dispatch({ effects: folds.set.of({ client: p.client, value }) });
+      },
     );
-    if (view.state.doc !== doc) return;
-    const folds = results
-      .flatMap((r) => r.result)
-      .filter((r) => r.endLine > r.startLine && r.endLine < doc.lines)
-      .map((r) => {
-        const start = doc.line(r.startLine + 1);
-        return {
-          from: r.startCharacter !== undefined ? Math.min(start.from + r.startCharacter, start.to) : start.to,
-          to: doc.line(r.endLine + 1).to,
-        };
-      });
-    view.dispatch({ effects: setFolds.of(folds) });
   },
   { refresh: 'workspace/foldingRange/refresh' },
 );
 const serverFolds = foldService.of((state, lineStart, lineEnd) => {
-  const fold = state.field(foldsField, false)?.find((f) => f.from >= lineStart && f.from <= lineEnd && f.to > lineEnd);
-  return fold ?? null;
+  for (const list of state.field(folds.field, false)?.values() ?? []) {
+    const fold = list.find((f) => f.from >= lineStart && f.from <= lineEnd && f.to > lineEnd);
+    if (fold) return fold;
+  }
+  return null;
 });
 
 // Selection ranges: grow the selection to the next enclosing syntax node.
@@ -591,7 +637,7 @@ const expansions = StateField.define<readonly EditorSelection[]>({
 });
 
 async function expandSelection(view: EditorView) {
-  const p = pluginFor(view, 'selectionRangeProvider');
+  const p = await pluginReady(view, 'selectionRangeProvider');
   if (!p) return false;
   const before = view.state.selection;
   const { from, to, head } = before.main;
@@ -641,12 +687,15 @@ function applyEdits(view: EditorView, edits: TextEdit[] | null, userEvent: strin
 }
 
 /** Whether the server can format a range (`gq`, format selection). */
-export const canFormatRange = (view: EditorView) => !!pluginFor(view, 'documentRangeFormattingProvider');
+export const canFormatRange = (view: EditorView) => mayHave(view, 'documentRangeFormattingProvider');
 
 /** Format `from..to` with the first server that can; false if none can. */
 export async function formatRange(view: EditorView, from: number, to: number) {
-  const p = pluginFor(view, 'documentRangeFormattingProvider');
-  if (from === to || !p) return false;
+  if (from === to) return false;
+  const start = view.state.doc;
+  const p = await pluginReady(view, 'documentRangeFormattingProvider');
+  // Typed while servers started: the range is stale.
+  if (!p || view.state.doc !== start) return false;
   const edits = await ask<TextEdit[]>(p, 'textDocument/rangeFormatting', (p) => ({
     range: { start: p.toPosition(from), end: p.toPosition(to) },
     options: formatOptions(view),
@@ -785,14 +834,15 @@ const serverName = (p: LSPPlugin) => {
 };
 
 function codeActions(view: EditorView) {
-  const ps = pluginsFor(view, 'codeActionProvider');
-  if (!ps.length) return false;
+  if (!mayHave(view, 'codeActionProvider')) return false;
   const doc = viewDocs.get(view);
-  const { from, to } = view.state.selection.main;
   void (async () => {
+    const ps = await pluginsReady(view, 'codeActionProvider');
+    if (!ps.length) return;
+    const { from, to } = view.state.selection.main;
     for (const p of ps) p.client.sync();
     const version = doc?.version() ?? null;
-    const results = await Promise.all(
+    const answers = await gather(
       ps.map(async (p) => {
         const context = { diagnostics: lspDiagnostics(p, from, to), triggerKind: 1 };
         const actions = await ask<(CodeAction | Command)[]>(p, 'textDocument/codeAction', (p) => ({
@@ -802,6 +852,8 @@ function codeActions(view: EditorView) {
         return (actions ?? []).filter((a) => !('disabled' in a && a.disabled)).map((action) => ({ action, p }));
       }),
     );
+    // A server too slow to answer offers nothing this time.
+    const results = answers.map((r) => r ?? []);
     const usable = results.flat();
     if (!usable.length) {
       useStore.getState().showToast('No code actions here', 'info');
@@ -897,10 +949,12 @@ type DocumentSymbol = {
 type SymbolInformation = { name: string; kind: number; location: Location; containerName?: string };
 
 function documentSymbols(view: EditorView) {
-  const p = pluginFor(view, 'documentSymbolProvider');
-  if (!p) return false;
-  void ask<(DocumentSymbol | SymbolInformation)[]>(p, 'textDocument/documentSymbol', () => ({}))
-    .then((symbols) => {
+  if (!mayHave(view, 'documentSymbolProvider')) return false;
+  void (async () => {
+    const p = await pluginReady(view, 'documentSymbolProvider');
+    if (!p) return;
+    const symbols = await ask<(DocumentSymbol | SymbolInformation)[]>(p, 'textDocument/documentSymbol', () => ({}));
+    {
       const items: PickItem[] = [];
       const add = (s: DocumentSymbol | SymbolInformation, depth: number) => {
         const location = 'location' in s ? s.location : { uri: p.uri, range: s.selectionRange };
@@ -913,14 +967,20 @@ function documentSymbols(view: EditorView) {
       };
       for (const s of symbols ?? []) add(s, 0);
       openPicker(view, { title: 'Go to symbol in file', items });
-    })
-    .catch((error) => toast('Symbols failed', error));
+    }
+  })().catch((error) => toast('Symbols failed', error));
   return true;
 }
 
 function workspaceSymbols(view: EditorView) {
-  const ps = pluginsFor(view, 'workspaceSymbolProvider');
-  if (!ps.length) return false;
+  if (!mayHave(view, 'workspaceSymbolProvider')) return false;
+  void pluginsReady(view, 'workspaceSymbolProvider').then((ps) => {
+    if (ps.length) workspaceSymbolPicker(view, ps);
+  });
+  return true;
+}
+
+function workspaceSymbolPicker(view: EditorView, ps: LSPPlugin[]) {
   const relative = (uri: string) => {
     const path = decodeURIComponent(new URL(uri).pathname);
     const root = viewDocs.get(view)?.path.split('/').slice(0, -1).join('/') ?? '';
@@ -930,7 +990,7 @@ function workspaceSymbols(view: EditorView) {
     title: 'Go to symbol in workspace',
     query: async (query) => {
       type Symbol = { name: string; kind: number; location: { uri: string; range?: Range } };
-      const results = await Promise.all(
+      const results = await gather(
         ps.map((p) =>
           p.client.request<object, Symbol[] | null>('workspace/symbol', { query }).then(
             (symbols) => (symbols ?? []).map((s) => ({ s, p })),
@@ -939,7 +999,7 @@ function workspaceSymbols(view: EditorView) {
         ),
       );
       return results
-        .flat()
+        .flatMap((r) => r ?? [])
         .slice(0, 200)
         .map(({ s, p }) => ({
           label: s.name,
@@ -953,7 +1013,6 @@ function workspaceSymbols(view: EditorView) {
         }));
     },
   });
-  return true;
 }
 
 type HierarchyItem = { name: string; kind: number; uri: string; selectionRange: Range; detail?: string };
@@ -961,10 +1020,12 @@ type HierarchyItem = { name: string; kind: number; uri: string; selectionRange: 
 function hierarchy(kind: 'incoming' | 'outgoing' | 'supertypes' | 'subtypes') {
   return (view: EditorView) => {
     const calls = kind === 'incoming' || kind === 'outgoing';
-    const p = pluginFor(view, calls ? 'callHierarchyProvider' : 'typeHierarchyProvider');
-    if (!p) return false;
-    const head = view.state.selection.main.head;
+    const capability = calls ? 'callHierarchyProvider' : 'typeHierarchyProvider';
+    if (!mayHave(view, capability)) return false;
     void (async () => {
+      const p = await pluginReady(view, capability);
+      if (!p) return;
+      const head = view.state.selection.main.head;
       const prepared = await ask<HierarchyItem[]>(
         p,
         calls ? 'textDocument/prepareCallHierarchy' : 'textDocument/prepareTypeHierarchy',
@@ -999,19 +1060,18 @@ function hierarchy(kind: 'incoming' | 'outgoing' | 'supertypes' | 'subtypes') {
 /** Jump to where the first server that can says the symbol at the cursor comes from. */
 function jumpTo(capability: string, method: string, what: string) {
   return (view: EditorView) => {
-    const p = pluginFor(view, capability);
-    if (!p) return false;
-    const head = view.state.selection.main.head;
-    void ask<Location | Location[] | { targetUri: string; targetSelectionRange: Range }[] | null>(p, method, (p) => ({
-      position: p.toPosition(head),
-    }))
-      .then((result) => {
-        const first = Array.isArray(result) ? result[0] : result;
-        if (!first) return;
-        const location = 'targetUri' in first ? { uri: first.targetUri, range: first.targetSelectionRange } : first;
-        return jump(p, location);
-      })
-      .catch((error) => toast(`Go to ${what} failed`, error));
+    if (!mayHave(view, capability)) return false;
+    void (async () => {
+      const p = await pluginReady(view, capability);
+      if (!p) return;
+      const head = view.state.selection.main.head;
+      type Origin = Location | Location[] | { targetUri: string; targetSelectionRange: Range }[] | null;
+      const result = await ask<Origin>(p, method, (p) => ({ position: p.toPosition(head) }));
+      const first = Array.isArray(result) ? result[0] : result;
+      if (!first) return;
+      const location = 'targetUri' in first ? { uri: first.targetUri, range: first.targetSelectionRange } : first;
+      await jump(p, location);
+    })().catch((error) => toast(`Go to ${what} failed`, error));
     return true;
   };
 }
@@ -1023,15 +1083,17 @@ const jumpToImplementation = jumpTo('implementationProvider', 'textDocument/impl
 
 /** References in lsp-client's panel, which only the first server's plugin can fill; else in a picker. */
 export function findReferences(view: EditorView) {
-  const p = pluginFor(view, 'referencesProvider');
-  if (!p) return false;
-  if (p === LSPPlugin.get(view)) return referencePanel(view);
-  const head = view.state.selection.main.head;
-  void ask<Location[]>(p, 'textDocument/references', (p) => ({
-    position: p.toPosition(head),
-    context: { includeDeclaration: true },
-  }))
-    .then((locations) => {
+  if (!mayHave(view, 'referencesProvider')) return false;
+  void (async () => {
+    const p = await pluginReady(view, 'referencesProvider');
+    if (!p) return;
+    if (p === LSPPlugin.get(view)) return void referencePanel(view);
+    const head = view.state.selection.main.head;
+    const locations = await ask<Location[]>(p, 'textDocument/references', (p) => ({
+      position: p.toPosition(head),
+      context: { includeDeclaration: true },
+    }));
+    {
       if (!locations?.length) return useStore.getState().showToast('No references', 'info');
       openPicker(view, {
         title: 'References',
@@ -1040,8 +1102,8 @@ export function findReferences(view: EditorView) {
           run: () => void jump(p, location),
         })),
       });
-    })
-    .catch((error) => toast('Finding references failed', error));
+    }
+  })().catch((error) => toast('Finding references failed', error));
   return true;
 }
 
@@ -1066,15 +1128,17 @@ export const lspFeatures: Extension = [
   highlights.field,
   highlightPlugin,
   hints.field,
+  showHints,
   hintRequester,
   hintClicks,
   hovers,
   semantic.field,
   semanticRequester,
   lenses.field,
+  showLenses,
   lensRequester,
   expansions,
-  foldsField,
+  folds.field,
   foldRequester,
   serverFolds,
   onTypeFormatting,

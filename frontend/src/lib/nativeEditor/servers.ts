@@ -48,3 +48,56 @@ export const pluginOf = (view: EditorView, client: LSPClient) => plugins(view).f
 
 /** Server ids by client: edits and commands go back to the server they came from. */
 export const serverIds = new WeakMap<LSPClient, number>();
+
+/** Whether a server can do `capability`, or may once it has started. */
+export const mayHave = (view: EditorView, capability: string) =>
+  plugins(view).some((p) => p.client.serverCapabilities === null || has(p, capability));
+
+/** Longest wait for servers still starting before a command picks among those started. */
+const START_WAIT_MS = 5000;
+
+/** Resolves once `view`'s servers have started, failed, or had `START_WAIT_MS`. */
+function started(view: EditorView) {
+  const pending = plugins(view).filter((p) => p.client.serverCapabilities === null);
+  if (!pending.length) return Promise.resolve();
+  return Promise.race([
+    Promise.all(pending.map((p) => p.client.initializing.catch(() => null))),
+    new Promise((resolve) => setTimeout(resolve, START_WAIT_MS)),
+  ]).then(() => undefined);
+}
+
+/** `pluginFor`, once the servers have started: a command run while they start waits for them. */
+export const pluginReady = (view: EditorView, capability: string) =>
+  started(view).then(() => pluginFor(view, capability));
+
+/** `pluginsFor`, once the servers have started. */
+export const pluginsReady = (view: EditorView, capability: string) =>
+  started(view).then(() => pluginsFor(view, capability));
+
+/**
+ * The results of `tasks` once all settle, or `grace` ms after the first does:
+ * a slow server doesn't hold back the others' (it gets `undefined`).
+ */
+export function gather<T>(tasks: Promise<T>[], grace = 1000): Promise<(T | undefined)[]> {
+  return new Promise((resolve) => {
+    const results: (T | undefined)[] = new Array(tasks.length).fill(undefined);
+    let left = tasks.length;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const done = () => {
+      clearTimeout(timer);
+      resolve(results.slice());
+    };
+    if (!left) return done();
+    tasks.forEach((task, i) =>
+      task
+        .then(
+          (result) => void (results[i] = result),
+          () => {},
+        )
+        .finally(() => {
+          if (--left === 0) done();
+          else timer ??= setTimeout(done, grace);
+        }),
+    );
+  });
+}

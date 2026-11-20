@@ -270,6 +270,7 @@ export function NativeEditor({
   const lsp = status ? servers.filter((s) => status.servers.includes(s.id)) : [];
   const animations = getAnimations(config);
   const work = status ? progress.filter((p) => status.servers.includes(p.server)) : [];
+  /** Close `path`, asking about unsaved changes; true if it closes without asking. */
   const close = (path: string, force = false) => {
     // Another pane showing the file keeps its unsaved changes.
     const elsewhere = useStore
@@ -279,7 +280,11 @@ export function NativeEditor({
       );
     if (!editor?.status(path)?.dirty || elsewhere) op({ kind: 'close', path });
     else if (force) void editor.revert(path).then(() => op({ kind: 'close', path }));
-    else setClosing(path);
+    else {
+      setClosing(path);
+      return false;
+    }
+    return true;
   };
   const closeRef = useRef(close);
   closeRef.current = close;
@@ -330,14 +335,13 @@ export function NativeEditor({
                   if (event.key !== 'Delete' || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey)
                     return;
                   event.preventDefault();
-                  // Focus stays in the strip once this tab goes.
                   const tab = event.currentTarget;
                   const tabs = [
                     ...(tab.closest('[role="tablist"]')?.querySelectorAll<HTMLElement>('[role="tab"]') ?? []),
                   ];
                   const at = tabs.indexOf(tab);
-                  (tabs[at + 1] ?? tabs[at - 1])?.focus();
-                  close(path);
+                  // Focus stays in the strip once this tab goes; asking to save keeps it.
+                  if (close(path)) (tabs[at + 1] ?? tabs[at - 1])?.focus();
                 }}
                 endContent={
                   <TabClose

@@ -47,7 +47,8 @@
 // - hover on "stall": sends nothing for 6 s, then answers
 // - --no-init: never answers initialize; --crash-init: exits on the first
 //   initialize (once, with a marker in $BTMUX_FAKE_LSP); --no-format: no
-//   formatting; --slow-publish: diagnostics only pushed, 2 s late after changes
+//   formatting; --slow-publish: diagnostics only pushed, 2 s late after changes;
+//   --slow-init: answers initialize after 2 s
 // - --second: another server for the same files, with only a warning on every
 //   "lint", a code action replacing it with "clean", "Second hover for WORD",
 //   formatting that uppercases every "fmt", completion failing 500 ms late, and
@@ -741,8 +742,9 @@ process.stdin.on('data', (chunk: Buffer) => {
           writeFileSync(marker, '');
           process.exit(1);
         }
-        if (!process.argv.includes('--no-init')) setTimeout(reply, 300);
+        if (!process.argv.includes('--no-init')) setTimeout(reply, process.argv.includes('--slow-init') ? 2000 : 300);
       } else if (
+        !SECOND &&
         msg.method === 'textDocument/hover' &&
         wordAt(text(msg.params.textDocument.uri), msg.params.position) === 'stall'
       ) {
