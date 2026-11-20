@@ -162,6 +162,8 @@ fn apply(doc: &mut DocumentMut, u: &ConfigUpdate) {
         ("wallpaper-resolution", u.wallpaper_resolution, 0.1, 1.0),
         ("backdrop-blur", u.backdrop_blur, 0.0, 50.0),
         ("backdrop-dim", u.backdrop_dim, 0.0, 1.0),
+        ("popup-opacity", u.popup_opacity, 0.0, 1.0),
+        ("popup-blur", u.popup_blur, 0.0, 50.0),
         (
             "pane-switch-border-speed",
             u.pane_switch_border_speed,

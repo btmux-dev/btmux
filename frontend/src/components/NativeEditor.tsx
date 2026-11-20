@@ -6,6 +6,7 @@ import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { Tab, TabList } from '@astryxdesign/core/TabList';
+import { StatusDot, type StatusDotProps } from '@astryxdesign/core/StatusDot';
 import { Text } from '@astryxdesign/core/Text';
 import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
 import { Circle, FileWarning, X } from 'lucide-react';
@@ -34,6 +35,25 @@ const loadEditor = () => (loader ??= import('../lib/nativeEditor/paneEditor'));
 
 const basename = (path: string) => path.slice(path.lastIndexOf('/') + 1) || path;
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/** A language server's status-line dot: ready, busy (`$/progress`), starting, or failed. */
+function serverDot(server: LspServerStatus): {
+  state: string;
+  variant: StatusDotProps['variant'];
+  pulsing: boolean;
+  text: string;
+} {
+  if (server.state === 'failed') {
+    return { state: 'failed', variant: 'error', pulsing: false, text: server.message ?? 'failed' };
+  }
+  if (server.state === 'starting') return { state: 'starting', variant: 'neutral', pulsing: true, text: 'starting' };
+  const work = server.progress[0];
+  if (work) {
+    const text = [work.title, work.message, work.percent != null && `${work.percent}%`].filter(Boolean).join(' ');
+    return { state: 'busy', variant: 'accent', pulsing: true, text: text || 'working' };
+  }
+  return { state: 'ready', variant: 'success', pulsing: false, text: 'ready' };
+}
 
 /** The native editor over a pane, as the server's `PaneEditor` describes it. */
 export function NativeEditor({
@@ -386,22 +406,33 @@ export function NativeEditor({
                 {plural(editor.problems.errors, 'error')}, {plural(editor.problems.warnings, 'warning')}
               </Text>
             )}
-            {lsp.map((server) => (
-              <Text
-                key={server.id}
-                size="sm"
-                color="secondary"
-                maxLines={1}
-                className="min-w-0 @max-md:hidden"
-                aria-label={`Language server ${server.name}`}
-              >
-                {server.state === 'failed'
-                  ? `${server.name}: ${server.message ?? 'failed'}`
-                  : server.state === 'starting'
-                    ? `${server.name}…`
-                    : server.name}
-              </Text>
-            ))}
+            {lsp.map((server) => {
+              const dot = serverDot(server);
+              return (
+                <HStack key={server.id} gap={1} vAlign="center" className="min-w-0" data-lsp-state={dot.state}>
+                  {/* Narrow panes keep the dot; its tooltip names the server. */}
+                  <StatusDot
+                    variant={dot.variant}
+                    isPulsing={dot.pulsing}
+                    label={`${server.name}: ${dot.text}`}
+                    tooltip={`${server.name}: ${dot.text}`}
+                  />
+                  <Text
+                    size="sm"
+                    color="secondary"
+                    maxLines={1}
+                    className="min-w-0 @max-md:hidden"
+                    aria-label={`Language server ${server.name}`}
+                  >
+                    {server.state === 'failed'
+                      ? `${server.name}: ${server.message ?? 'failed'}`
+                      : server.state === 'starting'
+                        ? `${server.name}…`
+                        : server.name}
+                  </Text>
+                </HStack>
+              );
+            })}
             {status?.language && (
               <Text size="sm" color="secondary" className="@max-md:hidden">
                 {status.language}

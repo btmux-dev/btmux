@@ -49,6 +49,10 @@ pub const DEFAULT_WALLPAPER_FOLLOWS_KEYBOARD: bool = false;
 pub const DEFAULT_BACKDROP_BLUR: f32 = 2.0;
 /// Opacity of the dimming layer behind modals.
 pub const DEFAULT_BACKDROP_DIM: f32 = 0.5;
+/// Background opacity of editor popups (completions, hovers, pickers).
+pub const DEFAULT_POPUP_OPACITY: f32 = 0.85;
+/// Blur radius in pixels behind editor popups.
+pub const DEFAULT_POPUP_BLUR: f32 = 2.0;
 /// Default pane-switch border-draw style (`"none"` disables it). The style
 /// registry lives in the frontend (`lib/paneSwitchBorder.ts`); an unknown name
 /// falls back there.
@@ -969,6 +973,14 @@ pub struct FileConfig {
     /// Defaults to 0.5.
     #[serde(rename = "backdrop-dim")]
     pub backdrop_dim: Option<f32>,
+    /// Background opacity of editor popups: 0.0 = clear, 1.0 = opaque.
+    /// Defaults to 0.85.
+    #[serde(rename = "popup-opacity")]
+    pub popup_opacity: Option<f32>,
+    /// Blur radius in pixels behind editor popups and Neovim floats. 0 = no
+    /// blur. Defaults to 2.0.
+    #[serde(rename = "popup-blur")]
+    pub popup_blur: Option<f32>,
     /// Border-draw effect played on the pane you switch to: `"none"`, `"trace"`
     /// (counter-clockwise perimeter draw), `"sweep"` (clockwise conic sweep), or
     /// `"wipe"` (diagonal gradient wipe). A pure-CSS accent; the style registry lives in the frontend and an
@@ -1071,6 +1083,8 @@ impl Default for FileConfig {
             wallpaper_shader_follows_keyboard_input: DEFAULT_WALLPAPER_FOLLOWS_KEYBOARD,
             backdrop_blur: None,
             backdrop_dim: None,
+            popup_opacity: None,
+            popup_blur: None,
             pane_switch_border: Some(DEFAULT_PANE_SWITCH_BORDER_STYLE.to_string()),
             pane_switch_border_speed: Some(DEFAULT_PANE_SWITCH_BORDER_SPEED),
             session_sort: SessionSort::default(),
@@ -1518,6 +1532,10 @@ pub struct ClientConfig {
     pub backdrop_blur: f32,
     /// Opacity of the dimming layer behind modals (0–1).
     pub backdrop_dim: f32,
+    /// Background opacity of editor popups (0–1).
+    pub popup_opacity: f32,
+    /// Blur radius in pixels behind editor popups (0–50).
+    pub popup_blur: f32,
     /// Resolved pane-switch border-draw style, or `null` when disabled (`"none"`
     /// in the file). The frontend also gates this on `animations`.
     pub pane_switch_border: Option<String>,
@@ -2026,6 +2044,12 @@ pub fn generate_config_toml() -> String {
 # backdrop-blur = {DEFAULT_BACKDROP_BLUR:.1}
 # backdrop-dim = {DEFAULT_BACKDROP_DIM:.2}
 
+# Editor popups (completions, hovers, pickers, which-key): background opacity
+# (0.0-1.0) and blur radius in pixels (0-50). The blur also applies to
+# Neovim floats made translucent by 'winblend'.
+# popup-opacity = {DEFAULT_POPUP_OPACITY:.2}
+# popup-blur = {DEFAULT_POPUP_BLUR:.1}
+
 # Border-draw effect played on the switched-to pane (pure CSS). Disabled
 # entirely when `animations = false`.
 # "none" | "trace" (counter-clockwise perimeter) | "sweep" (clockwise conic)
@@ -2365,6 +2389,14 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         .backdrop_dim
         .unwrap_or(DEFAULT_BACKDROP_DIM)
         .clamp(0.0, 1.0);
+    let popup_opacity = file
+        .popup_opacity
+        .unwrap_or(DEFAULT_POPUP_OPACITY)
+        .clamp(0.0, 1.0);
+    let popup_blur = file
+        .popup_blur
+        .unwrap_or(DEFAULT_POPUP_BLUR)
+        .clamp(0.0, 50.0);
     let wallpaper_speed = file
         .wallpaper_speed
         .unwrap_or(DEFAULT_WALLPAPER_SPEED)
@@ -2461,6 +2493,8 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         wallpaper_shader_follows_keyboard_input: file.wallpaper_shader_follows_keyboard_input,
         backdrop_blur,
         backdrop_dim,
+        popup_opacity,
+        popup_blur,
         pane_switch_border,
         pane_switch_border_speed,
         session_sort: file.session_sort.clone(),
@@ -2572,6 +2606,8 @@ pub struct ConfigUpdate {
     pub wallpaper_shader_follows_keyboard_input: Option<bool>,
     pub backdrop_blur: Option<f32>,
     pub backdrop_dim: Option<f32>,
+    pub popup_opacity: Option<f32>,
+    pub popup_blur: Option<f32>,
     /// Border-draw style name; `"none"` (or the empty string) disables it.
     pub pane_switch_border: Option<String>,
     pub pane_switch_border_speed: Option<f32>,
@@ -2709,6 +2745,12 @@ impl ConfigUpdate {
         }
         if other.backdrop_dim.is_some() {
             self.backdrop_dim = other.backdrop_dim;
+        }
+        if other.popup_opacity.is_some() {
+            self.popup_opacity = other.popup_opacity;
+        }
+        if other.popup_blur.is_some() {
+            self.popup_blur = other.popup_blur;
         }
         if other.pane_switch_border.is_some() {
             self.pane_switch_border = other.pane_switch_border.clone();
@@ -2857,6 +2899,12 @@ pub fn resolve_with_overrides(
     }
     if let Some(dim) = overrides.backdrop_dim {
         file.backdrop_dim = Some(dim.clamp(0.0, 1.0));
+    }
+    if let Some(opacity) = overrides.popup_opacity {
+        file.popup_opacity = Some(opacity.clamp(0.0, 1.0));
+    }
+    if let Some(blur) = overrides.popup_blur {
+        file.popup_blur = Some(blur.clamp(0.0, 50.0));
     }
     if let Some(style) = &overrides.pane_switch_border {
         // Kept verbatim (including `"none"`); resolve_binds maps it to the wire.
@@ -3111,6 +3159,8 @@ palette:
         assert!(!resolved.wallpaper_shader_follows_keyboard_input);
         assert_eq!(resolved.backdrop_blur, 2.0);
         assert_eq!(resolved.backdrop_dim, 0.5);
+        assert_eq!(resolved.popup_opacity, 0.85);
+        assert_eq!(resolved.popup_blur, 2.0);
         assert_eq!(resolved.window_grid_count, 4);
         assert_eq!(resolved.window_sort, WindowSort::Alphabetical);
         assert_eq!(resolved.session_sort, SessionSort::Mru);
@@ -3126,6 +3176,10 @@ palette:
         let resolved = resolve_binds(&file, ColorMode::Dark);
         assert_eq!(resolved.backdrop_blur, 50.0);
         assert_eq!(resolved.backdrop_dim, 0.1);
+        let file: FileConfig = toml::from_str("popup-opacity = 1.5\npopup-blur = 6.0").unwrap();
+        let resolved = resolve_binds(&file, ColorMode::Dark);
+        assert_eq!(resolved.popup_opacity, 1.0);
+        assert_eq!(resolved.popup_blur, 6.0);
     }
 
     #[test]

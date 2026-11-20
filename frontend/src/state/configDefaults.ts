@@ -23,6 +23,8 @@ export const CONFIG_DEFAULTS = {
   wallpaperFollowsKeyboard: false,
   backdropBlur: 2,
   backdropDim: 0.5,
+  popupOpacity: 0.85,
+  popupBlur: 2,
   paneSwitchBorder: 'wipe' as string | null,
   paneSwitchBorderSpeed: 0.15,
   sessionSort: 'mru' as const,
@@ -145,6 +147,14 @@ export function getBackdropBlur(config: ConfigLike): number {
 
 export function getBackdropDim(config: ConfigLike): number {
   return config?.backdrop_dim ?? CONFIG_DEFAULTS.backdropDim;
+}
+
+export function getPopupOpacity(config: ConfigLike): number {
+  return config?.popup_opacity ?? CONFIG_DEFAULTS.popupOpacity;
+}
+
+export function getPopupBlur(config: ConfigLike): number {
+  return config?.popup_blur ?? CONFIG_DEFAULTS.popupBlur;
 }
 
 export function getPaneSwitchBorderStyle(config: ConfigLike): string | null {

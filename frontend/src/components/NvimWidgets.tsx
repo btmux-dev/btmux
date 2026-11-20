@@ -258,14 +258,14 @@ function SignatureCard({
 
 /**
  * A translucent card for 'winblend'/'pumblend' (0–100), blurring what's behind it by
- * `backdrop-blur`, like dialogs. Text drawn on it stays opaque.
+ * `popup-blur`, like the native editor's popups. Text drawn on it stays opaque.
  */
 function blendStyle(blend: number): CSSProperties | undefined {
   if (blend <= 0) return undefined;
   return {
     '--btm-blend-alpha': `${100 - blend}%`,
     backgroundColor: `color-mix(in srgb, var(--color-background-card) ${100 - blend}%, transparent)`,
-    backdropFilter: 'blur(var(--btm-backdrop-blur, 2px))',
+    backdropFilter: 'blur(var(--btm-popup-blur, 2px))',
   } as CSSProperties;
 }
 

@@ -157,8 +157,10 @@ key isn't mapped. Esc drops keys typed so far, so it can't be mapped.
 
 The editor shares one instance of each language server per project root across
 clients. The root is the outermost directory in the Git worktree with a marker
-for that language, such as `Cargo.toml`. The status line shows server state
-and progress.
+for that language, such as `Cargo.toml`. The status line shows each server
+with a dot: green when ready, pulsing blue while it works (indexing), pulsing
+gray while it starts, and red when it failed, with the error beside it. Hover
+the dot for details; narrow panes keep only the dot.
 
 btmux searches its own `PATH` and then your shell's `PATH`. Preconfigured
 servers include rust-analyzer, typescript-language-server,

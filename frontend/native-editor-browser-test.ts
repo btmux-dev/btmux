@@ -436,6 +436,7 @@ try {
     await waitForText(page, paneId, 'let bad = 1;\nuse thing;\n');
     await page.locator(`[data-editor-pane="${paneId}"] .cm-lintRange-error`).first().waitFor();
     await page.getByLabel('Language server fake').waitFor();
+    await page.locator(`[data-editor-pane="${paneId}"] [data-lsp-state="ready"]`).waitFor();
     await page.getByText('1 error, 0 warnings').waitFor();
     // Lenses and hints move text as they arrive; positions are measured after.
     await page.locator(`[data-editor-pane="${paneId}"] .cm-lsp-code-lens`).first().waitFor();
@@ -446,9 +447,10 @@ try {
     splits.push(await api(`/api/panes/${paneId}/split`, 'POST', { direction: 'right', select: false }));
     const statusLine = () =>
       page.getByLabel('Language server fake').evaluate((server) => {
-        const line = server.parentElement!.parentElement!;
+        const line = server.closest('[data-lsp-state]')!.parentElement!.parentElement!;
         return {
           server: getComputedStyle(server).display,
+          dot: getComputedStyle(server.closest('[data-lsp-state]')!.firstElementChild!).display,
           // On one line, without clipping.
           fits: line.scrollWidth <= line.clientWidth && line.clientHeight < 30,
           width: line.clientWidth,
@@ -460,7 +462,10 @@ try {
       await page.waitForTimeout(50);
       narrow = await statusLine();
     }
-    assert.ok(narrow.width < 350 && narrow.fits && narrow.text!.includes('1 error, 0 warnings'), JSON.stringify(narrow));
+    assert.ok(
+      narrow.width < 350 && narrow.fits && narrow.dot !== 'none' && narrow.text!.includes('1 error, 0 warnings'),
+      JSON.stringify(narrow),
+    );
     for (const { pane_id } of splits) await api(`/api/panes/${pane_id}`, 'DELETE');
     await page.getByLabel('Language server fake').waitFor();
     console.log('PASS a narrow status line fits');
@@ -660,7 +665,9 @@ try {
     writeFileSync(nolsp, 'plain\n');
     await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: nolsp, line: null, editor: 'native' });
     await waitForText(page, paneId, 'plain\n');
-    await page.getByText('missing: btmux-missing-lsp not found').waitFor();
+    // The dot's tooltip has the same text.
+    await page.getByLabel('Language server missing').getByText('missing: btmux-missing-lsp not found').waitFor();
+    await page.locator(`[data-editor-pane="${paneId}"] [data-lsp-state="failed"]`).waitFor();
     const plain = (await wordRect(0, 'plain'))!;
     await page.mouse.move(plain.x, plain.y);
     await page.waitForTimeout(1000);

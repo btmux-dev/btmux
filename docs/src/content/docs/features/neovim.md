@@ -25,7 +25,7 @@ configured as your editor, open it from the status bar. You can also use
 
 `winblend` and `pumblend` make floating windows and the completion menu
 translucent, as in the screenshots, blurring what's behind them by
-`backdrop-blur` while their text stays sharp.
+`popup-blur` while their text stays sharp.
 
 ## Your Neovim config
 

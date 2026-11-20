@@ -72,6 +72,12 @@ Every option with its default, as `btmux generate-config` prints it. Uncomment a
 # backdrop-blur = 2.0
 # backdrop-dim = 0.50
 
+# Editor popups (completions, hovers, pickers, which-key): background opacity
+# (0.0-1.0) and blur radius in pixels (0-50). The blur also applies to
+# Neovim floats made translucent by 'winblend'.
+# popup-opacity = 0.85
+# popup-blur = 2.0
+
 # Border-draw effect played on the switched-to pane (pure CSS). Disabled
 # entirely when `animations = false`.
 # "none" | "trace" (counter-clockwise perimeter) | "sweep" (clockwise conic)
