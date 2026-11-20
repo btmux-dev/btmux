@@ -28,7 +28,11 @@ mkdirSync(join(configHome, 'btmux'), { recursive: true });
 writeFileSync(
   join(configHome, 'btmux', 'config.toml'),
   '[language-server.fake]\ncommand = "fake-lsp"\n[[language]]\nname = "fake"\nfile-types = ["fake"]\nlanguage-servers = ["fake"]\n' +
-    '[[language]]\nname = "rust"\nfile-types = ["rs"]\nlanguage-servers = ["fake"]\n',
+    '[[language]]\nname = "rust"\nfile-types = ["rs"]\nlanguage-servers = ["fake"]\n' +
+    // Two servers for one file, started only by the last test.
+    '[language-server.first]\ncommand = "fake-lsp"\nargs = ["--no-format"]\n' +
+    '[language-server.second]\ncommand = "fake-lsp"\nargs = ["--second"]\n' +
+    '[[language]]\nname = "duo"\nfile-types = ["duo"]\nlanguage-servers = ["first", "second"]\n',
 );
 const log = () => {
   try {
@@ -751,6 +755,40 @@ try {
   writeFileSync(join(dir, 'after.fake'), 'x\n');
   await until('the watched file after the restart', () => /watched .*after\.fake/.test(log()));
   console.log('PASS watched files after a restart');
+
+  // Two servers for one file: each one's diagnostics, hovers, and code
+  // actions, and formatting from the only one that can.
+  const duo = join(dir, 'main.duo');
+  writeFileSync(duo, 'bad lint fmt\n');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: duo, line: 1, editor: 'native' });
+  await pane.locator('[aria-label^="Language server first"][data-lsp-state="ready"]').waitFor();
+  await pane.locator('[aria-label^="Language server second"][data-lsp-state="ready"]').waitFor();
+  await until('the file', async () => (await lines(page, paneId)) === 'bad lint fmt\n');
+  await pane.getByText('1 error, 1 warning').waitFor();
+  console.log('PASS diagnostics from two servers');
+
+  // Lenses move text as they arrive; hover the mark itself.
+  await pane.locator('.cm-lsp-code-lens').first().waitFor();
+  const lintMark = pane.locator('.cm-lintRange-warning').first();
+  await lintMark.hover();
+  const hover = page.locator('.cm-lsp-hover-tooltip');
+  await hover.getByText('Fake hover for lint').waitFor();
+  await hover.getByText('Second hover for lint').waitFor();
+  console.log('PASS hovers from two servers');
+
+  await lintMark.click();
+  await page.keyboard.press('ControlOrMeta+.');
+  const fix = pane.getByRole('option', { name: /Fix lint/ });
+  await fix.waitFor();
+  assert.match((await fix.textContent()) ?? '', /second/);
+  await fix.click();
+  await until('the fix', async () => (await lines(page, paneId)) === 'bad clean fmt\n');
+  await pane.getByText('1 error, 0 warnings').waitFor();
+  console.log('PASS code actions from the second server');
+
+  await page.keyboard.press('Shift+Alt+f');
+  await until('the format', async () => (await lines(page, paneId)) === 'bad clean FMT\n');
+  console.log('PASS formatting from the server that can');
 } catch (error) {
   const shot = process.env.TEST_SHOT;
   if (shot) for (const context of browser.contexts()) await context.pages()[0]?.screenshot({ path: shot });

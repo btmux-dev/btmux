@@ -1,6 +1,15 @@
 /** Run with `just test-browser`, or against a running stack with BTMUX_TEST_URL and BTMUX_AUTH_TOKEN. */
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, type BrowserContext, type Page } from 'playwright';
@@ -233,7 +242,13 @@ try {
   await page.keyboard.type('qotgt');
   const targetOption = editorPane.getByRole('option', { name: /quickopen-target\.md/ });
   await targetOption.waitFor();
-  assert.equal(await targetOption.locator('.cm-btmux-picker-match').allTextContents().then((m) => m.join('')), 'qotgt');
+  assert.equal(
+    await targetOption
+      .locator('.cm-btmux-picker-match')
+      .allTextContents()
+      .then((m) => m.join('')),
+    'qotgt',
+  );
   await page.keyboard.press('Enter');
   await activeFile(target);
   await waitForText(page, paneId, 'found me\nline two\nline three\n');
@@ -442,6 +457,36 @@ try {
     await page.locator(`[data-editor-pane="${paneId}"] .cm-lsp-code-lens`).first().waitFor();
     console.log('PASS diagnostics from the language server');
 
+    // Virtual text shows each line's diagnostic after it, live.
+    const lspToml = readFileSync(join(configHome, 'btmux', 'config.toml'), 'utf8');
+    const virtualText = (on: boolean) =>
+      waitForAsync(
+        page,
+        async (on) => {
+          const { useStore } = await import('/src/state/store.tsx' as string);
+          return useStore.getState().config?.virtual_text === on;
+        },
+        on,
+      );
+    const inline = page.locator(`[data-editor-pane="${paneId}"] .cm-btmux-virtualText-error`);
+    assert.equal(await inline.count(), 0);
+    writeFileSync(
+      join(configHome, 'btmux', 'config.toml'),
+      lspToml.replace('[native-editor]\n', '[native-editor]\nvirtual-text = true\n'),
+    );
+    await virtualText(true);
+    await inline.first().waitFor();
+    // After the line's text (and its inlay hint).
+    const shown = await inline.first().evaluate((el) => ({
+      text: el.textContent,
+      line: el.closest('.cm-line')?.textContent,
+    }));
+    assert.deepEqual(shown, { text: 'bad word', line: 'let bad: hint = 1;bad word' });
+    writeFileSync(join(configHome, 'btmux', 'config.toml'), lspToml);
+    await virtualText(false);
+    await inline.first().waitFor({ state: 'detached' });
+    console.log('PASS virtual text shows diagnostics at the end of their lines');
+
     // A narrow pane's status line drops its least useful items rather than clip.
     const splits: { pane_id: string }[] = [];
     splits.push(await api(`/api/panes/${paneId}/split`, 'POST', { direction: 'right', select: false }));
@@ -515,7 +560,13 @@ try {
       el.scrollTop = 100;
       const [first, second] = Array.from(el.querySelectorAll('p'), (p) => p.getBoundingClientRect());
       const r = el.getBoundingClientRect();
-      return { top: r.top, bottom: r.bottom, scrollTop: el.scrollTop, gap: second.top - first.bottom, viewport: innerHeight };
+      return {
+        top: r.top,
+        bottom: r.bottom,
+        scrollTop: el.scrollTop,
+        gap: second.top - first.bottom,
+        viewport: innerHeight,
+      };
     });
     assert.ok(infoBox.scrollTop > 0 && infoBox.top >= 0 && infoBox.bottom <= infoBox.viewport, JSON.stringify(infoBox));
     assert.ok(infoBox.gap < 10, JSON.stringify(infoBox));
@@ -623,6 +674,24 @@ try {
     assert.match(lspLog(), /textDocument\/didSave/);
     console.log('PASS format on save');
 
+    // A tab's X closes it, active or not, asking about unsaved changes; so does a middle click.
+    const thirdTab = page.getByRole('tab', { name: 'third.fake' });
+    const otherTab = page.getByRole('tab', { name: 'other.fake' });
+    const mainTab = page.getByRole('tab', { name: 'main.fake' });
+    await thirdTab.hover();
+    await thirdTab.locator('[data-tab-close]').click();
+    const saveThird = page.getByRole('dialog', { name: 'Save changes to third.fake?' });
+    await saveThird.getByRole('button', { name: "Don't save", exact: true }).click();
+    await thirdTab.waitFor({ state: 'detached' });
+    assert.equal(await mainTab.getAttribute('aria-selected'), 'true');
+    await otherTab.click({ button: 'middle' });
+    const saveOther = page.getByRole('dialog', { name: 'Save changes to other.fake?' });
+    await saveOther.getByRole('button', { name: "Don't save", exact: true }).click();
+    await otherTab.waitFor({ state: 'detached' });
+    assert.equal(await mainTab.getAttribute('aria-selected'), 'true');
+    await waitForText(page, paneId, 'let bad = 1;\nuse item;\nfakeCompletion\nend');
+    console.log('PASS tabs close from their own X or a middle click');
+
     // A format answered after switching files changes the file it was for.
     const slow = join(dir, 'slow.fake');
     const two = join(dir, 'two.fake');
@@ -647,40 +716,40 @@ try {
     // A server that isn't installed shows in the status line, and its features stay off.
     const lspConfig = [
       '[language-server.missing]',
-        'command = "btmux-missing-lsp"',
-        '[language-server.stall]',
-        'command = "fake-lsp"',
-        'timeout = 2',
-        '[language-server.crashinit]',
-        'command = "fake-lsp"',
-        'args = ["--crash-init"]',
-        '[language-server.untimed]',
-        'command = "fake-lsp"',
-        'args = ["--no-init"]',
-        'timeout = 0',
-        '[language-server.noinit]',
-        'command = "fake-lsp"',
-        'args = ["--no-init"]',
-        'timeout = 2',
-        '[[language]]',
-        'name = "nolsp"',
-        'file-types = ["nolsp"]',
-        'language-servers = ["missing"]',
-        '[[language]]',
-        'name = "stall"',
-        'file-types = ["stall"]',
-        'language-servers = ["stall"]',
-        '[[language]]',
-        'name = "crashinit"',
-        'file-types = ["crashinit"]',
-        'language-servers = ["crashinit"]',
-        '[[language]]',
-        'name = "untimed"',
-        'file-types = ["untimed"]',
-        'language-servers = ["untimed"]',
-        '[[language]]',
-        'name = "noinit"',
-        'file-types = ["noinit"]',
+      'command = "btmux-missing-lsp"',
+      '[language-server.stall]',
+      'command = "fake-lsp"',
+      'timeout = 2',
+      '[language-server.crashinit]',
+      'command = "fake-lsp"',
+      'args = ["--crash-init"]',
+      '[language-server.untimed]',
+      'command = "fake-lsp"',
+      'args = ["--no-init"]',
+      'timeout = 0',
+      '[language-server.noinit]',
+      'command = "fake-lsp"',
+      'args = ["--no-init"]',
+      'timeout = 2',
+      '[[language]]',
+      'name = "nolsp"',
+      'file-types = ["nolsp"]',
+      'language-servers = ["missing"]',
+      '[[language]]',
+      'name = "stall"',
+      'file-types = ["stall"]',
+      'language-servers = ["stall"]',
+      '[[language]]',
+      'name = "crashinit"',
+      'file-types = ["crashinit"]',
+      'language-servers = ["crashinit"]',
+      '[[language]]',
+      'name = "untimed"',
+      'file-types = ["untimed"]',
+      'language-servers = ["untimed"]',
+      '[[language]]',
+      'name = "noinit"',
+      'file-types = ["noinit"]',
       'language-servers = ["noinit"]',
       '',
     ].join('\n');
@@ -857,7 +926,9 @@ try {
 
     // Quick open's Ctrl-P (off macOS) wins over vim's in normal mode.
     const linux = await openPage((context) =>
-      context.addInitScript(() => Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'Linux x86_64' })),
+      context.addInitScript(() =>
+        Object.defineProperty(Navigator.prototype, 'platform', { get: () => 'Linux x86_64' }),
+      ),
     );
     await waitForText(linux, paneId, 'hello alpha\nbeta\n');
     await linux.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();

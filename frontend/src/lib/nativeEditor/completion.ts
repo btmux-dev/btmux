@@ -11,13 +11,14 @@ import {
   type CompletionResult,
   type CompletionSource,
 } from '@codemirror/autocomplete';
-import { LSPPlugin, type WorkspaceMapping } from '@codemirror/lsp-client';
-import { ChangeSet, EditorState, StateEffect, StateField, type ChangeDesc } from '@codemirror/state';
+import { LSPPlugin, type LSPClient, type WorkspaceMapping } from '@codemirror/lsp-client';
+import { ChangeSet, EditorState, StateEffect, StateField, type ChangeDesc, type Extension } from '@codemirror/state';
 import { highlightingFor, language } from '@codemirror/language';
 import { ViewPlugin, type EditorView } from '@codemirror/view';
 import { highlightTree } from '@lezer/highlight';
 import { viewDocs, type Doc } from './doc';
 import { lspToSnippet, offsetChecked, type Range, type TextEdit } from './lspText';
+import { pluginOf } from './servers';
 
 type Markup = string | { kind: 'markdown' | 'plaintext'; value: string };
 
@@ -126,20 +127,24 @@ function overlaps(changes: ChangeDesc, from: number, to: number) {
 }
 
 /**
- * The latest completion request's mapping per view, from the document it was
- * made in to the one an option applies to. Released by the next request, or
- * when completion ends or the view shows another state.
+ * The latest completion request's mapping per view and server, from the
+ * document it was made in to the one an option applies to. Released by the
+ * server's next request, or when completion ends or the view shows another state.
  */
-const mappings = new WeakMap<EditorView, WorkspaceMapping>();
+const mappings = new WeakMap<EditorView, Map<LSPClient, WorkspaceMapping>>();
 
-function release(view: EditorView) {
-  mappings.get(view)?.destroy();
-  mappings.delete(view);
+function release(view: EditorView, client?: LSPClient) {
+  const byClient = mappings.get(view);
+  for (const [c, mapping] of byClient ?? []) {
+    if (client && c !== client) continue;
+    mapping.destroy();
+    byClient!.delete(c);
+  }
 }
 
 const releaseMappings = ViewPlugin.define((view) => ({
   update(u) {
-    if (mappings.has(view) && !completionStatus(u.state)) release(view);
+    if (mappings.get(view)?.size && !completionStatus(u.state)) release(view);
   },
   destroy() {
     release(view);
@@ -167,123 +172,128 @@ const tracked = StateField.define<Map<number, ChangeDesc>>({
 });
 let nextTrack = 0;
 
-const source: CompletionSource = async (context) => {
-  const view = context.view;
-  const plugin = view && LSPPlugin.get(view);
-  if (!view || !plugin) return null;
-  const capabilities = plugin.client.serverCapabilities;
-  if (capabilities && !capabilities.completionProvider) return null;
-  const reason = triggerReason(plugin, context);
-  if (!reason) return null;
-  plugin.client.sync();
-  // Follows edits from here on, for additional edits applied later.
-  release(view);
-  const mapping = plugin.client.workspaceMapping();
-  mappings.set(view, mapping);
-  const start = plugin.syncedDoc;
-  const uri = plugin.uri;
-  const params = { textDocument: { uri }, position: plugin.toPosition(context.pos), context: reason };
-  context.addEventListener('abort', () => plugin.client.cancelRequest(params));
-  let result: List | Item[] | null;
-  try {
-    result = await plugin.client.request<object, List | Item[] | null>('textDocument/completion', params);
-  } catch (error) {
-    if ((error as { code?: number }).code === -32800) return null;
-    throw error;
-  }
-  if (!result) return null;
-  const list: List = Array.isArray(result) ? { items: result } : result;
-  const defaults = list.itemDefaults;
-  const resolvable = !!plugin.client.serverCapabilities?.completionProvider?.resolveProvider;
-  const language = plugin.client.workspace.getFile(uri)?.languageId ?? '';
+/** Completions from the server whose plugin `pick` finds. */
+const sourceFrom =
+  (pick: (view: EditorView) => LSPPlugin | null): CompletionSource =>
+  async (context) => {
+    const view = context.view;
+    const plugin = view && pick(view);
+    if (!view || !plugin) return null;
+    const capabilities = plugin.client.serverCapabilities;
+    if (capabilities && !capabilities.completionProvider) return null;
+    const reason = triggerReason(plugin, context);
+    if (!reason) return null;
+    plugin.client.sync();
+    // Follows edits from here on, for additional edits applied later.
+    release(view, plugin.client);
+    const mapping = plugin.client.workspaceMapping();
+    let byClient = mappings.get(view);
+    if (!byClient) mappings.set(view, (byClient = new Map()));
+    byClient.set(plugin.client, mapping);
+    const start = plugin.syncedDoc;
+    const uri = plugin.uri;
+    const params = { textDocument: { uri }, position: plugin.toPosition(context.pos), context: reason };
+    context.addEventListener('abort', () => plugin.client.cancelRequest(params));
+    let result: List | Item[] | null;
+    try {
+      result = await plugin.client.request<object, List | Item[] | null>('textDocument/completion', params);
+    } catch (error) {
+      if ((error as { code?: number }).code === -32800) return null;
+      throw error;
+    }
+    if (!result) return null;
+    const list: List = Array.isArray(result) ? { items: result } : result;
+    const defaults = list.itemDefaults;
+    const resolvable = !!plugin.client.serverCapabilities?.completionProvider?.resolveProvider;
+    const language = plugin.client.workspace.getFile(uri)?.languageId ?? '';
 
-  const options = list.items.map((original): ServerCompletion => {
-    const item: Item =
-      defaults?.data !== undefined && original.data === undefined ? { ...original, data: defaults.data } : original;
-    let resolved: Promise<Item> | null = null;
-    const resolve = () =>
-      (resolved ??=
-        resolvable && (!item.documentation || !item.additionalTextEdits)
-          ? plugin.client.request<Item, Item>('completionItem/resolve', item).then(
-              (r) => ({ ...item, ...r }),
-              () => item,
-            )
-          : Promise.resolve(item));
-    const text = textOf(item);
-    const snippetText = (item.insertTextFormat ?? defaults?.insertTextFormat) === 2;
+    const options = list.items.map((original): ServerCompletion => {
+      const item: Item =
+        defaults?.data !== undefined && original.data === undefined ? { ...original, data: defaults.data } : original;
+      let resolved: Promise<Item> | null = null;
+      const resolve = () =>
+        (resolved ??=
+          resolvable && (!item.documentation || !item.additionalTextEdits)
+            ? plugin.client.request<Item, Item>('completionItem/resolve', item).then(
+                (r) => ({ ...item, ...r }),
+                () => item,
+              )
+            : Promise.resolve(item));
+      const text = textOf(item);
+      const snippetText = (item.insertTextFormat ?? defaults?.insertTextFormat) === 2;
 
-    /**
-     * `edits`, in the document the request was made in, into `doc`, changed
-     * by `before` until the option applied and by what `id` tracked since.
-     */
-    const applyExtra = (doc: Doc, id: number, before: ChangeDesc, edits: TextEdit[] | undefined) => {
-      const stop = track.of({ id, on: false });
-      const since = doc.state?.field(tracked, false)?.get(id);
-      // Closed, or reopened from scratch.
-      if (doc.closed || !since) return;
-      const changed = before.composeDesc(since);
-      const changes = [];
-      for (const edit of edits ?? []) {
-        const from = offsetChecked(start, edit.range.start);
-        const to = offsetChecked(start, edit.range.end);
-        // Edits beside the completion (a postfix one's receiver) still apply.
-        if (from === null || to === null || overlaps(changed, from, to)) continue;
-        const at = changed.mapPos(from, 1);
-        changes.push({ from: at, to: at + (to - from), insert: edit.newText });
-      }
-      doc.update({ changes, effects: stop, userEvent: 'input.complete' });
+      /**
+       * `edits`, in the document the request was made in, into `doc`, changed
+       * by `before` until the option applied and by what `id` tracked since.
+       */
+      const applyExtra = (doc: Doc, id: number, before: ChangeDesc, edits: TextEdit[] | undefined) => {
+        const stop = track.of({ id, on: false });
+        const since = doc.state?.field(tracked, false)?.get(id);
+        // Closed, or reopened from scratch.
+        if (doc.closed || !since) return;
+        const changed = before.composeDesc(since);
+        const changes = [];
+        for (const edit of edits ?? []) {
+          const from = offsetChecked(start, edit.range.start);
+          const to = offsetChecked(start, edit.range.end);
+          // Edits beside the completion (a postfix one's receiver) still apply.
+          if (from === null || to === null || overlaps(changed, from, to)) continue;
+          const at = changed.mapPos(from, 1);
+          changes.push({ from: at, to: at + (to - from), insert: edit.newText });
+        }
+        doc.update({ changes, effects: stop, userEvent: 'input.complete' });
+      };
+
+      const detail = item.labelDetails?.description ?? item.detail;
+      return {
+        label: item.filterText || item.label,
+        displayLabel: item.label + (item.labelDetails?.detail ?? ''),
+        type: item.kind ? KIND_TYPES[item.kind] : undefined,
+        code: detail,
+        sortText: item.sortText,
+        commitCharacters:
+          item.commitCharacters && item.commitCharacters !== defaults?.commitCharacters
+            ? item.commitCharacters
+            : undefined,
+        apply: (v, completion, from, to) => {
+          // Additional edits come now or once resolved, maybe once another file
+          // shows; positions map from the request through what's tracked from here.
+          const pending = item.additionalTextEdits ? Promise.resolve(item) : resolvable ? resolve() : null;
+          const doc = viewDocs.get(v);
+          const before = mapping.getMapping(uri);
+          const id = nextTrack++;
+          if (pending && doc && before) v.dispatch({ effects: track.of({ id, on: true }) });
+          if (snippetText) snippet(lspToSnippet(text))(v, completion, from, to);
+          else v.dispatch(insertCompletionText(v.state, text, from, to));
+          if (pending && doc && before) void pending.then((r) => applyExtra(doc, id, before, r.additionalTextEdits));
+        },
+        info:
+          item.documentation || resolvable
+            ? async () => {
+                const r = await resolve();
+                let html = '';
+                // A signature the list didn't show.
+                if (r.detail && r.detail !== detail)
+                  html += plugin.docToHTML({ kind: 'markdown', value: '```' + language + '\n' + r.detail + '\n```' });
+                if (r.documentation) html += plugin.docToHTML(r.documentation);
+                if (!html) return null;
+                const dom = document.createElement('div');
+                dom.className = 'cm-lsp-documentation cm-lsp-completion-documentation';
+                dom.innerHTML = html;
+                return dom;
+              }
+            : undefined,
+      };
+    });
+
+    const completions: CompletionResult = {
+      ...resultRange(context, list),
+      options,
+      commitCharacters: defaults?.commitCharacters,
+      validFor: list.isIncomplete ? undefined : validFor(list.items),
     };
-
-    const detail = item.labelDetails?.description ?? item.detail;
-    return {
-      label: item.filterText || item.label,
-      displayLabel: item.label + (item.labelDetails?.detail ?? ''),
-      type: item.kind ? KIND_TYPES[item.kind] : undefined,
-      code: detail,
-      sortText: item.sortText,
-      commitCharacters:
-        item.commitCharacters && item.commitCharacters !== defaults?.commitCharacters
-          ? item.commitCharacters
-          : undefined,
-      apply: (v, completion, from, to) => {
-        // Additional edits come now or once resolved, maybe once another file
-        // shows; positions map from the request through what's tracked from here.
-        const pending = item.additionalTextEdits ? Promise.resolve(item) : resolvable ? resolve() : null;
-        const doc = viewDocs.get(v);
-        const before = mapping.getMapping(uri);
-        const id = nextTrack++;
-        if (pending && doc && before) v.dispatch({ effects: track.of({ id, on: true }) });
-        if (snippetText) snippet(lspToSnippet(text))(v, completion, from, to);
-        else v.dispatch(insertCompletionText(v.state, text, from, to));
-        if (pending && doc && before) void pending.then((r) => applyExtra(doc, id, before, r.additionalTextEdits));
-      },
-      info:
-        item.documentation || resolvable
-          ? async () => {
-              const r = await resolve();
-              let html = '';
-              // A signature the list didn't show.
-              if (r.detail && r.detail !== detail)
-                html += plugin.docToHTML({ kind: 'markdown', value: '```' + language + '\n' + r.detail + '\n```' });
-              if (r.documentation) html += plugin.docToHTML(r.documentation);
-              if (!html) return null;
-              const dom = document.createElement('div');
-              dom.className = 'cm-lsp-documentation cm-lsp-completion-documentation';
-              dom.innerHTML = html;
-              return dom;
-            }
-          : undefined,
-    };
-  });
-
-  const completions: CompletionResult = {
-    ...resultRange(context, list),
-    options,
-    commitCharacters: defaults?.commitCharacters,
-    validFor: list.isIncomplete ? undefined : validFor(list.items),
+    return completions;
   };
-  return completions;
-};
 
 /** A signature or type in place of `detail`, which `codeDetail` highlights. */
 type ServerCompletion = Completion & { code?: string };
@@ -332,9 +342,24 @@ export const codeDetail = {
   position: 80,
 };
 
-/** Completions from the view's language server. */
+const firstSource = sourceFrom((view) => LSPPlugin.get(view));
+
+/** Completions from the view's first language server. */
 export const serverCompletions = [
-  EditorState.languageData.of(() => [{ autocomplete: source }]),
+  EditorState.languageData.of(() => [{ autocomplete: firstSource }]),
   tracked,
   releaseMappings,
 ];
+
+// One per client: CodeMirror tells results apart by source.
+const otherSources = new WeakMap<LSPClient, Extension>();
+
+/** Completions from another of its servers, besides `serverCompletions`. */
+export function completionsFrom(client: LSPClient) {
+  let found = otherSources.get(client);
+  if (!found) {
+    const source = sourceFrom((view) => pluginOf(view, client));
+    otherSources.set(client, (found = EditorState.languageData.of(() => [{ autocomplete: source }])));
+  }
+  return found;
+}

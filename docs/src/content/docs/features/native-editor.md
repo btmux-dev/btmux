@@ -38,6 +38,10 @@ Mod is Cmd on macOS and Ctrl elsewhere. Go back and forward are `Alt-←` and
 keep `Mod-w` and `Mod-t`, so the editor takes them only in the desktop app:
 `Mod-w` closes the file there, and Close Window moves to `Cmd-Shift-W`.
 
+Each tab has an X that closes it, shown on the active tab and on hover; on a
+tab with unsaved changes, a dot takes its place until you hover. A middle
+click closes a tab too.
+
 Quick open starts with open and recent files. Append `:42` to open a file at
 line 42, or enter `:42` alone to jump there in the current file.
 
@@ -172,11 +176,20 @@ dot. With `animations = false`, dots don't pulse.
 A server that isn't responding goes back to green once it sends anything.
 
 btmux searches its own `PATH` and then your shell's `PATH`. Preconfigured
-servers include rust-analyzer, typescript-language-server,
-pyright, gopls, clangd, lua-language-server, nil (Nix), bash-language-server,
+servers include rust-analyzer, typescript-language-server, ty and ruff
+(Python), gopls, clangd, lua-language-server, nil (Nix), bash-language-server,
 taplo (TOML), just-lsp (justfiles), yaml-language-server, and
 vscode-langservers-extracted (JSON, CSS, HTML). The About dialog's Health tab
 lists each configured server and whether btmux found it.
+
+A file can have several servers, as Python has ty for types, completions,
+and navigation and ruff for linting and formatting. Each gives its own
+diagnostics, code actions, hovers, inlay hints, code lenses, and completions.
+Everything else, such as formatting and go to definition, comes from the
+first server listed that can do it. Signature help and the references panel
+come from the first server, and references from a later one show in a
+picker. A server that isn't installed or fails is left out, so the next one
+takes its place.
 
 Add or replace languages and servers in `config.toml`:
 
@@ -222,6 +235,12 @@ completion with signature help need no keys. The rest:
 | All problems                               | `Mod-Shift-M`                                         |
 | Format the document or the selection       | `Shift-Alt-F`; `Mod-K Mod-F` the selection            |
 | Fold or unfold everything                  | `Mod-K Mod-0` / `Mod-K Mod-J`                         |
+
+Diagnostics are underlined, and hovering one shows its message. With
+`[native-editor] virtual-text = true`, also in Settings as **Inline
+diagnostics**, each line's most severe error, warning, or info also shows at
+the end of the line, with a count of the others. Hints don't, since they
+mostly fade unused code.
 
 `[native-editor] format-on-save = true` formats on every save. Renames and
 code actions also change files that aren't open: those wait in the editor,

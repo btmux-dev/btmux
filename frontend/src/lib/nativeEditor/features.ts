@@ -1,7 +1,7 @@
 // Language server features beyond @codemirror/lsp-client's: highlights,
 // inlay hints, semantic tokens, code lenses, folding, selection ranges,
 // range and on-type formatting, code actions, symbols, and hierarchies.
-import { LSPPlugin, jumpToDeclaration, jumpToImplementation, jumpToTypeDefinition } from '@codemirror/lsp-client';
+import { LSPPlugin, findReferences as referencePanel } from '@codemirror/lsp-client';
 import {
   EditorSelection,
   Prec,
@@ -29,15 +29,14 @@ import { editorConnection } from './connection';
 import { viewDocs, type Doc } from './doc';
 import { offset, type Command, type Location, type Position, type Range, type TextEdit } from './lspText';
 import { openPicker, type PickItem } from './picker';
+import { has, plugins, pluginFor, pluginsFor, serverIds } from './servers';
+
+export { has };
 
 /** A server-sent `$/btmux/refresh` (semantic tokens, inlay hints, code lenses). */
 export const refreshEffect = StateEffect.define<string>();
 /** A `refreshEffect` every requester takes: the client (re)initialized. */
 export const REFRESH_ALL = 'initialized';
-
-const plugin = (view: EditorView) => LSPPlugin.get(view);
-export const has = (p: LSPPlugin, capability: string) =>
-  !!(p.client.serverCapabilities as Record<string, unknown> | null)?.[capability];
 
 const toast = (message: string, error?: unknown) =>
   useStore.getState().showToast(message, 'error', {
@@ -49,14 +48,26 @@ const toast = (message: string, error?: unknown) =>
           : String((error as any)?.message ?? error),
   });
 
-/** Ask the server; `null` when the doc changed meanwhile (the result is stale). */
-export async function ask<T>(view: EditorView, method: string, params: (p: LSPPlugin) => object): Promise<T | null> {
-  const p = plugin(view);
-  if (!p) return null;
+/** Ask `p`'s server; `null` when the doc changed meanwhile (the result is stale). */
+export async function ask<T>(p: LSPPlugin, method: string, params: (p: LSPPlugin) => object): Promise<T | null> {
+  const view = p.view;
   p.client.sync();
   const doc = view.state.doc;
   const result = await p.client.request<object, T>(method, { textDocument: { uri: p.uri }, ...params(p) });
   return view.state.doc === doc ? result : null;
+}
+
+/** Ask every server in `ps`, leaving out failures and stale results. */
+async function askAll<T>(ps: LSPPlugin[], method: string, params: (p: LSPPlugin) => object) {
+  const results = await Promise.all(
+    ps.map((p) =>
+      ask<T>(p, method, params).then(
+        (result) => ({ p, result }),
+        () => ({ p, result: null }),
+      ),
+    ),
+  );
+  return results.filter((r): r is { p: LSPPlugin; result: NonNullable<T> } => r.result != null);
 }
 
 /** Re-ask on changes (debounced), on the viewport for `viewport`, and on refreshes. */
@@ -119,10 +130,10 @@ const highlightPlugin = ViewPlugin.fromClass(
     }
     async run() {
       const view = this.view;
-      const p = plugin(view);
-      if (!p || !has(p, 'documentHighlightProvider')) return;
+      const p = pluginFor(view, 'documentHighlightProvider');
+      if (!p) return;
       const head = view.state.selection.main.head;
-      const result = await ask<{ range: Range }[]>(view, 'textDocument/documentHighlight', (p) => ({
+      const result = await ask<{ range: Range }[]>(p, 'textDocument/documentHighlight', (p) => ({
         position: p.toPosition(head),
       }));
       const builder = new RangeSetBuilder<Decoration>();
@@ -155,8 +166,8 @@ type InlayHint = {
   data?: unknown;
 };
 
-/** The hint each widget's DOM shows, kept current when the DOM is reused. */
-const hintOf = new WeakMap<HTMLElement, { hint: InlayHint; doc: Text }>();
+/** The hint each widget's DOM shows, and its server, kept current when the DOM is reused. */
+const hintOf = new WeakMap<HTMLElement, { hint: InlayHint; doc: Text; p: LSPPlugin }>();
 const resolvedHints = new WeakMap<InlayHint, Promise<InlayHint>>();
 /** Resolved hints, for clicks that can't wait. */
 const settledHints = new WeakMap<InlayHint, InlayHint>();
@@ -187,6 +198,7 @@ class HintWidget extends WidgetType {
   constructor(
     readonly hint: InlayHint,
     readonly doc: Text,
+    readonly p: LSPPlugin,
   ) {
     super();
     this.key = JSON.stringify([hintParts(hint).map((part) => part.value), hint.paddingLeft, hint.paddingRight]);
@@ -206,13 +218,13 @@ class HintWidget extends WidgetType {
       span.append(el);
     }
     if (this.hint.paddingRight) span.append(' ');
-    hintOf.set(span, { hint: this.hint, doc: this.doc });
+    hintOf.set(span, { hint: this.hint, doc: this.doc, p: this.p });
     return span;
   }
   // Same label: keep the DOM, now showing this hint.
   updateDOM(dom: HTMLElement) {
     if (dom.dataset.key !== this.key) return false;
-    hintOf.set(dom, { hint: this.hint, doc: this.doc });
+    hintOf.set(dom, { hint: this.hint, doc: this.doc, p: this.p });
     return true;
   }
   ignoreEvent() {
@@ -240,8 +252,8 @@ const hintClicks = Prec.high(
   EditorView.domEventHandlers({
     mousedown(e, view) {
       const found = e.button === 0 ? hoveredHint(view, e.target) : null;
-      const p = plugin(view);
-      if (!found || !p) return false;
+      if (!found) return false;
+      const p = found.p;
       // Not a word selection: a double click applies the hint's edits.
       if (e.detail > 1) {
         e.preventDefault();
@@ -255,16 +267,15 @@ const hintClicks = Prec.high(
       e.preventDefault();
       void resolveHint(p, found.hint).then((hint) => {
         const resolved = hintParts(hint)[found.index] ?? part;
-        if (mod && resolved.location) void jump(view, resolved.location);
-        else if (!mod && resolved.command) void execute(view, resolved.command);
+        if (mod && resolved.location) void jump(p, resolved.location);
+        else if (!mod && resolved.command) void execute(p, resolved.command);
       });
       return true;
     },
     mouseover(e, view) {
       const found = hoveredHint(view, e.target);
-      const p = plugin(view);
-      if (!found || !p) return false;
-      void resolveHint(p, found.hint).then((hint) => {
+      if (!found) return false;
+      void resolveHint(found.p, found.hint).then((hint) => {
         // Commands the server only gave now.
         if (hintOf.get(found.el)?.hint !== found.hint) return;
         const parts = found.el.querySelectorAll('.cm-lsp-inlay-hint-part');
@@ -274,10 +285,9 @@ const hintClicks = Prec.high(
     },
     dblclick(e, view) {
       const found = hoveredHint(view, e.target);
-      const p = plugin(view);
-      if (!found || !p) return false;
+      if (!found) return false;
       e.preventDefault();
-      void resolveHint(p, found.hint).then((hint) => {
+      void resolveHint(found.p, found.hint).then((hint) => {
         // Edits are for the document the hint was made in.
         if (view.state.doc === found.doc) applyEdits(view, hint.textEdits ?? null, 'input');
       });
@@ -286,30 +296,34 @@ const hintClicks = Prec.high(
   }),
 );
 
-/** Hover tooltips: the inlay hint's under the pointer, else the server's hover. */
+/** Hover tooltips: the inlay hint's under the pointer, else every server's hover. */
 const hovers = hoverTooltip(
   async (view, pos) => {
-    const p = plugin(view);
-    if (!p) return null;
     const found = hoveredHint(view);
     if (found) {
-      const hint = await resolveHint(p, found.hint);
+      const hint = await resolveHint(found.p, found.hint);
       const tooltip = (found.index >= 0 ? hintParts(hint)[found.index]?.tooltip : undefined) ?? hint.tooltip;
       if (!tooltip || !found.el.isConnected) return null;
       const at = view.posAtDOM(found.el);
-      return { pos: at, end: at, above: true, create: () => tooltipDOM(p, tooltip, 'plaintext') };
+      return { pos: at, end: at, above: true, create: () => tooltipDOM([[found.p, tooltip]], 'plaintext') };
     }
-    if (!has(p, 'hoverProvider')) return null;
-    const result = await ask<{ contents: HoverContents; range?: Range } | null>(view, 'textDocument/hover', (p) => ({
-      position: p.toPosition(pos),
-    }));
-    if (!result) return null;
+    const results = await askAll<{ contents: HoverContents; range?: Range } | null>(
+      pluginsFor(view, 'hoverProvider'),
+      'textDocument/hover',
+      (p) => ({ position: p.toPosition(pos) }),
+    );
+    if (!results.length) return null;
     const doc = view.state.doc;
+    const range = results.find((r) => r.result.range)?.result.range;
     return {
-      pos: result.range ? offset(doc, result.range.start) : pos,
-      end: result.range ? offset(doc, result.range.end) : pos,
+      pos: range ? offset(doc, range.start) : pos,
+      end: range ? offset(doc, range.end) : pos,
       above: true,
-      create: () => tooltipDOM(p, hoverMarkdown(result.contents), 'markdown'),
+      create: () =>
+        tooltipDOM(
+          results.map(({ p, result }) => [p, hoverMarkdown(result.contents)]),
+          'markdown',
+        ),
     };
   },
   { hideOn: (tr) => tr.docChanged },
@@ -326,10 +340,11 @@ function hoverMarkdown(contents: HoverContents): Markup {
   return contents;
 }
 
-function tooltipDOM(p: LSPPlugin, value: Markup, kind: 'markdown' | 'plaintext') {
+/** Each server's part, divided. */
+function tooltipDOM(parts: [LSPPlugin, Markup][], kind: 'markdown' | 'plaintext') {
   const dom = document.createElement('div');
   dom.className = 'cm-lsp-hover-tooltip cm-lsp-documentation';
-  dom.innerHTML = p.docToHTML(value, kind);
+  dom.innerHTML = parts.map(([p, value]) => p.docToHTML(value, kind)).join('<hr>');
   return { dom };
 }
 
@@ -337,19 +352,21 @@ const hints = decorationField();
 const hintRequester = requester(
   300,
   async (view) => {
-    const p = plugin(view);
-    if (!p || !has(p, 'inlayHintProvider')) return;
+    const ps = pluginsFor(view, 'inlayHintProvider');
+    if (!ps.length) return;
     const { from, to } = view.viewport;
-    const result = await ask<InlayHint[]>(view, 'textDocument/inlayHint', (p) => ({
+    const doc = view.state.doc;
+    const results = await askAll<InlayHint[]>(ps, 'textDocument/inlayHint', (p) => ({
       range: { start: p.toPosition(from), end: p.toPosition(to) },
     }));
-    if (!result) return;
-    const doc = view.state.doc;
-    const widgets = result
-      .map((h) => ({
-        at: offset(doc, h.position),
-        deco: Decoration.widget({ widget: new HintWidget(h, doc), side: 1 }),
-      }))
+    if (view.state.doc !== doc) return;
+    const widgets = results
+      .flatMap(({ p, result }) =>
+        result.map((h) => ({
+          at: offset(doc, h.position),
+          deco: Decoration.widget({ widget: new HintWidget(h, doc, p), side: 1 }),
+        })),
+      )
       .sort((a, b) => a.at - b.at);
     const builder = new RangeSetBuilder<Decoration>();
     for (const w of widgets) builder.add(w.at, w.at, w.deco);
@@ -389,10 +406,10 @@ const semantic = decorationField((f) => Prec.lowest(EditorView.decorations.from(
 const semanticRequester = requester(
   400,
   async (view) => {
-    const p = plugin(view);
-    const provider = (p?.client.serverCapabilities as any)?.semanticTokensProvider;
-    if (!p || !provider?.full) return;
-    const result = await ask<{ data: number[] }>(view, 'textDocument/semanticTokens/full', () => ({}));
+    const p = plugins(view).find((p) => (p.client.serverCapabilities as any)?.semanticTokensProvider?.full);
+    if (!p) return;
+    const provider = (p.client.serverCapabilities as any).semanticTokensProvider;
+    const result = await ask<{ data: number[] }>(p, 'textDocument/semanticTokens/full', () => ({}));
     if (!result) return;
     const builder = new RangeSetBuilder<Decoration>();
     for (const [from, to, classes] of decodeTokens(view.state.doc, result.data, provider.legend))
@@ -402,10 +419,8 @@ const semanticRequester = requester(
   { refresh: 'workspace/semanticTokens/refresh' },
 );
 
-// Code lenses, as lines above the code.
-export async function execute(view: EditorView, command: Command) {
-  const p = plugin(view);
-  if (!p) return;
+/** Run `command` on the server that gave it. */
+export async function execute(p: LSPPlugin, command: Command) {
   try {
     await p.client.request('workspace/executeCommand', { command: command.command, arguments: command.arguments });
   } catch (error) {
@@ -413,9 +428,12 @@ export async function execute(view: EditorView, command: Command) {
   }
 }
 
+// Code lenses, as lines above the code.
+type Lens = { command: Command; p: LSPPlugin };
+
 class LensWidget extends WidgetType {
   constructor(
-    readonly commands: Command[],
+    readonly commands: Lens[],
     readonly indent: string,
   ) {
     super();
@@ -423,19 +441,20 @@ class LensWidget extends WidgetType {
   eq(other: LensWidget) {
     return (
       other.indent === this.indent &&
-      JSON.stringify(other.commands.map((c) => c.title)) === JSON.stringify(this.commands.map((c) => c.title))
+      JSON.stringify(other.commands.map((c) => c.command.title)) ===
+        JSON.stringify(this.commands.map((c) => c.command.title))
     );
   }
-  toDOM(view: EditorView) {
+  toDOM() {
     const div = document.createElement('div');
     div.className = 'cm-lsp-code-lens';
     div.textContent = this.indent;
-    this.commands.forEach((command, i) => {
+    this.commands.forEach(({ command, p }, i) => {
       if (i) div.append(' | ');
       const button = document.createElement('button');
       button.textContent = command.title;
       button.addEventListener('mousedown', (e) => e.preventDefault());
-      button.addEventListener('click', () => void execute(view, command));
+      button.addEventListener('click', () => void execute(p, command));
       div.append(button);
     });
     return div;
@@ -448,27 +467,30 @@ const lenses = decorationField();
 const lensRequester = requester(
   600,
   async (view) => {
-    const p = plugin(view);
-    const provider = (p?.client.serverCapabilities as any)?.codeLensProvider;
-    if (!p || !provider) return;
-    let result = await ask<{ range: Range; command?: Command; data?: unknown }[]>(
-      view,
-      'textDocument/codeLens',
-      () => ({}),
-    );
-    if (!result) return;
-    if (provider.resolveProvider)
-      result = await Promise.all(
-        result.map((lens) =>
-          lens.command ? lens : p.client.request<object, typeof lens>('codeLens/resolve', lens).catch(() => lens),
-        ),
-      );
+    const ps = pluginsFor(view, 'codeLensProvider');
+    if (!ps.length) return;
+    type ServerLens = { range: Range; command?: Command; data?: unknown };
     const doc = view.state.doc;
-    const byLine = new Map<number, Command[]>();
-    for (const lens of result) {
+    const results = await askAll<ServerLens[]>(ps, 'textDocument/codeLens', () => ({}));
+    const resolved = await Promise.all(
+      results.map(async ({ p, result }) => {
+        const resolves = (p.client.serverCapabilities as any)?.codeLensProvider?.resolveProvider;
+        const lenses = resolves
+          ? await Promise.all(
+              result.map((lens) =>
+                lens.command ? lens : p.client.request<object, ServerLens>('codeLens/resolve', lens).catch(() => lens),
+              ),
+            )
+          : result;
+        return lenses.map((lens) => ({ lens, p }));
+      }),
+    );
+    if (view.state.doc !== doc) return;
+    const byLine = new Map<number, Lens[]>();
+    for (const { lens, p } of resolved.flat()) {
       if (!lens.command?.title) continue;
       const line = doc.line(Math.min(lens.range.start.line + 1, doc.lines));
-      byLine.set(line.from, [...(byLine.get(line.from) ?? []), lens.command]);
+      byLine.set(line.from, [...(byLine.get(line.from) ?? []), { command: lens.command, p }]);
     }
     const builder = new RangeSetBuilder<Decoration>();
     for (const at of [...byLine.keys()].sort((a, b) => a - b)) {
@@ -487,7 +509,7 @@ const lensRequester = requester(
 /** Run the code lens on the cursor's line, or pick one of several. */
 function runCodeLens(view: EditorView) {
   const line = view.state.doc.lineAt(view.state.selection.main.head);
-  const commands: Command[] = [];
+  const commands: Lens[] = [];
   view.state.field(lenses.field, false)?.between(line.from, line.from, (_from, _to, deco) => {
     const widget = deco.spec.widget;
     if (widget instanceof LensWidget) commands.push(...widget.commands);
@@ -496,11 +518,11 @@ function runCodeLens(view: EditorView) {
     useStore.getState().showToast('No code lens on this line', 'info');
     return true;
   }
-  if (commands.length === 1) void execute(view, commands[0]);
+  if (commands.length === 1) void execute(commands[0].p, commands[0].command);
   else
     openPicker(view, {
       title: 'Code lenses',
-      items: commands.map((command) => ({ label: command.title, run: () => void execute(view, command) })),
+      items: commands.map(({ command, p }) => ({ label: command.title, run: () => void execute(p, command) })),
     });
   return true;
 }
@@ -521,16 +543,17 @@ const foldsField = StateField.define<{ from: number; to: number }[]>({
 const foldRequester = requester(
   800,
   async (view) => {
-    const p = plugin(view);
-    if (!p || !has(p, 'foldingRangeProvider')) return;
-    const result = await ask<{ startLine: number; endLine: number; startCharacter?: number }[]>(
-      view,
+    const ps = pluginsFor(view, 'foldingRangeProvider');
+    if (!ps.length) return;
+    const doc = view.state.doc;
+    const results = await askAll<{ startLine: number; endLine: number; startCharacter?: number }[]>(
+      ps,
       'textDocument/foldingRange',
       () => ({}),
     );
-    if (!result) return;
-    const doc = view.state.doc;
-    const folds = result
+    if (view.state.doc !== doc) return;
+    const folds = results
+      .flatMap((r) => r.result)
       .filter((r) => r.endLine > r.startLine && r.endLine < doc.lines)
       .map((r) => {
         const start = doc.line(r.startLine + 1);
@@ -565,12 +588,12 @@ const expansions = StateField.define<readonly EditorSelection[]>({
 });
 
 async function expandSelection(view: EditorView) {
-  const p = plugin(view);
-  if (!p || !has(p, 'selectionRangeProvider')) return false;
+  const p = pluginFor(view, 'selectionRangeProvider');
+  if (!p) return false;
   const before = view.state.selection;
   const { from, to, head } = before.main;
   type SelectionRange = { range: Range; parent?: SelectionRange };
-  const result = await ask<SelectionRange[]>(view, 'textDocument/selectionRange', (p) => ({
+  const result = await ask<SelectionRange[]>(p, 'textDocument/selectionRange', (p) => ({
     positions: [p.toPosition(head)],
   }));
   const doc = view.state.doc;
@@ -615,15 +638,13 @@ function applyEdits(view: EditorView, edits: TextEdit[] | null, userEvent: strin
 }
 
 /** Whether the server can format a range (`gq`, format selection). */
-export const canFormatRange = (view: EditorView) => {
-  const p = plugin(view);
-  return !!p && has(p, 'documentRangeFormattingProvider');
-};
+export const canFormatRange = (view: EditorView) => !!pluginFor(view, 'documentRangeFormattingProvider');
 
-/** Format `from..to` with the server; false if it can't. */
+/** Format `from..to` with the first server that can; false if none can. */
 export async function formatRange(view: EditorView, from: number, to: number) {
-  if (from === to || !canFormatRange(view)) return false;
-  const edits = await ask<TextEdit[]>(view, 'textDocument/rangeFormatting', (p) => ({
+  const p = pluginFor(view, 'documentRangeFormattingProvider');
+  if (from === to || !p) return false;
+  const edits = await ask<TextEdit[]>(p, 'textDocument/rangeFormatting', (p) => ({
     range: { start: p.toPosition(from), end: p.toPosition(to) },
     options: formatOptions(view),
   }));
@@ -637,7 +658,7 @@ export const formatSelection = (view: EditorView) => {
 };
 
 const onTypeFormatting = EditorView.updateListener.of((u) => {
-  const p = plugin(u.view);
+  const p = pluginFor(u.view, 'documentOnTypeFormattingProvider');
   const provider = (p?.client.serverCapabilities as any)?.documentOnTypeFormattingProvider;
   if (!p || !provider || !u.transactions.some((tr) => tr.isUserEvent('input.type'))) return;
   const triggers = [provider.firstTriggerCharacter, ...(provider.moreTriggerCharacter ?? [])];
@@ -648,7 +669,7 @@ const onTypeFormatting = EditorView.updateListener.of((u) => {
   });
   if (!typed) return;
   const { ch, at } = typed as { ch: string; at: number };
-  void ask<TextEdit[]>(u.view, 'textDocument/onTypeFormatting', (p) => ({
+  void ask<TextEdit[]>(p, 'textDocument/onTypeFormatting', (p) => ({
     position: p.toPosition(at),
     ch,
     options: formatOptions(u.view),
@@ -729,13 +750,14 @@ function choose(title: string, actions: string[]): Promise<string | null> {
 }
 
 /**
- * Apply workspace edit `title` from `doc`'s language server, its positions in
+ * Apply workspace edit `title` from `p`'s language server, its positions in
  * `doc` at `version`, first asking about changes that need confirmation.
  * False if it was declined or failed.
  */
 export async function applyWorkspaceEdit(
   title: string,
   edit: WorkspaceEdit,
+  p: LSPPlugin,
   doc: Doc | undefined,
   version: number | null,
 ): Promise<boolean> {
@@ -747,43 +769,56 @@ export async function applyWorkspaceEdit(
     if (chosen === SKIP_CONFIRMATIONS && rest) edit = rest;
     else if (chosen !== APPLY_ALL) return false;
   }
-  const result = await editorConnection.applyEdit(edit, doc?.servers[0] ?? null, doc?.buffer ?? null, version);
+  const server = serverIds.get(p.client) ?? null;
+  const result = await editorConnection.applyEdit(edit, server, doc?.buffer ?? null, version);
   if (result.error) toast(`${title} failed`, result.error);
   return !result.error;
 }
 
+/** The server's name, for telling apart what several servers offer. */
+const serverName = (p: LSPPlugin) => {
+  const id = serverIds.get(p.client);
+  return editorConnection.lspStatus.find((s) => s.id === id)?.name;
+};
+
 function codeActions(view: EditorView) {
-  const p = plugin(view);
-  if (!p || !has(p, 'codeActionProvider')) return false;
+  const ps = pluginsFor(view, 'codeActionProvider');
+  if (!ps.length) return false;
   const doc = viewDocs.get(view);
   const { from, to } = view.state.selection.main;
-  const context = { diagnostics: lspDiagnostics(p, from, to), triggerKind: 1 };
   void (async () => {
-    p.client.sync();
+    for (const p of ps) p.client.sync();
     const version = doc?.version() ?? null;
-    const actions = await ask<(CodeAction | Command)[]>(view, 'textDocument/codeAction', (p) => ({
-      range: { start: p.toPosition(from), end: p.toPosition(to) },
-      context,
-    }));
-    const usable = (actions ?? []).filter((a) => !('disabled' in a && a.disabled));
+    const results = await Promise.all(
+      ps.map(async (p) => {
+        const context = { diagnostics: lspDiagnostics(p, from, to), triggerKind: 1 };
+        const actions = await ask<(CodeAction | Command)[]>(p, 'textDocument/codeAction', (p) => ({
+          range: { start: p.toPosition(from), end: p.toPosition(to) },
+          context,
+        })).catch(() => null);
+        return (actions ?? []).filter((a) => !('disabled' in a && a.disabled)).map((action) => ({ action, p }));
+      }),
+    );
+    const usable = results.flat();
     if (!usable.length) {
       useStore.getState().showToast('No code actions here', 'info');
       return;
     }
-    const resolve = (p.client.serverCapabilities as any)?.codeActionProvider?.resolveProvider;
+    const several = results.filter((r) => r.length).length > 1;
     openPicker(view, {
       title: 'Code actions',
-      items: usable.map((action) => ({
+      items: usable.map(({ action, p }) => ({
         label: action.title,
-        detail: 'kind' in action && action.kind ? action.kind : undefined,
+        detail: [several && serverName(p), 'kind' in action && action.kind].filter(Boolean).join('  ') || undefined,
         run: async () => {
           try {
-            if (typeof (action as Command).command === 'string') return void execute(view, action as Command);
+            if (typeof (action as Command).command === 'string') return void execute(p, action as Command);
             let a = action as CodeAction;
+            const resolve = (p.client.serverCapabilities as any)?.codeActionProvider?.resolveProvider;
             if (!a.edit && !a.command && resolve) a = await p.client.request('codeAction/resolve', a);
             // The command follows the edit, if it was made.
-            if (a.edit && !(await applyWorkspaceEdit(a.title, a.edit as WorkspaceEdit, doc, version))) return;
-            if (a.command) await execute(view, a.command);
+            if (a.edit && !(await applyWorkspaceEdit(a.title, a.edit as WorkspaceEdit, p, doc, version))) return;
+            if (a.command) await execute(p, a.command);
           } catch (error) {
             toast(`${action.title} failed`, error);
           }
@@ -805,9 +840,8 @@ function lspDiagnostics(p: LSPPlugin, from: number, to: number) {
 }
 
 // Jumps, symbols, and hierarchies.
-async function jump(view: EditorView, location: Location) {
-  const p = plugin(view);
-  if (!p) return;
+async function jump(p: LSPPlugin, location: Location) {
+  const view = p.view;
   const target = location.uri === p.uri ? view : await p.client.workspace.displayFile(location.uri);
   if (!target) return;
   const at = offset(target.state.doc, location.range.start);
@@ -860,9 +894,9 @@ type DocumentSymbol = {
 type SymbolInformation = { name: string; kind: number; location: Location; containerName?: string };
 
 function documentSymbols(view: EditorView) {
-  const p = plugin(view);
-  if (!p || !has(p, 'documentSymbolProvider')) return false;
-  void ask<(DocumentSymbol | SymbolInformation)[]>(view, 'textDocument/documentSymbol', () => ({}))
+  const p = pluginFor(view, 'documentSymbolProvider');
+  if (!p) return false;
+  void ask<(DocumentSymbol | SymbolInformation)[]>(p, 'textDocument/documentSymbol', () => ({}))
     .then((symbols) => {
       const items: PickItem[] = [];
       const add = (s: DocumentSymbol | SymbolInformation, depth: number) => {
@@ -870,7 +904,7 @@ function documentSymbols(view: EditorView) {
         items.push({
           label: `${'  '.repeat(depth)}${s.name}`,
           detail: SYMBOL_KINDS[s.kind],
-          run: () => void jump(view, location),
+          run: () => void jump(p, location),
         });
         if ('children' in s) for (const child of s.children ?? []) add(child, depth + 1);
       };
@@ -882,8 +916,8 @@ function documentSymbols(view: EditorView) {
 }
 
 function workspaceSymbols(view: EditorView) {
-  const p = plugin(view);
-  if (!p || !has(p, 'workspaceSymbolProvider')) return false;
+  const ps = pluginsFor(view, 'workspaceSymbolProvider');
+  if (!ps.length) return false;
   const relative = (uri: string) => {
     const path = decodeURIComponent(new URL(uri).pathname);
     const root = viewDocs.get(view)?.path.split('/').slice(0, -1).join('/') ?? '';
@@ -892,20 +926,28 @@ function workspaceSymbols(view: EditorView) {
   openPicker(view, {
     title: 'Go to symbol in workspace',
     query: async (query) => {
-      const symbols = await p.client.request<
-        object,
-        { name: string; kind: number; location: { uri: string; range?: Range } }[] | null
-      >('workspace/symbol', { query });
-      return (symbols ?? []).slice(0, 200).map((s) => ({
-        label: s.name,
-        detail: `${SYMBOL_KINDS[s.kind]}  ${relative(s.location.uri)}`,
-        run: async () => {
-          let location = s.location;
-          if (!location.range)
-            location = (await p.client.request<object, typeof s>('workspaceSymbol/resolve', s)).location;
-          void jump(view, location as Location);
-        },
-      }));
+      type Symbol = { name: string; kind: number; location: { uri: string; range?: Range } };
+      const results = await Promise.all(
+        ps.map((p) =>
+          p.client.request<object, Symbol[] | null>('workspace/symbol', { query }).then(
+            (symbols) => (symbols ?? []).map((s) => ({ s, p })),
+            () => [],
+          ),
+        ),
+      );
+      return results
+        .flat()
+        .slice(0, 200)
+        .map(({ s, p }) => ({
+          label: s.name,
+          detail: `${SYMBOL_KINDS[s.kind]}  ${relative(s.location.uri)}`,
+          run: async () => {
+            let location = s.location;
+            if (!location.range)
+              location = (await p.client.request<object, Symbol>('workspaceSymbol/resolve', s)).location;
+            void jump(p, location as Location);
+          },
+        }));
     },
   });
   return true;
@@ -915,13 +957,13 @@ type HierarchyItem = { name: string; kind: number; uri: string; selectionRange: 
 
 function hierarchy(kind: 'incoming' | 'outgoing' | 'supertypes' | 'subtypes') {
   return (view: EditorView) => {
-    const p = plugin(view);
     const calls = kind === 'incoming' || kind === 'outgoing';
-    if (!p || !has(p, calls ? 'callHierarchyProvider' : 'typeHierarchyProvider')) return false;
+    const p = pluginFor(view, calls ? 'callHierarchyProvider' : 'typeHierarchyProvider');
+    if (!p) return false;
     const head = view.state.selection.main.head;
     void (async () => {
       const prepared = await ask<HierarchyItem[]>(
-        view,
+        p,
         calls ? 'textDocument/prepareCallHierarchy' : 'textDocument/prepareTypeHierarchy',
         (p) => ({ position: p.toPosition(head) }),
       );
@@ -936,7 +978,7 @@ function hierarchy(kind: 'incoming' | 'outgoing' | 'supertypes' | 'subtypes') {
         return {
           label: entry.name,
           detail: entry.detail ?? decodeURIComponent(new URL(entry.uri).pathname).split('/').pop(),
-          run: () => void jump(view, { uri: entry.uri, range: entry.selectionRange }),
+          run: () => void jump(p, { uri: entry.uri, range: entry.selectionRange }),
         };
       });
       const titles = {
@@ -949,6 +991,55 @@ function hierarchy(kind: 'incoming' | 'outgoing' | 'supertypes' | 'subtypes') {
     })().catch((error) => toast('Lookup failed', error));
     return true;
   };
+}
+
+/** Jump to where the first server that can says the symbol at the cursor comes from. */
+function jumpTo(capability: string, method: string, what: string) {
+  return (view: EditorView) => {
+    const p = pluginFor(view, capability);
+    if (!p) return false;
+    const head = view.state.selection.main.head;
+    void ask<Location | Location[] | { targetUri: string; targetSelectionRange: Range }[] | null>(p, method, (p) => ({
+      position: p.toPosition(head),
+    }))
+      .then((result) => {
+        const first = Array.isArray(result) ? result[0] : result;
+        if (!first) return;
+        const location = 'targetUri' in first ? { uri: first.targetUri, range: first.targetSelectionRange } : first;
+        return jump(p, location);
+      })
+      .catch((error) => toast(`Go to ${what} failed`, error));
+    return true;
+  };
+}
+
+export const jumpToDefinition = jumpTo('definitionProvider', 'textDocument/definition', 'definition');
+const jumpToDeclaration = jumpTo('declarationProvider', 'textDocument/declaration', 'declaration');
+const jumpToTypeDefinition = jumpTo('typeDefinitionProvider', 'textDocument/typeDefinition', 'type definition');
+const jumpToImplementation = jumpTo('implementationProvider', 'textDocument/implementation', 'implementation');
+
+/** References in lsp-client's panel, which only the first server's plugin can fill; else in a picker. */
+export function findReferences(view: EditorView) {
+  const p = pluginFor(view, 'referencesProvider');
+  if (!p) return false;
+  if (p === LSPPlugin.get(view)) return referencePanel(view);
+  const head = view.state.selection.main.head;
+  void ask<Location[]>(p, 'textDocument/references', (p) => ({
+    position: p.toPosition(head),
+    context: { includeDeclaration: true },
+  }))
+    .then((locations) => {
+      if (!locations?.length) return useStore.getState().showToast('No references', 'info');
+      openPicker(view, {
+        title: 'References',
+        items: locations.map((location) => ({
+          label: `${decodeURIComponent(new URL(location.uri).pathname).split('/').pop()}:${location.range.start.line + 1}`,
+          run: () => void jump(p, location),
+        })),
+      });
+    })
+    .catch((error) => toast('Finding references failed', error));
+  return true;
 }
 
 /** Commands for the btmux command palette, by action name. */

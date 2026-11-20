@@ -13,9 +13,19 @@ actions, saved state, and API types can change in any release.
 - Settings' **Show TOML** panel can show the settings as Home Manager's
   `programs.btmux.settings` in Nix, ready to paste.
   ([#180](https://github.com/btmux-dev/btmux/pull/180))
+- `[native-editor] virtual-text`, also in Settings as **Inline diagnostics**,
+  shows each line's diagnostic at the end of the line.
 
 ### Changed
 
+- Python files in the native editor get ty and ruff instead of pyright, so
+  formatting works: ruff formats and lints, ty checks types.
+- A native editor file with several language servers gets features from all
+  of them: diagnostics, code actions, hovers, inlay hints, code lenses, and
+  completions from each, and formatting and the rest from the first that can.
+  Before, only the first server was used.
+- The native editor's close button is on each tab, so inactive tabs close
+  too; a middle click closes a tab as well.
 - **Show TOML** shows the whole file Save would write, keeping settings the
   dialog doesn't have. It no longer adds `allow-transparency = false` when you
   add a wallpaper without touching the setting.

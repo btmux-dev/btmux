@@ -3,7 +3,7 @@
 // Typing what it suggests keeps it; Tab accepts it, Mod-Right its next word,
 // Alt-] and Alt-[ cycle through the server's items, and Esc dismisses it.
 import { snippet } from '@codemirror/autocomplete';
-import { LSPPlugin } from '@codemirror/lsp-client';
+import type { LSPPlugin } from '@codemirror/lsp-client';
 import { Prec, StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state';
 import {
   Decoration,
@@ -16,6 +16,7 @@ import {
 } from '@codemirror/view';
 import { IS_MAC } from '../nvimKeys';
 import { execute } from './features';
+import { pluginFor, plugins } from './servers';
 import { lspToSnippet, offset, type Command, type Range } from './lspText';
 
 type Item = {
@@ -26,7 +27,16 @@ type Item = {
 };
 
 /** An item where it applies: replacing `from`..`to`, `text` shown as typed. */
-type Suggestion = { from: number; to: number; text: string; filter: string; snippet: string | null; command?: Command };
+type Suggestion = {
+  from: number;
+  to: number;
+  text: string;
+  filter: string;
+  snippet: string | null;
+  command?: Command;
+  /** The server it came from, which runs its command. */
+  p: LSPPlugin;
+};
 type Ghost = { suggestions: Suggestion[]; index: number };
 
 /** How long typing pauses before the server is asked. */
@@ -101,8 +111,8 @@ async function request(
   previous: { cancel(): void } | null,
   current: () => boolean,
 ) {
-  const p = LSPPlugin.get(view);
-  if (!p || !(p.client.serverCapabilities as Record<string, unknown> | null)?.inlineCompletionProvider) return null;
+  const p = pluginFor(view, 'inlineCompletionProvider');
+  if (!p) return null;
   const state = view.state;
   if (!state.selection.main.empty) return null;
   previous?.cancel();
@@ -122,7 +132,7 @@ async function request(
         // Typed or moved meanwhile: a new request follows, or nothing applies.
         // Dismissed, typed, or moved meanwhile: a new request follows, or nothing applies.
         if (!current() || !result || view.state.doc !== state.doc || view.state.selection.main.head !== head) return;
-        if (LSPPlugin.get(view) !== p) return;
+        if (!plugins(view).includes(p)) return;
         const items = Array.isArray(result) ? result : result.items;
         const suggestions: Suggestion[] = items.map((item) => {
           const raw = item.insertText;
@@ -134,6 +144,7 @@ async function request(
             filter: item.filterText ?? text,
             snippet: typeof raw === 'string' ? null : raw.value,
             command: item.command,
+            p,
           };
         });
         const usable = suggestions.filter((s) => remaining(view.state, s) !== null);
@@ -197,7 +208,7 @@ function accept(view: EditorView) {
       userEvent: 'input.complete',
       scrollIntoView: true,
     });
-  if (s.command) void execute(view, s.command);
+  if (s.command) void execute(s.p, s.command);
   return true;
 }
 
@@ -233,8 +244,7 @@ function cycle(step: number) {
   };
 }
 
-const hasProvider = (view: EditorView) =>
-  !!(LSPPlugin.get(view)?.client.serverCapabilities as Record<string, unknown> | null)?.inlineCompletionProvider;
+const hasProvider = (view: EditorView) => !!pluginFor(view, 'inlineCompletionProvider');
 
 const trigger = (view: EditorView) => {
   if (!hasProvider(view)) return false;

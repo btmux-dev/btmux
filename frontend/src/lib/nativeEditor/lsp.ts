@@ -1,7 +1,5 @@
 import {
-  findReferencesKeymap,
-  jumpToDefinition,
-  jumpToDefinitionKeymap,
+  closeReferencePanel,
   LSPClient,
   LSPPlugin,
   showSignatureHelp,
@@ -19,13 +17,22 @@ import { useStore } from '../../state/store';
 import type { Overlay } from '../../state/types';
 import type { EditorServerMessage, LspServerStatus } from '../../generated/protocol';
 import { IS_MAC } from '../nvimKeys';
-import { serverCompletions } from './completion';
+import { completionsFrom, serverCompletions } from './completion';
 import { languages } from './languages';
 import { offset, type Position, type Range, type TextEdit } from './lspText';
 import { inlineCompletions } from './inlineCompletion';
 import { editorConnection } from './connection';
 import { viewDocs, type Doc } from './doc';
-import { REFRESH_ALL, applyWorkspaceEdit, lspFeatures, refreshEffect, setRawDiagnostics } from './features';
+import {
+  REFRESH_ALL,
+  applyWorkspaceEdit,
+  findReferences,
+  jumpToDefinition,
+  lspFeatures,
+  refreshEffect,
+  setRawDiagnostics,
+} from './features';
+import { otherServers, pluginFor, pluginOf, plugins, serverIds } from './servers';
 
 /** btmux's language server clients speak to the server through `/ws/editor`; it syncs documents itself. */
 
@@ -48,15 +55,28 @@ const pathOf = (uri: string) => {
   }
 };
 
+/** Set while one client's sync syncs the others. */
+let syncing = false;
+
 class BtmuxWorkspace extends Workspace {
   files: File[] = [];
 
   syncFiles() {
+    // Every client syncs together, so a view's plugins all hold the same
+    // unsynced changes: lsp-client maps positions with the first's.
+    if (!syncing) {
+      syncing = true;
+      try {
+        for (const c of clients.values()) if (c !== this.client) c.sync();
+      } finally {
+        syncing = false;
+      }
+    }
     const result = [];
     for (const file of this.files) {
       const doc = viewDocs.get(file.view);
       doc?.push();
-      const plugin = LSPPlugin.get(file.view);
+      const plugin = pluginOf(file.view, this.client);
       if (plugin && !plugin.unsyncedChanges.empty) {
         result.push({ changes: plugin.unsyncedChanges, file, prevDoc: file.doc });
         file.doc = file.view.state.doc;
@@ -78,10 +98,7 @@ class BtmuxWorkspace extends Workspace {
       getView: () => view,
     });
     // Diagnostics published while it was hidden.
-    queueMicrotask(() => {
-      const params = diagnostics.get(this.client)?.get(uri);
-      if (params) showDiagnostics(this.client, view, params);
-    });
+    queueMicrotask(() => showDiagnostics(view));
   }
 
   closeFile(uri: string, view: EditorView) {
@@ -183,13 +200,20 @@ function reveal(uri: string, at: Position | null) {
 /** The latest diagnostics per client and URI. */
 const diagnostics = new Map<LSPClient, Map<string, PublishParams>>();
 
-function showDiagnostics(client: LSPClient, view: EditorView, params: PublishParams) {
-  const plugin = LSPPlugin.get(view);
-  if (!plugin || plugin.client !== client) return;
+/** Every server's latest diagnostics for the file `view` shows. */
+function showDiagnostics(view: EditorView) {
+  const list = plugins(view).flatMap((plugin) => {
+    const params = diagnostics.get(plugin.client)?.get(plugin.uri);
+    return params ? serverDiagnostics(plugin, params) : [];
+  });
+  view.dispatch(setDiagnostics(view.state, list));
+}
+
+function serverDiagnostics(plugin: LSPPlugin, params: PublishParams): Diagnostic[] {
   // Positions are in the synced document; map them over edits since.
   const synced = plugin.syncedDoc;
   const changes = plugin.unsyncedChanges;
-  const list: Diagnostic[] = params.diagnostics.map((d) => {
+  return params.diagnostics.map((d) => {
     const from = changes.mapPos(offset(synced, d.range.start), 1);
     const to = Math.max(from, changes.mapPos(offset(synced, d.range.end), -1));
     const severity = d.severity === 1 ? 'error' : d.severity === 2 ? 'warning' : d.severity === 3 ? 'info' : 'hint';
@@ -209,7 +233,6 @@ function showDiagnostics(client: LSPClient, view: EditorView, params: PublishPar
         (code === undefined || code === '') && !d.relatedInformation?.length ? undefined : () => renderMessage(d),
     };
   });
-  view.dispatch(setDiagnostics(view.state, list));
 }
 
 function transport(server: number, workspace: () => BtmuxWorkspace): Transport {
@@ -303,7 +326,7 @@ function wordTarget(view: EditorView, pos: number): RenameTarget | null {
 }
 
 export const startRename = (view: EditorView) => {
-  const plugin = LSPPlugin.get(view);
+  const plugin = pluginFor(view, 'renameProvider');
   if (!plugin) return false;
   const head = view.state.selection.main.head;
   const provider = plugin.client.serverCapabilities?.renameProvider;
@@ -333,7 +356,7 @@ async function prepareRename(view: EditorView, plugin: LSPPlugin, head: number) 
     return;
   }
   // Typed meanwhile, or showing another file.
-  if (LSPPlugin.get(view) !== plugin || view.state.doc !== start) return;
+  if (!plugins(view).includes(plugin) || view.state.doc !== start) return;
   let target: RenameTarget | null;
   if (!result) target = null;
   else if ('defaultBehavior' in result) target = wordTarget(view, head);
@@ -357,7 +380,7 @@ const toast = (message: string, error: unknown) =>
 
 /** Rename the symbol at `pos` across files: the server applies the edit to every buffer, open or not. */
 async function rename(view: EditorView, pos: number, newName: string) {
-  const plugin = LSPPlugin.get(view);
+  const plugin = pluginFor(view, 'renameProvider');
   const doc = viewDocs.get(view);
   if (!plugin || !doc) return;
   plugin.client.sync();
@@ -367,17 +390,17 @@ async function rename(view: EditorView, pos: number, newName: string) {
       'textDocument/rename',
       { textDocument: { uri: plugin.uri }, position: plugin.toPosition(pos), newName },
     );
-    if (edit) await applyWorkspaceEdit('Rename', edit, doc, version);
+    if (edit) await applyWorkspaceEdit('Rename', edit, plugin, doc, version);
   } catch (error) {
     toast('Rename failed', error);
   }
 }
 
-/** Format with the language server, if it can; resolves once applied. */
+/** Format with the first language server that can; resolves once applied. */
 export async function format(view: EditorView) {
-  const plugin = LSPPlugin.get(view);
+  const plugin = pluginFor(view, 'documentFormattingProvider');
   const doc = viewDocs.get(view);
-  if (!plugin || !doc || (plugin.client as any).hasCapability('documentFormattingProvider') === false) return;
+  if (!plugin || !doc) return;
   plugin.client.sync();
   const uri = plugin.uri;
   const start = view.state.doc;
@@ -392,7 +415,7 @@ export async function format(view: EditorView) {
     if (!edits?.length) return;
     // The view is shared: it may show another file by now, or this one
     // through a new plugin, which the mapping doesn't follow.
-    if (LSPPlugin.get(view) !== plugin) {
+    if (!plugins(view).includes(plugin)) {
       // Still the formatted text: apply it there, shown or not.
       if (doc.state?.doc !== start) return;
       const changes = edits.map((e) => ({
@@ -422,7 +445,7 @@ export async function format(view: EditorView) {
 
 /** Instead of `formatKeymap`, whose command would format whatever file the view shows by then. */
 export const formatCommand = (view: EditorView) => {
-  if (!LSPPlugin.get(view)) return false;
+  if (!plugins(view).length) return false;
   format(view).catch((error) => toast('Formatting failed', error));
   return true;
 };
@@ -451,7 +474,7 @@ function client(server: number): LSPClient {
         if (!byUri) diagnostics.set(c, (byUri = new Map()));
         byUri.set(params.uri, params);
         for (const file of (c.workspace as BtmuxWorkspace).files)
-          if (file.uri === params.uri) showDiagnostics(c, file.view, params);
+          if (file.uri === params.uri) showDiagnostics(file.view);
         return true;
       },
       'window/showMessage': (_, params: { type: number; message: string }) => {
@@ -474,14 +497,16 @@ function client(server: number): LSPClient {
       signatureHelp(),
       keymap.of([
         { key: 'Shift-Alt-f', run: formatCommand, preventDefault: true },
-        ...jumpToDefinitionKeymap,
-        ...findReferencesKeymap,
+        { key: 'F12', run: jumpToDefinition, preventDefault: true },
+        { key: 'Shift-F12', run: findReferences, preventDefault: true },
+        { key: 'Escape', run: closeReferencePanel },
         { key: 'F2', run: startRename, preventDefault: true },
       ]),
       renameField,
       { clientCapabilities: { textDocument: { publishDiagnostics: { versionSupport: true } } } },
     ],
   });
+  serverIds.set(created, server);
   if (editorConnection.connected) connect(server, created);
   clients.set(server, created);
   return created;
@@ -616,6 +641,9 @@ setRawDiagnostics((p) => diagnostics.get(p.client)?.get(p.uri)?.diagnostics ?? [
 export const serverFailed = (server: number | undefined) =>
   editorConnection.lspStatus.find((s) => s.id === server)?.state === 'failed';
 
+/** `doc`'s servers that haven't failed, whose features it gets. */
+export const workingServers = (doc: Doc) => doc.servers.filter((s) => !serverFailed(s));
+
 // lsp-client's signature help has no key to close it, so Esc hides the
 // tooltip shown until another replaces it (a new parameter) or a trigger
 // character is typed (a new call, which lsp-client may answer with the same
@@ -675,13 +703,20 @@ const signatureDismissal: Extension = [
   EditorView.theme({ '&.cm-btmux-signature-dismissed .cm-lsp-signature-tooltip': { display: 'none' } }),
 ];
 
-/** The language server features for `doc`, through its first server. */
+/**
+ * The language server features for `doc`, through each of its servers that
+ * hasn't failed, whose features would only report errors. lsp-client's own
+ * features (signature help, the reference panel) go through the first.
+ */
 export function lspExtension(doc: Doc): Extension {
-  const server = doc.servers[0];
-  // A failed server's features would only report errors.
-  if (server === undefined || !doc.uri || !doc.languageId || serverFailed(server)) return [];
+  const [server, ...others] = workingServers(doc);
+  const uri = doc.uri;
+  const languageID = doc.languageId;
+  if (server === undefined || !uri || !languageID) return [];
   return [
-    client(server).plugin(doc.uri, doc.languageId),
+    client(server).plugin(uri, languageID),
+    otherServers(others.map((s) => ({ client: client(s), uri, languageID }))),
+    others.map((s) => completionsFrom(client(s))),
     lspFeatures,
     inlineCompletions,
     signatureDismissal,

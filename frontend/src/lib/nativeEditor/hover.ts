@@ -2,9 +2,9 @@
 // (`K`, `Mod-k Mod-i`, `<C-w>d`): lsp-client's hover only follows the pointer.
 import { StateEffect, StateField, type Extension } from '@codemirror/state';
 import { EditorView, ViewPlugin, showTooltip, type Tooltip } from '@codemirror/view';
-import { LSPPlugin } from '@codemirror/lsp-client';
 import { forEachDiagnostic, type Diagnostic } from '@codemirror/lint';
-import { ask, has } from './features';
+import { ask } from './features';
+import { pluginsFor } from './servers';
 
 /** Keys that leave a tooltip up: modifiers alone, and Cmd chords such as copying from it. */
 const keepsTooltip = (e: KeyboardEvent) =>
@@ -43,31 +43,41 @@ type Hover = { contents: Markup | Markup[]; range?: { start: { line: number; cha
 const markdown = (m: Markup) =>
   typeof m === 'string' ? m : 'language' in m ? '```' + m.language + '\n' + m.value + '\n```' : null;
 
-/** The server's hover for the symbol at the cursor, as a tooltip. */
+/** Every server's hover for the symbol at the cursor, as a tooltip. */
 export function showHover(view: EditorView): boolean {
-  const plugin = LSPPlugin.get(view);
+  const ps = pluginsFor(view, 'hoverProvider');
   const counter = view.plugin(requests);
-  if (!plugin || !counter || !has(plugin, 'hoverProvider')) return false;
+  if (!ps.length || !counter) return false;
   const generation = ++counter.generation;
   const pos = view.state.selection.main.head;
   void (async () => {
-    const result = await ask<Hover | null>(view, 'textDocument/hover', (p) => ({ position: p.toPosition(pos) })).catch(
-      () => null,
+    const results = await Promise.all(
+      ps.map((p) =>
+        ask<Hover | null>(p, 'textDocument/hover', (p) => ({ position: p.toPosition(pos) })).then(
+          (result) => ({ p, result }),
+          () => ({ p, result: null }),
+        ),
+      ),
     );
     const current = view.plugin(requests) === counter && counter.generation === generation;
-    if (!result || !current || view.state.selection.main.head !== pos) return;
-    const parts = Array.isArray(result.contents) ? result.contents : [result.contents];
-    const html = parts
-      .map((part) => {
-        const md = markdown(part);
-        return md === null
-          ? plugin.docToHTML(part as { kind: 'markdown'; value: string })
-          : plugin.docToHTML(md, 'markdown');
+    if (!current || view.state.selection.main.head !== pos) return;
+    const html = results
+      .map(({ p, result }) => {
+        if (!result) return '';
+        const parts = Array.isArray(result.contents) ? result.contents : [result.contents];
+        return parts
+          .map((part) => {
+            const md = markdown(part);
+            return md === null ? p.docToHTML(part as { kind: 'markdown'; value: string }) : p.docToHTML(md, 'markdown');
+          })
+          .filter(Boolean)
+          .join('<br>');
       })
       .filter(Boolean)
-      .join('<br>');
+      .join('<hr>');
     if (!html) return;
-    const at = result.range ? plugin.fromPosition(result.range.start) : pos;
+    const first = results.find((r) => r.result?.range);
+    const at = first ? first.p.fromPosition(first.result!.range!.start) : pos;
     view.dispatch({
       effects: setTooltip.of({
         pos: Math.min(at, pos),

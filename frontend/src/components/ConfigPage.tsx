@@ -101,6 +101,7 @@ type Draft = {
   windowSort: ClientConfig['window_sort'];
   editor: ClientConfig['editor'];
   vimMode: boolean;
+  virtualText: boolean;
   windowGridCount: number;
   binds: Record<string, string>;
   keyOverrides: Record<string, string>;
@@ -164,6 +165,7 @@ function initialDraft(config: ClientConfig): Draft {
     windowSort: config.window_sort,
     editor: config.editor,
     vimMode: config.vim_mode,
+    virtualText: config.virtual_text,
     windowGridCount: config.window_grid_count,
     binds: Object.fromEntries(config.binds.map((bind) => [bind.action, bind.key])),
     keyOverrides: config.keys,
@@ -219,6 +221,7 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   if (dirty.has('windowSort')) update.window_sort = draft.windowSort;
   if (dirty.has('editor')) update.editor = draft.editor;
   if (dirty.has('vimMode')) update.vim_mode = draft.vimMode;
+  if (dirty.has('virtualText')) update.virtual_text = draft.virtualText;
   if (dirty.has('windowGridCount')) update.window_grid_count = draft.windowGridCount;
   if (dirty.has('binds')) update.keys = draft.keyOverrides;
   if (dirty.has('appearance')) update.appearance = draft.appearance;
@@ -332,6 +335,7 @@ const OPTION_NAMES: Record<DraftKey, string> = {
   windowSort: 'window-sort',
   editor: 'editor',
   vimMode: 'vim native-editor',
+  virtualText: 'virtual-text native-editor diagnostics',
   windowGridCount: 'window-grid-count',
   binds: 'keys',
   keyOverrides: 'keys',
@@ -553,6 +557,7 @@ export function ConfigPage({ config, send, request }: Props) {
       animations: draft.animations,
       show_pane_titles: draft.showPaneTitles,
       vim_mode: draft.vimMode,
+      virtual_text: draft.virtualText,
       terminal: {
         ...config.terminal,
         cursorBlink: draft.cursorBlink,
@@ -886,6 +891,11 @@ export function ConfigPage({ config, send, request }: Props) {
         'vimMode',
         'Vim mode',
         "Vim keybindings in btmux's editor. :w saves, :q hides it, and a double Esc hides it only from normal mode.",
+      ),
+      toggle(
+        'virtualText',
+        'Inline diagnostics',
+        "Show errors, warnings, and infos from language servers at the end of their lines in btmux's editor.",
       ),
       formEntry(
         'windowGridCount',
