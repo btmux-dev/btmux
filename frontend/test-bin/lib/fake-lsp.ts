@@ -44,6 +44,8 @@
 // - watched files: **/*.fake, logged; a new crash.fake makes it exit, once
 // - opened documents: logged with their language id
 // - progress: "Indexing" at 50% while any document contains "busy"
+// - hover on "stall": sends nothing for 6 s, then answers
+// - --no-init: never answers initialize
 import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
@@ -95,7 +97,14 @@ function occurrences(text: string, word: string): Range[] {
   return ranges;
 }
 
+// Output held while stalled.
+let held: unknown[] | null = null;
+
 function send(message: unknown) {
+  if (held) {
+    held.push(message);
+    return;
+  }
   const body = Buffer.from(JSON.stringify(message));
   process.stdout.write(`Content-Length: ${body.length}\r\n\r\n`);
   process.stdout.write(body);
@@ -660,7 +669,20 @@ process.stdin.on('data', (chunk: Buffer) => {
               : { jsonrpc: '2.0', id: msg.id, result },
         );
       // Late capabilities: features must ask once they arrive.
-      if (msg.method === 'initialize') setTimeout(reply, 300);
+      if (msg.method === 'initialize') {
+        if (!process.argv.includes('--no-init')) setTimeout(reply, 300);
+      } else if (
+        msg.method === 'textDocument/hover' &&
+        wordAt(text(msg.params.textDocument.uri), msg.params.position) === 'stall'
+      ) {
+        held ??= [];
+        setTimeout(() => {
+          const queued = held ?? [];
+          held = null;
+          reply();
+          for (const message of queued) send(message);
+        }, 6000);
+      }
       else if (msg.method === 'textDocument/formatting' && text(msg.params.textDocument.uri).includes('slow'))
         setTimeout(reply, 700);
       else if (msg.method === 'completionItem/resolve' && msg.params.label === 'slowImport') setTimeout(reply, 700);

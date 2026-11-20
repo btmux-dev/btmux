@@ -36,7 +36,7 @@ const loadEditor = () => (loader ??= import('../lib/nativeEditor/paneEditor'));
 const basename = (path: string) => path.slice(path.lastIndexOf('/') + 1) || path;
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-/** A language server's status-line dot: ready, busy (`$/progress`), starting, or failed. */
+/** A language server's status-line dot: ready, busy (`$/progress`), starting, not responding, or failed. */
 function serverDot(server: LspServerStatus): {
   state: string;
   variant: StatusDotProps['variant'];
@@ -47,6 +47,7 @@ function serverDot(server: LspServerStatus): {
     return { state: 'failed', variant: 'error', pulsing: false, text: server.message ?? 'failed' };
   }
   if (server.state === 'starting') return { state: 'starting', variant: 'neutral', pulsing: true, text: 'starting' };
+  if (server.unresponsive) return { state: 'unresponsive', variant: 'warning', pulsing: false, text: 'not responding' };
   const work = server.progress[0];
   if (work) {
     const text = [work.title, work.message, work.percent != null && `${work.percent}%`].filter(Boolean).join(' ');
@@ -428,7 +429,9 @@ export function NativeEditor({
                       ? `${server.name}: ${server.message ?? 'failed'}`
                       : server.state === 'starting'
                         ? `${server.name}…`
-                        : server.name}
+                        : server.unresponsive
+                          ? `${server.name}: not responding`
+                          : server.name}
                   </Text>
                 </HStack>
               );

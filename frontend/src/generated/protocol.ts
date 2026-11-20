@@ -644,6 +644,10 @@ token: string, title: string, message: string | null, percent: number | null, };
 // prettier-ignore
 export type LspServerStatus = { id: number, name: string, root: string, state: ServerState, message: string | null,
 /**
+ * Ready, but a request is overdue and it has sent nothing since.
+ */
+unresponsive: boolean,
+/**
  * Work in progress (`$/progress`).
  */
 progress: Array<LspProgress>, };

@@ -778,6 +778,9 @@ pub struct LanguageServerConfig {
     /// Settings, answered to `workspace/configuration` by section.
     pub config: Option<toml::Value>,
     pub initialization_options: Option<toml::Value>,
+    /// Seconds it may take to start, or to answer a request while sending
+    /// nothing, before it counts as failed or not responding. Defaults to 20.
+    pub timeout: Option<u64>,
 }
 
 /// `[[language]]`: which files a language covers and its servers.

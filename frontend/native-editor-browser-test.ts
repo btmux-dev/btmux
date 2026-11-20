@@ -650,10 +650,25 @@ try {
       [
         '[language-server.missing]',
         'command = "btmux-missing-lsp"',
+        '[language-server.stall]',
+        'command = "fake-lsp"',
+        'timeout = 2',
+        '[language-server.noinit]',
+        'command = "fake-lsp"',
+        'args = ["--no-init"]',
+        'timeout = 2',
         '[[language]]',
         'name = "nolsp"',
         'file-types = ["nolsp"]',
         'language-servers = ["missing"]',
+        '[[language]]',
+        'name = "stall"',
+        'file-types = ["stall"]',
+        'language-servers = ["stall"]',
+        '[[language]]',
+        'name = "noinit"',
+        'file-types = ["noinit"]',
+        'language-servers = ["noinit"]',
         '',
       ].join('\n'),
     );
@@ -673,6 +688,29 @@ try {
     await page.waitForTimeout(1000);
     assert.equal(await page.locator('.cm-lsp-message-error').count(), 0);
     console.log('PASS a missing language server shows in the status line without errors');
+
+    // A server silent past its timeout on a request isn't responding, until it answers.
+    const stall = join(dir, 'x.stall');
+    writeFileSync(stall, 'stall\n');
+    await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: stall, line: null, editor: 'native' });
+    await waitForText(page, paneId, 'stall\n');
+    const dot = (state: string) => page.locator(`[data-editor-pane="${paneId}"] [data-lsp-state="${state}"]`);
+    await dot('ready').waitFor();
+    const word = (await wordRect(0, 'stall'))!;
+    await page.mouse.move(word.x, word.y);
+    await dot('unresponsive').waitFor({ timeout: 5000 });
+    await page.getByLabel('Language server stall').getByText('stall: not responding').waitFor();
+    await dot('ready').waitFor({ timeout: 8000 });
+    console.log('PASS a silent language server shows as not responding until it answers');
+
+    // One that doesn't answer `initialize` in time fails.
+    const noinit = join(dir, 'x.noinit');
+    writeFileSync(noinit, 'plain\n');
+    await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: noinit, line: null, editor: 'native' });
+    await waitForText(page, paneId, 'plain\n');
+    await dot('failed').waitFor({ timeout: 8000 });
+    await page.getByLabel('Language server noinit').getByText("noinit: noinit didn't start within 2 s").waitFor();
+    console.log('PASS a language server that never starts fails after its timeout');
   }
 
   // Vim mode, from config.toml.

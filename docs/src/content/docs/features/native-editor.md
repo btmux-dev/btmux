@@ -158,9 +158,17 @@ key isn't mapped. Esc drops keys typed so far, so it can't be mapped.
 The editor shares one instance of each language server per project root across
 clients. The root is the outermost directory in the Git worktree with a marker
 for that language, such as `Cargo.toml`. The status line shows each server
-with a dot: green when ready, pulsing blue while it works (indexing), pulsing
-gray while it starts, and red when it failed, with the error beside it. Hover
-the dot for details; narrow panes keep only the dot.
+with a dot. Hover it for details; narrow panes keep only the dot.
+
+| Dot           | Server                                                       |
+| ------------- | ------------------------------------------------------------ |
+| Green         | Ready                                                        |
+| Pulsing blue  | Working, such as indexing                                    |
+| Pulsing gray  | Starting                                                     |
+| Yellow        | Not responding: a request is unanswered and it sent nothing since, for longer than its `timeout` |
+| Red           | Failed: not found, didn't start within its `timeout`, or crashed 3 times in a minute |
+
+A server that isn't responding goes back to green once it sends anything.
 
 btmux searches its own `PATH` and then your shell's `PATH`. Preconfigured
 servers include rust-analyzer, typescript-language-server,
@@ -186,7 +194,8 @@ config = { basedpyright = { analysis = { typeCheckingMode = "strict" } } }
 
 `file-types` are extensions; `file-names` are whole names, such as
 `Makefile`, matched ignoring case. `config` answers the server's
-`workspace/configuration` requests. Changes
+`workspace/configuration` requests. `timeout` (seconds, default 20) is how
+long a server may take to start, or stay silent on a request. Changes
 apply to servers started afterward. nil releases since 2025-06-13 format with
 nixfmt by default (Nixpkgs builds in its own); for older ones, or another
 formatter, set `config = { nil = { formatting = { command = ["alejandra"] } } }`

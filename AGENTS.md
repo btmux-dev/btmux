@@ -588,7 +588,10 @@ hints resolve (`inlayHint/resolve`) once the pointer enters them: hovering
 shows their tooltip instead of the server's hover (`hovers` in `features.ts`
 replaces lsp-client's), label parts run their command on click and jump to
 their location on Mod-click, and a double click applies their edits.
-Crashed servers restart up to 3 times a minute; idle ones stop after 60 s. The backend also pulls diagnostics (`textDocument/diagnostic`) after
+Crashed servers restart up to 3 times a minute; idle ones stop after 60 s. A server
+not answering `initialize` within its `timeout` (default 20 s) fails; one
+with a request older than that, and nothing sent since it, is reported
+`unresponsive` (a once-a-second `lsp_check`) until it sends anything. The backend also pulls diagnostics (`textDocument/diagnostic`) after
 changes settle, publishing them with pushed ones; watches the root for
 registered `didChangeWatchedFiles` globs (`lsp/watch.rs`: never home or above,
 minus what the root's `.gitignore` ignores; on Linux, where each directory
