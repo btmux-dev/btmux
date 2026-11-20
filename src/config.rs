@@ -778,8 +778,8 @@ pub struct LanguageServerConfig {
     /// Settings, answered to `workspace/configuration` by section.
     pub config: Option<toml::Value>,
     pub initialization_options: Option<toml::Value>,
-    /// Seconds it may take to start, or to answer a request while sending
-    /// nothing, before it counts as failed or not responding. Defaults to 20.
+    /// Seconds it may stay silent while starting, or on a request, before it
+    /// counts as failed or not responding. 0 turns this off. Defaults to 20.
     pub timeout: Option<u64>,
 }
 

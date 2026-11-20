@@ -16,12 +16,16 @@ actions, saved state, and API types can change in any release.
   ([#178](https://github.com/btmux-dev/btmux/pull/178))
 - The native editor's status line marks each language server with a dot:
   green when ready, pulsing while starting or working, yellow when not
-  responding, red when it failed. A server that doesn't start within its
-  `timeout` (`[language-server.NAME]`, default 20 s) now fails instead of
-  starting forever.
+  responding, red when it failed. A server silent for its `timeout`
+  (`[language-server.NAME]`, default 20 s) while starting now fails instead
+  of starting forever.
   ([#178](https://github.com/btmux-dev/btmux/pull/178))
 
 ### Fixed
+
+- A native editor tab whose language server crashed while starting gets its
+  features once the server restarts, without a reload.
+  ([#178](https://github.com/btmux-dev/btmux/pull/178))
 
 - The native editor highlights Python stubs (`.pyi`), JSONC with comments,
   zsh files, shell startup files (`.bashrc`, `.zshrc`, …), `.gitconfig`,

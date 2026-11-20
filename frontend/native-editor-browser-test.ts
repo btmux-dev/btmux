@@ -654,6 +654,10 @@ try {
         '[language-server.crashinit]',
         'command = "fake-lsp"',
         'args = ["--crash-init"]',
+        '[language-server.untimed]',
+        'command = "fake-lsp"',
+        'args = ["--no-init"]',
+        'timeout = 0',
         '[language-server.noinit]',
         'command = "fake-lsp"',
         'args = ["--no-init"]',
@@ -670,6 +674,10 @@ try {
         'name = "crashinit"',
         'file-types = ["crashinit"]',
         'language-servers = ["crashinit"]',
+        '[[language]]',
+        'name = "untimed"',
+        'file-types = ["untimed"]',
+        'language-servers = ["untimed"]',
         '[[language]]',
         'name = "noinit"',
         'file-types = ["noinit"]',
@@ -714,6 +722,8 @@ try {
     await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: crashinit, line: null, editor: 'native' });
     await waitForText(page, paneId, 'hover\n');
     await dot('ready').waitFor();
+    // The code lens shows the tab's client initialized; a hover before it gets nothing.
+    await page.locator(`[data-editor-pane="${paneId}"] .cm-lsp-code-lens`).first().waitFor();
     const hovered = (await wordRect(0, 'hover'))!;
     // The pointer is still there from the last file.
     await page.mouse.move(0, 0);
@@ -754,6 +764,16 @@ try {
     await dot('failed').waitFor({ timeout: 8000 });
     await page.getByLabel('Language server noinit').getByText("noinit: noinit didn't start within 2 s").waitFor();
     console.log('PASS a language server that never starts fails after its timeout');
+
+    // `timeout = 0` turns that off.
+    const untimed = join(dir, 'x.untimed');
+    writeFileSync(untimed, 'plain\n');
+    await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: untimed, line: null, editor: 'native' });
+    await waitForText(page, paneId, 'plain\n');
+    await dot('starting').waitFor();
+    await page.waitForTimeout(3000);
+    assert.equal(await dot('starting').count(), 1);
+    console.log('PASS timeout = 0 lets a language server take its time');
   }
 
   // Vim mode, from config.toml.

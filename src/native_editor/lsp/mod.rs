@@ -126,9 +126,7 @@ pub(super) struct Server {
     waiting: Vec<(SocketId, Value)>,
     pending: HashMap<i64, Request>,
     next_request: i64,
-    /// When the process started, for `initialize`'s timeout.
-    started: Instant,
-    /// When the process last sent anything.
+    /// When the process last sent anything (or started).
     heard: Instant,
     /// A request is overdue, with nothing sent since it was.
     unresponsive: bool,
@@ -508,8 +506,10 @@ impl Server {
         sid
     }
 
-    fn timeout(&self) -> Duration {
-        Duration::from_secs(self.config.timeout.unwrap_or(DEFAULT_TIMEOUT))
+    /// `None` for `timeout = 0`, which turns the checks off.
+    fn timeout(&self) -> Option<Duration> {
+        let secs = self.config.timeout.unwrap_or(DEFAULT_TIMEOUT);
+        (secs > 0).then(|| Duration::from_secs(secs))
     }
 
     fn send(&self, message: Value) {
@@ -586,7 +586,6 @@ impl Inner {
                             waiting: Vec::new(),
                             pending: HashMap::new(),
                             next_request: 1,
-                            started: Instant::now(),
                             heard: Instant::now(),
                             unresponsive: false,
                             diagnostics: BTreeMap::new(),
@@ -630,8 +629,7 @@ impl Inner {
         let generation = server.generation;
         server.state = ServerState::Starting;
         server.init = None;
-        server.started = Instant::now();
-        server.heard = server.started;
+        server.heard = Instant::now();
         server.unresponsive = false;
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(CHECK);
@@ -1250,9 +1248,9 @@ impl super::Hub {
         inner.send_lsp_statuses();
     }
 
-    /// Fail a server that didn't start in time, and mark one not responding
-    /// while a request is overdue with nothing sent since it was. False once
-    /// that process is gone.
+    /// Fail a server that went silent while starting, and mark one not
+    /// responding while a request is overdue with nothing sent since it was.
+    /// False once that process is gone.
     fn lsp_check(&self, id: u64, generation: u32) -> bool {
         let mut inner = self.inner.lock().unwrap();
         let Some(server) = inner.lsp.servers.get_mut(&id) else {
@@ -1261,9 +1259,12 @@ impl super::Hub {
         if server.generation != generation || server.handle.is_none() {
             return false;
         }
-        let timeout = server.timeout();
+        let Some(timeout) = server.timeout() else {
+            return true;
+        };
         match server.state {
-            ServerState::Starting if server.started.elapsed() >= timeout => {
+            // Progress or log messages while starting show it's alive.
+            ServerState::Starting if server.heard.elapsed() >= timeout => {
                 let message = format!(
                     "{} didn't start within {} s",
                     server.name,
