@@ -14,6 +14,13 @@ actions, saved state, and API types can change in any release.
   `programs.btmux.settings` in Nix, ready to paste.
   ([#180](https://github.com/btmux-dev/btmux/pull/180))
 
+### Changed
+
+- **Show TOML** shows the whole file Save would write, keeping settings the
+  dialog doesn't have. It no longer adds `allow-transparency = false` when you
+  add a wallpaper without touching the setting.
+  ([#180](https://github.com/btmux-dev/btmux/pull/180))
+
 ## [0.0.215] - 2026-11-20
 
 ### Added

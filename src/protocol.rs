@@ -107,6 +107,7 @@ fn generated_protocol_is_current() {
         crate::widget::WidgetSummary::decl(&config),
         crate::popup::PopupSummary::decl(&config),
         crate::wallpaper::WallpaperCheck::decl(&config),
+        crate::config::ConfigPreview::decl(&config),
         ConfigUpdate::decl(&config),
         ClientMessage::decl(&config),
         ServerMessage::decl(&config),

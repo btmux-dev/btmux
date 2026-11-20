@@ -854,6 +854,13 @@ export type WallpaperCheck = { error: string | null,
 url: string | null, };
 
 // prettier-ignore
+export type ConfigPreview = { toml: string,
+/**
+ * A comment saying why when the settings have no Nix equivalent.
+ */
+nix: string, };
+
+// prettier-ignore
 export type ConfigUpdate = { prefix?: string, shell?: string, show_pane_titles?: boolean, keys?: { [key in string]: string }, session_sort?: SessionSort, window_sort?: WindowSort, editor?: Editor,
 /**
  * `[native-editor] vim`.

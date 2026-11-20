@@ -193,6 +193,10 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/health", get(crate::health::handle))
         .route("/api/wallpaper/check", get(api_wallpaper_check))
         .route(
+            "/api/config/preview",
+            axum::routing::post(api_config_preview),
+        )
+        .route(
             "/api/vscode/license",
             axum::routing::post(crate::vscode::accept),
         )
@@ -2427,6 +2431,32 @@ async fn api_wallpaper_check(
     Query(query): Query<WallpaperQuery>,
 ) -> Json<crate::wallpaper::WallpaperCheck> {
     Json(crate::wallpaper::check(&query.source).await)
+}
+
+/// Settings' Show TOML: config.toml as saving the overrides plus the body
+/// would write it, and as Nix. Errors are plain text.
+async fn api_config_preview(
+    State(state): State<AppState>,
+    Json(mut update): Json<crate::config::ConfigUpdate>,
+) -> Response {
+    let unprocessable = |e: String| (StatusCode::UNPROCESSABLE_ENTITY, e).into_response();
+    if let Some(prefix) = update.prefix.as_mut().filter(|p| !p.trim().is_empty()) {
+        match crate::config::parse_prefix(prefix) {
+            Ok(parsed) => *prefix = parsed,
+            Err(e) => return unprocessable(e),
+        }
+    }
+    let Some(path) = crate::config::config_path() else {
+        return unprocessable("No config directory: HOME is unset".into());
+    };
+    let overrides = state.read().await.overrides_with(&update);
+    match tokio::task::spawn_blocking(move || crate::config::preview_config(&path, &overrides))
+        .await
+    {
+        Ok(Ok(preview)) => Json(preview).into_response(),
+        Ok(Err(e)) => unprocessable(e),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }
 
 async fn serve_wallpaper(Query(query): Query<WallpaperQuery>) -> Response {
