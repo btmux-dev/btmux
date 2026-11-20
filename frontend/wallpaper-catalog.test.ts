@@ -7,7 +7,6 @@ import {
   parameterValue,
   SHADER_BLEND_MODES,
   shaderAcceptsInput,
-  wallpaperLayersToml,
   wallpaperUniformValues,
   WALLPAPER_SHADERS,
 } from './src/lib/wallpaperCatalog';
@@ -119,35 +118,4 @@ test('native seeds use generator defaults unless explicitly overridden', () => {
     expect(wallpaperUniformValues(shader, {}, 1).seed).toBe(seed.default);
     expect(wallpaperUniformValues(shader, { seed: 0 }, 1).seed).toBe(0);
   }
-});
-
-test('Settings TOML preserves layer order, settings, and every parameter type', () => {
-  const layers = [
-    { ...createShaderLayer('aurora'), params: { 'color-a': '#123456', center: { x: 0.3, y: 0.7 }, speed: 2 } },
-    {
-      ...createShaderLayer('strands'),
-      enabled: false,
-      params: {
-        'pin-edges': true,
-        stops: [
-          { color: '#ff0000', position: 0 },
-          { color: '#0000ff', position: 1 },
-        ],
-      },
-    },
-    { ...createShaderLayer('film-grain'), 'blend-mode': 'soft-light' as const, opacity: 0.35, interactive: false },
-  ];
-  const toml = [...wallpaperLayersToml(layers), '', '[keys]', 'split-vertical = "v"'].join('\n');
-  const parsed = Bun.TOML.parse(toml) as Record<string, any>;
-  expect(parsed['wallpaper-shader']).toEqual([
-    { shader: 'aurora', params: layers[0].params },
-    { shader: 'strands', enabled: false, params: layers[1].params },
-    { shader: 'film-grain', 'blend-mode': 'soft-light', opacity: 0.35, interactive: false },
-  ]);
-  expect(parsed.keys).toEqual({ 'split-vertical': 'v' });
-  expect(wallpaperLayersToml([{ ...createShaderLayer('aurora'), params: { stops: null } }])).toEqual([
-    '[[wallpaper-shader]]',
-    'shader = "aurora"',
-  ]);
-  expect(wallpaperLayersToml([])).toEqual([]);
 });

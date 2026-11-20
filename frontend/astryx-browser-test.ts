@@ -781,7 +781,9 @@ try {
     assert(i < 200, 'the Nix preview must show the edited binding');
     await page.waitForTimeout(50);
   }
-  assert.match(await nix.inputValue(), /^programs\.btmux\.settings = \{\n(.*\n)*  keys = \{\n(.*\n)*.* = "F9";$/m);
+  const nixText = await nix.inputValue();
+  assert(nixText.includes('\nprograms.btmux.settings = {\n'), nixText);
+  assert.match(nixText.slice(nixText.indexOf('\n  keys = {\n')), /^ {4}[\w-]+ = "F9";$/m);
   await dialog.getByRole('radio', { name: 'config.toml', exact: true }).click();
   await dialog.getByRole('switch', { name: 'Show TOML', exact: true }).click();
   await page.keyboard.press('Escape');

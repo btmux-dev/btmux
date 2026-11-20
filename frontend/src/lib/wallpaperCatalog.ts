@@ -165,38 +165,3 @@ export function wallpaperUniformValues(
     }),
   );
 }
-
-export function shaderValueToml(value: ShaderValue): string {
-  if (value === null) throw new Error('TOML does not support null');
-  if (typeof value === 'string') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(shaderValueToml).join(', ')}]`;
-  if (typeof value === 'object') {
-    return `{ ${Object.entries(value)
-      .map(([key, entry]) => `${JSON.stringify(key)} = ${shaderValueToml(entry)}`)
-      .join(', ')} }`;
-  }
-  return String(value);
-}
-
-function tomlKey(key: string): string {
-  return /^[A-Za-z0-9_-]+$/.test(key) ? key : JSON.stringify(key);
-}
-
-/** `[[wallpaper-shader]]` tables for config.toml, omitting defaults. */
-export function wallpaperLayersToml(layers: readonly ShaderLayer[]): string[] {
-  return layers.flatMap((layer, index) => {
-    const params = Object.entries(layer.params).filter(([, value]) => value !== null);
-    return [
-      ...(index ? [''] : []),
-      '[[wallpaper-shader]]',
-      `shader = ${JSON.stringify(layer.shader)}`,
-      ...(layer.enabled ? [] : ['enabled = false']),
-      ...(layer['blend-mode'] === 'normal' ? [] : [`blend-mode = ${JSON.stringify(layer['blend-mode'])}`]),
-      ...(layer.opacity === 1 ? [] : [`opacity = ${Number(layer.opacity.toFixed(4))}`]),
-      ...(layer.interactive ? [] : ['interactive = false']),
-      ...(params.length
-        ? ['[wallpaper-shader.params]', ...params.map(([key, value]) => `${tomlKey(key)} = ${shaderValueToml(value)}`)]
-        : []),
-    ];
-  });
-}
