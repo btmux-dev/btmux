@@ -198,6 +198,11 @@ try {
     await tcpRow.click();
     assert.equal(await tcpRow.count(), 1, 'listener and connections share one port/PID row');
     assert.equal(await tcpRow.locator('td').nth(3).innerText(), 'LISTEN');
+    // Short columns fit their values; addresses and names truncate inside theirs.
+    const clippedPorts = await viewer.locator('tr[data-port-focused] > td').evaluateAll((cells) =>
+      cells.filter((cell) => cell.scrollWidth > cell.clientWidth).map((cell) => cell.textContent),
+    );
+    assert.deepEqual(clippedPorts, []);
     const details = viewer.getByRole('table', { name: `Connections for port ${tcpPort}, PID ${process.pid}` });
     assert.equal(await details.count(), 0, 'connection details are collapsed initially');
     await viewer
