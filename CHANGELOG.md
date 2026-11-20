@@ -39,6 +39,8 @@ actions, saved state, and API types can change in any release.
 - The process viewer's port list shows a port's addresses one per line and
   never breaks one mid-address. Short columns fit their values; long
   addresses and process names end in an ellipsis, with the full text on hover.
+  A list wider than its panel scrolls sideways with the arrow keys; `h` and
+  `l` still fold and unfold.
   ([#179](https://github.com/btmux-dev/btmux/pull/179))
 - A native editor tab whose language server crashed while starting gets its
   features once the server restarts, without a reload.

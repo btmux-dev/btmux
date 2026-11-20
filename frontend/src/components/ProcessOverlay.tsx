@@ -44,6 +44,22 @@ interface ProcessOverlayProps {
   onClose: () => void;
 }
 
+/**
+ * Scrolls a port list wider than its panel sideways, so the keyboard reaches
+ * its last columns; arrows fold and unfold once it can't scroll that way,
+ * and h and l always do.
+ */
+function scrollPortList(root: HTMLElement | null, direction: 1 | -1): boolean {
+  const store = useProcessStore.getState();
+  if (store.viewMode !== 'ports' || store.panel !== 'list') return false;
+  const list = root?.querySelector<HTMLElement>('[data-port-list]');
+  if (!list) return false;
+  const max = list.scrollWidth - list.clientWidth;
+  if (direction < 0 ? list.scrollLeft <= 0 : list.scrollLeft >= max - 1) return false;
+  list.scrollBy({ left: direction * Math.max(40, list.clientWidth / 3) });
+  return true;
+}
+
 export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOverlayProps) {
   const { sendKill, state: connectionState } = useProcessSocket(true);
   const config = useStore((s) => s.config);
@@ -338,11 +354,13 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
         case 'h':
         case 'ArrowLeft':
           e.preventDefault();
+          if (e.key === 'ArrowLeft' && scrollPortList(rootRef.current, -1)) break;
           setExpanded(false);
           break;
         case 'l':
         case 'ArrowRight':
           e.preventDefault();
+          if (e.key === 'ArrowRight' && scrollPortList(rootRef.current, 1)) break;
           setExpanded(true);
           break;
         case 'Tab':

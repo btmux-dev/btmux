@@ -78,6 +78,7 @@ export function PortTable({
       <ScrollableArea
         label="Port list"
         axis="both"
+        data-port-list
         // Astryx's table wrapper clips; let the scroll area scroll instead.
         className="min-h-0 flex-1 overflow-auto [&_.astryx-table-scroll-wrapper]:overflow-visible"
       >
