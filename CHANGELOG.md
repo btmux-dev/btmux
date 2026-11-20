@@ -8,6 +8,8 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+## [0.0.215] - 2026-11-20
+
 ### Added
 
 - `popup-opacity` and `popup-blur` set the native editor's popups (completions,
@@ -48,7 +50,6 @@ actions, saved state, and API types can change in any release.
 - A native editor tab whose language server crashed while starting gets its
   features once the server restarts, without a reload.
   ([#178](https://github.com/btmux-dev/btmux/pull/178))
-
 - The native editor highlights Python stubs (`.pyi`), JSONC with comments,
   zsh files, shell startup files (`.bashrc`, `.zshrc`, …), `.gitconfig`,
   `Cargo.lock`, and `flake.lock`; file previews highlight these too, as well
