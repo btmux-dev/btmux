@@ -86,6 +86,9 @@ The server fetches remote images itself and serves them to the browser.
 - `popup-opacity` and `popup-blur` set the editor's popups (completions,
   hovers, pickers): how opaque their background is and how much they blur
   what's behind them.
+- `toolbar-opacity`, `toolbar-blur`, and `toolbar-saturate` set the side bar
+  and status bar: how opaque their background is, and how much they blur and
+  saturate what shows through. By default they're clear, with a 40 px blur.
 - `animations = false` turns off all animated effects.
 
 ## For programs in panes

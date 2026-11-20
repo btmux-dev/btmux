@@ -1,4 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+} from 'react';
+import { Search } from 'lucide-react';
 import { flushSync } from 'react-dom';
 import { useToast } from '@astryxdesign/core/Toast';
 import type { ClientMessage } from '../protocol/messages';
@@ -18,6 +27,9 @@ import {
   getBackdropDim,
   getPopupBlur,
   getPopupOpacity,
+  getToolbarBlur,
+  getToolbarOpacity,
+  getToolbarSaturate,
   getPaneSwitchBorderSpeed,
   getShowPaneTitles,
   getTerminalFontFamily,
@@ -46,6 +58,7 @@ import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { TabList, Tab } from '@astryxdesign/core/TabList';
 import { cycleTabs, enterTabPanel } from '../lib/tabKeys';
 import { Text } from '@astryxdesign/core/Text';
+import { Heading } from '@astryxdesign/core/Heading';
 import { useClipboard, useMediaQuery } from '@astryxdesign/core/hooks';
 import { Icon } from '@astryxdesign/core/Icon';
 import { IconButton } from '@astryxdesign/core/IconButton';
@@ -115,6 +128,9 @@ type Draft = {
   backdropDim: number;
   popupOpacity: number;
   popupBlur: number;
+  toolbarOpacity: number;
+  toolbarBlur: number;
+  toolbarSaturate: number;
   paneSwitchBorderStyle: string;
   paneSwitchBorderSpeed: number;
 };
@@ -176,6 +192,9 @@ function initialDraft(config: ClientConfig): Draft {
     backdropDim: getBackdropDim(config),
     popupOpacity: getPopupOpacity(config),
     popupBlur: getPopupBlur(config),
+    toolbarOpacity: getToolbarOpacity(config),
+    toolbarBlur: getToolbarBlur(config),
+    toolbarSaturate: getToolbarSaturate(config),
     paneSwitchBorderStyle: config.pane_switch_border ?? 'none',
     paneSwitchBorderSpeed: getPaneSwitchBorderSpeed(config),
   };
@@ -219,6 +238,9 @@ const TOML_DEFAULTS = {
   backdropDim: 0.5,
   popupOpacity: 0.85,
   popupBlur: 2,
+  toolbarOpacity: 0,
+  toolbarBlur: 40,
+  toolbarSaturate: 1,
   paneSwitchBorderStyle: 'wipe',
   paneSwitchBorderSpeed: 0.15,
   cursorBlink: true,
@@ -297,6 +319,9 @@ function toToml(draft: Draft): string {
     numLine('backdrop-dim', draft.backdropDim, TOML_DEFAULTS.backdropDim, 2),
     numLine('popup-opacity', draft.popupOpacity, TOML_DEFAULTS.popupOpacity, 2),
     numLine('popup-blur', draft.popupBlur, TOML_DEFAULTS.popupBlur, 1),
+    numLine('toolbar-opacity', draft.toolbarOpacity, TOML_DEFAULTS.toolbarOpacity, 2),
+    numLine('toolbar-blur', draft.toolbarBlur, TOML_DEFAULTS.toolbarBlur, 1),
+    numLine('toolbar-saturate', draft.toolbarSaturate, TOML_DEFAULTS.toolbarSaturate, 2),
     strLine('pane-switch-border', draft.paneSwitchBorderStyle, TOML_DEFAULTS.paneSwitchBorderStyle),
     numLine('pane-switch-border-speed', draft.paneSwitchBorderSpeed, TOML_DEFAULTS.paneSwitchBorderSpeed, 2),
   ].filter((line): line is string => line !== null);
@@ -391,6 +416,9 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   if (dirty.has('backdropDim')) update.backdrop_dim = draft.backdropDim;
   if (dirty.has('popupOpacity')) update.popup_opacity = draft.popupOpacity;
   if (dirty.has('popupBlur')) update.popup_blur = draft.popupBlur;
+  if (dirty.has('toolbarOpacity')) update.toolbar_opacity = draft.toolbarOpacity;
+  if (dirty.has('toolbarBlur')) update.toolbar_blur = draft.toolbarBlur;
+  if (dirty.has('toolbarSaturate')) update.toolbar_saturate = draft.toolbarSaturate;
   if (dirty.has('paneSwitchBorderStyle')) update.pane_switch_border = draft.paneSwitchBorderStyle;
   if (dirty.has('paneSwitchBorderSpeed')) update.pane_switch_border_speed = draft.paneSwitchBorderSpeed;
   return update;
@@ -418,6 +446,62 @@ const TAB_LABELS = {
 };
 type SettingsTab = keyof typeof TAB_LABELS;
 const SETTINGS_TABS = Object.keys(TAB_LABELS) as SettingsTab[];
+
+/**
+ * One setting: the words the search matches (with its tab's label) and its
+ * control. Runs of `form` entries share a FormLayout, `list` ones a list.
+ */
+type Entry = { terms: string; node: ReactNode; kind: 'form' | 'list' | 'plain' };
+const formEntry = (terms: string, node: ReactNode): Entry => ({ terms, node, kind: 'form' });
+const listEntry = (terms: string, node: ReactNode): Entry => ({ terms, node, kind: 'list' });
+const plainEntry = (terms: string, node: ReactNode): Entry => ({ terms, node, kind: 'plain' });
+const isEntry = (entry: Entry | false): entry is Entry => entry !== false;
+const withTerms = (entry: Entry, terms: string): Entry => ({ ...entry, terms: `${entry.terms} ${terms}` });
+const TOOLBAR_TERMS = 'side bar sidebar status bar glass transparency';
+
+function renderEntries(entries: Entry[]): ReactNode[] {
+  const runs: Entry[][] = [];
+  for (const entry of entries) {
+    const last = runs[runs.length - 1];
+    if (last && last[0].kind === entry.kind && entry.kind !== 'plain') last.push(entry);
+    else runs.push([entry]);
+  }
+  return runs.map((run) => {
+    const key = run[0].terms;
+    const nodes = run.map((entry) => <Fragment key={entry.terms}>{entry.node}</Fragment>);
+    if (run[0].kind === 'form') return <FormLayout key={key}>{nodes}</FormLayout>;
+    if (run[0].kind === 'list')
+      return (
+        <VStack key={key} gap={1}>
+          {nodes}
+        </VStack>
+      );
+    return <Fragment key={key}>{nodes}</Fragment>;
+  });
+}
+
+const CONTROLS = 'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
+function firstControl(root: HTMLElement | null): HTMLElement | undefined {
+  return [...(root?.querySelectorAll<HTMLElement>(CONTROLS) ?? [])].find(
+    (item) => !item.matches(':disabled') && item.checkVisibility(),
+  );
+}
+
+/**
+ * A character typed outside a text field (on a tab, a switch, the dialog)
+ * goes to the search field, which takes focus before the key types into it.
+ */
+function typeToSearch(e: ReactKeyboardEvent<HTMLElement>, search: HTMLInputElement | null): boolean {
+  if (!search || e.key.length !== 1 || e.key === ' ' || e.ctrlKey || e.metaKey || e.altKey) return false;
+  const target = e.target as HTMLElement;
+  if (target === search || !e.currentTarget.contains(target)) return false;
+  if (target.matches('input, textarea, select, [contenteditable]')) return false;
+  // Listbox and menu typeahead.
+  if (target.closest('[role="listbox"], [role="menu"], [role="option"], [role="menuitem"]')) return false;
+  search.focus();
+  return true;
+}
 
 const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'CapsLock']);
 
@@ -511,7 +595,9 @@ export function ConfigPage({ config, send, request }: Props) {
   const [dirty, setDirty] = useState<Set<DraftKey>>(() => new Set());
   const { copy, isCopied } = useClipboard({ announce: 'Copied' });
   const [showToml, setShowToml] = useState(false);
-  const [clearBackdrop, setClearBackdrop] = useState(false);
+  const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const resultsRef = useRef<HTMLElement>(null);
   const toml = useMemo(() => toToml(draft), [draft]);
 
   const knownFont = config.fonts.some((font) => font.family === draft.fontFamily);
@@ -568,6 +654,9 @@ export function ConfigPage({ config, send, request }: Props) {
       backdrop_dim: draft.backdropDim,
       popup_opacity: draft.popupOpacity,
       popup_blur: draft.popupBlur,
+      toolbar_opacity: draft.toolbarOpacity,
+      toolbar_blur: draft.toolbarBlur,
+      toolbar_saturate: draft.toolbarSaturate,
       pane_switch_border: draft.paneSwitchBorderStyle || null,
       pane_switch_border_speed: draft.paneSwitchBorderSpeed,
     }),
@@ -659,34 +748,38 @@ export function ConfigPage({ config, send, request }: Props) {
     key: { [K in DraftKey]: Draft[K] extends boolean ? K : never }[DraftKey],
     label: string,
     description?: string,
-  ) => (
-    <Switch
-      key={key}
-      label={label}
-      description={description}
-      value={draft[key]}
-      onChange={(value) => update(key, value)}
-      labelPosition="start"
-      labelSpacing="spread"
-    />
-  );
+  ): Entry =>
+    formEntry(
+      `${label} ${description ?? ''}`,
+      <Switch
+        key={key}
+        label={label}
+        description={description}
+        value={draft[key]}
+        onChange={(value) => update(key, value)}
+        labelPosition="start"
+        labelSpacing="spread"
+      />,
+    );
   const text = (
     key: { [K in DraftKey]: Draft[K] extends string ? K : never }[DraftKey],
     label: string,
     description?: string,
     /** An error message, or a full status. */
     status?: string | WallpaperStatus | null,
-  ) => (
-    <TextInput
-      key={key}
-      ref={plainTextInput}
-      label={label}
-      value={draft[key]}
-      onChange={(value) => update(key, value as never)}
-      description={description}
-      status={typeof status === 'string' ? { type: 'error', message: status } : (status ?? undefined)}
-    />
-  );
+  ): Entry =>
+    formEntry(
+      `${label} ${description ?? ''}`,
+      <TextInput
+        key={key}
+        ref={plainTextInput}
+        label={label}
+        value={draft[key]}
+        onChange={(value) => update(key, value as never)}
+        description={description}
+        status={typeof status === 'string' ? { type: 'error', message: status } : (status ?? undefined)}
+      />,
+    );
   const range = (
     key: { [K in DraftKey]: Draft[K] extends number ? K : never }[DraftKey],
     label: string,
@@ -694,36 +787,40 @@ export function ConfigPage({ config, send, request }: Props) {
     max: number,
     step = 1,
     isDisabled = false,
-  ) => (
-    <Slider
-      key={key}
-      label={label}
-      value={draft[key]}
-      min={min}
-      max={max}
-      step={step}
-      onChange={(value: number) => update(key, value)}
-      valueDisplay="text"
-      formatValue={(value) => formatSliderValue(value, step)}
-      isDisabled={isDisabled}
-    />
-  );
+  ): Entry =>
+    formEntry(
+      label,
+      <Slider
+        key={key}
+        label={label}
+        value={draft[key]}
+        min={min}
+        max={max}
+        step={step}
+        onChange={(value: number) => update(key, value)}
+        valueDisplay="text"
+        formatValue={(value) => formatSliderValue(value, step)}
+        isDisabled={isDisabled}
+      />,
+    );
   const choose = (
     key: { [K in DraftKey]: Draft[K] extends string ? K : never }[DraftKey],
     label: string,
     options: { value: string; label: string; description?: string }[],
     description?: string,
-  ) => (
-    <Selector
-      key={key}
-      label={label}
-      description={description}
-      value={draft[key] || 'none'}
-      options={options}
-      onChange={(value) => update(key, (value === 'none' ? '' : value) as never)}
-      presentation="adaptive"
-    />
-  );
+  ): Entry =>
+    formEntry(
+      `${label} ${description ?? ''} ${options.map((option) => option.label).join(' ')}`,
+      <Selector
+        key={key}
+        label={label}
+        description={description}
+        value={draft[key] || 'none'}
+        options={options}
+        onChange={(value) => update(key, (value === 'none' ? '' : value) as never)}
+        presentation="adaptive"
+      />,
+    );
   const none = { value: 'none', label: 'None' };
   const ordering = [
     { value: 'created', label: 'Created' },
@@ -731,6 +828,273 @@ export function ConfigPage({ config, send, request }: Props) {
     { value: 'alphabetical', label: 'Alphabetical' },
   ];
   const paneBorderOff = !draft.paneSwitchBorderStyle || draft.paneSwitchBorderStyle === 'none';
+
+  // Every tab's settings, which the search filters across tabs.
+  const entries: Record<SettingsTab, Entry[]> = {
+    general: [
+      choose(
+        'appearance',
+        'Appearance',
+        APPEARANCES.map(({ value, label }) => ({ value, label })),
+        'Auto follows the system setting.',
+      ),
+      ...(['dark', 'light'] as const).map((mode) => {
+        const label = mode === 'dark' ? 'Dark color scheme' : 'Light color scheme';
+        return formEntry(
+          `${label} theme palette`,
+          <Selector
+            key={mode}
+            label={label}
+            value={draft[COLORS_KEY[mode]] || DEFAULT_COLOR_SCHEMES[mode]}
+            hasSearch
+            presentation="adaptive"
+            options={config.color_schemes.map((value) => ({
+              value,
+              label: colorSchemeLabel(value),
+            }))}
+            onChange={(value) => update(COLORS_KEY[mode], value)}
+          />,
+        );
+      }),
+      formEntry(
+        'Terminal font Also used for paths, names, and key hints in the UI.',
+        <Selector
+          key="font"
+          label="Terminal font"
+          description="Also used for paths, names, and key hints in the UI."
+          value={fontChoice}
+          presentation="adaptive"
+          options={[
+            {
+              type: 'section',
+              title: 'Bundled',
+              options: config.fonts.map((font) => ({ value: font.family, label: font.family })),
+            },
+            { type: 'section', title: 'Custom', options: [{ value: FONT_CUSTOM, label: 'Custom…' }] },
+          ]}
+          onChange={chooseFont}
+        />,
+      ),
+      fontChoice === FONT_CUSTOM && text('fontFamily', 'Font family', 'A font installed on this device.', fontInvalid),
+      text('prefix', 'Prefix key', 'Use tmux notation such as C-a, C-b, M-x, or C-Space.', prefixInvalid),
+      formEntry(
+        'Shell for new panes',
+        <Selector
+          key="shell"
+          label="Shell for new panes"
+          value={config.cli_shell ?? shellChoice}
+          presentation="adaptive"
+          isDisabled={config.cli_shell != null}
+          disabledMessage="Set by btmux --shell."
+          options={
+            config.cli_shell != null
+              ? [{ value: config.cli_shell, label: config.cli_shell }]
+              : [
+                  { value: SHELL_DEFAULT, label: `Default (${config.default_shell})` },
+                  ...config.shells.map((shell) => ({
+                    value: shell.command,
+                    label: shell.label,
+                    description: shell.command,
+                  })),
+                  { type: 'divider' as const },
+                  { value: SHELL_CUSTOM, label: 'Custom…' },
+                ]
+          }
+          onChange={chooseShell}
+        />,
+      ),
+      config.cli_shell == null &&
+        shellChoice === SHELL_CUSTOM &&
+        text('shell', 'Shell command', 'A program, with arguments on Windows (wsl.exe -d Ubuntu).'),
+      toggle('animations', 'Animations'),
+      toggle('showPaneTitles', 'Show pane titles', 'Title bar with command, directory, and size above each pane.'),
+      choose('sessionSort', 'Session sort', ordering),
+      choose('windowSort', 'Window sort', ordering),
+      choose(
+        'editor',
+        'Editor',
+        [
+          {
+            value: 'native',
+            label: 'btmux',
+            description: "btmux's own editor.",
+          },
+          {
+            value: 'neovim',
+            label: 'Neovim',
+            description:
+              "Run headless Neovim with btmux's built-in GUI. Injects config for theming and UI. (Requires Neovim 0.12+ on PATH.)",
+          },
+          {
+            value: 'vscode',
+            label: 'VS Code',
+            description:
+              'Run headless VS Code (code serve-web). Injects an extension to sync theme and font. (Requires VS Code.)',
+          },
+          {
+            value: 'pane',
+            label: 'Terminal',
+            description: 'Run $EDITOR in the pane.',
+          },
+        ],
+        'Opens with prefix + e, or from the file browser and Git mode.',
+      ),
+      toggle(
+        'vimMode',
+        'Vim mode',
+        "Vim keybindings in btmux's editor. :w saves, :q hides it, and a double Esc hides it only from normal mode.",
+      ),
+      formEntry(
+        'Window grid count',
+        <NumberInput
+          key="windowGridCount"
+          label="Window grid count"
+          value={draft.windowGridCount}
+          min={1}
+          max={24}
+          isIntegerOnly
+          onChange={(value) => update('windowGridCount', value)}
+        />,
+      ),
+      range('desktopBackgroundOpacity', 'Desktop background opacity', 0, 1, 0.01),
+    ].filter(isEntry),
+    terminal: [
+      range('fontSize', 'Terminal font size', 8, 36),
+      range('fontWeight', 'Terminal font weight', weightMin, weightMax, 100),
+      toggle('cursorBlink', 'Blinking cursor'),
+      formEntry(
+        'Scrollback lines history',
+        <NumberInput
+          key="scrollback"
+          label="Scrollback lines"
+          value={draft.scrollback}
+          min={1}
+          max={1_000_000}
+          isIntegerOnly
+          onChange={(value) => update('scrollback', value)}
+        />,
+      ),
+      toggle('allowTransparency', 'Allow transparency'),
+      toggle('disableStdin', 'Disable terminal input'),
+      toggle(
+        'macosEditKeys',
+        'macOS Cmd editing keys',
+        'Cmd+Left/Right, Cmd+Backspace, and Cmd+Delete send C-a, C-e, C-u, and C-k',
+      ),
+      range('smoothScrollDuration', 'Smooth scroll duration (ms)', 0, 500, 10),
+      range('cursorAnimationDuration', 'Cursor animation duration (ms)', 0, 500, 10),
+      range('cellBackgroundOpacity', 'Cell background opacity', 0, 1, 0.05),
+    ],
+    wallpaper: [
+      text('wallpaper', 'Wallpaper URL or path', 'Drawn beneath the shader layers.', wallpaperCheck.status),
+      range('wallpaperOpacity', 'Wallpaper opacity', 0, 1, 0.01),
+      range('wallpaperBlur', 'Wallpaper blur', 0, 40, 0.5),
+      range('wallpaperSaturate', 'Wallpaper saturation', 0, 3, 0.05),
+      range('wallpaperSpeed', 'Wallpaper speed', 0, 10, 0.05),
+      range('wallpaperFps', 'Wallpaper frame rate', 10, 60, 1),
+      range('wallpaperResolution', 'Wallpaper resolution', 0.1, 1, 0.05),
+      toggle('wallpaperFollowsMouse', 'Follow mouse cursor'),
+      toggle(
+        'wallpaperFollowsKeyboard',
+        'Follow keyboard input',
+        'Drives interactive effects from the active terminal cursor.',
+      ),
+      plainEntry(
+        'Shader layers generators effects',
+        <ShaderLayerStack
+          key="shaders"
+          layers={draft.wallpaperShaders}
+          onChange={(layers) => update('wallpaperShaders', layers)}
+        />,
+      ),
+    ],
+    effects: [
+      range('backdropBlur', 'Modal backdrop blur (px)', 0, 50, 0.5),
+      range('backdropDim', 'Modal backdrop dimming', 0, 1, 0.05),
+      range('popupOpacity', 'Editor popup opacity', 0, 1, 0.05),
+      range('popupBlur', 'Editor popup blur (px)', 0, 50, 0.5),
+      withTerms(range('toolbarOpacity', 'Toolbar opacity', 0, 1, 0.05), TOOLBAR_TERMS),
+      withTerms(range('toolbarBlur', 'Toolbar blur (px)', 0, 80, 1), TOOLBAR_TERMS),
+      withTerms(range('toolbarSaturate', 'Toolbar saturation', 0, 3, 0.05), TOOLBAR_TERMS),
+      choose('paneSwitchBorderStyle', 'Pane switch border animation', [
+        none,
+        ...PANE_BORDER_STYLES.map((item) => ({ value: item.id, label: item.label })),
+      ]),
+      range('paneSwitchBorderSpeed', 'Border duration (s)', 0.05, 1, 0.01, paneBorderOff),
+    ],
+    keybinds: bindingRows.map((bind) => {
+      const value = draft.binds[bind.action] ?? bind.key;
+      return listEntry(
+        `${actionLabel(bind.action)} ${bind.action} ${value}`,
+        <KeyBindField
+          key={bind.action}
+          label={actionLabel(bind.action)}
+          value={value}
+          onChange={(key) => {
+            setDraft((current) => ({
+              ...current,
+              binds: { ...current.binds, [bind.action]: key },
+              keyOverrides: { ...current.keyOverrides, [bind.action]: key },
+            }));
+            setDirty((current) => new Set(current).add('binds'));
+          }}
+        />,
+      );
+    }),
+    notifications: [
+      toggle('osNotifications', 'OS notifications', 'Alert while btmux is hidden or unfocused.'),
+      choose('osNotificationLevel', 'Minimum level', [
+        { value: 'info', label: 'Info and above' },
+        { value: 'success', label: 'Success and above' },
+        { value: 'attention', label: 'Attention and error' },
+        { value: 'error', label: 'Errors only' },
+      ]),
+      osPermission !== 'granted' &&
+        plainEntry(
+          'OS notifications browser permission allow',
+          osPermission === 'default' ? (
+            <HStack key="permission" gap={2} vAlign="center">
+              <Text color="secondary">This browser has not allowed notifications yet.</Text>
+              <Button label="Allow" onClick={() => void Notification.requestPermission().then(setOsPermission)} />
+            </HStack>
+          ) : osPermission === 'denied' ? (
+            <Text key="permission" color="secondary">
+              Blocked; allow in site settings.
+            </Text>
+          ) : (
+            <Text key="permission" color="secondary">
+              This browser does not support notifications.
+            </Text>
+          ),
+        ),
+    ].filter(isEntry),
+    connect: [
+      plainEntry(
+        'Connect remote access relay passkeys sign in invite',
+        connect ? <ConnectSettings key="connect" status={connect} /> : <ConnectSetup key="connect" />,
+      ),
+    ],
+    logging: [
+      plainEntry(
+        'Log levels console file',
+        <Text key="intro" color="secondary">
+          Use error, warn, info, debug, trace, or a tracing directive. Applies after restart.
+        </Text>,
+      ),
+      text('consoleLevel', 'Console level'),
+      text('fileLevel', 'File level'),
+    ],
+  };
+
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const searching = words.length > 0;
+  const results = SETTINGS_TABS.map((value) => ({
+    tab: value,
+    found: entries[value].filter((item) => {
+      const terms = `${TAB_LABELS[value]} ${item.terms}`.toLowerCase();
+      return words.every((word) => terms.includes(word));
+    }),
+  })).filter(({ found }) => found.length > 0);
 
   const tomlPanel = (
     <LayoutPanel
@@ -777,11 +1141,13 @@ export function ConfigPage({ config, send, request }: Props) {
       }}
       purpose="form"
       {...(isNarrow ? NARROW_DIALOG : { width: showToml ? 1200 : 640, maxHeight: '90dvh' })}
-      className={clearBackdrop ? 'h-full btm-clear-backdrop' : 'h-full'}
+      // No blur or dim: the app behind previews the changes.
+      className="h-full btm-clear-backdrop"
       // Clicking text keeps focus here, so Tab still reaches the handler.
       tabIndex={-1}
       onKeyDown={(e) => {
-        if (!cycleTabs(e, SETTINGS_TABS, tab, setTab)) enterTabPanel(e);
+        if (typeToSearch(e, searchRef.current)) return;
+        if (!searching && !cycleTabs(e, SETTINGS_TABS, tab, setTab)) enterTabPanel(e);
       }}
     >
       <Layout
@@ -799,282 +1165,67 @@ export function ConfigPage({ config, send, request }: Props) {
         content={
           <Layout
             header={
-              <LayoutHeader paddingBlockEnd={0}>
-                <TabList
-                  value={tab}
-                  onChange={(value) => setTab(value as SettingsTab)}
-                  role="tablist"
-                  hasDivider
-                  isFullBleed
-                >
-                  {SETTINGS_TABS.map((value) => (
-                    <Tab key={value} value={value} label={TAB_LABELS[value]} panelId={`settings-${value}`} />
-                  ))}
-                </TabList>
+              <LayoutHeader paddingBlockEnd={searching ? undefined : 0}>
+                <VStack gap={3}>
+                  <TextInput
+                    ref={(input) => {
+                      searchRef.current = input;
+                      plainTextInput(input);
+                    }}
+                    label="Search settings"
+                    isLabelHidden
+                    placeholder="Search settings"
+                    startIcon={Search}
+                    hasClear
+                    autoComplete="off"
+                    value={query}
+                    onChange={setQuery}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape' && query) {
+                        // Clears the search rather than closing the dialog.
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setQuery('');
+                      } else if (e.key === 'ArrowDown' && searching) {
+                        e.preventDefault();
+                        firstControl(resultsRef.current)?.focus();
+                      }
+                    }}
+                  />
+                  {!searching && (
+                    <TabList
+                      value={tab}
+                      onChange={(value) => setTab(value as SettingsTab)}
+                      role="tablist"
+                      hasDivider
+                      isFullBleed
+                    >
+                      {SETTINGS_TABS.map((value) => (
+                        <Tab key={value} value={value} label={TAB_LABELS[value]} panelId={`settings-${value}`} />
+                      ))}
+                    </TabList>
+                  )}
+                </VStack>
               </LayoutHeader>
             }
             content={
               <LayoutContent padding={6}>
-                <VStack gap={8}>
-                  {tab === 'general' && (
-                    <VStack gap={4} id="settings-general" role="tabpanel" aria-label={TAB_LABELS.general}>
-                      <FormLayout>
-                        {choose(
-                          'appearance',
-                          'Appearance',
-                          APPEARANCES.map(({ value, label }) => ({ value, label })),
-                          'Auto follows the system setting.',
-                        )}
-                        {(['dark', 'light'] as const).map((mode) => (
-                          <Selector
-                            key={mode}
-                            label={mode === 'dark' ? 'Dark color scheme' : 'Light color scheme'}
-                            value={draft[COLORS_KEY[mode]] || DEFAULT_COLOR_SCHEMES[mode]}
-                            hasSearch
-                            presentation="adaptive"
-                            options={config.color_schemes.map((value) => ({
-                              value,
-                              label: colorSchemeLabel(value),
-                            }))}
-                            onChange={(value) => update(COLORS_KEY[mode], value)}
-                          />
-                        ))}
-                        <Selector
-                          label="Terminal font"
-                          description="Also used for paths, names, and key hints in the UI."
-                          value={fontChoice}
-                          presentation="adaptive"
-                          options={[
-                            {
-                              type: 'section',
-                              title: 'Bundled',
-                              options: config.fonts.map((font) => ({ value: font.family, label: font.family })),
-                            },
-                            { type: 'section', title: 'Custom', options: [{ value: FONT_CUSTOM, label: 'Custom…' }] },
-                          ]}
-                          onChange={chooseFont}
-                        />
-                        {fontChoice === FONT_CUSTOM &&
-                          text('fontFamily', 'Font family', 'A font installed on this device.', fontInvalid)}
-                        {text(
-                          'prefix',
-                          'Prefix key',
-                          'Use tmux notation such as C-a, C-b, M-x, or C-Space.',
-                          prefixInvalid,
-                        )}
-                        <Selector
-                          label="Shell for new panes"
-                          value={config.cli_shell ?? shellChoice}
-                          presentation="adaptive"
-                          isDisabled={config.cli_shell != null}
-                          disabledMessage="Set by btmux --shell."
-                          options={
-                            config.cli_shell != null
-                              ? [{ value: config.cli_shell, label: config.cli_shell }]
-                              : [
-                                  { value: SHELL_DEFAULT, label: `Default (${config.default_shell})` },
-                                  ...config.shells.map((shell) => ({
-                                    value: shell.command,
-                                    label: shell.label,
-                                    description: shell.command,
-                                  })),
-                                  { type: 'divider' as const },
-                                  { value: SHELL_CUSTOM, label: 'Custom…' },
-                                ]
-                          }
-                          onChange={chooseShell}
-                        />
-                        {config.cli_shell == null &&
-                          shellChoice === SHELL_CUSTOM &&
-                          text('shell', 'Shell command', 'A program, with arguments on Windows (wsl.exe -d Ubuntu).')}
-                        {toggle('animations', 'Animations')}
-                        {toggle(
-                          'showPaneTitles',
-                          'Show pane titles',
-                          'Title bar with command, directory, and size above each pane.',
-                        )}
-                        {choose('sessionSort', 'Session sort', ordering)}
-                        {choose('windowSort', 'Window sort', ordering)}
-                        {choose(
-                          'editor',
-                          'Editor',
-                          [
-                            {
-                              value: 'native',
-                              label: 'btmux',
-                              description: "btmux's own editor.",
-                            },
-                            {
-                              value: 'neovim',
-                              label: 'Neovim',
-                              description:
-                                "Run headless Neovim with btmux's built-in GUI. Injects config for theming and UI. (Requires Neovim 0.12+ on PATH.)",
-                            },
-                            {
-                              value: 'vscode',
-                              label: 'VS Code',
-                              description:
-                                'Run headless VS Code (code serve-web). Injects an extension to sync theme and font. (Requires VS Code.)',
-                            },
-                            {
-                              value: 'pane',
-                              label: 'Terminal',
-                              description: 'Run $EDITOR in the pane.',
-                            },
-                          ],
-                          'Opens with prefix + e, or from the file browser and Git mode.',
-                        )}
-                        {toggle(
-                          'vimMode',
-                          'Vim mode',
-                          "Vim keybindings in btmux's editor. :w saves, :q hides it, and a double Esc hides it only from normal mode.",
-                        )}
-                        <NumberInput
-                          label="Window grid count"
-                          value={draft.windowGridCount}
-                          min={1}
-                          max={24}
-                          isIntegerOnly
-                          onChange={(value) => update('windowGridCount', value)}
-                        />
-                        {range('desktopBackgroundOpacity', 'Desktop background opacity', 0, 1, 0.01)}
-                      </FormLayout>
-                    </VStack>
-                  )}
-                  {tab === 'terminal' && (
-                    <VStack gap={4} id="settings-terminal" role="tabpanel" aria-label={TAB_LABELS.terminal}>
-                      <FormLayout>
-                        {range('fontSize', 'Terminal font size', 8, 36)}
-                        {range('fontWeight', 'Terminal font weight', weightMin, weightMax, 100)}
-                        {toggle('cursorBlink', 'Blinking cursor')}
-                        <NumberInput
-                          label="Scrollback lines"
-                          value={draft.scrollback}
-                          min={1}
-                          max={1_000_000}
-                          isIntegerOnly
-                          onChange={(value) => update('scrollback', value)}
-                        />
-                        {toggle('allowTransparency', 'Allow transparency')}
-                        {toggle('disableStdin', 'Disable terminal input')}
-                        {toggle(
-                          'macosEditKeys',
-                          'macOS Cmd editing keys',
-                          'Cmd+Left/Right, Cmd+Backspace, and Cmd+Delete send C-a, C-e, C-u, and C-k',
-                        )}
-                        {range('smoothScrollDuration', 'Smooth scroll duration (ms)', 0, 500, 10)}
-                        {range('cursorAnimationDuration', 'Cursor animation duration (ms)', 0, 500, 10)}
-                        {range('cellBackgroundOpacity', 'Cell background opacity', 0, 1, 0.05)}
-                      </FormLayout>
-                    </VStack>
-                  )}
-                  {tab === 'wallpaper' && (
-                    <VStack gap={4} id="settings-wallpaper" role="tabpanel" aria-label={TAB_LABELS.wallpaper}>
-                      <FormLayout>
-                        {text(
-                          'wallpaper',
-                          'Wallpaper URL or path',
-                          'Drawn beneath the shader layers.',
-                          wallpaperCheck.status,
-                        )}
-                        {range('wallpaperOpacity', 'Wallpaper opacity', 0, 1, 0.01)}
-                        {range('wallpaperBlur', 'Wallpaper blur', 0, 40, 0.5)}
-                        {range('wallpaperSaturate', 'Wallpaper saturation', 0, 3, 0.05)}
-                        {range('wallpaperSpeed', 'Wallpaper speed', 0, 10, 0.05)}
-                        {range('wallpaperFps', 'Wallpaper frame rate', 10, 60, 1)}
-                        {range('wallpaperResolution', 'Wallpaper resolution', 0.1, 1, 0.05)}
-                        {toggle('wallpaperFollowsMouse', 'Follow mouse cursor')}
-                        {toggle(
-                          'wallpaperFollowsKeyboard',
-                          'Follow keyboard input',
-                          'Drives interactive effects from the active terminal cursor.',
-                        )}
-                      </FormLayout>
-                      <ShaderLayerStack
-                        layers={draft.wallpaperShaders}
-                        onChange={(layers) => update('wallpaperShaders', layers)}
-                      />
-                    </VStack>
-                  )}
-                  {tab === 'effects' && (
-                    <VStack gap={4} id="settings-effects" role="tabpanel" aria-label={TAB_LABELS.effects}>
-                      <FormLayout>
-                        {range('backdropBlur', 'Modal backdrop blur (px)', 0, 50, 0.5)}
-                        {range('backdropDim', 'Modal backdrop dimming', 0, 1, 0.05)}
-                        {range('popupOpacity', 'Editor popup opacity', 0, 1, 0.05)}
-                        {range('popupBlur', 'Editor popup blur (px)', 0, 50, 0.5)}
-                        {choose('paneSwitchBorderStyle', 'Pane switch border animation', [
-                          none,
-                          ...PANE_BORDER_STYLES.map((item) => ({ value: item.id, label: item.label })),
-                        ])}
-                        {range('paneSwitchBorderSpeed', 'Border duration (s)', 0.05, 1, 0.01, paneBorderOff)}
-                      </FormLayout>
-                    </VStack>
-                  )}
-                  {tab === 'keybinds' && (
-                    <VStack gap={4} id="settings-keybinds" role="tabpanel" aria-label={TAB_LABELS.keybinds}>
-                      <VStack gap={1}>
-                        {bindingRows.map((bind) => (
-                          <KeyBindField
-                            key={bind.action}
-                            label={actionLabel(bind.action)}
-                            value={draft.binds[bind.action] ?? bind.key}
-                            onChange={(key) => {
-                              setDraft((current) => ({
-                                ...current,
-                                binds: { ...current.binds, [bind.action]: key },
-                                keyOverrides: { ...current.keyOverrides, [bind.action]: key },
-                              }));
-                              setDirty((current) => new Set(current).add('binds'));
-                            }}
-                          />
-                        ))}
+                {!searching ? (
+                  <VStack gap={4} id={`settings-${tab}`} role="tabpanel" aria-label={TAB_LABELS[tab]}>
+                    {renderEntries(entries[tab])}
+                  </VStack>
+                ) : results.length ? (
+                  <VStack ref={resultsRef} gap={8} role="region" aria-label="Search results">
+                    {results.map(({ tab: value, found }) => (
+                      <VStack key={value} gap={4} role="group" aria-label={TAB_LABELS[value]}>
+                        <Heading level={4}>{TAB_LABELS[value]}</Heading>
+                        {renderEntries(found)}
                       </VStack>
-                    </VStack>
-                  )}
-                  {tab === 'notifications' && (
-                    <VStack gap={4} id="settings-notifications" role="tabpanel" aria-label={TAB_LABELS.notifications}>
-                      <FormLayout>
-                        {toggle('osNotifications', 'OS notifications', 'Alert while btmux is hidden or unfocused.')}
-                        {choose('osNotificationLevel', 'Minimum level', [
-                          { value: 'info', label: 'Info and above' },
-                          { value: 'success', label: 'Success and above' },
-                          { value: 'attention', label: 'Attention and error' },
-                          { value: 'error', label: 'Errors only' },
-                        ])}
-                      </FormLayout>
-                      {osPermission === 'default' ? (
-                        <HStack gap={2} vAlign="center">
-                          <Text color="secondary">This browser has not allowed notifications yet.</Text>
-                          <Button
-                            label="Allow"
-                            onClick={() => void Notification.requestPermission().then(setOsPermission)}
-                          />
-                        </HStack>
-                      ) : osPermission === 'denied' ? (
-                        <Text color="secondary">Blocked; allow in site settings.</Text>
-                      ) : osPermission === 'unsupported' ? (
-                        <Text color="secondary">This browser does not support notifications.</Text>
-                      ) : null}
-                    </VStack>
-                  )}
-                  {tab === 'connect' && (
-                    <VStack gap={4} id="settings-connect" role="tabpanel" aria-label={TAB_LABELS.connect}>
-                      {connect ? <ConnectSettings status={connect} /> : <ConnectSetup />}
-                    </VStack>
-                  )}
-                  {tab === 'logging' && (
-                    <VStack gap={4} id="settings-logging" role="tabpanel" aria-label={TAB_LABELS.logging}>
-                      <Text color="secondary">
-                        Use error, warn, info, debug, trace, or a tracing directive. Applies after restart.
-                      </Text>
-                      <FormLayout>
-                        {text('consoleLevel', 'Console level')}
-                        {text('fileLevel', 'File level')}
-                      </FormLayout>
-                    </VStack>
-                  )}
-                </VStack>
+                    ))}
+                  </VStack>
+                ) : (
+                  <Text color="secondary">No settings match “{query.trim()}”.</Text>
+                )}
               </LayoutContent>
             }
             footer={
@@ -1083,7 +1234,6 @@ export function ConfigPage({ config, send, request }: Props) {
                   <HStack gap={4} wrap="wrap" vAlign="center">
                     <Button label="Reset" onClick={reset} />
                     <Switch label="Show TOML" value={showToml} onChange={setShowToml} />
-                    <Switch label="Clear background" value={clearBackdrop} onChange={setClearBackdrop} />
                   </HStack>
                   <HStack gap={2} wrap="wrap" vAlign="center">
                     <Button label="Close" onClick={goBack} />

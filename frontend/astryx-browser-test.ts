@@ -658,7 +658,7 @@ try {
   await dialog.getByLabel('Console level').fill('debug');
   await dialog.getByLabel('File level').focus();
   const footer: (string | undefined)[] = [];
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 5; i++) {
     await page.keyboard.press('Tab');
     footer.push(
       await page.evaluate(() => {
@@ -667,8 +667,34 @@ try {
       }),
     );
   }
-  assert.deepEqual(footer, ['Reset', 'Show TOML', 'Clear background', 'Close', 'Apply', 'Save']);
+  assert.deepEqual(footer, ['Reset', 'Show TOML', 'Close', 'Apply', 'Save']);
   assert.equal(await settingsTab(), 'Logging', 'Tab in the footer keeps the tab');
+  // Typing outside a field searches every tab.
+  const search = dialog.getByRole('textbox', { name: 'Search settings', exact: true });
+  await dialog.getByRole('heading', { name: 'Settings', exact: true }).focus();
+  await page.keyboard.type('toolbar');
+  assert.equal(await search.inputValue(), 'toolbar', 'typing goes to the search');
+  assert.equal(await dialog.getByRole('tablist').count(), 0, 'search results replace the tabs');
+  const results = dialog.getByRole('region', { name: 'Search results', exact: true });
+  assert.deepEqual(await results.getByRole('heading').allInnerTexts(), ['Effects']);
+  await results.getByRole('slider', { name: 'Toolbar blur (px)' }).waitFor();
+  await search.fill('status bar');
+  await results.getByRole('slider', { name: 'Toolbar opacity' }).waitFor();
+  await search.fill('console level');
+  assert.deepEqual(await results.getByRole('heading').allInnerTexts(), ['Logging']);
+  await page.keyboard.press('ArrowDown');
+  assert.equal(
+    await page.evaluate(() => (document.activeElement as HTMLInputElement).labels?.[0]?.innerText),
+    'Console level',
+    'ArrowDown enters the results',
+  );
+  await search.fill('no such setting');
+  await dialog.getByText('No settings match “no such setting”.').waitFor();
+  await search.focus();
+  await page.keyboard.press('Escape');
+  assert.equal(await search.inputValue(), '', 'Escape clears the search');
+  assert(await dialog.isVisible(), 'Escape with a search keeps settings open');
+  assert.equal(await settingsTab(), 'Logging', 'clearing the search restores the tab');
   // ArrowDown stays in the generated TOML.
   await dialog.getByRole('switch', { name: 'Show TOML', exact: true }).click();
   await dialog.getByRole('textbox', { name: 'Generated TOML', exact: true }).focus();

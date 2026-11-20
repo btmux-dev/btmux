@@ -25,6 +25,9 @@ export const CONFIG_DEFAULTS = {
   backdropDim: 0.5,
   popupOpacity: 0.85,
   popupBlur: 2,
+  toolbarOpacity: 0,
+  toolbarBlur: 40,
+  toolbarSaturate: 1,
   paneSwitchBorder: 'wipe' as string | null,
   paneSwitchBorderSpeed: 0.15,
   sessionSort: 'mru' as const,
@@ -155,6 +158,18 @@ export function getPopupOpacity(config: ConfigLike): number {
 
 export function getPopupBlur(config: ConfigLike): number {
   return config?.popup_blur ?? CONFIG_DEFAULTS.popupBlur;
+}
+
+export function getToolbarOpacity(config: ConfigLike): number {
+  return config?.toolbar_opacity ?? CONFIG_DEFAULTS.toolbarOpacity;
+}
+
+export function getToolbarBlur(config: ConfigLike): number {
+  return config?.toolbar_blur ?? CONFIG_DEFAULTS.toolbarBlur;
+}
+
+export function getToolbarSaturate(config: ConfigLike): number {
+  return config?.toolbar_saturate ?? CONFIG_DEFAULTS.toolbarSaturate;
 }
 
 export function getPaneSwitchBorderStyle(config: ConfigLike): string | null {

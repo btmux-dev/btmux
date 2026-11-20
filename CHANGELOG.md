@@ -20,6 +20,16 @@ actions, saved state, and API types can change in any release.
   (`[language-server.NAME]`, default 20 s) while starting now fails instead
   of starting forever.
   ([#178](https://github.com/btmux-dev/btmux/pull/178))
+- Settings has a search field that finds settings across all tabs. Typing
+  anywhere in the dialog starts a search.
+- `toolbar-opacity`, `toolbar-blur`, and `toolbar-saturate` set the side bar
+  and status bar's background, blur, and saturation, with sliders in
+  Settings → Effects.
+
+### Changed
+
+- Settings no longer blurs or dims the app behind it, so changes preview
+  unobscured; the "Clear background" switch is gone.
 
 ### Fixed
 

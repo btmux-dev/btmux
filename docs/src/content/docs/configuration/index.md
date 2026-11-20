@@ -40,6 +40,8 @@ Press `<prefix> + :` and choose `config: open settings` for live previews.
 **Apply** changes the running server until it restarts or reloads
 `config.toml`. **Save** edits the file and preserves comments and other
 settings. If the file is read-only, the dialog shows TOML you can copy.
+To find a setting, type its name: the search field above the tabs lists
+matches from every tab.
 
 ![The Settings dialog on its General tab](../../../assets/screenshots/settings-dark.png)
 ![The Settings dialog on its General tab](../../../assets/screenshots/settings-light.png)

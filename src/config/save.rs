@@ -164,6 +164,9 @@ fn apply(doc: &mut DocumentMut, u: &ConfigUpdate) {
         ("backdrop-dim", u.backdrop_dim, 0.0, 1.0),
         ("popup-opacity", u.popup_opacity, 0.0, 1.0),
         ("popup-blur", u.popup_blur, 0.0, 50.0),
+        ("toolbar-opacity", u.toolbar_opacity, 0.0, 1.0),
+        ("toolbar-blur", u.toolbar_blur, 0.0, 80.0),
+        ("toolbar-saturate", u.toolbar_saturate, 0.0, 3.0),
         (
             "pane-switch-border-speed",
             u.pane_switch_border_speed,
