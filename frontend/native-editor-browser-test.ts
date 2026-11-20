@@ -436,6 +436,7 @@ try {
     await waitForText(page, paneId, 'let bad = 1;\nuse thing;\n');
     await page.locator(`[data-editor-pane="${paneId}"] .cm-lintRange-error`).first().waitFor();
     await page.getByLabel('Language server fake').waitFor();
+    await page.locator(`[data-editor-pane="${paneId}"] [data-lsp-state="ready"]`).waitFor();
     await page.getByText('1 error, 0 warnings').waitFor();
     // Lenses and hints move text as they arrive; positions are measured after.
     await page.locator(`[data-editor-pane="${paneId}"] .cm-lsp-code-lens`).first().waitFor();
@@ -446,9 +447,10 @@ try {
     splits.push(await api(`/api/panes/${paneId}/split`, 'POST', { direction: 'right', select: false }));
     const statusLine = () =>
       page.getByLabel('Language server fake').evaluate((server) => {
-        const line = server.parentElement!.parentElement!;
+        const line = server.closest('[data-editor-status]')!;
         return {
-          server: getComputedStyle(server).display,
+          server: getComputedStyle(server.querySelector('[data-lsp-name]')!).display,
+          dot: getComputedStyle(server.firstElementChild!).display,
           // On one line, without clipping.
           fits: line.scrollWidth <= line.clientWidth && line.clientHeight < 30,
           width: line.clientWidth,
@@ -460,7 +462,10 @@ try {
       await page.waitForTimeout(50);
       narrow = await statusLine();
     }
-    assert.ok(narrow.width < 350 && narrow.fits && narrow.text!.includes('1 error, 0 warnings'), JSON.stringify(narrow));
+    assert.ok(
+      narrow.width < 350 && narrow.fits && narrow.dot !== 'none' && narrow.text!.includes('1 error, 0 warnings'),
+      JSON.stringify(narrow),
+    );
     for (const { pane_id } of splits) await api(`/api/panes/${pane_id}`, 'DELETE');
     await page.getByLabel('Language server fake').waitFor();
     console.log('PASS a narrow status line fits');
@@ -640,18 +645,46 @@ try {
     console.log('PASS formatting follows its file when the view switches');
 
     // A server that isn't installed shows in the status line, and its features stay off.
-    writeFileSync(
-      join(configHome, 'btmux', 'config.toml'),
-      [
-        '[language-server.missing]',
+    const lspConfig = [
+      '[language-server.missing]',
         'command = "btmux-missing-lsp"',
+        '[language-server.stall]',
+        'command = "fake-lsp"',
+        'timeout = 2',
+        '[language-server.crashinit]',
+        'command = "fake-lsp"',
+        'args = ["--crash-init"]',
+        '[language-server.untimed]',
+        'command = "fake-lsp"',
+        'args = ["--no-init"]',
+        'timeout = 0',
+        '[language-server.noinit]',
+        'command = "fake-lsp"',
+        'args = ["--no-init"]',
+        'timeout = 2',
         '[[language]]',
         'name = "nolsp"',
         'file-types = ["nolsp"]',
         'language-servers = ["missing"]',
-        '',
-      ].join('\n'),
-    );
+        '[[language]]',
+        'name = "stall"',
+        'file-types = ["stall"]',
+        'language-servers = ["stall"]',
+        '[[language]]',
+        'name = "crashinit"',
+        'file-types = ["crashinit"]',
+        'language-servers = ["crashinit"]',
+        '[[language]]',
+        'name = "untimed"',
+        'file-types = ["untimed"]',
+        'language-servers = ["untimed"]',
+        '[[language]]',
+        'name = "noinit"',
+        'file-types = ["noinit"]',
+      'language-servers = ["noinit"]',
+      '',
+    ].join('\n');
+    writeFileSync(join(configHome, 'btmux', 'config.toml'), lspConfig);
     await waitForAsync(page, async () => {
       const { useStore } = await import('/src/state/store.tsx' as string);
       return useStore.getState().config?.format_on_save === false;
@@ -660,12 +693,87 @@ try {
     writeFileSync(nolsp, 'plain\n');
     await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: nolsp, line: null, editor: 'native' });
     await waitForText(page, paneId, 'plain\n');
-    await page.getByText('missing: btmux-missing-lsp not found').waitFor();
+    // The dot's tooltip has the same text.
+    await page.getByLabel('Language server missing').getByText('missing: btmux-missing-lsp not found').waitFor();
+    await page.locator(`[data-editor-pane="${paneId}"] [data-lsp-state="failed"]`).waitFor();
     const plain = (await wordRect(0, 'plain'))!;
     await page.mouse.move(plain.x, plain.y);
     await page.waitForTimeout(1000);
     assert.equal(await page.locator('.cm-lsp-message-error').count(), 0);
     console.log('PASS a missing language server shows in the status line without errors');
+
+    // A server silent past its timeout on a request isn't responding, until it answers.
+    const stall = join(dir, 'x.stall');
+    writeFileSync(stall, 'stall\n');
+    await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: stall, line: null, editor: 'native' });
+    await waitForText(page, paneId, 'stall\n');
+    const dot = (state: string) => page.locator(`[data-editor-pane="${paneId}"] [data-lsp-state="${state}"]`);
+    await dot('ready').waitFor();
+    const word = (await wordRect(0, 'stall'))!;
+    await page.mouse.move(word.x, word.y);
+    await dot('unresponsive').waitFor({ timeout: 5000 });
+    await page.getByLabel('Language server stall').getByText('stall: not responding').waitFor();
+    await dot('ready').waitFor({ timeout: 8000 });
+    console.log('PASS a silent language server shows as not responding until it answers');
+
+    // A tab whose initialization failed (the server crashed starting) initializes again once it's ready.
+    const crashinit = join(dir, 'x.crashinit');
+    writeFileSync(crashinit, 'hover\n');
+    await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: crashinit, line: null, editor: 'native' });
+    await waitForText(page, paneId, 'hover\n');
+    await dot('ready').waitFor();
+    // The code lens shows the tab's client initialized; a hover before it gets nothing.
+    await page.locator(`[data-editor-pane="${paneId}"] .cm-lsp-code-lens`).first().waitFor();
+    const hovered = (await wordRect(0, 'hover'))!;
+    // The pointer is still there from the last file.
+    await page.mouse.move(0, 0);
+    await page.mouse.move(hovered.x, hovered.y);
+    await page.locator('.cm-tooltip').getByText('Fake hover for').waitFor();
+    await page.mouse.move(0, 0);
+    console.log('PASS a tab initializes again after its server restarts');
+
+    // A working server's dot pulses, unless animations are off.
+    const busy = join(dir, 'busy.stall');
+    writeFileSync(busy, 'busy\n');
+    await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: busy, line: null, editor: 'native' });
+    await waitForText(page, paneId, 'busy\n');
+    await dot('busy').waitFor();
+    const pulses = () => dot('busy').evaluate((button) => button.getAnimations({ subtree: true }).length);
+    assert.ok((await pulses()) > 0);
+    writeFileSync(join(configHome, 'btmux', 'config.toml'), `animations = false\n${lspConfig}`);
+    await waitForAsync(page, async () => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      return useStore.getState().config?.animations === false;
+    });
+    for (let i = 0; i < 50 && (await pulses()) > 0; i++) await page.waitForTimeout(20);
+    assert.equal(await pulses(), 0);
+    console.log('PASS dots pulse only with animations');
+
+    // The status is reachable by keyboard: focus shows its tooltip.
+    await page.keyboard.press('Shift');
+    await dot('busy').focus();
+    await page.getByRole('tooltip').filter({ hasText: 'stall: Indexing' }).waitFor();
+    await dot('busy').blur();
+    console.log("PASS a server's status shows on keyboard focus");
+
+    // One that doesn't answer `initialize` in time fails.
+    const noinit = join(dir, 'x.noinit');
+    writeFileSync(noinit, 'plain\n');
+    await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: noinit, line: null, editor: 'native' });
+    await waitForText(page, paneId, 'plain\n');
+    await dot('failed').waitFor({ timeout: 8000 });
+    await page.getByLabel('Language server noinit').getByText("noinit: noinit didn't start within 2 s").waitFor();
+    console.log('PASS a language server that never starts fails after its timeout');
+
+    // `timeout = 0` turns that off.
+    const untimed = join(dir, 'x.untimed');
+    writeFileSync(untimed, 'plain\n');
+    await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: untimed, line: null, editor: 'native' });
+    await waitForText(page, paneId, 'plain\n');
+    await dot('starting').waitFor();
+    await page.waitForTimeout(3000);
+    assert.equal(await dot('starting').count(), 1);
+    console.log('PASS timeout = 0 lets a language server take its time');
   }
 
   // Vim mode, from config.toml.

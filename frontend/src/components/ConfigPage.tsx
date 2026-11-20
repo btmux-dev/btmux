@@ -16,6 +16,8 @@ import {
   getFontWeightRange,
   getBackdropBlur,
   getBackdropDim,
+  getPopupBlur,
+  getPopupOpacity,
   getPaneSwitchBorderSpeed,
   getShowPaneTitles,
   getTerminalFontFamily,
@@ -111,6 +113,8 @@ type Draft = {
   wallpaperFollowsKeyboard: boolean;
   backdropBlur: number;
   backdropDim: number;
+  popupOpacity: number;
+  popupBlur: number;
   paneSwitchBorderStyle: string;
   paneSwitchBorderSpeed: number;
 };
@@ -170,6 +174,8 @@ function initialDraft(config: ClientConfig): Draft {
     wallpaperFollowsKeyboard: getWallpaperFollowsKeyboard(config),
     backdropBlur: getBackdropBlur(config),
     backdropDim: getBackdropDim(config),
+    popupOpacity: getPopupOpacity(config),
+    popupBlur: getPopupBlur(config),
     paneSwitchBorderStyle: config.pane_switch_border ?? 'none',
     paneSwitchBorderSpeed: getPaneSwitchBorderSpeed(config),
   };
@@ -211,6 +217,8 @@ const TOML_DEFAULTS = {
   wallpaperFollowsKeyboard: false,
   backdropBlur: 2,
   backdropDim: 0.5,
+  popupOpacity: 0.85,
+  popupBlur: 2,
   paneSwitchBorderStyle: 'wipe',
   paneSwitchBorderSpeed: 0.15,
   cursorBlink: true,
@@ -287,6 +295,8 @@ function toToml(draft: Draft): string {
     ),
     numLine('backdrop-blur', draft.backdropBlur, TOML_DEFAULTS.backdropBlur, 1),
     numLine('backdrop-dim', draft.backdropDim, TOML_DEFAULTS.backdropDim, 2),
+    numLine('popup-opacity', draft.popupOpacity, TOML_DEFAULTS.popupOpacity, 2),
+    numLine('popup-blur', draft.popupBlur, TOML_DEFAULTS.popupBlur, 1),
     strLine('pane-switch-border', draft.paneSwitchBorderStyle, TOML_DEFAULTS.paneSwitchBorderStyle),
     numLine('pane-switch-border-speed', draft.paneSwitchBorderSpeed, TOML_DEFAULTS.paneSwitchBorderSpeed, 2),
   ].filter((line): line is string => line !== null);
@@ -379,6 +389,8 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   }
   if (dirty.has('backdropBlur')) update.backdrop_blur = draft.backdropBlur;
   if (dirty.has('backdropDim')) update.backdrop_dim = draft.backdropDim;
+  if (dirty.has('popupOpacity')) update.popup_opacity = draft.popupOpacity;
+  if (dirty.has('popupBlur')) update.popup_blur = draft.popupBlur;
   if (dirty.has('paneSwitchBorderStyle')) update.pane_switch_border = draft.paneSwitchBorderStyle;
   if (dirty.has('paneSwitchBorderSpeed')) update.pane_switch_border_speed = draft.paneSwitchBorderSpeed;
   return update;
@@ -554,6 +566,8 @@ export function ConfigPage({ config, send, request }: Props) {
       wallpaper_shader_follows_keyboard_input: draft.wallpaperFollowsKeyboard,
       backdrop_blur: draft.backdropBlur,
       backdrop_dim: draft.backdropDim,
+      popup_opacity: draft.popupOpacity,
+      popup_blur: draft.popupBlur,
       pane_switch_border: draft.paneSwitchBorderStyle || null,
       pane_switch_border_speed: draft.paneSwitchBorderSpeed,
     }),
@@ -985,8 +999,10 @@ export function ConfigPage({ config, send, request }: Props) {
                   {tab === 'effects' && (
                     <VStack gap={4} id="settings-effects" role="tabpanel" aria-label={TAB_LABELS.effects}>
                       <FormLayout>
-                        {range('backdropBlur', 'Modal backdrop blur (px)', 0, 40, 0.5)}
+                        {range('backdropBlur', 'Modal backdrop blur (px)', 0, 50, 0.5)}
                         {range('backdropDim', 'Modal backdrop dimming', 0, 1, 0.05)}
+                        {range('popupOpacity', 'Editor popup opacity', 0, 1, 0.05)}
+                        {range('popupBlur', 'Editor popup blur (px)', 0, 50, 0.5)}
                         {choose('paneSwitchBorderStyle', 'Pane switch border animation', [
                           none,
                           ...PANE_BORDER_STYLES.map((item) => ({ value: item.id, label: item.label })),

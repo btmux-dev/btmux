@@ -83,6 +83,9 @@ The server fetches remote images itself and serves them to the browser.
 - `pane-switch-border` draws a border on the pane you switch to: `"wipe"` (the
   default), `"trace"`, `"sweep"`, or `"none"`.
 - `backdrop-blur` and `backdrop-dim` set the backdrop behind dialogs.
+- `popup-opacity` and `popup-blur` set the editor's popups (completions,
+  hovers, pickers): how opaque their background is and how much they blur
+  what's behind them.
 - `animations = false` turns off all animated effects.
 
 ## For programs in panes

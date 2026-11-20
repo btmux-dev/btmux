@@ -24,6 +24,10 @@ use super::{EditorServerMessage, Inner, SocketId};
 const IDLE: Duration = Duration::from_secs(60);
 /// Crashes within a minute after which a server stays down.
 const MAX_CRASHES: usize = 3;
+/// `timeout` unset: seconds to start, or to answer while silent.
+const DEFAULT_TIMEOUT: u64 = 20;
+/// How often servers are checked for a start or answer overdue.
+const CHECK: Duration = Duration::from_secs(1);
 /// `id` of the `initialize` request.
 const INITIALIZE: i64 = 0;
 /// JSON-RPC error codes.
@@ -56,6 +60,8 @@ pub struct LspServerStatus {
     pub root: String,
     pub state: ServerState,
     pub message: Option<String>,
+    /// Ready, but a request is overdue and it has sent nothing since.
+    pub unresponsive: bool,
     /// Work in progress (`$/progress`).
     pub progress: Vec<LspProgress>,
 }
@@ -69,6 +75,14 @@ pub struct LspProgress {
     pub title: String,
     pub message: Option<String>,
     pub percent: Option<u32>,
+}
+
+/// A request to the server, waiting for its answer.
+struct Request {
+    pending: Pending,
+    sent: Instant,
+    /// The tab gave up on it, so a missing answer doesn't count.
+    canceled: bool,
 }
 
 enum Pending {
@@ -110,8 +124,12 @@ pub(super) struct Server {
     sockets: HashSet<SocketId>,
     /// Tabs' `initialize` requests waiting for the server's.
     waiting: Vec<(SocketId, Value)>,
-    pending: HashMap<i64, Pending>,
+    pending: HashMap<i64, Request>,
     next_request: i64,
+    /// When the process last sent anything (or started).
+    heard: Instant,
+    /// A request is overdue, with nothing sent since it was.
+    unresponsive: bool,
     /// The latest diagnostics per URI, for tabs that connect later.
     diagnostics: BTreeMap<String, Diagnostics>,
     /// By token.
@@ -463,8 +481,35 @@ impl Server {
             root: crate::fs_ops::client_path(&self.root),
             state: self.state.clone(),
             message: self.message.clone(),
+            unresponsive: self.unresponsive,
             progress: self.progress.values().cloned().collect(),
         }
+    }
+
+    /// Send a request, returning its id.
+    fn request(&mut self, pending: Pending, method: &str, params: Value) -> i64 {
+        let sid = self.next_request;
+        self.next_request += 1;
+        self.pending.insert(
+            sid,
+            Request {
+                pending,
+                sent: Instant::now(),
+                canceled: false,
+            },
+        );
+        let mut message = json!({ "jsonrpc": "2.0", "id": sid, "method": method });
+        if !params.is_null() {
+            message["params"] = params;
+        }
+        self.send(message);
+        sid
+    }
+
+    /// `None` for `timeout = 0`, which turns the checks off.
+    fn timeout(&self) -> Option<Duration> {
+        let secs = self.config.timeout.unwrap_or(DEFAULT_TIMEOUT);
+        (secs > 0).then(|| Duration::from_secs(secs))
     }
 
     fn send(&self, message: Value) {
@@ -541,6 +586,8 @@ impl Inner {
                             waiting: Vec::new(),
                             pending: HashMap::new(),
                             next_request: 1,
+                            heard: Instant::now(),
+                            unresponsive: false,
                             diagnostics: BTreeMap::new(),
                             progress: BTreeMap::new(),
                             crashes: VecDeque::new(),
@@ -582,6 +629,18 @@ impl Inner {
         let generation = server.generation;
         server.state = ServerState::Starting;
         server.init = None;
+        server.heard = Instant::now();
+        server.unresponsive = false;
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(CHECK);
+            tick.tick().await;
+            loop {
+                tick.tick().await;
+                if !super::hub().lsp_check(id, generation) {
+                    break;
+                }
+            }
+        });
         let handle = process::spawn(
             server.name.clone(),
             server.root.clone(),
@@ -653,15 +712,8 @@ impl Inner {
         let Some(server) = self.lsp.servers.get_mut(&id).filter(|s| s.ready()) else {
             return;
         };
-        let sid = server.next_request;
-        server.next_request += 1;
-        server.pending.insert(sid, Pending::Pull(uri.clone()));
-        server.send(json!({
-            "jsonrpc": "2.0",
-            "id": sid,
-            "method": "textDocument/diagnostic",
-            "params": { "textDocument": { "uri": uri } },
-        }));
+        let params = json!({ "textDocument": { "uri": uri } });
+        server.request(Pending::Pull(uri), "textDocument/diagnostic", params);
     }
 
     /// Take one source's diagnostics for `uri`; tabs get both sources'
@@ -792,7 +844,7 @@ impl Inner {
             server.waiting.retain(|(s, _)| *s != socket);
             server
                 .pending
-                .retain(|_, p| !matches!(p, Pending::Tab(s, _) if *s == socket));
+                .retain(|_, r| !matches!(r.pending, Pending::Tab(s, _) if s == socket));
             // Nobody is left to answer.
             if had && server.sockets.is_empty() {
                 let prompts: Vec<_> = server.prompts.drain().collect();
@@ -819,15 +871,7 @@ impl Inner {
                 continue;
             };
             let (tx, rx) = tokio::sync::oneshot::channel();
-            let sid = server.next_request;
-            server.next_request += 1;
-            server.pending.insert(sid, Pending::Btmux(tx));
-            server.send(json!({
-                "jsonrpc": "2.0",
-                "id": sid,
-                "method": kind.method(true),
-                "params": params,
-            }));
+            server.request(Pending::Btmux(tx), &kind.method(true), params);
             answers.push((server.id, rx));
         }
         answers
@@ -929,10 +973,16 @@ impl Inner {
             ) => {}
             (Some("$/cancelRequest"), None) => {
                 let cancelled = &message["params"]["id"];
-                let found = server.pending.iter().find_map(|(sid, p)| match p {
-                    Pending::Tab(s, rid) if *s == socket && rid == cancelled => Some(*sid),
-                    _ => None,
-                });
+                let found = server
+                    .pending
+                    .iter_mut()
+                    .find_map(|(sid, r)| match &r.pending {
+                        Pending::Tab(s, rid) if *s == socket && rid == cancelled => {
+                            r.canceled = true;
+                            Some(*sid)
+                        }
+                        _ => None,
+                    });
                 if let Some(sid) = found {
                     server.send(notification("$/cancelRequest", json!({ "id": sid })));
                 }
@@ -950,11 +1000,9 @@ impl Inner {
                     return;
                 }
                 let server = self.lsp.servers.get_mut(&id).expect("checked");
-                let sid = server.next_request;
-                server.next_request += 1;
-                server.pending.insert(sid, Pending::Tab(socket, rid));
-                message["id"] = sid.into();
-                server.send(message);
+                let method = method.as_deref().unwrap_or_default();
+                let params = message["params"].take();
+                server.request(Pending::Tab(socket, rid), method, params);
             }
             (Some(_), None) => server.send(message),
             // Answers to requests btmux handles itself never reach tabs.
@@ -1090,8 +1138,13 @@ impl super::Hub {
         let Some(server) = inner.lsp.servers.get_mut(&id) else {
             return;
         };
-        if server.generation != generation {
+        // A stopped process's messages, already on their way, are ignored.
+        if server.generation != generation || server.handle.is_none() {
             return;
+        }
+        server.heard = Instant::now();
+        if std::mem::take(&mut server.unresponsive) {
+            inner.send_lsp_statuses();
         }
         let method = message["method"].as_str().map(str::to_owned);
         match (method, message.get("id").cloned()) {
@@ -1101,7 +1154,10 @@ impl super::Hub {
                     inner.lsp_initialized(id, message);
                     return;
                 }
-                match server.pending.remove(&sid) {
+                let Some(server) = inner.lsp.servers.get_mut(&id) else {
+                    return;
+                };
+                match server.pending.remove(&sid).map(|r| r.pending) {
                     Some(Pending::Tab(socket, tab_id)) => {
                         let mut reply = message;
                         reply["id"] = tab_id;
@@ -1152,6 +1208,7 @@ impl super::Hub {
         }
         server.handle = None;
         server.progress.clear();
+        server.unresponsive = false;
         // The process's registrations and prompts went with it; a restarted
         // one registers again, under its own generation.
         server.watchers.clear();
@@ -1175,8 +1232,8 @@ impl super::Hub {
         } else {
             ServerState::Failed
         };
-        for (_, p) in pending {
-            if let Pending::Tab(socket, rid) = p {
+        for (_, r) in pending {
+            if let Pending::Tab(socket, rid) = r.pending {
                 inner.send_lsp(socket, id, error(rid, REQUEST_FAILED, &exit.message));
             }
         }
@@ -1189,6 +1246,67 @@ impl super::Hub {
             inner.start_server(id, &shell);
         }
         inner.send_lsp_statuses();
+    }
+
+    /// Fail a server that went silent while starting, and mark one not
+    /// responding while a request is overdue with nothing sent since it was.
+    /// False once that process is gone.
+    fn lsp_check(&self, id: u64, generation: u32) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        let Some(server) = inner.lsp.servers.get_mut(&id) else {
+            return false;
+        };
+        if server.generation != generation || server.handle.is_none() {
+            return false;
+        }
+        let Some(timeout) = server.timeout() else {
+            return true;
+        };
+        match server.state {
+            // Progress or log messages while starting show it's alive.
+            ServerState::Starting if server.heard.elapsed() >= timeout => {
+                let message = format!(
+                    "{} didn't start within {} s",
+                    server.name,
+                    timeout.as_secs()
+                );
+                tracing::info!(target: process::LOG_TARGET, "{message}");
+                server.state = ServerState::Failed;
+                // Stopped, so its exit isn't taken for a crash.
+                if let Some(handle) = server.handle.take() {
+                    drop(handle.stop);
+                }
+                let waiting = std::mem::take(&mut server.waiting);
+                server.message = Some(message.clone());
+                for (socket, rid) in waiting {
+                    inner.send_lsp(socket, id, error(rid, REQUEST_FAILED, &message));
+                }
+                inner.send_lsp_statuses();
+                false
+            }
+            ServerState::Ready => {
+                // Anything it sent since a request shows it's alive.
+                let heard = server.heard;
+                let unresponsive = server
+                    .pending
+                    .values()
+                    .any(|r| !r.canceled && heard < r.sent && r.sent.elapsed() >= timeout);
+                if unresponsive != server.unresponsive {
+                    server.unresponsive = unresponsive;
+                    if unresponsive {
+                        tracing::info!(
+                            target: process::LOG_TARGET,
+                            "{}: not responding for {} s",
+                            server.name,
+                            timeout.as_secs()
+                        );
+                    }
+                    inner.send_lsp_statuses();
+                }
+                true
+            }
+            _ => true,
+        }
     }
 
     /// Stop a server that still has no buffers.
@@ -1222,6 +1340,9 @@ impl Inner {
         let Some(server) = self.lsp.servers.get_mut(&id) else {
             return;
         };
+        if server.state != ServerState::Starting {
+            return;
+        }
         if let Some(e) = message.get("error") {
             server.state = ServerState::Failed;
             server.message = Some(format!(

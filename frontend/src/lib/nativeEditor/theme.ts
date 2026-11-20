@@ -105,10 +105,10 @@ function completionIcons(theme: Theme) {
   return rules;
 }
 
-/** The native editor's popups: half translucent, blurred by `backdrop-blur`. */
+/** The native editor's popups: `popup-opacity`, blurred by `popup-blur` (`useModalBackdrop`). */
 export const POPUP_GLASS = {
-  backgroundColor: 'color-mix(in srgb, var(--color-background-popover) 50%, transparent)',
-  backdropFilter: 'blur(var(--btm-backdrop-blur, 2px))',
+  backgroundColor: 'color-mix(in srgb, var(--color-background-popover) var(--btm-popup-opacity, 85%), transparent)',
+  backdropFilter: 'blur(var(--btm-popup-blur, 2px))',
 } as const;
 
 /** The editor's look, from the terminal palette and font. */

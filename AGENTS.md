@@ -588,7 +588,12 @@ hints resolve (`inlayHint/resolve`) once the pointer enters them: hovering
 shows their tooltip instead of the server's hover (`hovers` in `features.ts`
 replaces lsp-client's), label parts run their command on click and jump to
 their location on Mod-click, and a double click applies their edits.
-Crashed servers restart up to 3 times a minute; idle ones stop after 60 s. The backend also pulls diagnostics (`textDocument/diagnostic`) after
+Crashed servers restart up to 3 times a minute; idle ones stop after 60 s. A server
+silent for its `timeout` (default 20 s; 0 is off) before answering
+`initialize` fails; one with a request older than that, and nothing sent
+since it, is reported `unresponsive` (a once-a-second `lsp_check`) until it
+sends anything. A tab whose client failed to initialize while its server
+wasn't failed initializes again once it's ready (`connect` in `lsp.ts`). The backend also pulls diagnostics (`textDocument/diagnostic`) after
 changes settle, publishing them with pushed ones; watches the root for
 registered `didChangeWatchedFiles` globs (`lsp/watch.rs`: never home or above,
 minus what the root's `.gitignore` ignores; on Linux, where each directory
@@ -708,7 +713,7 @@ Floats get an Astryx card frame behind their canvas (`NvimFloatFrames`): the
 border reported by `win_viewport_margins` is cropped, its title is fetched for
 the frame, and cells with the NormalFloat background stay transparent.
 'winblend' arrives as `blend` on each cell's highlight: it sets the frame's
-background alpha (blurred by `--btm-backdrop-blur`) and other cell backgrounds'
+background alpha (blurred by `--btm-popup-blur`) and other cell backgrounds'
 alpha, never the text's; 'pumblend' does the same for the popupmenu cards. As
 in wterm, rows draw printable ASCII runs of one highlight with one `fillText`
 (so fonts join ligatures; cell by cell for proportional fonts), other cells

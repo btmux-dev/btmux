@@ -157,8 +157,19 @@ key isn't mapped. Esc drops keys typed so far, so it can't be mapped.
 
 The editor shares one instance of each language server per project root across
 clients. The root is the outermost directory in the Git worktree with a marker
-for that language, such as `Cargo.toml`. The status line shows server state
-and progress.
+for that language, such as `Cargo.toml`. The status line shows each server
+with a dot. Hover, focus, or tap it for details; narrow panes keep only the
+dot. With `animations = false`, dots don't pulse.
+
+| Dot           | Server                                                       |
+| ------------- | ------------------------------------------------------------ |
+| Green         | Ready                                                        |
+| Pulsing blue  | Working, such as indexing                                    |
+| Pulsing gray  | Starting                                                     |
+| Yellow        | Not responding: a request is unanswered and it sent nothing since, for longer than its `timeout` |
+| Red           | Failed: not found, silent for its `timeout` while starting, or crashed 3 times in a minute |
+
+A server that isn't responding goes back to green once it sends anything.
 
 btmux searches its own `PATH` and then your shell's `PATH`. Preconfigured
 servers include rust-analyzer, typescript-language-server,
@@ -184,7 +195,9 @@ config = { basedpyright = { analysis = { typeCheckingMode = "strict" } } }
 
 `file-types` are extensions; `file-names` are whole names, such as
 `Makefile`, matched ignoring case. `config` answers the server's
-`workspace/configuration` requests. Changes
+`workspace/configuration` requests. `timeout` (seconds, default 20) is how
+long a server may stay silent while starting or on a request; 0 turns these
+checks off. Changes
 apply to servers started afterward. nil releases since 2025-06-13 format with
 nixfmt by default (Nixpkgs builds in its own); for older ones, or another
 formatter, set `config = { nil = { formatting = { command = ["alejandra"] } } }`

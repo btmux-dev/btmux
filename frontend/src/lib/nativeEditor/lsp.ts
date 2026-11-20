@@ -17,7 +17,7 @@ import { setDiagnostics, type Diagnostic } from '@codemirror/lint';
 import DOMPurify from 'dompurify';
 import { useStore } from '../../state/store';
 import type { Overlay } from '../../state/types';
-import type { EditorServerMessage } from '../../generated/protocol';
+import type { EditorServerMessage, LspServerStatus } from '../../generated/protocol';
 import { IS_MAC } from '../nvimKeys';
 import { serverCompletions } from './completion';
 import { languages } from './languages';
@@ -489,14 +489,37 @@ function client(server: number): LSPClient {
 
 function connect(server: number, c: LSPClient) {
   c.connect(transport(server, () => c.workspace as BtmuxWorkspace));
-  c.initializing.then(
+  const attempt = c.initializing;
+  attempt.then(
     // Requesters that ran before the capabilities arrived ask again.
     () => {
       for (const file of (c.workspace as BtmuxWorkspace).files)
         file.view.dispatch({ effects: refreshEffect.of(REFRESH_ALL) });
     },
-    // A server that fails to start shows that in the status line.
-    () => {},
+    // A server that fails to start shows that in the status line. One that
+    // started after this client gave up (its timeout is shorter than the
+    // server's), or restarted after a crash, is initialized again.
+    () => {
+      let stop: (() => void) | null = null;
+      let done = false;
+      const check = (servers: LspServerStatus[]) => {
+        if (done) return;
+        const state = servers.find((s) => s.id === server)?.state;
+        // Not reconnected or replaced since.
+        const current = clients.get(server) === c && c.initializing === attempt && editorConnection.connected;
+        if (current && state === 'starting') return;
+        done = true;
+        // Subscribing calls `check` before `stop` is set.
+        queueMicrotask(() => {
+          stop?.();
+          if (current && state === 'ready') {
+            c.disconnect();
+            connect(server, c);
+          }
+        });
+      };
+      stop = editorConnection.onLspStatus(check);
+    },
   );
 }
 
