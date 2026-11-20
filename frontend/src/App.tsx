@@ -303,7 +303,7 @@ function AppInner({
             <LayoutFooter
               padding={0}
               hasDivider
-              className="backdrop-blur-2xl"
+              className="btm-toolbar-glass"
               // Clear the home indicator and rounded screen corners; none above the keyboard.
               style={{ paddingBottom: 'var(--btm-safe-bottom, env(safe-area-inset-bottom, 0px))' }}
             >

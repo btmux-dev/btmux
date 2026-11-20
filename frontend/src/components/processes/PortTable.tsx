@@ -16,14 +16,20 @@ import {
 import { clsx } from 'clsx';
 import { Placeholder } from '../files/Placeholder';
 
-const COLUMNS: Array<{ label: string; mode: PortSortMode }> = [
-  { label: 'PORT', mode: 'port' },
-  { label: 'PROTOCOL', mode: 'protocol' },
+// Short columns take their content's width; ADDRESS and PROCESS share the
+// rest and truncate, down to a minimum below which the table scrolls. Only
+// these cells keep to one line: an expanded row's sockets still wrap.
+const FIT = 'w-px max-w-none whitespace-nowrap';
+const FLEX = 'min-w-24 whitespace-nowrap';
+
+const COLUMNS: Array<{ label: string; mode: PortSortMode; fit?: boolean }> = [
+  { label: 'PORT', mode: 'port', fit: true },
+  { label: 'PROTO', mode: 'protocol', fit: true },
   { label: 'ADDRESS', mode: 'address' },
-  { label: 'STATE', mode: 'state' },
-  { label: 'PID', mode: 'pid' },
+  { label: 'STATE', mode: 'state', fit: true },
+  { label: 'PID', mode: 'pid', fit: true },
   { label: 'PROCESS', mode: 'command' },
-  { label: 'CONNECTIONS', mode: 'connections' },
+  { label: 'CONNS', mode: 'connections', fit: true },
 ];
 
 export function PortTable({
@@ -70,12 +76,18 @@ export function PortTable({
 
   return (
     <VStack ref={listRef} className="min-h-0 flex-1 overflow-hidden">
-      <ScrollableArea label="Port list" axis="both" className="min-h-0 flex-1 overflow-auto">
-        <Table density="compact" dividers="none">
+      <ScrollableArea
+        label="Port list"
+        axis="both"
+        data-port-list
+        // Astryx's table wrapper clips; let the scroll area scroll instead.
+        className="min-h-0 flex-1 overflow-auto [&_.astryx-table-scroll-wrapper]:overflow-visible"
+      >
+        <Table density="compact" dividers="none" className="min-w-full">
           <TableHeader className="sticky top-0 z-10 bg-surface">
             <TableRow>
-              {COLUMNS.map(({ label, mode }) => (
-                <TableHeaderCell key={mode} className="font-normal">
+              {COLUMNS.map(({ label, mode, fit }) => (
+                <TableHeaderCell key={mode} className={clsx('font-normal', fit ? FIT : FLEX)}>
                   <button
                     type="button"
                     aria-label={`Sort by ${PORT_SORT_LABELS[mode]}`}
@@ -112,7 +124,7 @@ export function PortTable({
                         : 'bg-overlay-hover',
                   )}
                 >
-                  <TableCell>
+                  <TableCell className={FIT}>
                     <HStack gap={1} vAlign="center">
                       <IconButton
                         label={`${expandedPorts.has(key) ? 'Hide' : 'Show'} connections for port ${port.local_port}, PID ${port.pid ?? 'unavailable'}`}
@@ -134,16 +146,25 @@ export function PortTable({
                       </Text>
                     </HStack>
                   </TableCell>
-                  <TableCell>{port.protocol}</TableCell>
-                  <TableCell>{port.local_address}</TableCell>
-                  <TableCell>{port.state}</TableCell>
-                  <TableCell>{port.pid ?? '—'}</TableCell>
-                  <TableCell>
-                    <Text type="inherit" color="inherit" textWrap="nowrap">
+                  <TableCell className={FIT}>{port.protocol}</TableCell>
+                  <TableCell className={FLEX}>
+                    {/* A group's addresses, one per line. */}
+                    <VStack>
+                      {port.local_address.split(', ').map((address) => (
+                        <Text key={address} type="inherit" color="inherit" maxLines={1}>
+                          {address}
+                        </Text>
+                      ))}
+                    </VStack>
+                  </TableCell>
+                  <TableCell className={FIT}>{port.state}</TableCell>
+                  <TableCell className={FIT}>{port.pid ?? '—'}</TableCell>
+                  <TableCell className={FLEX}>
+                    <Text type="inherit" color="inherit" maxLines={1}>
                       {process?.name || (port.pid === null ? 'Unknown owner' : 'Process unavailable')}
                     </Text>
                   </TableCell>
-                  <TableCell>{connectionCount}</TableCell>
+                  <TableCell className={FIT}>{connectionCount}</TableCell>
                 </TableRow>
                 {expandedPorts.has(key) && (
                   <TableRow>

@@ -53,6 +53,12 @@ pub const DEFAULT_BACKDROP_DIM: f32 = 0.5;
 pub const DEFAULT_POPUP_OPACITY: f32 = 0.85;
 /// Blur radius in pixels behind editor popups.
 pub const DEFAULT_POPUP_BLUR: f32 = 2.0;
+/// Background opacity of the side bar and status bar.
+pub const DEFAULT_TOOLBAR_OPACITY: f32 = 0.0;
+/// Blur radius in pixels behind the side bar and status bar.
+pub const DEFAULT_TOOLBAR_BLUR: f32 = 40.0;
+/// Saturation multiplier behind the side bar and status bar.
+pub const DEFAULT_TOOLBAR_SATURATE: f32 = 1.0;
 /// Default pane-switch border-draw style (`"none"` disables it). The style
 /// registry lives in the frontend (`lib/paneSwitchBorder.ts`); an unknown name
 /// falls back there.
@@ -984,6 +990,18 @@ pub struct FileConfig {
     /// blur. Defaults to 2.0.
     #[serde(rename = "popup-blur")]
     pub popup_blur: Option<f32>,
+    /// Background opacity of the side bar and status bar: 0.0 = clear, 1.0 =
+    /// opaque. Defaults to 0.0.
+    #[serde(rename = "toolbar-opacity")]
+    pub toolbar_opacity: Option<f32>,
+    /// Blur radius in pixels behind the side bar and status bar. 0 = no blur.
+    /// Defaults to 40.0.
+    #[serde(rename = "toolbar-blur")]
+    pub toolbar_blur: Option<f32>,
+    /// Saturation multiplier behind the side bar and status bar: 0.0 =
+    /// grayscale, 1.0 = unchanged. Defaults to 1.0.
+    #[serde(rename = "toolbar-saturate")]
+    pub toolbar_saturate: Option<f32>,
     /// Border-draw effect played on the pane you switch to: `"none"`, `"trace"`
     /// (counter-clockwise perimeter draw), `"sweep"` (clockwise conic sweep), or
     /// `"wipe"` (diagonal gradient wipe). A pure-CSS accent; the style registry lives in the frontend and an
@@ -1088,6 +1106,9 @@ impl Default for FileConfig {
             backdrop_dim: None,
             popup_opacity: None,
             popup_blur: None,
+            toolbar_opacity: None,
+            toolbar_blur: None,
+            toolbar_saturate: None,
             pane_switch_border: Some(DEFAULT_PANE_SWITCH_BORDER_STYLE.to_string()),
             pane_switch_border_speed: Some(DEFAULT_PANE_SWITCH_BORDER_SPEED),
             session_sort: SessionSort::default(),
@@ -1539,6 +1560,12 @@ pub struct ClientConfig {
     pub popup_opacity: f32,
     /// Blur radius in pixels behind editor popups (0–50).
     pub popup_blur: f32,
+    /// Background opacity of the side bar and status bar (0–1).
+    pub toolbar_opacity: f32,
+    /// Blur radius in pixels behind the side bar and status bar (0–80).
+    pub toolbar_blur: f32,
+    /// Saturation multiplier behind the side bar and status bar (0–3).
+    pub toolbar_saturate: f32,
     /// Resolved pane-switch border-draw style, or `null` when disabled (`"none"`
     /// in the file). The frontend also gates this on `animations`.
     pub pane_switch_border: Option<String>,
@@ -2053,6 +2080,12 @@ pub fn generate_config_toml() -> String {
 # popup-opacity = {DEFAULT_POPUP_OPACITY:.2}
 # popup-blur = {DEFAULT_POPUP_BLUR:.1}
 
+# The side bar and status bar: background opacity (0.0-1.0), blur radius in
+# pixels (0-80), and saturation of what shows through (0.0-3.0).
+# toolbar-opacity = {DEFAULT_TOOLBAR_OPACITY:.2}
+# toolbar-blur = {DEFAULT_TOOLBAR_BLUR:.1}
+# toolbar-saturate = {DEFAULT_TOOLBAR_SATURATE:.2}
+
 # Border-draw effect played on the switched-to pane (pure CSS). Disabled
 # entirely when `animations = false`.
 # "none" | "trace" (counter-clockwise perimeter) | "sweep" (clockwise conic)
@@ -2202,7 +2235,7 @@ pub fn generate_config_toml() -> String {
 # args = ["--stdio"]
 
 # The pressed keys shown on screen, for recording demos; the status bar's
-# keyboard button turns it on for one client.
+# "Show pressed keys" button turns it on for one client.
 # [key-overlay]
 # mode = "all"   # or "chords": key bindings and Ctrl, Alt, or Cmd chords only
 # position = "bottom"   # "bottom-left", "bottom-right", "top", "top-left", or "top-right"
@@ -2400,6 +2433,18 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         .popup_blur
         .unwrap_or(DEFAULT_POPUP_BLUR)
         .clamp(0.0, 50.0);
+    let toolbar_opacity = file
+        .toolbar_opacity
+        .unwrap_or(DEFAULT_TOOLBAR_OPACITY)
+        .clamp(0.0, 1.0);
+    let toolbar_blur = file
+        .toolbar_blur
+        .unwrap_or(DEFAULT_TOOLBAR_BLUR)
+        .clamp(0.0, 80.0);
+    let toolbar_saturate = file
+        .toolbar_saturate
+        .unwrap_or(DEFAULT_TOOLBAR_SATURATE)
+        .clamp(0.0, 3.0);
     let wallpaper_speed = file
         .wallpaper_speed
         .unwrap_or(DEFAULT_WALLPAPER_SPEED)
@@ -2498,6 +2543,9 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         backdrop_dim,
         popup_opacity,
         popup_blur,
+        toolbar_opacity,
+        toolbar_blur,
+        toolbar_saturate,
         pane_switch_border,
         pane_switch_border_speed,
         session_sort: file.session_sort.clone(),
@@ -2611,6 +2659,9 @@ pub struct ConfigUpdate {
     pub backdrop_dim: Option<f32>,
     pub popup_opacity: Option<f32>,
     pub popup_blur: Option<f32>,
+    pub toolbar_opacity: Option<f32>,
+    pub toolbar_blur: Option<f32>,
+    pub toolbar_saturate: Option<f32>,
     /// Border-draw style name; `"none"` (or the empty string) disables it.
     pub pane_switch_border: Option<String>,
     pub pane_switch_border_speed: Option<f32>,
@@ -2754,6 +2805,15 @@ impl ConfigUpdate {
         }
         if other.popup_blur.is_some() {
             self.popup_blur = other.popup_blur;
+        }
+        if other.toolbar_opacity.is_some() {
+            self.toolbar_opacity = other.toolbar_opacity;
+        }
+        if other.toolbar_blur.is_some() {
+            self.toolbar_blur = other.toolbar_blur;
+        }
+        if other.toolbar_saturate.is_some() {
+            self.toolbar_saturate = other.toolbar_saturate;
         }
         if other.pane_switch_border.is_some() {
             self.pane_switch_border = other.pane_switch_border.clone();
@@ -2908,6 +2968,15 @@ pub fn resolve_with_overrides(
     }
     if let Some(blur) = overrides.popup_blur {
         file.popup_blur = Some(blur.clamp(0.0, 50.0));
+    }
+    if let Some(opacity) = overrides.toolbar_opacity {
+        file.toolbar_opacity = Some(opacity.clamp(0.0, 1.0));
+    }
+    if let Some(blur) = overrides.toolbar_blur {
+        file.toolbar_blur = Some(blur.clamp(0.0, 80.0));
+    }
+    if let Some(saturate) = overrides.toolbar_saturate {
+        file.toolbar_saturate = Some(saturate.clamp(0.0, 3.0));
     }
     if let Some(style) = &overrides.pane_switch_border {
         // Kept verbatim (including `"none"`); resolve_binds maps it to the wire.
@@ -3164,6 +3233,9 @@ palette:
         assert_eq!(resolved.backdrop_dim, 0.5);
         assert_eq!(resolved.popup_opacity, 0.85);
         assert_eq!(resolved.popup_blur, 2.0);
+        assert_eq!(resolved.toolbar_opacity, 0.0);
+        assert_eq!(resolved.toolbar_blur, 40.0);
+        assert_eq!(resolved.toolbar_saturate, 1.0);
         assert_eq!(resolved.window_grid_count, 4);
         assert_eq!(resolved.window_sort, WindowSort::Alphabetical);
         assert_eq!(resolved.session_sort, SessionSort::Mru);
@@ -3183,6 +3255,13 @@ palette:
         let resolved = resolve_binds(&file, ColorMode::Dark);
         assert_eq!(resolved.popup_opacity, 1.0);
         assert_eq!(resolved.popup_blur, 6.0);
+        let file: FileConfig =
+            toml::from_str("toolbar-opacity = -1.0\ntoolbar-blur = 99.0\ntoolbar-saturate = 1.8")
+                .unwrap();
+        let resolved = resolve_binds(&file, ColorMode::Dark);
+        assert_eq!(resolved.toolbar_opacity, 0.0);
+        assert_eq!(resolved.toolbar_blur, 80.0);
+        assert_eq!(resolved.toolbar_saturate, 1.8);
     }
 
     #[test]

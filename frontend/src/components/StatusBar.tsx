@@ -7,7 +7,7 @@ import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { Spinner } from './Spinner';
 import { KeyCap } from './KeyHint';
 import { HStack } from '@astryxdesign/core/Layout';
-import { Activity, Box, FolderOpen, GitBranch, Globe, Keyboard } from 'lucide-react';
+import { Activity, Box, Cast, FolderOpen, GitBranch, Globe } from 'lucide-react';
 import { useStore, type FileBrowserMode } from '../state/store';
 import { chromePalette } from '../lib/chrome-colors';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
@@ -210,7 +210,7 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
         tooltip={keyOverlay ? 'Hide pressed keys' : 'Show pressed keys'}
         variant={keyOverlay ? 'secondary' : 'ghost'}
         size="sm"
-        icon={<Keyboard />}
+        icon={<Cast />}
         onClick={() => state().setKeyOverlay(!keyOverlay)}
       />
       <TailscaleButton />

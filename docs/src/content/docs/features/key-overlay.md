@@ -6,7 +6,7 @@ sidebar:
 
 Show key presses and btmux actions when recording a tutorial or demo.
 The overlay is off by default. Enable it per client with the status bar's
-keyboard button or `toggle-key-overlay` in the command palette. For scripted
+"Show pressed keys" button or `toggle-key-overlay` in the command palette. For scripted
 recordings, add `?keys` to the URL. The browser remembers the setting.
 
 ## What it shows

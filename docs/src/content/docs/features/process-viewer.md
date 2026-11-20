@@ -34,6 +34,8 @@ PORT header to sort by number alone, or **Listeners first** to go back.
 
 - Sockets are grouped by local port and process. Expand a group for its
   sockets and their remote endpoints.
+- When the port list is wider than its panel, Left and Right scroll it
+  sideways first, then collapse and expand; `h` and `l` always do.
 - A UDP socket marked `BOUND` has a local port. That doesn't mean a service is
   listening on it.
 - A socket whose process is unknown can't be signaled. On macOS, sockets of

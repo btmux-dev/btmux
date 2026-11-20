@@ -78,6 +78,12 @@ Every option with its default, as `btmux generate-config` prints it. Uncomment a
 # popup-opacity = 0.85
 # popup-blur = 2.0
 
+# The side bar and status bar: background opacity (0.0-1.0), blur radius in
+# pixels (0-80), and saturation of what shows through (0.0-3.0).
+# toolbar-opacity = 0.00
+# toolbar-blur = 40.0
+# toolbar-saturate = 1.00
+
 # Border-draw effect played on the switched-to pane (pure CSS). Disabled
 # entirely when `animations = false`.
 # "none" | "trace" (counter-clockwise perimeter) | "sweep" (clockwise conic)
@@ -277,7 +283,7 @@ Every option with its default, as `btmux generate-config` prints it. Uncomment a
 # args = ["--stdio"]
 
 # The pressed keys shown on screen, for recording demos; the status bar's
-# keyboard button turns it on for one client.
+# "Show pressed keys" button turns it on for one client.
 # [key-overlay]
 # mode = "all"   # or "chords": key bindings and Ctrl, Alt, or Cmd chords only
 # position = "bottom"   # "bottom-left", "bottom-right", "top", "top-left", or "top-right"

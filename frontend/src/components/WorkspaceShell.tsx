@@ -85,7 +85,7 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
       sideNav={
         <SideNav
           aria-label="Sessions and windows"
-          className="btm-side-nav backdrop-blur-2xl"
+          className="btm-side-nav btm-toolbar-glass"
           collapsible={{
             isCollapsed: collapsed,
             onCollapsedChange: (value) => {

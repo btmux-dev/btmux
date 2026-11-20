@@ -20,9 +20,31 @@ actions, saved state, and API types can change in any release.
   (`[language-server.NAME]`, default 20 s) while starting now fails instead
   of starting forever.
   ([#178](https://github.com/btmux-dev/btmux/pull/178))
+- Settings has a search field that finds settings across all tabs. Typing
+  anywhere in the dialog starts a search.
+  ([#179](https://github.com/btmux-dev/btmux/pull/179))
+- `toolbar-opacity`, `toolbar-blur`, and `toolbar-saturate` set the side bar
+  and status bar's background, blur, and saturation, with sliders in
+  Settings → Effects.
+  ([#179](https://github.com/btmux-dev/btmux/pull/179))
+
+### Changed
+
+- Settings no longer blurs or dims the app behind it, so changes preview
+  unobscured; the "Clear background" switch is gone.
+  ([#179](https://github.com/btmux-dev/btmux/pull/179))
 
 ### Fixed
 
+- The process viewer's port list shows a port's addresses one per line and
+  never breaks one mid-address. Short columns fit their values; long
+  addresses and process names end in an ellipsis, with the full text on hover.
+  A list wider than its panel scrolls sideways with the arrow keys; `h` and
+  `l` still fold and unfold.
+  ([#179](https://github.com/btmux-dev/btmux/pull/179))
+- The TOML Settings shows no longer writes `editor = "native"`, the
+  default, or leaves out `editor = "neovim"`.
+  ([#179](https://github.com/btmux-dev/btmux/pull/179))
 - A native editor tab whose language server crashed while starting gets its
   features once the server restarts, without a reload.
   ([#178](https://github.com/btmux-dev/btmux/pull/178))

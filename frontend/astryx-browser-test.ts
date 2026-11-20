@@ -198,6 +198,11 @@ try {
     await tcpRow.click();
     assert.equal(await tcpRow.count(), 1, 'listener and connections share one port/PID row');
     assert.equal(await tcpRow.locator('td').nth(3).innerText(), 'LISTEN');
+    // Short columns fit their values; addresses and names truncate inside theirs.
+    const clippedPorts = await viewer.locator('tr[data-port-focused] > td').evaluateAll((cells) =>
+      cells.filter((cell) => cell.scrollWidth > cell.clientWidth).map((cell) => cell.textContent),
+    );
+    assert.deepEqual(clippedPorts, []);
     const details = viewer.getByRole('table', { name: `Connections for port ${tcpPort}, PID ${process.pid}` });
     assert.equal(await details.count(), 0, 'connection details are collapsed initially');
     await viewer
@@ -205,6 +210,11 @@ try {
       .click();
     await details.waitFor();
     assert.equal(await details.getByRole('row').count(), 4, 'listener plus two accepted connections');
+    assert.equal(
+      await details.locator('td').first().evaluate((cell) => getComputedStyle(cell).whiteSpace),
+      'normal',
+      "an expanded row's sockets wrap",
+    );
     assert.equal(await details.getByText('ESTABLISHED', { exact: true }).count(), 2);
     await page.keyboard.press('Escape');
     await page.keyboard.press('h');
@@ -253,6 +263,29 @@ try {
     await viewer.getByRole('list', { name: 'Processes', exact: true }).waitFor();
     await page.keyboard.press('p');
     await viewer.locator('tr[data-port-focused]').first().waitFor();
+    // A port list wider than its panel scrolls with the arrows; h and l still fold.
+    await page.setViewportSize({ width: 800, height: 900 });
+    const portList = viewer.locator('[data-port-list]');
+    await waitForAsync(page, async () => {
+      const list = document.querySelector<HTMLElement>('[data-port-list]');
+      return !!list && list.scrollWidth > list.clientWidth;
+    });
+    const scrollLeft = () => portList.evaluate((list) => list.scrollLeft);
+    const focusedExpanded = () =>
+      viewer.locator('tr[data-port-focused="true"]').getAttribute('aria-expanded');
+    await page.keyboard.press('ArrowRight');
+    await waitForAsync(page, async () => document.querySelector('[data-port-list]')!.scrollLeft > 0);
+    assert.equal(await focusedExpanded(), 'false', 'ArrowRight scrolls instead of unfolding');
+    await page.keyboard.press('l');
+    assert.equal(await focusedExpanded(), 'true', 'l unfolds');
+    await page.keyboard.press('h');
+    assert.equal(await focusedExpanded(), 'false', 'h folds');
+    for (let i = 0; i < 20 && (await scrollLeft()) > 0; i++) {
+      await page.keyboard.press('ArrowLeft');
+      await page.waitForTimeout(50);
+    }
+    assert.equal(await scrollLeft(), 0, 'ArrowLeft scrolls back');
+    await page.setViewportSize({ width: 1440, height: 900 });
 
     const otherPage = await context.newPage();
     try {
@@ -658,7 +691,7 @@ try {
   await dialog.getByLabel('Console level').fill('debug');
   await dialog.getByLabel('File level').focus();
   const footer: (string | undefined)[] = [];
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 5; i++) {
     await page.keyboard.press('Tab');
     footer.push(
       await page.evaluate(() => {
@@ -667,8 +700,75 @@ try {
       }),
     );
   }
-  assert.deepEqual(footer, ['Reset', 'Show TOML', 'Clear background', 'Close', 'Apply', 'Save']);
+  assert.deepEqual(footer, ['Reset', 'Show TOML', 'Close', 'Apply', 'Save']);
   assert.equal(await settingsTab(), 'Logging', 'Tab in the footer keeps the tab');
+  // Typing outside a field searches every tab.
+  const search = dialog.getByRole('textbox', { name: 'Search settings', exact: true });
+  await dialog.getByRole('heading', { name: 'Settings', exact: true }).focus();
+  await page.keyboard.type('toolbar');
+  assert.equal(await search.inputValue(), 'toolbar', 'typing goes to the search');
+  assert.equal(await dialog.getByRole('tablist').count(), 0, 'search results replace the tabs');
+  const results = dialog.getByRole('region', { name: 'Search results', exact: true });
+  assert.deepEqual(await results.getByRole('heading').allInnerTexts(), ['Effects']);
+  await results.getByRole('slider', { name: 'Toolbar blur (px)' }).waitFor();
+  await search.fill('status bar');
+  await results.getByRole('slider', { name: 'Toolbar opacity' }).waitFor();
+  await search.fill('console level');
+  assert.deepEqual(await results.getByRole('heading').allInnerTexts(), ['Logging']);
+  await page.keyboard.press('ArrowDown');
+  assert.equal(
+    await page.evaluate(() => (document.activeElement as HTMLInputElement).labels?.[0]?.innerText),
+    'Console level',
+    'ArrowDown enters the results',
+  );
+  // Escape from a result clears the search, keeping Settings and the edit.
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.type('trace');
+  await page.keyboard.press('Escape');
+  assert.equal(await search.inputValue(), '', 'Escape in a result clears the search');
+  assert(await dialog.isVisible(), 'Escape in a result keeps settings open');
+  assert(await search.evaluate((input) => input === document.activeElement), 'focus returns to the search');
+  assert.equal(await settingsTab(), 'Logging', 'clearing the search restores the tab');
+  assert.equal(await dialog.getByLabel('Console level').inputValue(), 'trace', 'the edit survives');
+  // An open selector in the results takes its own Escape.
+  await search.fill('minimum level');
+  const level = results.locator('[aria-haspopup]').first();
+  await level.click();
+  await waitForAsync(page, async () => !!document.querySelector('[aria-haspopup][aria-expanded="true"]'));
+  await page.keyboard.press('Escape');
+  await waitForAsync(page, async () => !document.querySelector('[aria-haspopup][aria-expanded="true"]'));
+  assert.equal(await search.inputValue(), 'minimum level', 'Escape closes the selector first');
+  // Option names from config.toml find their settings.
+  const status = dialog.locator('#settings-search-status');
+  for (const [option, label] of [
+    ['toolbar-opacity', 'Toolbar opacity'],
+    ['toolbar-saturate', 'Toolbar saturation'],
+    ['wallpaper-shader-follows-mouse-cursor', 'Follow mouse cursor'],
+  ]) {
+    await search.fill(option);
+    await results.getByLabel(label).first().waitFor();
+    assert.equal(await status.innerText(), '1 setting found', `${option} finds only its setting`);
+  }
+  await search.fill('no such setting');
+  await dialog.getByText('No settings match “no such setting”.').first().waitFor();
+  assert.equal(await status.innerText(), 'No settings match “no such setting”.', 'no matches are announced');
+  await page.keyboard.press('Escape');
+  assert.equal(await search.inputValue(), '', 'Escape clears the search');
+  assert(await dialog.isVisible(), 'Escape with a search keeps settings open');
+  assert.equal(await status.innerText(), '', 'the status empties with the search');
+  // Recording a key binding keeps focus on its button, the list's first included.
+  await dialog.getByRole('tab', { name: 'Key binds', exact: true }).click();
+  const firstBind = dialog.getByRole('button', { name: /^Change key for / }).first();
+  const bindLabel = await firstBind.getAttribute('aria-label');
+  await firstBind.focus();
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('F9');
+  await dialog.getByRole('button', { name: bindLabel!, exact: true }).filter({ hasText: 'F9' }).waitFor();
+  assert.equal(
+    await page.evaluate(() => document.activeElement?.getAttribute('aria-label')),
+    bindLabel,
+    'the edited binding keeps focus',
+  );
   // ArrowDown stays in the generated TOML.
   await dialog.getByRole('switch', { name: 'Show TOML', exact: true }).click();
   await dialog.getByRole('textbox', { name: 'Generated TOML', exact: true }).focus();

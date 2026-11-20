@@ -419,7 +419,22 @@ dialog::backdrop {
   ) !important;
 }
 
-/* Optional: drop the dialog's blur and dim to inspect visual changes. */
+/* The side bar and status bar: the toolbar-* config, set on :root by
+   useModalBackdrop. Astryx's SideNav inherits its background otherwise; as
+   a drawer (a dialog, below the breakpoint) it paints its own. */
+.btm-toolbar-glass {
+  -webkit-backdrop-filter: blur(var(--btm-toolbar-blur, 40px)) saturate(var(--btm-toolbar-saturate, 1));
+  backdrop-filter: blur(var(--btm-toolbar-blur, 40px)) saturate(var(--btm-toolbar-saturate, 1));
+}
+.btm-toolbar-glass:not(dialog) {
+  background-color: color-mix(
+    in srgb,
+    var(--color-background-surface) var(--btm-toolbar-opacity, 0%),
+    transparent
+  ) !important;
+}
+
+/* Settings drops the modal blur and dim, so its changes preview unobscured. */
 .btm-clear-backdrop::backdrop {
   background: transparent !important;
   backdrop-filter: none !important;
