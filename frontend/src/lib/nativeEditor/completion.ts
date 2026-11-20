@@ -14,7 +14,7 @@ import {
 import { LSPPlugin, type LSPClient, type WorkspaceMapping } from '@codemirror/lsp-client';
 import { ChangeSet, EditorState, StateEffect, StateField, type ChangeDesc, type Extension } from '@codemirror/state';
 import { highlightingFor, language } from '@codemirror/language';
-import { ViewPlugin, type EditorView } from '@codemirror/view';
+import { logException, ViewPlugin, type EditorView } from '@codemirror/view';
 import { highlightTree } from '@lezer/highlight';
 import { viewDocs, type Doc } from './doc';
 import { lspToSnippet, offsetChecked, type Range, type TextEdit } from './lspText';
@@ -198,8 +198,9 @@ const sourceFrom =
     try {
       result = await plugin.client.request<object, List | Item[] | null>('textDocument/completion', params);
     } catch (error) {
-      if ((error as { code?: number }).code === -32800) return null;
-      throw error;
+      // Rejecting would end completion for every server's source.
+      if ((error as { code?: number }).code !== -32800) logException(context.state, error, 'completion');
+      return null;
     }
     if (!result) return null;
     const list: List = Array.isArray(result) ? { items: result } : result;

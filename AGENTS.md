@@ -563,7 +563,9 @@ ruff). lsp-client allows one `LSPPlugin` per view, for the first; the rest get
 plugins of their own (`lib/nativeEditor/servers.ts`), and all clients sync
 together, since lsp-client maps positions with the first plugin's unsynced
 changes. Diagnostics, code actions, hovers, inlay hints, lenses, folds,
-completions, and workspace symbols merge across servers; other features go to
+completions, and workspace symbols merge across servers (each server's
+diagnostics map through edits until it publishes again, and a failed
+completion request yields nothing rather than ending the others); other features go to
 the first server with the capability, and edits and commands back to the one
 that gave them.
 The backend answers the server's requests (`workspace/configuration` from

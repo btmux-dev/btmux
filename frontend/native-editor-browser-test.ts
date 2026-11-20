@@ -692,6 +692,22 @@ try {
     await waitForText(page, paneId, 'let bad = 1;\nuse item;\nfakeCompletion\nend');
     console.log('PASS tabs close from their own X or a middle click');
 
+    // Delete closes the focused tab, and focus stays in the strip.
+    const keyFile = join(dir, 'key.fake');
+    writeFileSync(keyFile, 'key\n');
+    await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: keyFile, line: null, editor: 'native' });
+    await waitForText(page, paneId, 'key\n');
+    const keyTab = page.getByRole('tab', { name: 'key.fake' });
+    assert.equal(await keyTab.getAttribute('aria-keyshortcuts'), 'Delete');
+    await mainTab.click();
+    await waitForText(page, paneId, 'let bad = 1;\nuse item;\nfakeCompletion\nend');
+    await keyTab.focus();
+    await page.keyboard.press('Delete');
+    await keyTab.waitFor({ state: 'detached' });
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('role')), 'tab');
+    assert.equal(await mainTab.getAttribute('aria-selected'), 'true');
+    console.log('PASS Delete closes the focused tab');
+
     // A format answered after switching files changes the file it was for.
     const slow = join(dir, 'slow.fake');
     const two = join(dir, 'two.fake');

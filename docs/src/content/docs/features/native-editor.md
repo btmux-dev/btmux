@@ -40,7 +40,7 @@ keep `Mod-w` and `Mod-t`, so the editor takes them only in the desktop app:
 
 Each tab has an X that closes it, shown on the active tab and on hover; on a
 tab with unsaved changes, a dot takes its place until you hover. A middle
-click closes a tab too.
+click closes a tab too, and so does `Delete` on a focused tab.
 
 Quick open starts with open and recent files. Append `:42` to open a file at
 line 42, or enter `:42` alone to jump there in the current file.

@@ -64,7 +64,17 @@ function serverDot(server: LspServerStatus): {
 
 // A tab's close control; a button can't hold a button, so it isn't one.
 // The unsaved dot gives way to it on hover.
-function TabClose({ dirty, selected, onClose }: { dirty: boolean; selected: boolean; onClose: () => void }) {
+function TabClose({
+  name,
+  dirty,
+  selected,
+  onClose,
+}: {
+  name: string;
+  dirty: boolean;
+  selected: boolean;
+  onClose: () => void;
+}) {
   // Touch screens have no hover: inactive tabs always show it, unsaved ones the dot.
   const x = dirty
     ? 'invisible group-hover:visible'
@@ -74,6 +84,7 @@ function TabClose({ dirty, selected, onClose }: { dirty: boolean; selected: bool
   return (
     <span
       data-tab-close
+      title={`Close ${name} (Delete)`}
       className="-mr-1 ml-1 grid size-4 place-items-center rounded-sm hover:bg-overlay-hover"
       // Keeps the editor's focus.
       onMouseDown={(event) => event.preventDefault()}
@@ -312,7 +323,30 @@ export function NativeEditor({
                 // Middle click closes, as in browsers.
                 onMouseDown={(event) => event.button === 1 && event.preventDefault()}
                 onAuxClick={(event) => event.button === 1 && close(path)}
-                endContent={<TabClose dirty={dirty} selected={path === active} onClose={() => close(path)} />}
+                // The X can't be a button inside the tab, so Delete closes the focused tab.
+                aria-keyshortcuts="Delete"
+                aria-description="Delete closes the file"
+                onKeyDown={(event) => {
+                  if (event.key !== 'Delete' || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey)
+                    return;
+                  event.preventDefault();
+                  // Focus stays in the strip once this tab goes.
+                  const tab = event.currentTarget;
+                  const tabs = [
+                    ...(tab.closest('[role="tablist"]')?.querySelectorAll<HTMLElement>('[role="tab"]') ?? []),
+                  ];
+                  const at = tabs.indexOf(tab);
+                  (tabs[at + 1] ?? tabs[at - 1])?.focus();
+                  close(path);
+                }}
+                endContent={
+                  <TabClose
+                    name={basename(path)}
+                    dirty={dirty}
+                    selected={path === active}
+                    onClose={() => close(path)}
+                  />
+                }
               />
             );
           })}

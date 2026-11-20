@@ -98,7 +98,7 @@ class BtmuxWorkspace extends Workspace {
       getView: () => view,
     });
     // Diagnostics published while it was hidden.
-    queueMicrotask(() => showDiagnostics(view));
+    queueMicrotask(() => showDiagnostics(view, this.client));
   }
 
   closeFile(uri: string, view: EditorView) {
@@ -200,13 +200,50 @@ function reveal(uri: string, at: Position | null) {
 /** The latest diagnostics per client and URI. */
 const diagnostics = new Map<LSPClient, Map<string, PublishParams>>();
 
-/** Every server's latest diagnostics for the file `view` shows. */
-function showDiagnostics(view: EditorView) {
-  const list = plugins(view).flatMap((plugin) => {
-    const params = diagnostics.get(plugin.client)?.get(plugin.uri);
-    return params ? serverDiagnostics(plugin, params) : [];
+const setServerDiagnostics = StateEffect.define<{ client: LSPClient; list: Diagnostic[] }>();
+
+/**
+ * Each server's diagnostics, mapped through edits since it published them: a
+ * server answering an edit later keeps its ranges in place meanwhile.
+ */
+const serverDiagnosticsField = StateField.define<ReadonlyMap<LSPClient, Diagnostic[]>>({
+  create: () => new Map(),
+  update(value, tr) {
+    let next = value;
+    if (tr.docChanged && value.size) {
+      const changes = tr.changes;
+      next = new Map(
+        [...value].map(([client, list]) => [
+          client,
+          list.map((d) => {
+            const from = changes.mapPos(d.from, 1);
+            return { ...d, from, to: Math.max(from, changes.mapPos(d.to, -1)) };
+          }),
+        ]),
+      );
+    }
+    for (const e of tr.effects) {
+      if (!e.is(setServerDiagnostics)) continue;
+      if (next === value) next = new Map(value);
+      (next as Map<LSPClient, Diagnostic[]>).set(e.value.client, e.value.list);
+    }
+    return next;
+  },
+});
+
+/** `client`'s latest diagnostics for the file `view` shows, with the other servers' as they are. */
+function showDiagnostics(view: EditorView, client: LSPClient) {
+  const plugin = pluginOf(view, client);
+  if (!plugin) return;
+  const params = diagnostics.get(client)?.get(plugin.uri);
+  const list = params ? serverDiagnostics(plugin, params) : [];
+  const live = new Set(plugins(view).map((p) => p.client));
+  const others = [...(view.state.field(serverDiagnosticsField, false) ?? [])]
+    .filter(([c]) => c !== client && live.has(c))
+    .flatMap(([, list]) => list);
+  view.dispatch(setDiagnostics(view.state, [...others, ...list]), {
+    effects: setServerDiagnostics.of({ client, list }),
   });
-  view.dispatch(setDiagnostics(view.state, list));
 }
 
 function serverDiagnostics(plugin: LSPPlugin, params: PublishParams): Diagnostic[] {
@@ -474,7 +511,7 @@ function client(server: number): LSPClient {
         if (!byUri) diagnostics.set(c, (byUri = new Map()));
         byUri.set(params.uri, params);
         for (const file of (c.workspace as BtmuxWorkspace).files)
-          if (file.uri === params.uri) showDiagnostics(file.view);
+          if (file.uri === params.uri) showDiagnostics(file.view, c);
         return true;
       },
       'window/showMessage': (_, params: { type: number; message: string }) => {
@@ -715,6 +752,7 @@ export function lspExtension(doc: Doc): Extension {
   if (server === undefined || !uri || !languageID) return [];
   return [
     client(server).plugin(uri, languageID),
+    serverDiagnosticsField,
     otherServers(others.map((s) => ({ client: client(s), uri, languageID }))),
     others.map((s) => completionsFrom(client(s))),
     lspFeatures,

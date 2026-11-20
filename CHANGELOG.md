@@ -28,7 +28,7 @@ actions, saved state, and API types can change in any release.
   Before, only the first server was used.
   ([#181](https://github.com/btmux-dev/btmux/pull/181))
 - The native editor's close button is on each tab, so inactive tabs close
-  too; a middle click closes a tab as well.
+  too; a middle click or `Delete` on a focused tab closes a tab as well.
   ([#181](https://github.com/btmux-dev/btmux/pull/181))
 - **Show TOML** shows the whole file Save would write, keeping settings the
   dialog doesn't have. It no longer adds `allow-transparency = false` when you

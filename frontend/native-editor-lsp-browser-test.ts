@@ -30,7 +30,7 @@ writeFileSync(
   '[language-server.fake]\ncommand = "fake-lsp"\n[[language]]\nname = "fake"\nfile-types = ["fake"]\nlanguage-servers = ["fake"]\n' +
     '[[language]]\nname = "rust"\nfile-types = ["rs"]\nlanguage-servers = ["fake"]\n' +
     // Two servers for one file, started only by the last test.
-    '[language-server.first]\ncommand = "fake-lsp"\nargs = ["--no-format"]\n' +
+    '[language-server.first]\ncommand = "fake-lsp"\nargs = ["--no-format", "--slow-publish"]\n' +
     '[language-server.second]\ncommand = "fake-lsp"\nargs = ["--second"]\n' +
     '[[language]]\nname = "duo"\nfile-types = ["duo"]\nlanguage-servers = ["first", "second"]\n',
 );
@@ -789,6 +789,30 @@ try {
   await page.keyboard.press('Shift+Alt+f');
   await until('the format', async () => (await lines(page, paneId)) === 'bad clean FMT\n');
   console.log('PASS formatting from the server that can');
+
+  // A line added above: the second server's warning on it comes after the
+  // editor synced (1 s), the first server's update 2 s late. Meanwhile its
+  // error stays on its text. Its late update for formatting comes first.
+  await page.waitForTimeout(2500);
+  await page.keyboard.press('ControlOrMeta+Home');
+  await page.keyboard.type('lint\n');
+  await until('the new warning', async () => (await pane.locator('.cm-lintRange-warning').count()) === 1);
+  const error = pane.locator('.cm-lintRange-error');
+  assert.equal(await error.textContent(), 'bad');
+  await until('the first server', () => /version \d+ "lint\\nbad clean FMT\\n"/.test(log()));
+  await page.waitForTimeout(2500);
+  assert.equal(await error.textContent(), 'bad');
+  console.log("PASS a server's diagnostics stay on their text while another publishes");
+
+  // One server's failed completion leaves the other's suggestions.
+  await page.keyboard.press('ControlOrMeta+End');
+  await page.keyboard.type(' fa');
+  const suggestion = completions.locator('.cm-completionLabel', { hasText: 'fakeCompletion' });
+  await suggestion.waitFor();
+  await page.waitForTimeout(1000);
+  assert(await suggestion.isVisible(), 'the failed request closed completion');
+  await page.keyboard.press('Escape');
+  console.log("PASS one server's failed completion keeps the other's");
 } catch (error) {
   const shot = process.env.TEST_SHOT;
   if (shot) for (const context of browser.contexts()) await context.pages()[0]?.screenshot({ path: shot });

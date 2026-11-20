@@ -47,10 +47,11 @@
 // - hover on "stall": sends nothing for 6 s, then answers
 // - --no-init: never answers initialize; --crash-init: exits on the first
 //   initialize (once, with a marker in $BTMUX_FAKE_LSP); --no-format: no
-//   formatting
+//   formatting; --slow-publish: diagnostics only pushed, 2 s late after changes
 // - --second: another server for the same files, with only a warning on every
 //   "lint", a code action replacing it with "clean", "Second hover for WORD",
-//   and formatting that uppercases every "fmt"
+//   formatting that uppercases every "fmt", completion failing 500 ms late, and
+//   diagnostics 1 s late after changes (once the editor synced)
 import { appendFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 
@@ -116,6 +117,7 @@ function send(message: unknown) {
 }
 
 const SECOND = process.argv.includes('--second');
+const SLOW_PUBLISH = process.argv.includes('--slow-publish');
 
 function publish(uri: string) {
   const doc = docs.get(uri)!;
@@ -175,8 +177,11 @@ function second(msg: any): unknown {
           hoverProvider: true,
           documentFormattingProvider: true,
           codeActionProvider: true,
+          completionProvider: {},
         },
       };
+    case 'textDocument/completion':
+      throw new Error('second completion failed');
     case 'shutdown':
       return null;
     case 'textDocument/hover':
@@ -218,7 +223,7 @@ function handle(msg: any): unknown {
           documentRangeFormattingProvider: true,
           renameProvider: { prepareProvider: true },
           documentFormattingProvider: !process.argv.includes('--no-format'),
-          diagnosticProvider: { interFileDependencies: true, workspaceDiagnostics: false },
+          diagnosticProvider: SLOW_PUBLISH ? undefined : { interFileDependencies: true, workspaceDiagnostics: false },
           implementationProvider: true,
           inlineCompletionProvider: true,
           semanticTokensProvider: { legend: { tokenTypes: ['function'], tokenModifiers: [] }, full: true },
@@ -651,7 +656,10 @@ function notify(msg: any) {
       }
       doc.version = p.textDocument.version;
       log(`version ${doc.version} ${JSON.stringify(doc.text)}`);
-      publish(p.textDocument.uri);
+      const late = SLOW_PUBLISH ? 2000 : SECOND ? 1000 : 0;
+      const uri = p.textDocument.uri;
+      if (late) setTimeout(() => docs.has(uri) && publish(uri), late);
+      else publish(uri);
       progress();
       break;
     }
@@ -748,6 +756,7 @@ process.stdin.on('data', (chunk: Buffer) => {
       } else if (msg.method === 'textDocument/formatting' && text(msg.params.textDocument.uri).includes('slow'))
         setTimeout(reply, 700);
       else if (msg.method === 'completionItem/resolve' && msg.params.label === 'slowImport') setTimeout(reply, 700);
+      else if (SECOND && msg.method === 'textDocument/completion') setTimeout(reply, 500);
       else if (
         msg.method === 'textDocument/completion' &&
         msg.params.textDocument.uri.endsWith('/incomplete.fake') &&

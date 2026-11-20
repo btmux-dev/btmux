@@ -441,8 +441,11 @@ class LensWidget extends WidgetType {
   eq(other: LensWidget) {
     return (
       other.indent === this.indent &&
-      JSON.stringify(other.commands.map((c) => c.command.title)) ===
-        JSON.stringify(this.commands.map((c) => c.command.title))
+      other.commands.length === this.commands.length &&
+      // Same server and command, or the reused button would run the old one.
+      other.commands.every(
+        (c, i) => c.p === this.commands[i].p && JSON.stringify(c.command) === JSON.stringify(this.commands[i].command),
+      )
     );
   }
   toDOM() {
