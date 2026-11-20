@@ -17,9 +17,10 @@ import { clsx } from 'clsx';
 import { Placeholder } from '../files/Placeholder';
 
 // Short columns take their content's width; ADDRESS and PROCESS share the
-// rest and truncate, down to a minimum below which the table scrolls.
-const FIT = 'w-px max-w-none';
-const FLEX = 'min-w-24';
+// rest and truncate, down to a minimum below which the table scrolls. Only
+// these cells keep to one line: an expanded row's sockets still wrap.
+const FIT = 'w-px max-w-none whitespace-nowrap';
+const FLEX = 'min-w-24 whitespace-nowrap';
 
 const COLUMNS: Array<{ label: string; mode: PortSortMode; fit?: boolean }> = [
   { label: 'PORT', mode: 'port', fit: true },
@@ -82,7 +83,7 @@ export function PortTable({
         // Astryx's table wrapper clips; let the scroll area scroll instead.
         className="min-h-0 flex-1 overflow-auto [&_.astryx-table-scroll-wrapper]:overflow-visible"
       >
-        <Table density="compact" dividers="none" className="min-w-full whitespace-nowrap">
+        <Table density="compact" dividers="none" className="min-w-full">
           <TableHeader className="sticky top-0 z-10 bg-surface">
             <TableRow>
               {COLUMNS.map(({ label, mode, fit }) => (

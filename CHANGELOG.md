@@ -42,6 +42,9 @@ actions, saved state, and API types can change in any release.
   A list wider than its panel scrolls sideways with the arrow keys; `h` and
   `l` still fold and unfold.
   ([#179](https://github.com/btmux-dev/btmux/pull/179))
+- The TOML Settings shows no longer writes `editor = "native"`, the
+  default, or leaves out `editor = "neovim"`.
+  ([#179](https://github.com/btmux-dev/btmux/pull/179))
 - A native editor tab whose language server crashed while starting gets its
   features once the server restarts, without a reload.
   ([#178](https://github.com/btmux-dev/btmux/pull/178))

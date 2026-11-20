@@ -222,7 +222,7 @@ const TOML_DEFAULTS = {
   showPaneTitles: false,
   sessionSort: 'mru',
   windowSort: 'alphabetical',
-  editor: 'neovim',
+  editor: 'native',
   vimMode: false,
   windowGridCount: 4,
   appearance: 'auto',
@@ -552,10 +552,6 @@ function firstControl(root: HTMLElement | null): HTMLElement | undefined {
 }
 
 /**
- * A character typed outside a text field (on a tab, a switch, the dialog)
- * goes to the search field, which takes focus before the key types into it.
- */
-/**
  * The first Escape during a search clears it, wherever focus is in the
  * dialog, rather than closing Settings and dropping its edits. An open
  * popup (a selector's options) and key recording, which listens first,
@@ -570,6 +566,10 @@ function escapeClearsSearch(e: ReactKeyboardEvent<HTMLElement>, searching: boole
   return true;
 }
 
+/**
+ * A character typed outside a text field (on a tab, a switch, the dialog)
+ * goes to the search field, which takes focus before the key types into it.
+ */
 function typeToSearch(e: ReactKeyboardEvent<HTMLElement>, search: HTMLInputElement | null): boolean {
   if (!search || e.key.length !== 1 || e.key === ' ' || e.ctrlKey || e.metaKey || e.altKey) return false;
   const target = e.target as HTMLElement;

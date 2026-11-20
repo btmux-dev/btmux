@@ -181,8 +181,8 @@ export function ProcessOverlay({ sessionId, paneId, send, onClose }: ProcessOver
   // Switching views unmounts the list, which a click may have focused (a
   // scroll area takes focus); keep keys on the viewer.
   useEffect(() => {
-    if (document.activeElement === document.body) rootRef.current?.focus();
-  }, [viewMode]);
+    if (isActive && document.activeElement === document.body) rootRef.current?.focus();
+  }, [viewMode, isActive]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {

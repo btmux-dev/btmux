@@ -210,6 +210,11 @@ try {
       .click();
     await details.waitFor();
     assert.equal(await details.getByRole('row').count(), 4, 'listener plus two accepted connections');
+    assert.equal(
+      await details.locator('td').first().evaluate((cell) => getComputedStyle(cell).whiteSpace),
+      'normal',
+      "an expanded row's sockets wrap",
+    );
     assert.equal(await details.getByText('ESTABLISHED', { exact: true }).count(), 2);
     await page.keyboard.press('Escape');
     await page.keyboard.press('h');
