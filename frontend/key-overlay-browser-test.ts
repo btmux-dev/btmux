@@ -1,4 +1,4 @@
-/** The key overlay (status bar keyboard button) against the isolated browser-test stack. */
+/** The key overlay (status bar "Show pressed keys" button) against the isolated browser-test stack. */
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { waitForAsync } from './browser-test-utils';

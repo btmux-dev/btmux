@@ -2202,7 +2202,7 @@ pub fn generate_config_toml() -> String {
 # args = ["--stdio"]
 
 # The pressed keys shown on screen, for recording demos; the status bar's
-# keyboard button turns it on for one client.
+# "Show pressed keys" button turns it on for one client.
 # [key-overlay]
 # mode = "all"   # or "chords": key bindings and Ctrl, Alt, or Cmd chords only
 # position = "bottom"   # "bottom-left", "bottom-right", "top", "top-left", or "top-right"
