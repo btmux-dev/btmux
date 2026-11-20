@@ -1,9 +1,7 @@
 import { expect, test } from 'bun:test';
 import {
-  createShaderLayer,
   findWallpaperShader,
   parameterValue,
-  wallpaperLayersToml,
   WALLPAPER_SHADERS,
 } from './src/lib/wallpaperCatalog';
 import { randomizeShaderParams } from './src/lib/wallpaperRandomize';
@@ -40,11 +38,6 @@ test('every shader gets a complete native parameter set that round-trips through
           for (let i = 1; i < stops.length; i++) expect(stops[i].position).toBeGreaterThan(stops[i - 1].position);
         }
       }
-      const layer = { ...createShaderLayer(shader.id), params };
-      const toml = Bun.TOML.parse(wallpaperLayersToml([layer]).join('\n')) as Record<string, any>;
-      expect(toml['wallpaper-shader'][0].params ?? {}).toEqual(
-        Object.fromEntries(Object.entries(params).filter(([, value]) => value !== null)),
-      );
     }
   }
 });

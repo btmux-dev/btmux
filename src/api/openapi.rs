@@ -238,6 +238,7 @@ fn document() -> String {
 /// agents' exporters rather than by automation.
 const UNDOCUMENTED: &[&str] = &[
     // The app's own surfaces.
+    "/api/config/preview",
     "/api/editors",
     "/api/file",
     "/api/multipass",

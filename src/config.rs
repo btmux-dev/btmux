@@ -8,9 +8,13 @@ use serde::{de::Error, Deserialize, Deserializer, Serialize};
 use crate::session::NotificationLevel;
 use crate::worktree::DEFAULT_PATH as DEFAULT_WORKTREE_PATH;
 
+mod nix;
 mod save;
 pub mod vim_keys;
+pub use save::preview as preview_config;
 pub use save::render as render_config;
+#[cfg(test)]
+pub use save::ConfigPreview;
 use vim_keys::DEFAULT_TIMEOUT as DEFAULT_VIM_TIMEOUT;
 pub use vim_keys::{VimBind, VimGroup};
 

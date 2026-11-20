@@ -22,11 +22,42 @@ pub struct Saved {
 /// file (Nix, Home Manager) is an error.
 pub fn render(path: &Path, update: &ConfigUpdate) -> Result<Saved, String> {
     let target = target(path)?;
-    let text = match std::fs::read_to_string(&target) {
-        Ok(text) => text,
-        Err(e) if e.kind() == ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(io_error(path, &target, &e)),
-    };
+    let text = read(&target).map_err(|e| io_error(path, &target, &e))?;
+    let (text, config) = merge(path, &text, update)?;
+    Ok(Saved {
+        path: path.to_path_buf(),
+        target,
+        text,
+        config,
+    })
+}
+
+/// What Settings' Show TOML shows: the file `render` would write, also as
+/// Home Manager Nix.
+#[derive(Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ConfigPreview {
+    pub toml: String,
+    /// A comment saying why when the settings have no Nix equivalent.
+    pub nix: String,
+}
+
+/// `render`'s result without writing, so also for a read-only file.
+pub fn preview(path: &Path, update: &ConfigUpdate) -> Result<ConfigPreview, String> {
+    let text = read(path).map_err(|e| format!("Couldn't read {}: {e}", path.display()))?;
+    let (toml, _) = merge(path, &text, update)?;
+    let nix = super::nix::settings(&toml).unwrap_or_else(|e| format!("# {e}\n"));
+    Ok(ConfigPreview { toml, nix })
+}
+
+fn read(path: &Path) -> std::io::Result<String> {
+    match std::fs::read_to_string(path) {
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(String::new()),
+        result => result,
+    }
+}
+
+fn merge(path: &Path, text: &str, update: &ConfigUpdate) -> Result<(String, FileConfig), String> {
     let mut doc: DocumentMut = text
         .parse()
         .map_err(|_| format!("{} isn't valid TOML; fix it first", path.display()))?;
@@ -34,12 +65,7 @@ pub fn render(path: &Path, update: &ConfigUpdate) -> Result<Saved, String> {
     let text = doc.to_string();
     // Never write a file the next reload would reject.
     let config = toml::from_str(&text).map_err(|e| format!("Couldn't save settings: {e}"))?;
-    Ok(Saved {
-        path: path.to_path_buf(),
-        target,
-        text,
-        config,
-    })
+    Ok((text, config))
 }
 
 impl Saved {
@@ -80,7 +106,7 @@ fn read_only(path: &Path, target: &Path) -> String {
         ""
     };
     format!(
-        "{} is read-only{managed}. Copy the settings from Show TOML into your config instead.",
+        "{} is read-only{managed}. Copy the file from Show TOML (or its Home Manager Nix) instead.",
         path.display()
     )
 }
@@ -515,6 +541,58 @@ mod tests {
         std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o444)).unwrap();
         let error = render(&link, &update).err().unwrap();
         assert!(error.contains("read-only"), "{error}");
+        // Show TOML still previews it.
+        let update = ConfigUpdate {
+            prefix: Some("C-b".into()),
+            ..ConfigUpdate::default()
+        };
+        assert_eq!(
+            preview(&link, &update).unwrap().toml,
+            "animations = false\nprefix = \"C-b\"\n"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The Nix replaces Home Manager's settings, so it keeps what the dialog
+    /// doesn't edit, and leaves out what it didn't change.
+    #[test]
+    fn previews_the_whole_file_as_nix() {
+        let dir = std::env::temp_dir().join(format!("btmux-preview-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(
+            &path,
+            "prefix = \"C-b\"\nrepeat-time = 500\n\n[github]\nenabled = false\n",
+        )
+        .unwrap();
+        let layers: ShaderLayers =
+            serde_json::from_value(serde_json::json!([{ "shader": "aurora" }])).unwrap();
+        let update = ConfigUpdate {
+            prefix: Some("C-a".into()),
+            wallpaper_shaders: Some(layers),
+            ..ConfigUpdate::default()
+        };
+        assert_eq!(
+            preview(&path, &update).unwrap().nix,
+            "# All of config.toml: replace your programs.btmux.settings with it.
+programs.btmux.settings = {
+  prefix = \"C-a\";
+  repeat-time = 500;
+  github = {
+    enabled = false;
+  };
+  wallpaper-shader = [
+    {
+      shader = \"aurora\";
+    }
+  ];
+};
+"
+        );
+        assert!(preview(&dir.join("missing.toml"), &ConfigUpdate::default())
+            .unwrap()
+            .toml
+            .is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
