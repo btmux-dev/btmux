@@ -8,6 +8,8 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+## [0.0.216] - 2026-11-21
+
 ### Added
 
 - Antigravity CLI (`agy`) gets what Claude Code and Codex have: `btmux skill
@@ -18,7 +20,6 @@ actions, saved state, and API types can change in any release.
 - The About dialog's Health tab shows each check as it finishes, instead of
   waiting for the slowest.
   ([#188](https://github.com/btmux-dev/btmux/pull/188))
-
 - `Cmd+Shift+P` (`Ctrl+Shift+P` on Windows and Linux) opens the command
   palette, as in VS Code.
   ([#182](https://github.com/btmux-dev/btmux/pull/182))
