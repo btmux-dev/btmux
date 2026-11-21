@@ -91,23 +91,26 @@ async fn forward(profile: Option<&str>, args: &ForwardArgs) -> Result<i32, Strin
     let listener = pick(&listeners, port, address)?;
 
     let (server_url, token) = server(profile)?;
+    let path = format!(
+        "/ws/forward/{pane}?port={}&address={}",
+        listener.port, listener.address
+    );
+    let local = listen(profile, &path, args.bind, args.local_port, listener.port).await?;
+    let address = local.local_addr().map_err(|e| e.to_string())?;
     let tunnel = Arc::new(Tunnel {
         url: format!(
-            "{}/ws/forward/{pane}?port={}&address={}",
+            "{}{path}&{}",
             websocket_base(&server_url)?,
-            listener.port,
-            listener.address,
+            forwarder_query(address)
         ),
         token,
         connector: connector()?,
         retry_for: RECONNECT_FOR,
     });
-    let local = listen(&tunnel, args.bind, args.local_port, listener.port).await?;
-    let address = local.local_addr().map_err(|e| e.to_string())?;
     let url = local_url(address);
     println!("{url}");
     eprintln!(
-        "btmux: forwarding {address} to {} ({}) in pane {pane}; Ctrl-C stops",
+        "btmux: forwarding {address} to {} ({}) in pane {pane}; Ctrl+C stops",
         SocketAddr::new(
             listener.address.parse().unwrap_or(address.ip()),
             listener.port
@@ -126,15 +129,26 @@ async fn forward(profile: Option<&str>, args: &ForwardArgs) -> Result<i32, Strin
         pane,
         gone_tx.clone(),
     ));
+    let interrupted = tokio::signal::ctrl_c();
+    tokio::pin!(interrupted);
     let code = loop {
         tokio::select! {
             accepted = local.accept() => {
-                let Ok((tcp, peer)) = accepted else { continue };
+                let tcp = match accepted {
+                    Ok((tcp, _)) => tcp,
+                    // Out of file descriptors, say: the connection waits in
+                    // the backlog, so retrying at once would spin.
+                    Err(error) => {
+                        eprintln!("btmux: can't accept a connection: {error}");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        continue;
+                    }
+                };
                 let _ = tcp.set_nodelay(true);
                 let tunnel = tunnel.clone();
                 let gone = gone_tx.clone();
                 tokio::spawn(async move {
-                    if let Err(error) = tunnel.carry(tcp, peer).await {
+                    if let Err(error) = tunnel.carry(tcp).await {
                         if error == Failure::PaneGone {
                             let _ = gone.try_send(());
                         } else {
@@ -147,7 +161,7 @@ async fn forward(profile: Option<&str>, args: &ForwardArgs) -> Result<i32, Strin
                 eprintln!("btmux: pane {pane} is gone");
                 break PANE_GONE;
             }
-            _ = tokio::signal::ctrl_c() => break 0,
+            _ = &mut interrupted => break 0,
         }
     };
     checker.abort();
@@ -166,12 +180,13 @@ fn parse_target(target: &str) -> Result<(Option<IpAddr>, u16), String> {
 }
 
 /// Listens on `local` if given, else on the pane's port when it's free, else
-/// on any port, and checks that a connection through the tunnel reaches the
-/// pane's program before anyone uses the URL. On the server's own machine,
-/// taking the pane's port can shadow a wildcard listener, so that falls back
-/// to any port.
+/// on any port, after the server confirms, without connecting to the
+/// program, that a connection would reach it. On the server's own machine,
+/// taking the pane's port can stand in front of a wildcard listener, so that
+/// falls back to any port.
 async fn listen(
-    tunnel: &Tunnel,
+    profile: Option<&str>,
+    path: &str,
     address: IpAddr,
     local: Option<u16>,
     remote: u16,
@@ -182,21 +197,46 @@ async fn listen(
             .await
             .map_err(|e| format!("can't listen on {}: {e}", at(port)))
     };
+    let probe = |listener: TcpListener| async move {
+        let bound = listener.local_addr().map_err(|e| e.to_string())?;
+        let path = format!("{path}&{}&probe=true", forwarder_query(bound));
+        match request_with_status(profile, Method::GET, &path, None, TIMEOUT).await {
+            Ok((StatusCode::NO_CONTENT, _)) => Ok(Ok(listener)),
+            Ok((StatusCode::CONFLICT, body)) => Ok(Err(body)),
+            Ok((StatusCode::NOT_FOUND, _)) => Err("the pane is gone".to_string()),
+            Ok((status, body)) => Err(if body.is_empty() {
+                status.to_string()
+            } else {
+                body
+            }),
+            Err(error) => Err(error),
+        }
+    };
     if let Some(port) = local {
-        let listener = bind(port).await?;
-        tunnel.probe().await.map_err(Failure::message)?;
-        return Ok(listener);
+        return probe(bind(port).await?).await?;
     }
     if let Ok(listener) = bind(remote).await {
-        match tunnel.probe().await {
-            Ok(()) => return Ok(listener),
-            Err(Failure::Refused(_)) => drop(listener),
-            Err(failure) => return Err(failure.message()),
+        if let Ok(listener) = probe(listener).await? {
+            return Ok(listener);
         }
     }
-    let listener = bind(0).await?;
-    tunnel.probe().await.map_err(Failure::message)?;
-    Ok(listener)
+    probe(bind(0).await?).await?
+}
+
+/// Names this process and its listener to the server.
+fn forwarder_query(listener: SocketAddr) -> String {
+    format!(
+        "forwarder_pid={}&forwarder_listener={}",
+        std::process::id(),
+        urlencoding(&listener.to_string())
+    )
+}
+
+/// Percent-encodes the brackets and colons of an IPv6 socket address.
+fn urlencoding(text: &str) -> String {
+    text.replace('[', "%5B")
+        .replace(']', "%5D")
+        .replace(':', "%3A")
 }
 
 fn local_url(address: SocketAddr) -> String {
@@ -232,13 +272,17 @@ fn connector() -> Result<Connector, String> {
 
 /// Ends the command once the pane is gone.
 async fn watch_pane(profile: Option<String>, pane: Uuid, gone: tokio::sync::mpsc::Sender<()>) {
-    let path = format!("/api/panes/{pane}/ports");
     loop {
         tokio::time::sleep(PANE_CHECK).await;
         // Other failures, like a server mid-upgrade, aren't the pane closing.
-        if let Ok((StatusCode::NOT_FOUND, _)) =
-            request_with_status(profile.as_deref(), Method::GET, &path, None, TIMEOUT).await
-        {
+        let Ok(body) = request(profile.as_deref(), Method::GET, "/api/panes", None, TIMEOUT).await
+        else {
+            continue;
+        };
+        let Ok(panes) = serde_json::from_str::<Vec<crate::session::PaneInfo>>(&body) else {
+            continue;
+        };
+        if !panes.iter().any(|p| p.pane_id == pane) {
             let _ = gone.send(()).await;
             return;
         }
@@ -275,8 +319,8 @@ struct Tunnel {
 
 impl Tunnel {
     /// Carries one local connection to the pane's port.
-    async fn carry(&self, tcp: TcpStream, peer: SocketAddr) -> Result<(), Failure> {
-        let socket = self.connect(Some(peer)).await?;
+    async fn carry(&self, tcp: TcpStream) -> Result<(), Failure> {
+        let socket = self.connect().await?;
         let (tx, rx) = socket.split();
         let tx = tx.with(|frame: Frame| async move {
             Ok::<_, WsError>(match frame {
@@ -295,14 +339,7 @@ impl Tunnel {
         Ok(())
     }
 
-    /// Opens and closes one connection to the pane's program.
-    async fn probe(&self) -> Result<(), Failure> {
-        let mut socket = self.connect(None).await?;
-        let _ = socket.close(None).await;
-        Ok(())
-    }
-
-    async fn connect(&self, peer: Option<SocketAddr>) -> Result<Socket, Failure> {
+    async fn connect(&self) -> Result<Socket, Failure> {
         let deadline = Instant::now() + self.retry_for;
         loop {
             let mut request = self
@@ -316,14 +353,6 @@ impl Tunnel {
                     .parse()
                     .map_err(|_| Failure::Other("the token isn't a valid header".into()))?,
             );
-            if let Some(peer) = peer {
-                request.headers_mut().insert(
-                    crate::ws::forward::PEER_HEADER,
-                    peer.to_string()
-                        .parse()
-                        .expect("an address is a valid header"),
-                );
-            }
             let attempt = tokio::time::timeout_at(
                 deadline.into(),
                 tokio_tungstenite::connect_async_tls_with_config(
@@ -402,8 +431,8 @@ mod tests {
         let client = TcpStream::connect(local.local_addr().unwrap())
             .await
             .unwrap();
-        let (accepted, peer) = local.accept().await.unwrap();
-        tokio::spawn(async move { tunnel.carry(accepted, peer).await });
+        let (accepted, _) = local.accept().await.unwrap();
+        tokio::spawn(async move { tunnel.carry(accepted).await });
         client
     }
 
@@ -481,7 +510,7 @@ mod tests {
         });
         let started = Instant::now();
         let failure = tunnel(address, Duration::from_millis(300))
-            .connect(None)
+            .connect()
             .await
             .unwrap_err();
         assert!(started.elapsed() < Duration::from_secs(2));
@@ -514,19 +543,19 @@ mod tests {
     #[tokio::test]
     async fn temporary_proxy_errors_are_retried_and_others_are_not() {
         let (address, count) = answering(&[503, 502]).await;
-        tunnel(address, RECONNECT_FOR).connect(None).await.unwrap();
+        tunnel(address, RECONNECT_FOR).connect().await.unwrap();
         assert_eq!(count.load(Ordering::SeqCst), 3);
 
         let (address, count) = answering(&[401]).await;
-        let failure = tunnel(address, RECONNECT_FOR).connect(None).await;
+        let failure = tunnel(address, RECONNECT_FOR).connect().await;
         assert!(matches!(failure, Err(Failure::Other(_))));
         assert_eq!(count.load(Ordering::SeqCst), 1);
 
         let (address, _) = answering(&[409]).await;
-        let failure = tunnel(address, RECONNECT_FOR).connect(None).await;
+        let failure = tunnel(address, RECONNECT_FOR).connect().await;
         assert!(matches!(failure, Err(Failure::Refused(_))));
         let (address, _) = answering(&[404]).await;
-        let failure = tunnel(address, RECONNECT_FOR).connect(None).await;
+        let failure = tunnel(address, RECONNECT_FOR).connect().await;
         assert_eq!(failure.unwrap_err(), Failure::PaneGone);
     }
 
@@ -535,7 +564,7 @@ mod tests {
         let (address, count) = answering(&[503; 64]).await;
         let started = Instant::now();
         let failure = tunnel(address, Duration::from_millis(600))
-            .connect(None)
+            .connect()
             .await
             .unwrap_err();
         assert!(started.elapsed() < Duration::from_secs(2));

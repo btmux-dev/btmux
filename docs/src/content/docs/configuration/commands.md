@@ -1160,7 +1160,7 @@ Options:
 
 ### `btmux forward`
 
-Listen on a local port and forward each connection to a TCP port that a program in the pane listens on, such as a dev server, until Ctrl-C. Prints the local URL. Exits 3 when the pane closes
+Listen on a local port and forward each connection to a TCP port that a program in the pane listens on, such as a dev server, until Ctrl+C. Prints the local URL. Exits 3 when the pane closes
 
 ```text
 Usage: btmux forward [OPTIONS] [[ADDRESS:]PORT]

@@ -233,8 +233,8 @@ pub async fn run(profile: Option<&str>, command: TmuxCommand) -> i32 {
 
 /// The pane `target` names, or without one this pane.
 pub async fn resolve_pane(profile: Option<&str>, target: Option<&str>) -> Result<Uuid, String> {
-    let current = profile
-        .is_none()
+    // This pane's ID means nothing to a server named with `--server`.
+    let current = (profile.is_none() && crate::send_notification::SERVER_URL.get().is_none())
         .then(|| std::env::var("BTMUX_PANE_ID").ok())
         .flatten()
         .and_then(|id| Uuid::parse_str(&id).ok());

@@ -86,10 +86,11 @@ browser. With several ports and none named, it lists them and exits 1, as it
 does when different programs hold one port on different addresses: name one
 as `ADDRESS:PORT`. When the pane closes, it exits 3.
 
-Before printing the URL, it checks that a connection reaches the pane's
-program. On the server's own machine, taking the pane's port number can stand
-in front of a program that listens on every address; it then takes any free
-port instead.
+Before printing the URL, it asks the server whether a connection would reach
+the pane's program, without connecting to it, so a program that takes only one
+connection, like a debugger, keeps it for you. On the server's own machine,
+taking the pane's port number can stand in front of a program that listens on
+every address; it then takes any free port instead.
 
 In a pane, it forwards to your client's machine only if that is the server's
 too. From another computer with btmux installed, name the server's URL; the

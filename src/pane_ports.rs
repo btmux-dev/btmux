@@ -108,6 +108,14 @@ struct Socket {
     pid: Option<u32>,
 }
 
+/// The `btmux forward` process asking, and where it listens, so the server
+/// never forwards to the forward itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Forwarder {
+    pub pid: u32,
+    pub listener: SocketAddr,
+}
+
 /// One sample of every TCP socket and the process tree.
 pub struct Snapshot {
     started: Instant,
@@ -221,73 +229,106 @@ impl Snapshot {
                 })
             })
             .collect();
-        listeners.sort_by(|a, b| (a.port, &a.address).cmp(&(b.port, &b.address)));
-        listeners.dedup();
+        // Workers sharing a listening socket (gunicorn, Puma) are one listener,
+        // shown by the lowest pid, usually the parent's.
+        listeners.sort_by(|a, b| (a.port, &a.address, a.pid).cmp(&(b.port, &b.address, b.pid)));
+        listeners.dedup_by(|b, a| a.port == b.port && a.address == b.address);
         listeners
     }
 
     /// Checks that the connection from `ours` to `theirs` reached a program
     /// in `pane`: the one that accepted it, else every listener the kernel
-    /// could have queued it on, which is the most specific for `theirs`.
+    /// could have queued it on.
     pub fn check(
         &self,
         shells: &HashMap<u32, Uuid>,
         pane: Uuid,
         ours: SocketAddr,
         theirs: SocketAddr,
+        forwarder: Option<Forwarder>,
     ) -> Result<(), String> {
         let (ours, theirs) = (canonical(ours), canonical(theirs));
-        let in_pane = |pid: u32| self.owner(shells, pid) == Some(pane);
         let accepted = self
             .sockets
             .iter()
             .find(|s| !s.listening && s.local == theirs && s.remote == Some(ours))
             .and_then(|s| s.pid);
-        if let Some(pid) = accepted {
-            return if in_pane(pid) {
-                Ok(())
-            } else {
-                Err(format!(
-                    "{theirs} is held by {}, not a program in the pane",
-                    self.describe(pid)
-                ))
-            };
+        match accepted {
+            Some(pid) if forwarder.is_some_and(|f| f.pid == pid) => Err(itself(theirs)),
+            Some(pid) if self.owner(shells, pid) == Some(pane) => Ok(()),
+            Some(pid) => Err(format!(
+                "{theirs} is held by {}, not a program in the pane",
+                self.describe(pid)
+            )),
+            // The route was checked before connecting. A program that accepts
+            // one connection can close it and its listener at once, leaving
+            // nothing to check; a program that took over is still there.
+            None if self.route(theirs).is_empty() => Ok(()),
+            None => self.check_route(shells, pane, theirs, forwarder),
         }
+    }
+
+    /// The listeners the kernel could queue a connection to `theirs` on: the
+    /// most specific for it.
+    fn route(&self, theirs: SocketAddr) -> Vec<&Socket> {
+        let theirs = canonical(theirs);
         let on_port = || {
             self.sockets
                 .iter()
                 .filter(move |s| s.listening && s.local.port() == theirs.port())
         };
         let exact: Vec<&Socket> = on_port().filter(|s| s.local.ip() == theirs.ip()).collect();
-        let candidates = if exact.is_empty() {
-            on_port()
-                .filter(|s| {
-                    s.local.ip().is_unspecified()
-                        // A dual-stack IPv6 wildcard takes IPv4 too.
-                        && (s.local.is_ipv4() == theirs.is_ipv4() || s.local.is_ipv6())
-                })
-                .collect()
-        } else {
-            exact
-        };
+        if !exact.is_empty() {
+            return exact;
+        }
+        on_port()
+            .filter(|s| {
+                s.local.ip().is_unspecified()
+                    // A dual-stack IPv6 wildcard takes IPv4 too.
+                    && (s.local.is_ipv4() == theirs.is_ipv4() || s.local.is_ipv6())
+            })
+            .collect()
+    }
+
+    /// Checks, without connecting, that a connection to `theirs` would reach
+    /// a program in `pane` and not the forwarder: every listener the kernel
+    /// could queue it on, the most specific for `theirs`, must be the pane's.
+    pub fn check_route(
+        &self,
+        shells: &HashMap<u32, Uuid>,
+        pane: Uuid,
+        theirs: SocketAddr,
+        forwarder: Option<Forwarder>,
+    ) -> Result<(), String> {
+        let theirs = canonical(theirs);
+        let candidates = self.route(theirs);
         if candidates.is_empty() {
             return Err(format!("nothing listens on {theirs} any more"));
         }
         for socket in candidates {
-            match socket.pid {
-                None => return Err(format!("can't tell which program listens on {theirs}")),
-                Some(pid) if !in_pane(pid) => {
-                    return Err(format!(
-                        "{} is held by {}, not a program in the pane",
-                        socket.local,
-                        self.describe(pid)
-                    ))
-                }
-                Some(_) => {}
+            let Some(pid) = socket.pid else {
+                return Err(format!("can't tell which program listens on {theirs}"));
+            };
+            if forwarder.is_some_and(|f| f.pid == pid && canonical(f.listener) == socket.local) {
+                return Err(itself(theirs));
+            }
+            if self.owner(shells, pid) != Some(pane) {
+                return Err(format!(
+                    "{} is held by {}, not a program in the pane",
+                    socket.local,
+                    self.describe(pid)
+                ));
             }
         }
         Ok(())
     }
+}
+
+fn itself(at: SocketAddr) -> String {
+    format!(
+        "{at} is this forward's own port: on the server's machine it stands in front of the \
+         pane's program"
+    )
 }
 
 /// Why a pane's listeners can't be listed.
@@ -392,9 +433,9 @@ mod tests {
         let pane = Uuid::new_v4();
         let snapshot = snapshot(Instant::now()).await.unwrap();
         let mine = HashMap::from([(std::process::id(), pane)]);
-        assert_eq!(snapshot.check(&mine, pane, ours, theirs), Ok(()));
+        assert_eq!(snapshot.check(&mine, pane, ours, theirs, None), Ok(()));
         let error = snapshot
-            .check(&HashMap::new(), pane, ours, theirs)
+            .check(&HashMap::new(), pane, ours, theirs, None)
             .unwrap_err();
         assert!(error.contains("not a program in the pane"), "{error}");
     }
@@ -425,7 +466,7 @@ mod tests {
         let shells = HashMap::from([(10, pane)]);
         let ours: SocketAddr = "127.0.0.1:50000".parse().unwrap();
         let check = |sockets: Vec<Socket>, theirs: &str| {
-            fixture(sockets).check(&shells, pane, ours, theirs.parse().unwrap())
+            fixture(sockets).check(&shells, pane, ours, theirs.parse().unwrap(), None)
         };
         // A wildcard listener in the pane takes loopback connections.
         assert_eq!(
@@ -452,7 +493,11 @@ mod tests {
                 .unwrap_err()
                 .contains("can't tell")
         );
-        assert!(check(vec![], "127.0.0.1:8125")
+        // Nothing left after connecting: the program that accepted closed its
+        // listener, which the route check before connecting saw as the pane's.
+        assert_eq!(check(vec![], "127.0.0.1:8125"), Ok(()));
+        assert!(fixture(vec![])
+            .check_route(&shells, pane, "127.0.0.1:8125".parse().unwrap(), None)
             .unwrap_err()
             .contains("any more"));
         // An accepted socket decides, whatever listens.
@@ -467,6 +512,75 @@ mod tests {
             "127.0.0.1:8125"
         )
         .is_err());
+    }
+
+    #[test]
+    fn workers_sharing_a_socket_are_one_listener() {
+        let pane = Uuid::new_v4();
+        let shells = HashMap::from([(10, pane)]);
+        // The master, 11, and its workers, 12 and 13, share 127.0.0.1:8000.
+        let mut snapshot = fixture(vec![
+            listen("127.0.0.1:8000", Some(13)),
+            listen("127.0.0.1:8000", Some(11)),
+            listen("127.0.0.1:8000", Some(12)),
+        ]);
+        snapshot.parents.extend([(12, 11), (13, 11)]);
+        let listeners = snapshot.listeners(&shells, pane);
+        assert_eq!(listeners.len(), 1);
+        assert_eq!(listeners[0].pid, Some(11));
+        assert_eq!(pick(&listeners, Some(8000), None).unwrap().pid, Some(11));
+        assert_eq!(
+            snapshot.check_route(&shells, pane, "127.0.0.1:8000".parse().unwrap(), None),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn the_forward_itself_is_never_a_destination() {
+        let pane = Uuid::new_v4();
+        let shells = HashMap::from([(10, pane)]);
+        // A forward run in the pane, 11, on the loopback port of the pane's
+        // wildcard listener, 12.
+        let mut snapshot = fixture(vec![
+            listen("0.0.0.0:5173", Some(12)),
+            listen("127.0.0.1:5173", Some(11)),
+        ]);
+        snapshot.parents.insert(12, 10);
+        let me = Forwarder {
+            pid: 11,
+            listener: "127.0.0.1:5173".parse().unwrap(),
+        };
+        let theirs: SocketAddr = "127.0.0.1:5173".parse().unwrap();
+        // Without saying who it is, the forward looks like the pane's.
+        assert_eq!(snapshot.check_route(&shells, pane, theirs, None), Ok(()));
+        let error = snapshot
+            .check_route(&shells, pane, theirs, Some(me))
+            .unwrap_err();
+        assert!(error.contains("own port"), "{error}");
+        // Once it accepted the connection, too.
+        let ours: SocketAddr = "127.0.0.1:50000".parse().unwrap();
+        snapshot.sockets.push(Socket {
+            local: theirs,
+            remote: Some(ours),
+            listening: false,
+            pid: Some(11),
+        });
+        assert!(snapshot
+            .check(&shells, pane, ours, theirs, Some(me))
+            .is_err());
+        // Another machine's forward with another pid isn't confused with it.
+        let elsewhere = Forwarder { pid: 99, ..me };
+        assert_eq!(
+            snapshot
+                .check_route(
+                    &shells,
+                    pane,
+                    "127.0.0.1:5174".parse().unwrap(),
+                    Some(elsewhere)
+                )
+                .unwrap_err(),
+            "nothing listens on 127.0.0.1:5174 any more"
+        );
     }
 
     fn listener(address: &str, port: u16, pid: u32) -> Listener {

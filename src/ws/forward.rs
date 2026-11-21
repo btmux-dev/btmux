@@ -3,15 +3,14 @@
 //! frame for each direction's end. `btmux forward` opens one per connection
 //! it accepts.
 
-use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::Mutex;
 use std::time::Instant;
 
 use axum::body::Bytes;
+use axum::extract::ws::rejection::WebSocketUpgradeRejection;
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Path, Query, State, WebSocketUpgrade};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use serde::Deserialize;
@@ -19,52 +18,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use uuid::Uuid;
 
-use crate::pane_ports::{listing_age, pane_shells, pick, snapshot, Unavailable};
+use crate::pane_ports::{listing_age, pane_shells, pick, snapshot, Forwarder, Unavailable};
 use crate::AppState;
 
 const READ_SIZE: usize = 64 * 1024;
-
-/// The address of the connection that `btmux forward` accepted, which it
-/// sends so the server can tell its own connections coming back.
-pub const PEER_HEADER: &str = "x-btmux-forward-peer";
-
-/// This end of each connection the server makes for a forward. A forward on
-/// the server's machine can listen where the server connects (a wildcard
-/// listener's loopback address); its connections would then loop.
-static OUTBOUND: Mutex<Option<HashSet<SocketAddr>>> = Mutex::new(None);
-
-/// Holds an `OUTBOUND` entry while its connection is open.
-struct Outbound(Option<SocketAddr>);
-
-impl Outbound {
-    fn new(tcp: &TcpStream) -> Self {
-        let address = tcp.local_addr().ok();
-        if let Some(address) = address {
-            OUTBOUND
-                .lock()
-                .unwrap()
-                .get_or_insert_default()
-                .insert(address);
-        }
-        Self(address)
-    }
-
-    fn contains(address: SocketAddr) -> bool {
-        OUTBOUND
-            .lock()
-            .unwrap()
-            .as_ref()
-            .is_some_and(|set| set.contains(&address))
-    }
-}
-
-impl Drop for Outbound {
-    fn drop(&mut self) {
-        if let (Some(address), Some(set)) = (self.0, OUTBOUND.lock().unwrap().as_mut()) {
-            set.remove(&address);
-        }
-    }
-}
 
 /// Sent as text when a side's TCP read ends, so the other shuts down its
 /// write side and keeps relaying replies: a client may close its request
@@ -147,48 +104,67 @@ pub struct ForwardQuery {
     port: u16,
     /// The listener's address, when the pane holds the port on several.
     address: Option<IpAddr>,
+    /// The `btmux forward` process and where it listens: a forward on the
+    /// server's machine can stand in front of the pane's program, and the
+    /// server must not connect to it.
+    forwarder_pid: Option<u32>,
+    forwarder_listener: Option<SocketAddr>,
+    /// Checks the route without connecting to the program, which may take
+    /// only one connection.
+    #[serde(default)]
+    probe: bool,
 }
 
 pub async fn handle(
     State(state): State<AppState>,
     Path(pane): Path<Uuid>,
     Query(query): Query<ForwardQuery>,
-    headers: HeaderMap,
-    ws: WebSocketUpgrade,
+    ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
 ) -> Response {
-    let peer = headers
-        .get(PEER_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<SocketAddr>().ok());
-    if peer.is_some_and(Outbound::contains) {
-        return conflict(
-            "this connection came from the server's own forward: a `btmux forward` on the \
-             server's machine listens where the pane's program does",
-        );
-    }
+    let forwarder = match (query.forwarder_pid, query.forwarder_listener) {
+        (Some(pid), Some(listener)) => Some(Forwarder { pid, listener }),
+        _ => None,
+    };
     let shells = match pane_shells(&state, pane).await {
         Ok(shells) => shells,
         Err(unavailable) => return unavailable.into_response(),
     };
-    let mut picked = Err(String::new());
-    // A recent sample can predate a program that just started listening.
-    for not_before in [listing_age(), Instant::now()] {
-        let snapshot = match snapshot(not_before).await {
+    let mut routed = Err(String::new());
+    // A recent sample can predate a program that just started listening; a
+    // probe is rare and asks about now.
+    let attempts: &[fn() -> Instant] = if query.probe {
+        &[Instant::now]
+    } else {
+        &[listing_age, Instant::now]
+    };
+    for not_before in attempts {
+        let snapshot = match snapshot(not_before()).await {
             Ok(snapshot) => snapshot,
             Err(error) => return Unavailable::Failed(error).into_response(),
         };
-        picked = pick(
+        routed = pick(
             &snapshot.listeners(&shells, pane),
             Some(query.port),
             query.address,
-        );
-        if picked.is_ok() {
+        )
+        .and_then(|listener| {
+            snapshot.check_route(&shells, pane, listener.connect_address(), forwarder)?;
+            Ok(listener)
+        });
+        if routed.is_ok() {
             break;
         }
     }
-    let listener = match picked {
+    let listener = match routed {
         Ok(listener) => listener,
         Err(error) => return conflict(error),
+    };
+    if query.probe {
+        return StatusCode::NO_CONTENT.into_response();
+    }
+    let ws = match ws {
+        Ok(ws) => ws,
+        Err(rejection) => return rejection.into_response(),
     };
     let tcp = match TcpStream::connect(listener.connect_address()).await {
         Ok(tcp) => tcp,
@@ -203,13 +179,12 @@ pub async fn handle(
                 .into_response()
         }
     };
-    let outbound = Outbound::new(&tcp);
     // Whatever accepted it must still be the pane's program: the listener can
     // have changed hands since the sample, or another can shadow it.
     let dialed = Instant::now();
     let checked = match (tcp.local_addr(), tcp.peer_addr()) {
         (Ok(ours), Ok(theirs)) => match snapshot(dialed).await {
-            Ok(snapshot) => snapshot.check(&shells, pane, ours, theirs),
+            Ok(snapshot) => snapshot.check(&shells, pane, ours, theirs, forwarder),
             Err(error) => return Unavailable::Failed(error).into_response(),
         },
         _ => Err("the connection closed".into()),
@@ -218,10 +193,7 @@ pub async fn handle(
         return conflict(error);
     }
     let _ = tcp.set_nodelay(true);
-    ws.on_upgrade(move |socket| async move {
-        relay(socket, tcp).await;
-        drop(outbound);
-    })
+    ws.on_upgrade(move |socket| relay(socket, tcp))
 }
 
 /// The server's relay, for the CLI's tests.
@@ -309,33 +281,48 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refuses_connections_that_loop_back() {
-        let target = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let tcp = TcpStream::connect(target.local_addr().unwrap())
-            .await
-            .unwrap();
-        let outbound = Outbound::new(&tcp);
+    async fn probes_answer_without_upgrading() {
+        let state = state();
+        let pane = {
+            let mut manager = state.write().await;
+            manager.create_session(None).await;
+            manager.pane_infos()[0].pane_id
+        };
         let address = serve(
             axum::Router::new()
                 .route("/ws/forward/{pane_id}", axum::routing::get(handle))
-                .with_state(state()),
+                .with_state(state),
         )
         .await;
-        let request = |peer: SocketAddr| {
-            use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-            let mut request = format!("ws://{address}/ws/forward/{}?port=9", Uuid::nil())
-                .into_client_request()
-                .unwrap();
-            request
-                .headers_mut()
-                .insert(PEER_HEADER, peer.to_string().parse().unwrap());
-            tokio_tungstenite::connect_async(request)
+        let probe = |pane: Uuid| {
+            reqwest::get(format!(
+                "http://{address}/ws/forward/{pane}?port=9&forwarder_pid=1\
+                 &forwarder_listener=%5B%3A%3A1%5D%3A9&probe=true"
+            ))
         };
-        let own = tcp.local_addr().unwrap();
-        assert_eq!(status(request(own).await.unwrap_err()), 409);
-        drop(outbound);
-        // Once the connection closes, its address means nothing.
-        assert_eq!(status(request(own).await.unwrap_err()), 404);
+        assert_eq!(probe(Uuid::nil()).await.unwrap().status(), 404);
+        assert_eq!(probe(pane).await.unwrap().status(), 409);
+        // Without `probe`, a plain request is no upgrade.
+        let plain = reqwest::get(format!("http://{address}/ws/forward/{pane}?port=9"))
+            .await
+            .unwrap();
+        assert_eq!(
+            plain.status(),
+            409,
+            "the route is refused before the upgrade"
+        );
+    }
+
+    #[test]
+    fn queries_name_the_forwarder() {
+        let uri = "/?port=80&address=::1&forwarder_pid=7&forwarder_listener=%5B%3A%3A1%5D%3A80\
+                   &probe=true"
+            .parse()
+            .unwrap();
+        let Query(query) = Query::<ForwardQuery>::try_from_uri(&uri).unwrap();
+        assert_eq!(query.address, Some("::1".parse().unwrap()));
+        assert_eq!(query.forwarder_listener, Some("[::1]:80".parse().unwrap()));
+        assert!(query.probe);
     }
 
     #[tokio::test]
