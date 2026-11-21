@@ -234,17 +234,16 @@ fn now_seconds() -> f64 {
 }
 
 /// The `PATH` the Claude, Codex, and Antigravity CLIs run with, `None` for the server's own.
+/// Fewer have agy, so its absence alone doesn't start the shell again.
 async fn agent_paths(shell: &str) -> [Option<OsString>; 3] {
-    programs_paths(
+    let [claude, codex] = programs_paths(
         shell,
-        [
-            agent_program(Agent::Claude),
-            agent_program(Agent::Codex),
-            AGY_PROGRAM.into(),
-        ],
+        [agent_program(Agent::Claude), agent_program(Agent::Codex)],
         AskShell::Retry,
     )
-    .await
+    .await;
+    let [agy] = programs_paths(shell, [AGY_PROGRAM.into()], AskShell::Once).await;
+    [claude, codex, agy]
 }
 
 /// When a program missing from both `PATH`s starts the shell.
@@ -460,6 +459,7 @@ async fn read_codex(path: Option<OsString>) -> Read {
 
 /// Answers `/usage` itself only from 1.1.11; older ones would send it as a prompt.
 const AGY_MIN_VERSION: [u64; 3] = [1, 1, 11];
+const AGY_VERSION_TIMEOUT: Duration = Duration::from_secs(5);
 
 async fn read_agy(path: Option<OsString>) -> Read {
     let search = path.clone().or_else(|| std::env::var_os("PATH"));
@@ -472,16 +472,14 @@ async fn read_agy(path: Option<OsString>) -> Read {
 /// Checks the version of the same executable first, so no read can start a
 /// model turn.
 async fn read_agy_at(program: &Path, path: Option<OsString>, timeout: Duration) -> Read {
-    let probe = crate::health::probe(
-        Some(program.to_path_buf()),
-        &["--version"],
-        Duration::from_secs(5),
-    )
-    .await;
-    let version = probe
-        .output
-        .as_deref()
-        .and_then(crate::system_info::version)
+    // With the `PATH` it reads with, which a shim may need.
+    let probed = run_to_end(program, path.clone(), &["--version"], AGY_VERSION_TIMEOUT).await?;
+    let output = String::from_utf8_lossy(&probed.stdout);
+    let version = probed
+        .status
+        .success()
+        .then(|| crate::system_info::version(&output))
+        .flatten()
         .ok_or_else(|| format!("{AGY_PROGRAM}: no version, so /usage may not be safe"))?;
     if !version_at_least(version, AGY_MIN_VERSION) {
         return Err(format!(
@@ -782,8 +780,13 @@ fn parse_agy(reply: &Value, now: f64) -> Read {
 }
 
 fn agy_limit(group: Option<&str>, bucket: &Value) -> Option<AgentLimit> {
-    let percent = ((1.0 - bucket["remaining_fraction"].as_f64()?) * 100.0).clamp(0.0, 100.0);
     let window = bucket["window"].as_str();
+    // Its JSON leaves out zero values, so a used-up bucket has no fraction.
+    let remaining = match &bucket["remaining_fraction"] {
+        Value::Null => 0.0,
+        fraction => fraction.as_f64()?,
+    };
+    let percent = ((1.0 - remaining) * 100.0).clamp(0.0, 100.0);
     let base = match window.and_then(agy_window_minutes) {
         Some(minutes) => window_label(minutes),
         None => bucket["name"].as_str().or(window)?.to_string(),
@@ -996,7 +999,8 @@ mod tests {
             ] },
             { "name": "Gemini 4 Argon", "buckets": [
                 { "name": "Argon Monthly Limit", "window": "monthly", "remaining_fraction": 0 },
-                { "name": "No fraction", "window": "weekly" },
+                { "id": "argon-weekly", "name": "Used up", "window": "weekly" },
+                { "name": "Not a number", "window": "weekly", "remaining_fraction": "x" },
             ] },
         ] } } });
         let parsed = parse_agy(&reply, NOW).unwrap().unwrap();
@@ -1012,6 +1016,10 @@ mod tests {
                 AgentLimit {
                     severity: LimitSeverity::Critical,
                     ..limit("Argon Monthly Limit (Gemini 4 Argon)", 100.0, None)
+                },
+                AgentLimit {
+                    severity: LimitSeverity::Critical,
+                    ..limit("Weekly (Gemini 4 Argon)", 100.0, None)
                 },
             ]
         );
@@ -1047,7 +1055,6 @@ mod tests {
         assert_eq!(slot.error, None);
     }
 
-    #[cfg(unix)]
     #[test]
     fn agy_versions_are_compared_by_number() {
         for (version, ok) in [
@@ -1064,6 +1071,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     mod exchange {
         use super::*;
         use crate::health::tests::{assert_child_exits, spawns_child, test_script, CHILD_STARTED};
@@ -1105,6 +1113,17 @@ mod tests {
             // An API key has no account quota.
             let (dir, path) = fake_agy("1.5.14", "exit 2");
             assert_eq!(read_agy_at(&path, None, CHILD_STARTED).await, Ok(None));
+            std::fs::remove_dir_all(&dir).unwrap();
+
+            // A shim answers its version only with the `PATH` it was found on.
+            let (dir, path) = test_script(
+                "case \":$PATH:\" in *:/btmux-shim:*) ;; *) exit 1;; esac\n\
+                 if [ \"$1\" = --version ]; then echo 1.5.14; else exit 2; fi",
+                0o755,
+            );
+            assert!(read_agy_at(&path, None, CHILD_STARTED).await.is_err());
+            let shim = Some(OsString::from("/btmux-shim:/usr/bin:/bin"));
+            assert_eq!(read_agy_at(&path, shim, CHILD_STARTED).await, Ok(None));
             std::fs::remove_dir_all(&dir).unwrap();
         }
 

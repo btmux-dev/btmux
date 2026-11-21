@@ -45,9 +45,9 @@ aren't listed.
 
 btmux reads limits through the CLI without sending a prompt or reading
 credentials. For Antigravity it first checks the CLI's version and reads only
-from 1.1.11, the first to answer `/usage` without a model turn. Each agent's
-limits refresh on their own about once a minute, so a slow CLI doesn't hold up
-the others. `GET /api/agent-limits` returns the same data.
+from 1.1.11, the first to answer `/usage` without a model turn. After the first
+read, each agent's limits refresh on their own about once a minute, so a slow
+CLI doesn't hold up the others. `GET /api/agent-limits` returns the same data.
 
 :::caution
 These CLI interfaces are undocumented or experimental, so a CLI update can make
