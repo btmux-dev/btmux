@@ -49,26 +49,35 @@ export function useSidebarResize(
 
 /**
  * Follows a drag that starts with `e` on a divider, with mouse, pen, or touch.
- * The divider needs `touch-action: none`, or touch scrolls instead.
+ * The divider needs `touch-action: none`, or touch scrolls instead. `onEnd`
+ * gets the `pointerup`, `pointercancel`, or `lostpointercapture` that ended
+ * it, or `null` when the returned function cancels it (for a divider about to
+ * go away, whose capture loss the divider doesn't hear).
  */
 export function trackPointerDrag(
   e: React.PointerEvent,
   onMove: (event: PointerEvent) => void,
-  onEnd: (event: PointerEvent) => void,
-) {
+  onEnd: (event: PointerEvent | null) => void,
+): () => void {
   e.preventDefault();
   const target = e.currentTarget as HTMLElement;
-  target.setPointerCapture(e.pointerId);
-  const end = (event: PointerEvent) => {
+  const { pointerId } = e;
+  target.setPointerCapture(pointerId);
+  let ended = false;
+  const end = (event: PointerEvent | null) => {
+    if (ended) return;
+    ended = true;
     target.removeEventListener('pointermove', onMove);
-    target.removeEventListener('pointerup', end);
-    target.removeEventListener('pointercancel', end);
+    for (const type of ENDS) target.removeEventListener(type, end);
+    if (event === null && target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId);
     onEnd(event);
   };
   target.addEventListener('pointermove', onMove);
-  target.addEventListener('pointerup', end);
-  target.addEventListener('pointercancel', end);
+  for (const type of ENDS) target.addEventListener(type, end);
+  return () => end(null);
 }
+
+const ENDS = ['pointerup', 'pointercancel', 'lostpointercapture'] as const;
 
 /** Widens a thin divider's hit area on touch screens. */
 export const DIVIDER_TOUCH_TARGET =

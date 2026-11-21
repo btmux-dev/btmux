@@ -183,6 +183,13 @@ export function useKeybindings(
       if (isPaletteChord(e) && !vscodeFocused()) {
         e.preventDefault();
         e.stopPropagation();
+        // Like a handled binding, it ends an armed prefix and repeat window.
+        endRepeat();
+        clearTimeout(timeoutRef.current);
+        if (prefixActiveRef.current) {
+          setPrefixActive(false);
+          prefixActiveRef.current = false;
+        }
         // Opens wherever a prefix binding would run.
         const modal =
           overlayRef.current ||

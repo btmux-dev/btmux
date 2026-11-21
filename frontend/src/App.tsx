@@ -229,7 +229,7 @@ function AppInner({
         header={config?.config_error ? <ConfigErrorBanner /> : undefined}
         content={
           <LayoutContent isScrollable={false} padding={0} className="relative min-h-0 overflow-hidden">
-            <SessionPool send={send} />
+            <SessionPool send={send} request={request} />
             <Routes>
               <Route path="/" element={null} />
               <Route path="/s/:sessionName" element={<SessionView send={send} />} />

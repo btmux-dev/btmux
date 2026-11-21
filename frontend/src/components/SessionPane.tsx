@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { PaneTerminal as Terminal } from '../lib/paneTerminal';
 import { Dialog } from '@astryxdesign/core/Dialog';
 import { TerminalPane } from './TerminalPane';
@@ -7,19 +7,14 @@ import { FileBrowserOverlay } from './FileBrowserOverlay';
 import { PopupDialog } from './PopupDialog';
 import { wideDialogProps } from '../lib/wideDialog';
 import { ProcessOverlay } from './ProcessOverlay';
-import { ClientConfig, LayoutNode, LayoutRect } from '../state/types';
+import { ClientConfig, LayoutRect } from '../state/types';
 import {
   computeRectsAndDividers,
   dividerStyle,
-  layoutPercent,
   PANE_GAP,
   paneIdsInOrder,
   paneRectStyle,
-  splitRatio,
-  collapsedRect,
-  sameBounds,
   type Bounds,
-  Divider,
 } from '../state/layout';
 import { animateGhost } from '../lib/paneMotion';
 import { ClientMessage } from '../protocol/messages';
@@ -29,7 +24,9 @@ import { STARTUP_THEME } from '../state/startupTheme';
 import { recordWindowMruVisit } from '../state/windowMru';
 import { useWindowAttended } from '../lib/windowAttention';
 import { NARROW_QUERY } from '../lib/touch';
-import { DIVIDER_TOUCH_TARGET, trackPointerDrag } from '../hooks/useSidebarResize';
+import { DIVIDER_TOUCH_TARGET } from '../hooks/useSidebarResize';
+import { useDividerDrag } from '../hooks/useDividerDrag';
+import { useLayoutMotion } from '../hooks/useLayoutMotion';
 import { useMediaQuery } from '@astryxdesign/core/hooks';
 
 interface Props {
@@ -51,31 +48,11 @@ interface Props {
   /** Draft config applied locally to this active session while settings are open. */
   previewConfig: ClientConfig | null;
   send: (msg: ClientMessage) => void;
+  request: (msg: ClientMessage) => Promise<string | null>;
 }
 
-export function SessionPane({ sessionId, isActiveSession, previewConfig, send }: Props) {
+export function SessionPane({ sessionId, isActiveSession, previewConfig, send, request }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [ratioOverrides, setRatioOverrides] = useState<Map<string, number>>(new Map());
-  // Ratios sent with `resize_split`, kept as overrides until the server's
-  // layout has them, so a released divider doesn't jump back for a round trip.
-  const committedRef = useRef(new Map<string, number>());
-  // The shown window's layout and rects as last committed, to animate from.
-  const shownRef = useRef<{
-    windowId: string;
-    layoutKey: string;
-    layout: LayoutNode;
-    rects: Map<string, LayoutRect>;
-  } | null>(null);
-  const [ghosts, setGhosts] = useState<{ key: string; from: Bounds; to: Bounds }[]>([]);
-  const dropOverride = useCallback((id: string) => {
-    committedRef.current.delete(id);
-    setRatioOverrides((prev) => {
-      if (!prev.has(id)) return prev;
-      const next = new Map(prev);
-      next.delete(id);
-      return next;
-    });
-  }, []);
   const overlay = useStore((s) => s.overlay);
   const windowGridOpen = useStore((s) => s.windowGridOpen);
   const agentGridOpen = useStore((s) => s.agentGridOpen);
@@ -221,101 +198,27 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
     popupOpen,
   ]);
 
-  const handleDividerPointerDown = useCallback(
-    (divider: Divider, e: React.PointerEvent) => {
-      e.stopPropagation();
-
-      const container = containerRef.current;
-      if (!container) return;
-
-      const containerRect = container.getBoundingClientRect();
-      const isVertical = divider.orientation === 'vertical';
-      // The root's `column-gap` resolves PANE_GAP to px.
-      const gap = parseFloat(getComputedStyle(container).columnGap) || 0;
-
-      const computeRatio = (clientX: number, clientY: number): number => {
-        const containerSize = isVertical ? containerRect.width : containerRect.height;
-        const mousePos = isVertical ? clientX - containerRect.left : clientY - containerRect.top;
-        const mousePct = layoutPercent(mousePos, containerSize, gap);
-        const ratio = (mousePct - divider.boundsStart) / divider.boundsSize;
-        return Math.max(0.05, Math.min(0.95, ratio));
-      };
-
-      const onMove = (moveEvent: PointerEvent) => {
-        const ratio = computeRatio(moveEvent.clientX, moveEvent.clientY);
-        setRatioOverrides((prev) => new Map(prev).set(divider.id, ratio));
-      };
-
-      committedRef.current.delete(divider.id);
-      useStore.getState().setDividerDragging(true);
-      trackPointerDrag(e, onMove, (upEvent) => {
-        // A cancelled touch (a system gesture) keeps the old layout.
-        if (upEvent.type === 'pointerup') {
-          const ratio = computeRatio(upEvent.clientX, upEvent.clientY);
-          committedRef.current.set(divider.id, ratio);
-          setRatioOverrides((prev) => new Map(prev).set(divider.id, ratio));
-          send({ type: 'resize_split', session_id: sessionId, split_id: divider.id, ratio });
-          // Without the server's reply, fall back to its layout.
-          window.setTimeout(() => {
-            if (committedRef.current.get(divider.id) === ratio) dropOverride(divider.id);
-          }, 2000);
-        } else dropOverride(divider.id);
-        // Terminals fit once, to the released layout.
-        useStore.getState().setDividerDragging(false);
-      });
-    },
-    [sessionId, send, dropOverride],
-  );
-
-  const layout = activeWindow?.layout;
-  useEffect(() => {
-    for (const [id, ratio] of committedRef.current) {
-      const stored = layout ? splitRatio(layout, id) : null;
-      // f32 on the server.
-      if (stored === null || Math.abs(stored - ratio) < 1e-4) dropOverride(id);
-    }
-  }, [layout, dropOverride]);
-
   // Lay out only the active window. Panes of other windows are kept mounted but
   // hidden, so they need no rect of their own.
+  const shownWindowId = isActiveSession && activeWindow ? activeWindow.id : null;
+  const { overrides, onDividerPointerDown } = useDividerDrag({
+    sessionId,
+    windowId: shownWindowId,
+    layout: activeWindow?.layout,
+    zoomed: !!zoomedPaneId,
+    containerRef,
+    request,
+  });
   const layoutRects = activeWindow
-    ? computeRectsAndDividers(activeWindow.layout, { top: 0, left: 0, width: 100, height: 100 }, ratioOverrides)
+    ? computeRectsAndDividers(activeWindow.layout, { top: 0, left: 0, width: 100, height: 100 }, overrides)
     : { rects: [], dividers: [] };
   const { dividers } = layoutRects;
-
-  // When the shown window's layout changes (a split, a close, a layout cycle),
-  // each pane's box animates from where it was; new panes grow from the outer
-  // edge of their split. Window switches, drags, and zoom don't animate.
-  const layoutKey = activeWindow ? JSON.stringify(activeWindow.layout) : '';
-  const prevShown = shownRef.current;
-  const moved =
-    isActiveSession &&
-    !!activeWindow &&
-    !zoomedPaneId &&
-    prevShown !== null &&
-    prevShown.windowId === activeWindow.id &&
-    prevShown.layoutKey !== layoutKey;
-  const rects: LayoutRect[] = moved
-    ? layoutRects.rects.map((rect) => {
-        const from = prevShown.rects.get(rect.paneId) ?? collapsedRect(activeWindow.layout, rect.paneId, rect);
-        return from && !sameBounds(from, rect) ? { ...rect, from } : rect;
-      })
-    : layoutRects.rects;
-  const rectByPane = new Map(rects.map((r) => [r.paneId, r]));
-  useLayoutEffect(() => {
-    if (moved) {
-      // Closed panes' empty boxes shrink to the edge they came from.
-      const closed = [...prevShown.rects.values()].flatMap((rect) => {
-        if (rectByPane.has(rect.paneId)) return [];
-        const to = collapsedRect(prevShown.layout, rect.paneId, rect);
-        return to ? [{ key: rect.paneId, from: rect, to }] : [];
-      });
-      if (closed.length) setGhosts((prev) => [...prev, ...closed]);
-    }
-    shownRef.current =
-      isActiveSession && activeWindow && !zoomedPaneId
-        ? { windowId: activeWindow.id, layoutKey, layout: activeWindow.layout, rects: rectByPane }
-        : null;
+  const { rects, rectByPane, ghosts, removeGhost, settling } = useLayoutMotion({
+    windowId: shownWindowId,
+    layout: activeWindow?.layout,
+    zoomed: !!zoomedPaneId,
+    rects: layoutRects.rects,
+    containerRef,
   });
   const HIDDEN: LayoutRect = { paneId: '', top: 0, left: 0, width: 100, height: 100 };
 
@@ -445,15 +348,17 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
           from={ghost.from}
           to={ghost.to}
           color={config?.theme?.selectionBackground ?? STARTUP_THEME.selectionBackground}
-          onDone={() => setGhosts((prev) => prev.filter((g) => g !== ghost))}
+          onDone={() => removeGhost(ghost)}
         />
       ))}
       {!zoomedPaneId &&
         dividers.map((divider) => (
           <div
             key={divider.id}
-            onPointerDown={(e) => handleDividerPointerDown(divider, e)}
+            onPointerDown={(e) => onDividerPointerDown(divider, e)}
             className={DIVIDER_TOUCH_TARGET}
+            // Final positions, ahead of the boxes still moving there.
+            data-settling={settling || undefined}
             style={
               divider.orientation === 'vertical'
                 ? {
@@ -462,6 +367,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
                     transform: 'translateX(-50%)',
                     width: '8px',
                     cursor: 'col-resize',
+                    pointerEvents: settling ? 'none' : undefined,
                     zIndex: 10,
                   }
                 : {
@@ -470,6 +376,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
                     transform: 'translateY(-50%)',
                     height: '8px',
                     cursor: 'row-resize',
+                    pointerEvents: settling ? 'none' : undefined,
                     zIndex: 10,
                   }
             }
