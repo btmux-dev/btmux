@@ -330,6 +330,15 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         return result;
     }
 
+    if let ClientMessage::ClearPane { pane_id } = &cmd {
+        let mgr = state.read().await;
+        let Some(pty) = mgr.find_pty(*pane_id) else {
+            return Err("Pane no longer exists".into());
+        };
+        pty.clear();
+        return Ok(());
+    }
+
     if let ClientMessage::NvimOpen { path, line } = &cmd {
         return crate::ws::nvim::open(path, *line).await;
     }
@@ -541,6 +550,7 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         | ClientMessage::SaveConfig { .. }
         | ClientMessage::ResetConfig
         | ClientMessage::WritePaneInput { .. }
+        | ClientMessage::ClearPane { .. }
         | ClientMessage::CapturePane { .. }
         | ClientMessage::OpenPopup { .. }
         | ClientMessage::ClosePopup { .. }
@@ -1094,6 +1104,10 @@ pub(crate) enum ClientMessage {
         session_id: Uuid,
         pane_id: Uuid,
         text: String,
+    },
+    /// Clear a pane's (or popup's) scrollback and the lines above its cursor.
+    ClearPane {
+        pane_id: Uuid,
     },
     /// Run a command line in a popup over the pane, in its directory.
     OpenPopup {

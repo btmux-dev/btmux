@@ -41,7 +41,7 @@ import { APPEARANCES } from '../lib/appearance';
 import { worktreeLabel } from '../lib/gitIdentity';
 import { actionLabel, popupIndex } from '../lib/actionLabel';
 import { keyCaster } from '../lib/keyCast';
-import { IS_MAC } from '../lib/nvimKeys';
+import { OPEN_SETTINGS, workbenchKey, type WorkbenchKey } from '../lib/workbenchKeys';
 
 /** How long the display-panes (prefix + q) number overlay stays up, in ms. */
 const DISPLAY_PANES_MS = 1500;
@@ -73,19 +73,19 @@ function sendPrefix(sessionId: string, p: ParsedKey, send: (msg: ClientMessage) 
   if (paneId && text) send({ type: 'write_pane_input', session_id: sessionId, pane_id: paneId, text });
 }
 
-/** Cmd+Shift+P (Ctrl+Shift+P off macOS) opens the command palette, as in VS Code. */
-function isPaletteChord(e: KeyboardEvent): boolean {
-  return (
-    e.key.toLowerCase() === 'p' &&
-    e.shiftKey &&
-    !e.altKey &&
-    (IS_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)
-  );
-}
-
-/** Whether VS Code's iframe has focus; it keeps the chord for its own palette. */
-function vscodeFocused(): boolean {
-  return document.activeElement?.matches('iframe[title="VS Code"]') === true;
+/** VS Code's key `e` presses where it applies; VS Code keeps its own while focused. */
+function workbenchChord(e: KeyboardEvent): WorkbenchKey | undefined {
+  if (document.activeElement?.matches('iframe[title="VS Code"]')) return undefined;
+  const key = workbenchKey(e);
+  if (!key || (key.terminal && !inPaneTerminal(e.target))) return undefined;
+  // Quick open is the native editor's, which runs its own for its pane while focused.
+  if (
+    key.action === 'editor-quick-open' &&
+    ((useStore.getState().config?.editor ?? 'native') !== 'native' ||
+      (e.target instanceof Element && e.target.closest('[data-native-editor]')))
+  )
+    return undefined;
+  return key;
 }
 
 /** Actions that stay armed for `repeat-time` after the prefix (tmux `bind -r`). */
@@ -180,7 +180,8 @@ export function useKeybindings(
       const dataset = (e.target as HTMLElement | null)?.dataset;
       const fromSurface =
         dataset?.nvimInput !== undefined || dataset?.browserInput !== undefined || dataset?.nativeEditor !== undefined;
-      if (isPaletteChord(e) && !vscodeFocused()) {
+      const chord = workbenchChord(e);
+      if (chord) {
         e.preventDefault();
         e.stopPropagation();
         // Like a handled binding, it ends an armed prefix and repeat window.
@@ -190,7 +191,7 @@ export function useKeybindings(
           setPrefixActive(false);
           prefixActiveRef.current = false;
         }
-        // Opens wherever a prefix binding would run.
+        // Runs wherever a prefix binding would.
         const modal =
           overlayRef.current ||
           settingsOpenRef.current ||
@@ -200,8 +201,13 @@ export function useKeybindings(
           switcherOpenRef.current;
         if (!modal) {
           hidePaneNumbers();
-          keyCaster.note(e, { kind: 'binding', label: castLabel('command-palette') });
-          runAction('command-palette', sessionIdRef.current, sendRef.current, onSwitchToSessionRef.current);
+          if (chord.action === OPEN_SETTINGS) {
+            keyCaster.note(e, { kind: 'binding', label: 'Settings' });
+            useStore.getState().setSettingsOpen(true);
+          } else {
+            keyCaster.note(e, { kind: 'binding', label: castLabel(chord.action) });
+            runAction(chord.action, sessionIdRef.current, sendRef.current, onSwitchToSessionRef.current);
+          }
         }
         return;
       }
@@ -449,6 +455,9 @@ export function runAction(
     }
     case 'search-pane':
       if (termId) store.setSearchPaneId(termId);
+      break;
+    case 'clear-pane':
+      if (termId) send({ type: 'clear_pane', pane_id: termId });
       break;
     case 'toggle-latex':
       if (paneId) store.toggleLatex(paneId);

@@ -250,7 +250,11 @@ and touch screens get a `MobileKeyBar` inside it, since the dialog is modal.
 - Output fans out via a `tokio::sync::broadcast` channel, so multiple browser tabs can attach to the same pane. Replay uses `pty/replay.rs`: a bounded chunk journal (8 MiB per pane, 128 MiB
   shared history budget) plus a VT100 screen checkpoint at its head. Eviction
   advances the checkpoint. Resize events are journaled and broadcast in the same
-  stream; resizing never clears history. The first interactive viewer owns PTY
+  stream; resizing never clears history. `clear-pane` (`PtyHandle::clear`)
+  folds the journal into the checkpoint and sends viewers `CSI n S`,
+  `CSI 3 J`, `CSI n A`: the cursor's line to the top and no scrollback, as
+  VS Code's clear does, without the shell (Ctrl-L is text to shells without a
+  line editor, or in vi mode). The first interactive viewer owns PTY
   dimensions until it disconnects or another viewer claims them (the browser
   claims on keydown, paste, or pointerdown, which covers swipes). Followers and
   mirrors keep the ordered server sizes instead of fitting locally: a local
@@ -1122,7 +1126,9 @@ the browser. Actions are kebab-case strings (`split-vertical`, `new-session`, â€
 each mapping 1:1 to a case in `runAction` (`useKeybindings.ts`). **To add a binding
 you must touch both:** add the default in `config.rs` and the handler case in
 `useKeybindings.ts`. `0-9` window-select is special-cased in the frontend, not in
-the bind table.
+the bind table, as are VS Code's keys (`lib/workbenchKeys.ts`), which run
+actions without the prefix (terminal ones only from a pane's terminal) and
+are left to VS Code while it has focus.
 
 `useKeybindings.ts` parses the configured prefix (the frontend matches `C-`/`M-`
 modifiers + key),

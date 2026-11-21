@@ -26,7 +26,8 @@ import { KeyCap, KeyHint } from './KeyHint';
 import { actionLabel } from '../lib/actionLabel';
 import { runAction } from '../hooks/useKeybindings';
 import { EDITOR_COMMANDS } from '../lib/nativeEditor/registry';
-import { editorKeyRows, editorKeys, type EditorKey } from '../lib/nativeEditor/keyHelp';
+import { cmKeyCap, editorKeyRows, editorKeys, type EditorKey } from '../lib/nativeEditor/keyHelp';
+import { OPEN_SETTINGS, workbenchKeys, workbenchKeysFor } from '../lib/workbenchKeys';
 import { EditorKeys } from './EditorKeys';
 import { usePressHint } from '../hooks/usePressHint';
 import { smoothScrollBy } from '../lib/smoothScroll';
@@ -63,6 +64,7 @@ const KEY_SECTIONS: { title: string; actions: string[] }[] = [
       'display-panes',
       'capture-pane',
       'search-pane',
+      'clear-pane',
       'scroll-page-up',
       'scroll-page-down',
       'paste-clipboard',
@@ -162,8 +164,13 @@ const UNAVAILABLE_EDITOR: Record<string, (config: ClientConfig | null) => boolea
   browser: (config) => !config?.browser,
 };
 
-/** A palette entry, with the native editor's keys for its action. */
+/** A palette entry, with the keys that run it without the prefix. */
 type PaletteItem = Command & { editorKeys?: EditorKey[] };
+
+/** VS Code's keys for an action, as palette keys. */
+function chordKeys(action: string): EditorKey[] {
+  return workbenchKeysFor(action).map((key) => ({ caps: [cmKeyCap(key)] }));
+}
 
 /** Keybinding actions as palette entries, after the server's own commands. */
 function actionCommands(commands: Command[], config: ClientConfig | null): PaletteItem[] {
@@ -182,7 +189,7 @@ function actionCommands(commands: Command[], config: ClientConfig | null): Palet
         label: actionLabel(action, config?.popups),
         description: bound ? `${prefix}, then ${bound.join(' or ')}` : '',
         confirm: null,
-        editorKeys: EDITOR_COMMANDS.includes(action) ? editorKeys(action, vim) : undefined,
+        editorKeys: EDITOR_COMMANDS.includes(action) ? editorKeys(action, vim) : chordKeys(action),
       };
     });
 }
@@ -237,7 +244,9 @@ export function Overlay({ sessionId, send, config }: Props) {
     () =>
       overlay?.mode === 'command'
         ? [
-            ...overlay.commands,
+            ...overlay.commands.map((command) =>
+              command.id === 'open-config' ? { ...command, editorKeys: chordKeys(OPEN_SETTINGS) } : command,
+            ),
             ...(isDesktopApp() ? [SWITCH_SERVER, NEW_WINDOW] : []),
             ...actionCommands(overlay.commands, config),
           ]
@@ -649,6 +658,22 @@ export function Overlay({ sessionId, send, config }: Props) {
                   </Section>
                 ) : null;
               })}
+              <Section variant="transparent" data-workbench-key-help>
+                <Heading level={3}>VS Code keys</Heading>
+                <Text color="secondary">Without the prefix. VS Code keeps them while it has focus.</Text>
+                <List density="compact" hasDividers>
+                  {workbenchKeys().map(({ action, key, terminal }) => (
+                    <ListItem
+                      key={action}
+                      label={
+                        (action === OPEN_SETTINGS ? 'Settings' : actionLabel(action, config?.popups)) +
+                        (terminal ? ' (in a terminal)' : '')
+                      }
+                      endContent={<KeyCap keys={cmKeyCap(key)} />}
+                    />
+                  ))}
+                </List>
+              </Section>
               {config && (
                 <Section variant="transparent" data-editor-key-help>
                   <Heading level={3}>Native editor</Heading>

@@ -888,7 +888,7 @@ runtime: Runtime | null, } | { "type": "rename_session", session_id: string, nam
 /**
  * The VS Code workspace to open it in, as for `vscode_open`.
  */
-folder: string | null, } | { "type": "kill_agent", pane_id: string, agent_id: number, } | { "type": "write_pane_input", session_id: string, pane_id: string, text: string, } | { "type": "open_popup", pane_id: string, command: string, title: string | null, } | { "type": "close_popup", id: string, } | { "type": "open_file", pane_id: string, path: string | null, line: number | null, } | { "type": "change_directory", pane_id: string, path: string, } | { "type": "nvim_open", path: string, line: number | null, } | { "type": "vscode_open", path: string, line: number | null,
+folder: string | null, } | { "type": "kill_agent", pane_id: string, agent_id: number, } | { "type": "write_pane_input", session_id: string, pane_id: string, text: string, } | { "type": "clear_pane", pane_id: string, } | { "type": "open_popup", pane_id: string, command: string, title: string | null, } | { "type": "close_popup", id: string, } | { "type": "open_file", pane_id: string, path: string | null, line: number | null, } | { "type": "change_directory", pane_id: string, path: string, } | { "type": "nvim_open", path: string, line: number | null, } | { "type": "vscode_open", path: string, line: number | null,
 /**
  * The workspace of the window to open it in; all windows without one.
  */
