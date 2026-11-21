@@ -12,6 +12,7 @@ import { ClientConfig, LayoutRect } from '../state/types';
 import { useStore } from '../state/store';
 import { STARTUP_THEME } from '../state/startupTheme';
 import { paneRectStyle } from '../state/layout';
+import { usePaneMotion } from '../lib/paneMotion';
 import { DOUBLE_ESC_MS } from './NvimSurface';
 import { isDesktopApp } from '../lib/desktopApp';
 import { IS_MAC } from '../lib/nvimKeys';
@@ -89,6 +90,8 @@ export function VscodeSurface({
 }) {
   const visible = open && rect !== null;
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  usePaneMotion(rootRef, rect);
   const [loaded, setLoaded] = useState(false);
   const shown = useStore((s) => s.vscodeShown);
   // Changing the iframe's src (or moving it in the DOM) reloads VS Code, so
@@ -265,6 +268,7 @@ export function VscodeSurface({
 
   return (
     <div
+      ref={rootRef}
       inert={!visible}
       aria-hidden={!visible}
       style={{

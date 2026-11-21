@@ -47,6 +47,28 @@ export function splitRatio(layout: LayoutNode, id: string): number | null {
   return splitRatio(a, id) ?? splitRatio(b, id);
 }
 
+export function sameBounds(a: Bounds, b: Bounds): boolean {
+  return a.top === b.top && a.left === b.left && a.width === b.width && a.height === b.height;
+}
+
+/**
+ * `rect` collapsed to the outer edge of the split that directly holds the pane,
+ * where a new pane grows from and a closed one shrinks to; `null` for a pane
+ * not directly in a split.
+ */
+export function collapsedRect(layout: LayoutNode, paneId: string, rect: Bounds): Bounds | null {
+  if (layout.type === 'leaf') return null;
+  const vertical = layout.type === 'v_split';
+  const [a, b] = vertical ? [layout.left!, layout.right!] : [layout.top!, layout.bottom!];
+  const isPane = (node: LayoutNode) => node.type === 'leaf' && node.pane_id === paneId;
+  if (isPane(a)) return vertical ? { ...rect, width: 0 } : { ...rect, height: 0 };
+  if (isPane(b))
+    return vertical
+      ? { ...rect, left: rect.left + rect.width, width: 0 }
+      : { ...rect, top: rect.top + rect.height, height: 0 };
+  return collapsedRect(a, paneId, rect) ?? collapsedRect(b, paneId, rect);
+}
+
 /**
  * Decode a recursive `LayoutNode` tree into percentage-based pane rects plus the
  * divider lines between splits. Shared by SessionPane (the live grid, which uses

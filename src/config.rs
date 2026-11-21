@@ -931,8 +931,9 @@ pub struct FileConfig {
     /// which another repeatable key runs without the prefix. 0 disables.
     #[serde(rename = "repeat-time")]
     pub repeat_time: u32,
-    /// Enable CSS animations/transitions in the browser (e.g. border highlight
-    /// when switching panes). Set to false to disable all animated effects.
+    /// Enable animations in the browser (e.g. border highlight when switching
+    /// panes, panes growing and shrinking as they split and close). Set to
+    /// false to disable all animated effects.
     pub animations: bool,
     /// Show a per-pane title bar (shell/title, cwd, dimensions, zoom tag) above
     /// each pane. Defaults to false; set to true to show pane metadata.
@@ -2040,8 +2041,9 @@ pub fn generate_config_toml() -> String {
 # runs without pressing the prefix again (tmux repeat-time). 0 (default) disables.
 # repeat-time = {DEFAULT_REPEAT_TIME}
 
-# Enable CSS animations/transitions in the browser (e.g. border highlight when
-# switching panes). Set to false to disable all animated effects.
+# Enable animations in the browser (e.g. border highlight when switching panes,
+# panes growing and shrinking as they split and close). Set to false to disable
+# all animated effects.
 # animations = {DEFAULT_ANIMATIONS}
 
 # Show a per-pane title bar (shell/title, working directory, dimensions, zoom

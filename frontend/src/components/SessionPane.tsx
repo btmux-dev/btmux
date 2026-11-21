@@ -7,7 +7,7 @@ import { FileBrowserOverlay } from './FileBrowserOverlay';
 import { PopupDialog } from './PopupDialog';
 import { wideDialogProps } from '../lib/wideDialog';
 import { ProcessOverlay } from './ProcessOverlay';
-import { ClientConfig, LayoutRect } from '../state/types';
+import { ClientConfig, LayoutNode, LayoutRect } from '../state/types';
 import {
   computeRectsAndDividers,
   dividerStyle,
@@ -16,8 +16,12 @@ import {
   paneIdsInOrder,
   paneRectStyle,
   splitRatio,
+  collapsedRect,
+  sameBounds,
+  type Bounds,
   Divider,
 } from '../state/layout';
+import { animateGhost } from '../lib/paneMotion';
 import { ClientMessage } from '../protocol/messages';
 import { githubKey, useStore } from '../state/store';
 import { useFileStore } from '../state/fileStore';
@@ -55,6 +59,14 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
   // Ratios sent with `resize_split`, kept as overrides until the server's
   // layout has them, so a released divider doesn't jump back for a round trip.
   const committedRef = useRef(new Map<string, number>());
+  // The shown window's layout and rects as last committed, to animate from.
+  const shownRef = useRef<{
+    windowId: string;
+    layoutKey: string;
+    layout: LayoutNode;
+    rects: Map<string, LayoutRect>;
+  } | null>(null);
+  const [ghosts, setGhosts] = useState<{ key: string; from: Bounds; to: Bounds }[]>([]);
   const dropOverride = useCallback((id: string) => {
     committedRef.current.delete(id);
     setRatioOverrides((prev) => {
@@ -266,10 +278,45 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
 
   // Lay out only the active window. Panes of other windows are kept mounted but
   // hidden, so they need no rect of their own.
-  const { rects, dividers } = activeWindow
+  const layoutRects = activeWindow
     ? computeRectsAndDividers(activeWindow.layout, { top: 0, left: 0, width: 100, height: 100 }, ratioOverrides)
     : { rects: [], dividers: [] };
+  const { dividers } = layoutRects;
+
+  // When the shown window's layout changes (a split, a close, a layout cycle),
+  // each pane's box animates from where it was; new panes grow from the outer
+  // edge of their split. Window switches, drags, and zoom don't animate.
+  const layoutKey = activeWindow ? JSON.stringify(activeWindow.layout) : '';
+  const prevShown = shownRef.current;
+  const moved =
+    isActiveSession &&
+    !!activeWindow &&
+    !zoomedPaneId &&
+    prevShown !== null &&
+    prevShown.windowId === activeWindow.id &&
+    prevShown.layoutKey !== layoutKey;
+  const rects: LayoutRect[] = moved
+    ? layoutRects.rects.map((rect) => {
+        const from = prevShown.rects.get(rect.paneId) ?? collapsedRect(activeWindow.layout, rect.paneId, rect);
+        return from && !sameBounds(from, rect) ? { ...rect, from } : rect;
+      })
+    : layoutRects.rects;
   const rectByPane = new Map(rects.map((r) => [r.paneId, r]));
+  useLayoutEffect(() => {
+    if (moved) {
+      // Closed panes' empty boxes shrink to the edge they came from.
+      const closed = [...prevShown.rects.values()].flatMap((rect) => {
+        if (rectByPane.has(rect.paneId)) return [];
+        const to = collapsedRect(prevShown.layout, rect.paneId, rect);
+        return to ? [{ key: rect.paneId, from: rect, to }] : [];
+      });
+      if (closed.length) setGhosts((prev) => [...prev, ...closed]);
+    }
+    shownRef.current =
+      isActiveSession && activeWindow && !zoomedPaneId
+        ? { windowId: activeWindow.id, layoutKey, layout: activeWindow.layout, rects: rectByPane }
+        : null;
+  });
   const HIDDEN: LayoutRect = { paneId: '', top: 0, left: 0, width: 100, height: 100 };
 
   // display-panes (prefix + q): map each pane id to its layout-order index, the
@@ -392,6 +439,15 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
             ];
           }),
         )}
+      {ghosts.map((ghost) => (
+        <PaneGhost
+          key={ghost.key}
+          from={ghost.from}
+          to={ghost.to}
+          color={config?.theme?.selectionBackground ?? STARTUP_THEME.selectionBackground}
+          onDone={() => setGhosts((prev) => prev.filter((g) => g !== ghost))}
+        />
+      ))}
       {!zoomedPaneId &&
         dividers.map((divider) => (
           <div
@@ -490,5 +546,27 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
           );
         })}
     </div>
+  );
+}
+
+/** A closed pane's empty box, shrinking to the edge it grew from. */
+function PaneGhost({ from, to, color, onDone }: { from: Bounds; to: Bounds; color: string; onDone: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const done = useRef(onDone);
+  done.current = onDone;
+  useLayoutEffect(() => animateGhost(ref.current!, from, to, () => done.current()), [from, to]);
+  return (
+    <div
+      ref={ref}
+      aria-hidden
+      data-pane-ghost
+      style={{
+        position: 'absolute',
+        ...paneRectStyle(to),
+        border: `1px solid ${color}`,
+        borderRadius: 'var(--radius-container)',
+        pointerEvents: 'none',
+      }}
+    />
   );
 }

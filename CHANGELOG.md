@@ -13,6 +13,9 @@ actions, saved state, and API types can change in any release.
 - `Cmd+Shift+P` (`Ctrl+Shift+P` on Windows and Linux) opens the command
   palette, as in VS Code.
   ([#182](https://github.com/btmux-dev/btmux/pull/182))
+- Panes grow and shrink into place when they split, close, or change layout.
+  The programs in them resize once, at the start, so prompts don't flicker.
+  ([#182](https://github.com/btmux-dev/btmux/pull/182))
 - Settings' **Show TOML** panel can show the settings as Home Manager's
   `programs.btmux.settings` in Nix, ready to paste.
   ([#180](https://github.com/btmux-dev/btmux/pull/180))

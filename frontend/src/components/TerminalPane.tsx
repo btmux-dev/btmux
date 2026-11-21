@@ -6,6 +6,7 @@ import { AgentStatus, LayoutRect, ClientConfig } from '../state/types';
 import { ClientMessage } from '../protocol/messages';
 import { STARTUP_THEME } from '../state/startupTheme';
 import { paneRectStyle } from '../state/layout';
+import { usePaneMotion } from '../lib/paneMotion';
 import { PaneCorner, PaneTitleBar } from './PaneTitleBar';
 import { mix, withAlpha } from '../lib/chrome-colors';
 import { findPaneBorderStyle } from '../lib/paneSwitchBorder';
@@ -122,6 +123,8 @@ export function TerminalPane({
 }: Props) {
   const outerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Layout changes animate the box; the terminal keeps its final size.
+  usePaneMotion(outerRef, rect, containerRef);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
 

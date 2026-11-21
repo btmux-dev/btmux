@@ -9,6 +9,7 @@ import { ClientConfig, LayoutRect } from '../state/types';
 import { useStore } from '../state/store';
 import { STARTUP_THEME } from '../state/startupTheme';
 import { paneRectStyle } from '../state/layout';
+import { usePaneMotion } from '../lib/paneMotion';
 import {
   getCursorAnimationDuration,
   getSmoothScrollDuration,
@@ -92,6 +93,7 @@ export function NvimSurface({
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const layersRef = useRef<HTMLDivElement>(null);
+  usePaneMotion(containerRef, rect);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const gridRef = useRef<NvimGrid | null>(null);
   const refitRef = useRef<() => void>(() => {});

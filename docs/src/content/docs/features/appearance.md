@@ -89,7 +89,10 @@ The server fetches remote images itself and serves them to the browser.
 - `toolbar-opacity`, `toolbar-blur`, and `toolbar-saturate` set the side bar
   and status bar: how opaque their background is, and how much they blur and
   saturate what shows through. By default they're clear, with a 40 px blur.
-- `animations = false` turns off all animated effects.
+- Panes grow and shrink into place when they split, close, or change layout,
+  while the programs in them resize once, at the start.
+- `animations = false` turns off all animated effects, as does the system's
+  reduced motion setting for panes.
 
 ## For programs in panes
 

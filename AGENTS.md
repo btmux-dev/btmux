@@ -1007,7 +1007,12 @@ the server's; with neither a Mac, Chromium maps them itself.
 `Leaf` / `VSplit` / `HSplit`. It is serialized with serde `tag = "type"`,
 `rename_all = "snake_case"`, and the frontend's `LayoutNode`
 (`frontend/src/state/types.ts`) plus `computeRectsAndDividers` in
-`frontend/src/state/layout.ts` decode it into percentage-based rects. **After changing Rust wire types, run `just protocol`.** Test-only `ts-rs`
+`frontend/src/state/layout.ts` decode it into percentage-based rects.
+When the shown window's layout changes, `SessionPane` gives each rect the one
+it moves `from` (new panes grow from the outer edge of their split, closed
+ones leave a box shrinking to it), and `lib/paneMotion.ts` animates boxes with
+the Web Animations API: a pane's terminal is held at its final size and
+surfaces over panes are revealed by a clip, so contents resize once. **After changing Rust wire types, run `just protocol`.** Test-only `ts-rs`
 derives generate `frontend/src/generated/protocol.ts`; frontend aliases preserve
 existing import names. The generated layout is a discriminated union.
 

@@ -105,4 +105,6 @@ export interface LayoutRect {
   left: number;
   width: number;
   height: number;
+  /** Where the box animates from, when a layout change moved it (`lib/paneMotion.ts`). */
+  from?: { top: number; left: number; width: number; height: number };
 }

@@ -447,13 +447,76 @@ try {
   await dragPage.goto(url);
   await dragPage.getByLabel('Access token').fill(token);
   await dragPage.getByRole('button', { name: 'Connect', exact: true }).click();
+  // In a new window, with one pane.
   await dragPage.locator('[data-pane-terminal]').first().click();
+  const windowCount = () =>
+    dragPage.evaluate(async () => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      return useStore.getState().allSessions[0].windows.length as number;
+    });
+  const windowsBefore = await windowCount();
+  await dragPage.keyboard.press('Control+a');
+  await dragPage.keyboard.press('c');
+  const leftId = await waitForAsync(
+    dragPage,
+    async (before) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      const session = useStore.getState().allSessions[0];
+      const window = session.windows[session.active_window];
+      const id = window.panes[0]?.id;
+      return session.windows.length > before && window.panes.length === 1 && useStore.getState().terminals.has(id)
+        ? (id as string)
+        : null;
+    },
+    windowsBefore,
+  );
+  const left = dragPage.locator(`[data-pane-id="${leftId}"][style]`);
+  await left.locator('[data-pane-terminal]').click();
   const paneCount = await dragPage.locator('[data-pane-terminal]').count();
+  // A split animates the box, but the terminal resizes once, at the start.
+  const fullWidth = (await left.boundingBox())!.width;
+  const splitFrames = left.evaluate(async (el, id) => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    let resizes = 0;
+    const off = useStore
+      .getState()
+      .terminals.get(id)
+      .onResize(() => resizes++);
+    const widths: number[] = [];
+    const end = performance.now() + 800;
+    await new Promise<void>((resolve) => {
+      const tick = () => {
+        widths.push(el.getBoundingClientRect().width);
+        if (performance.now() < end) requestAnimationFrame(tick);
+        else resolve();
+      };
+      requestAnimationFrame(tick);
+    });
+    off();
+    return { resizes, widths };
+  }, leftId);
   await dragPage.keyboard.press('Control+a');
   await dragPage.keyboard.press('%');
   await dragPage.waitForFunction((n) => document.querySelectorAll('[data-pane-terminal]').length > n, paneCount);
-  const left = dragPage.locator('[data-pane-id]:visible').first();
-  const leftId = (await left.getAttribute('data-pane-id'))!;
+  // Layout motion uses the Web Animations API; CSS animations (a connecting
+  // pulse, the focus ring's bloom) aren't it.
+  const settled = () =>
+    dragPage.evaluate(() =>
+      Promise.all(
+        document
+          .getAnimations()
+          .filter((animation) => animation.constructor === Animation)
+          .map((animation) => animation.finished),
+      ),
+    );
+  const split = await splitFrames;
+  await settled();
+  const halfWidth = (await left.boundingBox())!.width;
+  assert.equal(split.resizes, 1, `the terminal resizes once: ${split.resizes} ${split.widths.map(Math.round)}`);
+  assert(
+    split.widths.some((width) => width < fullWidth - 50 && width > halfWidth + 50),
+    `the box animates: ${split.widths.map(Math.round)}`,
+  );
   const cols = () =>
     dragPage.evaluate(async (id) => {
       const { useStore } = await import('/src/state/store.tsx' as string);
@@ -498,8 +561,34 @@ try {
     [leftId, startCols] as const,
   );
   assert((await left.boundingBox())!.width < startWidth - 150, 'the server keeps the released layout');
+  await settled();
+
+  // Closing a pane shrinks its empty box away while the other grows.
+  const rightId = await dragPage.evaluate(async (leftId) => {
+    const { useStore } = await import('/src/state/store.tsx' as string);
+    const session = useStore.getState().allSessions[0];
+    return session.windows[session.active_window].panes.find((pane: { id: string }) => pane.id !== leftId).id as string;
+  }, leftId);
+  await dragPage.locator(`[data-pane-id="${rightId}"][style] [data-pane-terminal]`).click();
+  await dragPage.keyboard.type('exit');
+  await dragPage.keyboard.press('Enter');
+  await dragPage.locator('[data-pane-ghost]').waitFor();
+  await dragPage.locator('[data-pane-ghost]').waitFor({ state: 'detached' });
+  await settled();
+  assert.equal(Math.round((await left.boundingBox())!.width), Math.round(fullWidth));
+
+  // Reduced motion changes the layout at once.
+  await dragPage.emulateMedia({ reducedMotion: 'reduce' });
+  const beforeReduced = await dragPage.locator('[data-pane-terminal]').count();
+  await dragPage.keyboard.press('Control+a');
+  await dragPage.keyboard.press('%');
+  await dragPage.waitForFunction((n) => document.querySelectorAll('[data-pane-terminal]').length > n, beforeReduced);
+  assert.equal(
+    await dragPage.evaluate(() => document.getAnimations().filter((a) => a.constructor === Animation).length),
+    0,
+  );
   await dragPage.close();
-  console.log('PASS dragging a divider resizes the terminal once, on release');
+  console.log('PASS splits and closes animate, and dragging a divider resizes the terminal once, on release');
 } finally {
   await browser.close();
 }

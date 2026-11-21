@@ -26,6 +26,7 @@ import { ClientConfig, LayoutRect } from '../state/types';
 import { useStore } from '../state/store';
 import { STARTUP_THEME } from '../state/startupTheme';
 import { paneRectStyle } from '../state/layout';
+import { usePaneMotion } from '../lib/paneMotion';
 import { DOUBLE_ESC_MS } from './NvimSurface';
 
 const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/browser`;
@@ -65,6 +66,8 @@ export function BrowserSurface({
   const visible = open && rect !== null;
   const theme = config?.theme ?? STARTUP_THEME;
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  usePaneMotion(rootRef, rect);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const addressRef = useRef<HTMLInputElement>(null);
   const socketRef = useRef<WebSocket | null>(null);
@@ -422,6 +425,7 @@ export function BrowserSurface({
 
   return (
     <VStack
+      ref={rootRef}
       inert={!visible}
       aria-hidden={!visible}
       gap={0}
