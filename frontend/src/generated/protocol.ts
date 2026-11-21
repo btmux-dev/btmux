@@ -775,6 +775,16 @@ note: string | null, };
 export type HealthStatus = "ok" | "missing" | "warning" | "error";
 
 // prettier-ignore
+export type HealthEvent = { "type": "plan", groups: Array<HealthGroupPlan>, path: Array<string>, } | { "type": "check", group: number, index: number, check: HealthCheck, };
+
+// prettier-ignore
+export type HealthGroupPlan = { title: string,
+/**
+ * Check names.
+ */
+checks: Array<string>, };
+
+// prettier-ignore
 export type TailscaleStatus = { "state": "starting" } | { "state": "serving", url: string, } | { "state": "error", message: string, };
 
 // prettier-ignore

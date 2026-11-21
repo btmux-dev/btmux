@@ -42,7 +42,8 @@ split into four `--shard I/N` jobs instead), with Vite's dependency cache built
 first (`vite optimize`) so concurrent stacks don't race to build it, and output
 printed per file as it ends. Stacks put a fake
 `multipass` (`frontend/test-bin`) first on the server's `PATH`, logging its calls
-to the stack's `multipass` dir (`sandbox-browser-test.ts`), so no test starts a VM;
+to the stack's `multipass` dir (`sandbox-browser-test.ts`), so no test starts a VM,
+and a fake `agy`, whose `--version` waits while the stack's `agy/hold` exists;
 its `test-editor` is the server's `$EDITOR`. Stack shells read `shrc` in the
 stack's config dir (`ENV`) if a file writes one. Async page predicates must
 use `waitForAsync` (`browser-test-utils.ts`): `page.waitForFunction` treats a
@@ -140,7 +141,7 @@ derived from each browser tab's URL, so session navigation is per-tab.
 
 7. **`/ws/browser`** (`src/browser.rs`) — the shared server-side Chromium: JPEG frames as binary messages and page state as JSON, with input and navigation coming back as JSON. See *Browser surface* below.
 
-REST handlers and MCP tools share the same `SessionManager`; structural mutations must call `broadcast_state` so browser tabs stay synchronized. REST lives under `/api` and includes session/window/pane/layout operations, pane input/output, notifications, and raw local-file serving. Automation routes carry a test-only `utoipa::path` attribute giving their statuses and response bodies, collected in `api/openapi.rs`, which also lists the routes left out (`UNDOCUMENTED`); its tests check the document against the router, the sources, and real replies. `GET /api/openapi.json` serves it, and the docs render it as the API reference and list its operations in the REST API page (`docs/src/remark-api-endpoints.mjs`). `GET /api/system` (`system_info.rs`) reports the server host fastfetch-style (`sysinfo`, plus `ioreg` for the Mac model name and the shell's `--version`) for the About dialog's System tab and the `system_info` MCP tool, which adds what the browser reports about its own machine (`lib/clientInfo.ts`). `GET /api/health` (`health.rs`) finds the optional programs btmux uses and runs each one's version command in its own process group (a job on Windows), killed whole on timeout or cancellation since wrappers wait on children, for the About dialog's Health tab, which adds what the browser supports. MCP is mounted at `/mcp`, with rmcp's own Host check off in favor of `auth.rs`; tools cover session/window/pane lifecycle, `send_keys` (text plus tmux-style key names), `read_pane_output` (the rendered screen or scrollback), `run_command`, `system_info`, and agents (`list_agents`, `wait_for_agent`, `send_prompt`). `automation.rs` implements the pane and agent operations that REST, MCP, and the `btmux agents`/`wait` commands share; waits recheck agent status on each state broadcast. `run_command` appends Enter, captures ANSI-stripped output until 400 ms of quiet by default, and has a 15 s default timeout; quiet output does not prove process exit.
+REST handlers and MCP tools share the same `SessionManager`; structural mutations must call `broadcast_state` so browser tabs stay synchronized. REST lives under `/api` and includes session/window/pane/layout operations, pane input/output, notifications, and raw local-file serving. Automation routes carry a test-only `utoipa::path` attribute giving their statuses and response bodies, collected in `api/openapi.rs`, which also lists the routes left out (`UNDOCUMENTED`); its tests check the document against the router, the sources, and real replies. `GET /api/openapi.json` serves it, and the docs render it as the API reference and list its operations in the REST API page (`docs/src/remark-api-endpoints.mjs`). `GET /api/system` (`system_info.rs`) reports the server host fastfetch-style (`sysinfo`, plus `ioreg` for the Mac model name and the shell's `--version`) for the About dialog's System tab and the `system_info` MCP tool, which adds what the browser reports about its own machine (`lib/clientInfo.ts`). `GET /api/health` (`health.rs`) finds the optional programs btmux uses and runs each one's version command in its own process group (a job on Windows), killed whole on timeout or cancellation since wrappers wait on children. The About dialog's Health tab reads `GET /api/health/stream` instead: newline-delimited JSON naming every check first (`HealthEvent::Plan`), then each result as it finishes, so rows fill in; it adds what the browser supports. MCP is mounted at `/mcp`, with rmcp's own Host check off in favor of `auth.rs`; tools cover session/window/pane lifecycle, `send_keys` (text plus tmux-style key names), `read_pane_output` (the rendered screen or scrollback), `run_command`, `system_info`, and agents (`list_agents`, `wait_for_agent`, `send_prompt`). `automation.rs` implements the pane and agent operations that REST, MCP, and the `btmux agents`/`wait` commands share; waits recheck agent status on each state broadcast. `run_command` appends Enter, captures ANSI-stripped output until 400 ms of quiet by default, and has a 15 s default timeout; quiet output does not prove process exit.
 
 ### Agent telemetry
 
@@ -195,18 +196,28 @@ does, and exits once stdout's reader goes away (`poll` for `POLLOUT`, which
 macOS needs to report it).
 
 `skill.rs` implements `btmux skill setup|status|remove|show`: per agent, the
-status hooks (`extras/*/hooks.json`), and for Claude Code and Codex a skill
-and a context hook. The guide is `skills/btmux/SKILL.md` (also what `npx
+status hooks (`extras/*/hooks.json`), and for Claude Code, Codex, and
+Antigravity CLI a skill and a context hook. The guide is `skills/btmux/SKILL.md` (also what `npx
 skills add` copies), which `show` prints without its frontmatter; the skill
 is a marked stub telling the agent to run `btmux skill show`, in
-`$CLAUDE_CONFIG_DIR/skills/btmux` (`~/.claude`) and `~/.agents/skills/btmux`
-(Codex). A foreign skill is a conflict without `--force` (which trashes it),
+`$CLAUDE_CONFIG_DIR/skills/btmux` (`~/.claude`), `~/.agents/skills/btmux`
+(Codex), and `~/.gemini/config/skills/btmux` (Antigravity). A foreign skill is a conflict without `--force` (which trashes it),
 and its agent's context hook is skipped. The context hook runs the hidden
 `btmux skill context --agent NAME`, which prints
 `hookSpecificOutput.additionalContext` naming the pane. Hooks merge and remove
 through `agent_hooks.rs` (`merged`, `without`, scoped to the generated
 events), owned by a trailing marker comment (`# btmux-notify`,
 `# btmux-context`); status hooks from before the marker match exactly.
+Antigravity's `~/.gemini/config/hooks.json` names whole hooks at its top
+level, so btmux owns `btmux` and `btmux-context` there (`Hooks::Named`,
+`with_named`/`without_named`) while every handler in one is marked as btmux's;
+otherwise it is the user's (a conflict on setup, kept on remove). Refreshing
+one keeps its `enabled`. Its context hook prints `injectSteps`. Its
+camelCase payloads (`hookEventName`, `conversationId`, `toolCall`) reach
+`/notify` through serde aliases; `PreInvocation` starts a turn, `Stop`'s
+`terminationReason` (any case) tells a cancel, an error, or a `MAX_*` limit
+from a finished turn, and a `Stop` with `fullyIdle: false` is ignored, as
+background tasks resume the turn.
 
 ### Popups
 
@@ -242,7 +253,7 @@ and touch screens get a `MobileKeyBar` inside it, since the dialog is modal.
 
 ### Plan limits
 
-`agent_limits.rs` serves `GET /api/agent-limits`: the session, weekly, and per-model subscription limits above agent view's Usage tab (`AgentLimitsPanel.tsx`). It starts each CLI and asks without a prompt, so the CLI does its own auth and btmux never reads a credential: Claude's undocumented `get_usage` control request (`claude -p --safe-mode`; `--safe-mode` skips hooks, MCP, and plugins, while `--bare` skips OAuth too) and Codex's experimental `account/rateLimits/read` (`codex app-server`). Only an open Usage tab in a visible browser tab polls (`useAgentLimits`), each read is shared for 50 s, and a failed one keeps the last limits for 10 minutes, with their age shown. A service's `PATH` lacks what shell startup adds, like `~/.local/bin`, so a CLI missing from it runs with the `PATH` of the pane shell, asked for without a terminal (again every 10 minutes while a CLI stays missing). The Health tab finds and runs them the same way. API keys and no login mean no limits, so that agent isn't shown; so does a CLI too old or changed to answer, with a warning logged once per distinct error. Claude's `limits[]` rows are shown in the server's order and severity, so a new meter needs no change; Codex's windows are named by duration, since the weekly one can be `primary` or `secondary`.
+`agent_limits.rs` serves `GET /api/agent-limits`: the session, weekly, and per-model subscription limits above agent view's Usage tab (`AgentLimitsPanel.tsx`). It starts each CLI and asks without a prompt, so the CLI does its own auth and btmux never reads a credential: Claude's undocumented `get_usage` control request (`claude -p --safe-mode`; `--safe-mode` skips hooks, MCP, and plugins, while `--bare` skips OAuth too), Codex's experimental `account/rateLimits/read` (`codex app-server`), and Antigravity's `/usage` (`agy -p /usage --output-format json`, answered without a model turn or hooks from 1.1.11, so the same executable's `--version` is checked first; exit status 2 means no account quota; its process group is killed on timeout). Only an open Usage tab in a visible browser tab polls (`useAgentLimits`), each agent's read is shared for 50 s and refreshed on its own (`Reader`): only a first read is waited for, later ones run in the background behind the last limits, and a failed one keeps the last limits for 10 minutes, with their age shown. A service's `PATH` lacks what shell startup adds, like `~/.local/bin`, so a CLI missing from it runs with the `PATH` of the pane shell, asked for without a terminal (again every 10 minutes while a CLI stays missing). The Health tab finds and runs them the same way. API keys and no login mean no limits, so that agent isn't shown; so does a CLI too old or changed to answer, with a warning logged once per distinct error. Claude's `limits[]` rows are shown in the server's order and severity, so a new meter needs no change; Codex's windows are named by duration, since the weekly one can be `primary` or `secondary`. Antigravity's buckets are named by window and model group, since groups of models share them.
 
 ### PTY lifecycle (`src/pty/mod.rs`)
 

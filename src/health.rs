@@ -4,7 +4,15 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
+use std::future::Future;
+use std::pin::Pin;
+
+use axum::body::Body;
+use axum::http::header;
+use axum::response::{IntoResponse, Response};
 use axum::{extract::State, Json};
+use futures_util::future::join_all;
+use futures_util::stream::{FuturesUnordered, StreamExt};
 use serde::Serialize;
 
 use crate::config::{Editor, VscodeServer};
@@ -95,7 +103,7 @@ impl Drop for ProcessTree {
 }
 
 #[cfg(windows)]
-struct ProcessTree(windows_sys::Win32::Foundation::HANDLE);
+pub(crate) struct ProcessTree(windows_sys::Win32::Foundation::HANDLE);
 
 // SAFETY: a job handle can be used from any thread.
 #[cfg(windows)]
@@ -103,7 +111,7 @@ unsafe impl Send for ProcessTree {}
 
 #[cfg(windows)]
 impl ProcessTree {
-    fn new(child: &tokio::process::Child) -> Option<Self> {
+    pub(crate) fn new(child: &tokio::process::Child) -> Option<Self> {
         use windows_sys::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW};
         let process = child.raw_handle()?;
         // SAFETY: null attributes and name are allowed, and `process` is the live child's.
@@ -117,7 +125,7 @@ impl ProcessTree {
         }
     }
 
-    fn release(self) {
+    pub(crate) fn release(self) {
         // SAFETY: the handle is owned, and `forget` keeps `drop` from closing it again.
         unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
         std::mem::forget(self);
@@ -229,14 +237,6 @@ async fn agent_version(name: &str, search_path: Option<OsString>) -> Probe {
     probe_with(path, &["--version"], PROBE_TIMEOUT, Some(&search_path)).await
 }
 
-async fn agent_versions(shell: &str) -> (Probe, Probe) {
-    let [claude, codex] = crate::agent_limits::agent_paths(shell).await;
-    tokio::join!(
-        agent_version("claude", claude),
-        agent_version("codex", codex)
-    )
-}
-
 /// Found as GitHub status runs it.
 async fn gh_version(shell: &str) -> Probe {
     let [path] = crate::agent_limits::programs_paths(
@@ -318,40 +318,6 @@ fn present(
             ..check(name, purpose, HealthStatus::Missing, "Not found")
         },
     }
-}
-
-/// The native editor's language servers, found as it finds them.
-async fn language_servers(shell: &str) -> Vec<HealthCheck> {
-    let config = crate::native_editor::lsp::config::current();
-    let mut checks = Vec::new();
-    for (name, server) in &config.servers {
-        let languages: Vec<&str> = config
-            .languages
-            .iter()
-            .filter(|l| l.language_servers.contains(name))
-            .map(|l| l.name.as_str())
-            .collect();
-        if languages.is_empty() || server.command.is_empty() {
-            continue;
-        }
-        let program = OsString::from(&server.command);
-        let [shell_path] = crate::agent_limits::programs_paths(
-            shell,
-            [program.clone()],
-            crate::agent_limits::AskShell::Retry,
-        )
-        .await;
-        let path = shell_path
-            .or_else(|| std::env::var_os("PATH"))
-            .and_then(|search| crate::agent_limits::find_in(&program, &search));
-        checks.push(present(
-            name,
-            &format!("The native editor's {}.", languages.join(", ")),
-            path,
-            None,
-        ));
-    }
-    checks
 }
 
 /// Absent is an error only for the configured editor.
@@ -485,10 +451,182 @@ async fn shell_check(shell: String) -> HealthCheck {
     ),
 ))]
 pub async fn handle(State(state): State<AppState>) -> Json<HealthReport> {
-    Json(report(&state).await)
+    let plan = plan(&state).await;
+    let groups = join_all(plan.groups.into_iter().map(|(title, checks)| async move {
+        let checks = join_all(checks.into_iter().map(|c| c.check)).await;
+        HealthGroup { title, checks }
+    }))
+    .await;
+    Json(HealthReport {
+        groups,
+        path: plan.path,
+    })
 }
 
-async fn report(state: &AppState) -> HealthReport {
+/// `GET /api/health/stream`: the checks, then each result as it finishes, as
+/// newline-delimited JSON. Dropping the response kills the probes.
+pub async fn stream(State(state): State<AppState>) -> Response {
+    let plan = plan(&state).await;
+    let start = HealthEvent::Plan {
+        groups: plan
+            .groups
+            .iter()
+            .map(|(title, checks)| HealthGroupPlan {
+                title: title.clone(),
+                checks: checks.iter().map(|c| c.name.clone()).collect(),
+            })
+            .collect(),
+        path: plan.path,
+    };
+    let pending: FuturesUnordered<_> = plan
+        .groups
+        .into_iter()
+        .enumerate()
+        .flat_map(|(group, (_, checks))| {
+            checks
+                .into_iter()
+                .enumerate()
+                .map(move |(index, c)| async move {
+                    HealthEvent::Check {
+                        group,
+                        index,
+                        check: c.check.await,
+                    }
+                })
+        })
+        .collect();
+    let events = futures_util::stream::once(async { start }).chain(pending);
+    let body = events.map(|event| {
+        let mut line = serde_json::to_string(&event).expect("health events serialize");
+        line.push('\n');
+        Ok::<_, std::convert::Infallible>(line)
+    });
+    (
+        [
+            (header::CONTENT_TYPE, "application/x-ndjson"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        Body::from_stream(body),
+    )
+        .into_response()
+}
+
+/// What `/api/health/stream` sends.
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum HealthEvent {
+    /// First: every check, in order, before any has finished.
+    Plan {
+        groups: Vec<HealthGroupPlan>,
+        path: Vec<String>,
+    },
+    /// The check at `index` in group `group`.
+    Check {
+        group: usize,
+        index: usize,
+        check: HealthCheck,
+    },
+}
+
+#[derive(Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct HealthGroupPlan {
+    pub title: String,
+    /// Check names.
+    pub checks: Vec<String>,
+}
+
+/// A check not yet run, named so clients can list it while it runs.
+struct Planned {
+    name: String,
+    check: Pin<Box<dyn Future<Output = HealthCheck> + Send>>,
+}
+
+/// `check` gets the name to report.
+fn planned<F>(name: impl Into<String>, check: impl FnOnce(String) -> F) -> Planned
+where
+    F: Future<Output = HealthCheck> + Send + 'static,
+{
+    let name = name.into();
+    Planned {
+        check: Box::pin(check(name.clone())),
+        name,
+    }
+}
+
+struct Plan {
+    groups: Vec<(String, Vec<Planned>)>,
+    path: Vec<String>,
+}
+
+/// Found and run as plan limits run it: with the pane shell's `PATH` if the server's lacks it.
+async fn agent_check(
+    name: String,
+    program_name: &str,
+    purpose: &str,
+    shell: String,
+) -> HealthCheck {
+    let [path] = crate::agent_limits::programs_paths(
+        &shell,
+        [OsString::from(program_name)],
+        crate::agent_limits::AskShell::Retry,
+    )
+    .await;
+    program(
+        &name,
+        purpose,
+        agent_version(program_name, path).await,
+        (HealthStatus::Missing, None),
+    )
+}
+
+/// One of the native editor's language servers, found as it finds them.
+async fn language_server(
+    name: String,
+    command: String,
+    purpose: String,
+    shell: String,
+) -> HealthCheck {
+    let program = OsString::from(command);
+    let [shell_path] = crate::agent_limits::programs_paths(
+        &shell,
+        [program.clone()],
+        crate::agent_limits::AskShell::Retry,
+    )
+    .await;
+    let path = shell_path
+        .or_else(|| std::env::var_os("PATH"))
+        .and_then(|search| crate::agent_limits::find_in(&program, &search));
+    present(&name, &purpose, path, None)
+}
+
+/// The language servers some language uses: name, command, and purpose.
+fn language_servers() -> Vec<(String, String, String)> {
+    let config = crate::native_editor::lsp::config::current();
+    config
+        .servers
+        .iter()
+        .filter_map(|(name, server)| {
+            let languages: Vec<&str> = config
+                .languages
+                .iter()
+                .filter(|l| l.language_servers.contains(name))
+                .map(|l| l.name.as_str())
+                .collect();
+            (!languages.is_empty() && !server.command.is_empty()).then(|| {
+                (
+                    name.clone(),
+                    server.command.clone(),
+                    format!("The native editor's {}.", languages.join(", ")),
+                )
+            })
+        })
+        .collect()
+}
+
+/// Every check, named, none started.
+async fn plan(state: &AppState) -> Plan {
     let (shell, editor, vscode_kind, config_error, config_file) = {
         let state = state.read().await;
         let config = state.config();
@@ -504,161 +642,171 @@ async fn report(state: &AppState) -> HealthReport {
         VscodeServer::Code => "VS Code",
         VscodeServer::OpenvscodeServer => "openvscode-server",
     };
-    let (
-        shell,
-        nvim,
-        vscode,
-        browser,
-        (claude, codex),
-        rg,
-        fd_probe,
-        fzf,
-        git,
-        gh,
-        tailscale,
-        multipass,
-        servers,
-    ) = tokio::join!(
-        shell_check(shell.clone()),
-        version_of(locate("nvim")),
-        version_of(crate::vscode::program(vscode_kind)),
-        version_of(crate::browser::program()),
-        agent_versions(&shell),
-        version_of(locate("rg")),
-        version_of(locate("fd").or_else(|| locate("fdfind"))),
-        version_of(crate::fzf::real_fzf()),
-        version_of(locate("git")),
-        gh_version(&shell),
-        probe(
-            crate::tailscale::PROGRAMS
-                .iter()
-                .find_map(|name| locate(name)),
-            &["version"],
-            PROBE_TIMEOUT
-        ),
-        version_of(crate::multipass::program()),
-        // Not run: some start serving instead of printing a version.
-        language_servers(&shell),
-    );
 
     let mut tools = vec![
-        program(
-            "Git",
-            "Git mode, worktrees, and the branch names on sessions.",
-            git,
-            (
-                HealthStatus::Warning,
-                Some("Git mode and worktrees won't work.".into()),
-            ),
-        ),
-        program(
-            "GitHub CLI",
-            "Pull request and CI status on panes in GitHub repos.",
-            gh,
-            (HealthStatus::Missing, None),
-        ),
-        program(
-            "Tailscale",
-            "The --tailscale option, for reaching btmux from your tailnet.",
-            tailscale,
-            (HealthStatus::Missing, None),
-        ),
+        planned("Git", |name| async move {
+            program(
+                &name,
+                "Git mode, worktrees, and the branch names on sessions.",
+                version_of(locate("git")).await,
+                (
+                    HealthStatus::Warning,
+                    Some("Git mode and worktrees won't work.".into()),
+                ),
+            )
+        }),
+        planned("GitHub CLI", |name| {
+            let shell = shell.clone();
+            async move {
+                program(
+                    &name,
+                    "Pull request and CI status on panes in GitHub repos.",
+                    gh_version(&shell).await,
+                    (HealthStatus::Missing, None),
+                )
+            }
+        }),
+        planned("Tailscale", |name| async move {
+            let path = crate::tailscale::PROGRAMS
+                .iter()
+                .find_map(|name| locate(name));
+            program(
+                &name,
+                "The --tailscale option, for reaching btmux from your tailnet.",
+                probe(path, &["version"], PROBE_TIMEOUT).await,
+                (HealthStatus::Missing, None),
+            )
+        }),
     ];
     if cfg!(unix) {
-        tools.push(program(
-            "Multipass",
-            "Sandboxed sessions, in a Multipass VM.",
-            multipass,
-            (HealthStatus::Missing, None),
-        ));
-        tools.push(present(
-            "lsof",
-            "Finding a pane's foreground Neovim to open files in.",
-            locate("lsof"),
-            None,
-        ));
+        tools.push(planned("Multipass", |name| async move {
+            program(
+                &name,
+                "Sandboxed sessions, in a Multipass VM.",
+                version_of(crate::multipass::program()).await,
+                (HealthStatus::Missing, None),
+            )
+        }));
+        tools.push(planned("lsof", |name| async move {
+            present(
+                &name,
+                "Finding a pane's foreground Neovim to open files in.",
+                locate("lsof"),
+                None,
+            )
+        }));
         let opener = if cfg!(target_os = "macos") {
             "open"
         } else {
             "xdg-open"
         };
-        tools.push(present(
-            opener,
-            "Opening binary files from the file browser.",
-            locate(opener),
-            Some("Binary files won't open on the server's desktop.".into()),
-        ));
+        tools.push(planned(opener, |name| async move {
+            present(
+                &name,
+                "Opening binary files from the file browser.",
+                locate(opener),
+                Some("Binary files won't open on the server's desktop.".into()),
+            )
+        }));
     }
 
-    HealthReport {
-        groups: vec![
-            HealthGroup {
-                title: "Server".into(),
-                checks: vec![
-                    config_check(config_file.as_deref(), config_error.as_deref()),
-                    shell,
-                ],
-            },
-            HealthGroup {
-                title: "Surfaces".into(),
-                checks: vec![
-                    neovim(nvim, editor == Editor::Neovim, crate::ws::nvim::available()),
+    let agent = |name: &str, program_name: &'static str, purpose: &'static str| {
+        let shell = shell.clone();
+        planned(name, move |name| {
+            agent_check(name, program_name, purpose, shell)
+        })
+    };
+    let agents = vec![
+        agent(
+            "Claude Code",
+            "claude",
+            "Plan limits in agent view, and usage through btmux claude.",
+        ),
+        agent(
+            "Codex",
+            "codex",
+            "Plan limits in agent view, and usage through btmux codex.",
+        ),
+        agent("Antigravity CLI", "agy", "Plan limits in agent view."),
+    ];
+
+    // Not run: some start serving instead of printing a version.
+    let servers = language_servers()
+        .into_iter()
+        .map(|(name, command, purpose)| {
+            let shell = shell.clone();
+            planned(name, move |name| {
+                language_server(name, command, purpose, shell)
+            })
+        })
+        .collect();
+
+    let groups = vec![
+        (
+            "Server".to_string(),
+            vec![
+                planned("Config file", |_| async move {
+                    config_check(config_file.as_deref(), config_error.as_deref())
+                }),
+                planned("Default shell", |_| shell_check(shell.clone())),
+            ],
+        ),
+        (
+            "Surfaces".to_string(),
+            vec![
+                planned("Neovim", |_| async move {
+                    neovim(
+                        version_of(locate("nvim")).await,
+                        editor == Editor::Neovim,
+                        crate::ws::nvim::available(),
+                    )
+                }),
+                planned(vscode_name, |name| async move {
                     unix_only(program(
-                        vscode_name,
+                        &name,
                         "The built-in VS Code surface.",
-                        vscode,
-                        optional_editor(editor == Editor::Vscode, vscode_name),
-                    )),
+                        version_of(crate::vscode::program(vscode_kind)).await,
+                        optional_editor(editor == Editor::Vscode, &name),
+                    ))
+                }),
+                planned("Chrome or Chromium", |name| async move {
                     unix_only(program(
-                        "Chrome or Chromium",
+                        &name,
                         "The built-in browser surface.",
-                        browser,
+                        version_of(crate::browser::program()).await,
                         (HealthStatus::Missing, None),
-                    )),
-                ],
-            },
-            HealthGroup {
-                title: "Agents".into(),
-                checks: vec![
+                    ))
+                }),
+            ],
+        ),
+        ("Agents".to_string(), agents),
+        (
+            "Search".to_string(),
+            vec![
+                planned("ripgrep", |_| async move {
+                    ripgrep(version_of(locate("rg")).await, locate("grep").is_some())
+                }),
+                planned("fd", |_| async move {
+                    fd(version_of(locate("fd").or_else(|| locate("fdfind"))).await)
+                }),
+                planned("fzf", |name| async move {
                     program(
-                        "Claude Code",
-                        "Plan limits in agent view, and usage through btmux claude.",
-                        claude,
-                        (HealthStatus::Missing, None),
-                    ),
-                    program(
-                        "Codex",
-                        "Plan limits in agent view, and usage through btmux codex.",
-                        codex,
-                        (HealthStatus::Missing, None),
-                    ),
-                ],
-            },
-            HealthGroup {
-                title: "Search".into(),
-                checks: vec![
-                    ripgrep(rg, locate("grep").is_some()),
-                    fd(fd_probe),
-                    program(
-                        "fzf",
+                        &name,
                         "What btmux fzf runs when a menu won't do; also for your shell and Neovim plugins.",
-                        fzf,
+                        version_of(crate::fzf::real_fzf()).await,
                         (
                             HealthStatus::Missing,
                             Some("btmux fzf can only show its menu.".into()),
                         ),
-                    ),
-                ],
-            },
-            HealthGroup {
-                title: "Tools".into(),
-                checks: tools,
-            },
-            HealthGroup {
-                title: "Language servers".into(),
-                checks: servers,
-            },
-        ],
+                    )
+                }),
+            ],
+        ),
+        ("Tools".to_string(), tools),
+        ("Language servers".to_string(), servers),
+    ];
+    Plan {
+        groups,
         path: std::env::var_os("PATH")
             .map(|path| {
                 std::env::split_paths(&path)
