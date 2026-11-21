@@ -480,10 +480,9 @@ impl PtyHandle {
     /// Stop the reader and writer of a finished pane and close its terminal,
     /// keeping what it showed.
     pub(super) fn release(&mut self) {
+        // They exit once stopped, closing their copies of the descriptor.
         self.stop_io();
-        if let Some(mut stopping) = self.stopping.get_mut().unwrap().take() {
-            stopping.wait(Instant::now() + std::time::Duration::from_secs(1));
-        }
+        self.stopping.get_mut().unwrap().take();
         // Before `master` closes the descriptor it borrows.
         self.probe.lock().unwrap().take();
         self.stop_reader = None;

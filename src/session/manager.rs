@@ -1334,6 +1334,18 @@ impl SessionManager {
         };
         // At the reader's end, the waiter reports once it reaped the program.
         if pane.pty.child_alive() {
+            // One that closed its terminal but still runs closes its pane, as
+            // before; a kept pane stays until it exits.
+            if !pane.pty.keep_open() && pane.pty.output_done() {
+                if pane.pty.output_grace_over() {
+                    self.close_pane(pane_id).await;
+                } else if pane.pty.begin_output_grace() {
+                    tokio::spawn(async move {
+                        tokio::time::sleep(crate::pty::OUTPUT_GRACE).await;
+                        let _ = exit_tx.send(pane_id);
+                    });
+                }
+            }
             return;
         }
         if pane.pty.keep_open() {
@@ -2131,6 +2143,14 @@ impl SessionManager {
                 .filter_map(|pane| Some((pane.id, pane.pty.export_exited()?)))
                 .collect(),
             closing,
+            keep_open: self
+                .sessions
+                .iter()
+                .flat_map(|s| &s.windows)
+                .flat_map(|w| &w.panes)
+                .filter(|pane| pane.pty.keep_open() && !pane.pty.is_spawned())
+                .map(|pane| pane.id)
+                .collect(),
         };
         Ok((self.all_snapshots(), popups, exported, exits))
     }
@@ -2240,6 +2260,11 @@ impl SessionManager {
         for (id, exited) in exits.dead {
             if let Some(pane) = self.find_pane_mut(id) {
                 pane.pty.restore_exited(exited);
+            }
+        }
+        for id in exits.keep_open {
+            if let Some(pane) = self.find_pane_mut(id) {
+                pane.pty.set_keep_open(true);
             }
         }
         for id in exits.closing {

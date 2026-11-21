@@ -37,6 +37,9 @@ pub const EXIT_TIMED_OUT: i32 = 124;
 /// The longest `wait-exit --timeout`, in seconds: a year.
 pub const MAX_TIMEOUT_SECS: u64 = 365 * 24 * 3600;
 
+/// How long a `wait-exit` whose timeout already passed waits for its one poll.
+const FIRST_POLL: Duration = Duration::from_secs(5);
+
 /// What a new pane runs, and whether it stays once that exits.
 #[derive(Default)]
 pub struct Launch {
@@ -66,6 +69,20 @@ struct Ended {
     pane_id: Uuid,
     status: Option<i32>,
     at: Instant,
+    /// A waiter was waiting when it closed.
+    awaited: bool,
+}
+
+impl Ended {
+    /// Still awaited by a waiter from before it closed.
+    fn held(&self, waited: &HashMap<Uuid, usize>) -> bool {
+        self.awaited && waited.contains_key(&self.pane_id)
+    }
+
+    /// Recent, or held.
+    fn kept(&self, now: Instant, waited: &HashMap<Uuid, usize>) -> bool {
+        now.duration_since(self.at) <= ENDED_KEPT || self.held(waited)
+    }
 }
 
 /// Closed panes' statuses, and a signal for waiters.
@@ -107,6 +124,7 @@ impl Drop for Waiting {
 /// A closed pane's status, for an upgraded server.
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(not(unix), allow(dead_code))]
 pub struct ClosedHandoff {
     pane_id: Uuid,
     status: Option<i32>,
@@ -123,6 +141,8 @@ pub struct ExitsHandoff {
     pub dead: Vec<(Uuid, crate::pty::Exited)>,
     /// Panes whose programs exited, for the next server to close.
     pub closing: Vec<Uuid>,
+    /// Kept panes no client started yet.
+    pub keep_open: Vec<Uuid>,
 }
 
 impl PaneExits {
@@ -136,26 +156,21 @@ impl PaneExits {
             .find(|ended| ended.pane_id == pane_id)
             .and_then(|ended| ended.status);
         let waited = self.waited.lock().unwrap();
-        self.ended.retain(|ended| {
-            ended.pane_id != pane_id
-                && (now.duration_since(ended.at) <= ENDED_KEPT
-                    || waited.contains_key(&ended.pane_id))
-        });
+        self.ended
+            .retain(|ended| ended.pane_id != pane_id && ended.kept(now, &waited));
         while self.ended.len() >= ENDED_MAX {
-            let Some(oldest) = self
-                .ended
-                .iter()
-                .position(|ended| !waited.contains_key(&ended.pane_id))
-            else {
+            let Some(oldest) = self.ended.iter().position(|ended| !ended.held(&waited)) else {
                 break;
             };
             self.ended.remove(oldest);
         }
+        let awaited = waited.contains_key(&pane_id);
         drop(waited);
         self.ended.push_back(Ended {
             pane_id,
             status: status.or(known),
             at: now,
+            awaited,
         });
         self.touch();
     }
@@ -175,13 +190,15 @@ impl PaneExits {
     }
 
     fn ended(&self, pane_id: Uuid) -> Option<Option<i32>> {
-        let waited = self.waited.lock().unwrap().contains_key(&pane_id);
+        let waited = self.waited.lock().unwrap();
+        let now = Instant::now();
         self.ended
             .iter()
-            .find(|ended| ended.pane_id == pane_id && (waited || ended.at.elapsed() <= ENDED_KEPT))
+            .find(|ended| ended.pane_id == pane_id && ended.kept(now, &waited))
             .map(|ended| ended.status)
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub fn export(&self) -> Vec<ClosedHandoff> {
         self.ended
             .iter()
@@ -199,6 +216,7 @@ impl PaneExits {
             .collect()
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub fn restore(&mut self, ended: Vec<ClosedHandoff>) {
         let now = Instant::now();
         for ended in ended {
@@ -213,6 +231,7 @@ impl PaneExits {
                 pane_id: ended.pane_id,
                 status: ended.status,
                 at,
+                awaited: false,
             });
         }
     }
@@ -350,10 +369,14 @@ pub async fn wait_cli(profile: Option<&str>, pane: Uuid, timeout: Option<Duratio
     };
     let waited = wait_remote(profile, pane, deadline);
     let result = match deadline {
-        // Requests, replies, and retries all count.
-        Some(deadline) => tokio::time::timeout_at(deadline, waited)
-            .await
-            .unwrap_or(Ok(None)),
+        // Requests, replies, and retries all count, but the first poll gets
+        // its reply, so a short timeout still reports an exit.
+        Some(deadline) => {
+            let cutoff = deadline.max(tokio::time::Instant::now() + FIRST_POLL);
+            tokio::time::timeout_at(cutoff, waited)
+                .await
+                .unwrap_or(Ok(None))
+        }
         None => waited.await,
     };
     match result {
@@ -375,15 +398,17 @@ async fn wait_remote(
     pane: Uuid,
     deadline: Option<tokio::time::Instant>,
 ) -> Result<Option<i32>, String> {
+    let mut first = true;
     loop {
         let left = deadline
             .map_or(crate::automation::MAX_WAIT, |deadline| {
                 deadline.saturating_duration_since(tokio::time::Instant::now())
             })
             .min(crate::automation::MAX_WAIT);
-        if left.is_zero() {
+        if left.is_zero() && !first {
             return Ok(None);
         }
+        first = false;
         let path = format!("/api/panes/{pane}/exit?timeout_ms={}", left.as_millis());
         // Each poll is bounded, so a server that stops answering is retried.
         let (status, reply) = crate::popup::request_retrying(
@@ -397,7 +422,7 @@ async fn wait_remote(
         match status {
             reqwest::StatusCode::OK => {}
             reqwest::StatusCode::NOT_FOUND => {
-                eprintln!("btmux: pane {pane} closed; its exit status is unknown");
+                eprintln!("btmux: no pane {pane}, or it closed too long ago");
                 return Ok(Some(1));
             }
             _ => {
@@ -472,6 +497,19 @@ mod tests {
         drop(waiting);
         exits.closed(Uuid::new_v4(), Some(0));
         assert_eq!(exits.ended(waited), None);
+
+        // Only a waiter from before the close outlasts the retention time.
+        let mut exits = PaneExits::default();
+        let (early, late) = (Uuid::new_v4(), Uuid::new_v4());
+        let _early = exits.wait_for(early);
+        exits.closed(early, Some(1));
+        exits.closed(late, Some(2));
+        let _late = exits.wait_for(late);
+        for ended in &mut exits.ended {
+            ended.at -= ENDED_KEPT * 2;
+        }
+        assert_eq!(exits.ended(early), Some(Some(1)));
+        assert_eq!(exits.ended(late), None);
     }
 
     #[test]
@@ -742,6 +780,56 @@ mod runs {
             .unwrap();
         assert_eq!(restored.cwd.as_deref(), Some("/tmp"));
         assert!(restored.cwd_remote);
+    }
+
+    /// A program that closes its terminal but keeps running closes its pane
+    /// after the grace, as before; a wait then reports no status.
+    #[tokio::test]
+    async fn detached_programs_close_their_pane() {
+        let (state, app, pane) = app().await;
+        let new = run(&app, pane, json!({"command": {"shell": "sleep 5"}})).await;
+        {
+            let mut mgr = state.write().await;
+            mgr.find_pane(new).unwrap().pty.end_output();
+            mgr.handle_pane_exit(new).await;
+            assert!(mgr.find_pane(new).is_some(), "the waiter may still report");
+        }
+        until(async || state.read().await.find_pane(new).is_none()).await;
+        assert_eq!(
+            wait_for(&app, new).await.1,
+            json!({"status": null, "timed_out": false})
+        );
+    }
+
+    /// The same, with a program that really does it: Linux ends the output
+    /// once no process has the terminal open; macOS keeps a session's.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn programs_closing_their_terminal_close_their_pane() {
+        let (state, app, pane) = app().await;
+        let detach = "exec </dev/null >/dev/null 2>&1; sleep 5";
+        let body = json!({"command": {"exec": ["/bin/sh", "-c", detach]}});
+        let new = run(&app, pane, body).await;
+        until(async || state.read().await.find_pane(new).is_none()).await;
+        assert_eq!(wait_for(&app, new).await.1["status"], json!(null));
+    }
+
+    #[tokio::test]
+    async fn unstarted_kept_panes_stay_kept_across_an_upgrade() {
+        let (state, app, pane) = app().await;
+        let kept = run(&app, pane, json!({"keep_open": true})).await;
+        let (sessions, exits) = {
+            let mut mgr = state.write().await;
+            assert!(!mgr.find_pane(kept).unwrap().pty.is_spawned());
+            let (sessions, _, panes, exits) = mgr.export_handoff(Duration::from_secs(2)).unwrap();
+            mgr.resume_handoff(panes);
+            (sessions, exits)
+        };
+        let (mut manager, _exit_rx) = manager();
+        manager
+            .restore_handoff(sessions, Default::default(), Vec::new(), exits)
+            .await;
+        assert!(manager.find_pane(kept).unwrap().pty.keep_open());
     }
 
     /// Programs reaped while the upgrade holds the lock, before their exits

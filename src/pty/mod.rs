@@ -271,8 +271,10 @@ pub struct PtyHandle {
     reader_done: Arc<AtomicBool>,
     /// A kept pane finished: its exit was written to its output.
     exit_noted: AtomicBool,
-    /// When a kept pane's exit was handled with its output still open.
+    /// When its exit was handled with its program or output still running.
     exited_at: Mutex<Option<std::time::Instant>>,
+    /// A finished pane drops output its reader still reads.
+    output_muted: Arc<AtomicBool>,
 }
 
 /// How long a kept pane waits for the rest of its output after its program
@@ -356,6 +358,7 @@ impl PtyHandle {
             reader_done: Arc::default(),
             exit_noted: AtomicBool::new(false),
             exited_at: Mutex::new(None),
+            output_muted: Arc::default(),
         }
     }
 
@@ -410,6 +413,12 @@ impl PtyHandle {
         self.exited() && (!self.keep_open || self.exit_noted.load(Ordering::Acquire))
     }
 
+    /// As when the reader reaches the end of the output.
+    #[cfg(test)]
+    pub fn end_output(&self) {
+        self.reader_done.store(true, Ordering::Release);
+    }
+
     /// Whether it still holds its terminal.
     #[cfg(test)]
     pub fn has_terminal(&self) -> bool {
@@ -422,7 +431,8 @@ impl PtyHandle {
     }
 
     /// Start the wait for a kept pane's last output after its program
-    /// exited; `false` if it already started.
+    /// exited, or for a program to exit after its output ended; `false` if
+    /// it already started.
     pub fn begin_output_grace(&self) -> bool {
         let mut since = self.exited_at.lock().unwrap();
         if since.is_some() {
@@ -432,8 +442,7 @@ impl PtyHandle {
         true
     }
 
-    /// The wait for the last output is over: something else, such as a
-    /// background process, holds the terminal open.
+    /// The wait from `begin_output_grace` is over.
     pub fn output_grace_over(&self) -> bool {
         self.exited_at
             .lock()
@@ -454,18 +463,23 @@ impl PtyHandle {
         if !force && !self.output_done() {
             return false;
         }
-        // Stops a reader still running, so nothing follows the exit.
-        self.release();
         let text = match self.exit_status() {
             Some(status) => format!("\x1b[0m\r\n[exited with status {status}]\r\n"),
             None => "\x1b[0m\r\n[exited]\r\n".into(),
         };
         let bytes = Bytes::from(text.into_bytes());
-        self.scrollback
-            .lock()
-            .unwrap()
-            .push(Output::Data(bytes.clone()));
-        let _ = self.output_tx.send(Output::Data(bytes));
+        {
+            let mut replay = self.scrollback.lock().unwrap();
+            // Under the replay's lock: what a reader still running reads
+            // now is dropped, so nothing follows the exit.
+            self.output_muted.store(true, Ordering::Release);
+            replay.push(Output::Data(bytes.clone()));
+            let _ = self.output_tx.send(Output::Data(bytes));
+        }
+        // Its reader and writer stop on their own, off the manager's lock.
+        self.release();
+        // Its pid may be reused; nothing descends from it now.
+        self.shell_pid = None;
         self.exit_noted.store(true, Ordering::Release);
         true
     }
@@ -667,7 +681,6 @@ impl PtyHandle {
                 let exe = server_exe().ok_or("cannot find the btmux executable")?;
                 let cwd = self.spawn_cwd.as_deref().and_then(Path::to_str);
                 std::iter::once(exe.to_string_lossy().into_owned())
-                    // A popup's directory comes from its guest caller.
                     // A popup's or command's directory is the caller's.
                     .chain(guest.wrapper_args(cwd, popup.is_some()))
                     .chain(popup.iter().flat_map(|popup| popup.command.guest_args()))
@@ -1016,6 +1029,7 @@ struct OutputPipeline {
     program_status: Arc<Mutex<program_status::ProgramStatus>>,
     scrollback: Arc<Mutex<Replay>>,
     output_tx: broadcast::Sender<Output>,
+    muted: Arc<AtomicBool>,
     pane_id: Uuid,
     /// The pane's shell and its name when the pipeline started.
     #[cfg(unix)]
@@ -1048,6 +1062,7 @@ impl PtyHandle {
             program_status: self.program_status.clone(),
             scrollback: self.scrollback.clone(),
             output_tx: self.output_tx.clone(),
+            muted: self.output_muted.clone(),
             pane_id: self.pane_id,
             #[cfg(unix)]
             shell: self.shell_pid.zip(self.shell_name.clone()),
@@ -1099,6 +1114,9 @@ impl OutputPipeline {
             self.hidden_input.check();
         }
         let mut sb = self.scrollback.lock().unwrap();
+        if self.muted.load(Ordering::Acquire) {
+            return sent;
+        }
         if !result.scrollback.is_empty() {
             sb.push(Output::Data(exact_bytes(result.scrollback)));
         }

@@ -277,11 +277,9 @@ async fn handle_socket(
                     if watched {
                         check();
                     }
-                    if input_tx.send_wait(data.to_vec()).await.is_err() {
-                        // A kept pane's program exited: nothing reads input.
-                        if !alive() {
-                            continue;
-                        }
+                    // A kept pane's program exited: nothing reads input, but
+                    // it is still counted for the key overlay.
+                    if input_tx.send_wait(data.to_vec()).await.is_err() && alive() {
                         break;
                     }
                     if watched {

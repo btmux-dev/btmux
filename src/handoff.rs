@@ -76,6 +76,8 @@ struct ExitsHeader {
     ended: Vec<ClosedHandoff>,
     /// Panes whose programs exited, to close.
     closing: Vec<Uuid>,
+    /// Kept panes not started yet.
+    keep_open: Vec<Uuid>,
     /// Their journal bytes follow the live panes'.
     dead: Vec<DeadHeader>,
 }
@@ -267,6 +269,7 @@ pub fn take() -> Result<Option<Inherited>, String> {
             ended: header.exits.ended,
             dead,
             closing: header.exits.closing,
+            keep_open: header.exits.keep_open,
         },
     }))
 }
@@ -571,6 +574,7 @@ fn write(
         exits: ExitsHeader {
             ended: exits.ended,
             closing: exits.closing,
+            keep_open: exits.keep_open,
             dead: exits
                 .dead
                 .iter()
