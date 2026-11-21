@@ -567,6 +567,67 @@ Options:
           Print version
 ```
 
+### `btmux skill`
+
+Set up coding agents (Claude Code, Codex) to use btmux: a skill that teaches them its CLI, and a hook that tells them which pane they run in. Both take their text from the installed btmux when they run
+
+```text
+Usage: btmux skill <COMMAND>
+
+Commands:
+  setup   Install the btmux skill and its SessionStart hook into the agents found here (Claude Code, Codex), or those given with --agent. With none found, the skill alone goes into ~/.agents/skills, which most agents read. Safe to run again; it updates what an older btmux installed
+  status  Report whether the skill and hook are installed for each agent
+  remove  Remove the skill and hook from agents, leaving a skill btmux didn't install and every other hook alone
+  show    Print the guide the skill gives agents
+  help    Print this message or the help of the given subcommand(s)
+```
+
+#### `btmux skill setup`
+
+Install the btmux skill and its SessionStart hook into the agents found here (Claude Code, Codex), or those given with --agent. With none found, the skill alone goes into ~/.agents/skills, which most agents read. Safe to run again; it updates what an older btmux installed
+
+```text
+Usage: btmux skill setup [OPTIONS]
+
+Options:
+      --agent <AGENT>  Only this agent. Repeatable [possible values: claude, codex]
+      --dry-run        Report what would change without changing anything
+      --force          Replace a skill named btmux that btmux didn't install (moved to the trash)
+      --json           Print the result as JSON
+```
+
+#### `btmux skill status`
+
+Report whether the skill and hook are installed for each agent
+
+```text
+Usage: btmux skill status [OPTIONS]
+
+Options:
+      --json  Print the result as JSON
+```
+
+#### `btmux skill remove`
+
+Remove the skill and hook from agents, leaving a skill btmux didn't install and every other hook alone
+
+```text
+Usage: btmux skill remove [OPTIONS]
+
+Options:
+      --agent <AGENT>  Only this agent. Repeatable [possible values: claude, codex]
+      --dry-run        Report what would change without changing anything
+      --json           Print the result as JSON
+```
+
+#### `btmux skill show`
+
+Print the guide the skill gives agents
+
+```text
+Usage: btmux skill show
+```
+
 ### `btmux agents`
 
 Print the panes running a coding agent, with their states, as JSON. Inside a btmux pane this targets that pane's server; otherwise the `--profile` server
@@ -606,6 +667,18 @@ Options:
       --timeout <TIMEOUT>  Seconds to wait, at most 3600 [default: 600]
 ```
 
+### `btmux events`
+
+Print server events as they happen, one line each, until interrupted: sessions, windows, and panes created, renamed, selected, or closed; agent state changes; notifications; widgets and popups. Inside a btmux pane this targets that pane's server; otherwise the `--profile` server. Reconnects after the server restarts or upgrades
+
+```text
+Usage: btmux events [OPTIONS]
+
+Options:
+  -s, --session <SESSION>  Only this session's events (ID or name), exiting once it closes
+      --json               Print each event as one line of JSON
+```
+
 ## From a pane
 
 ### `btmux open-editor`
@@ -628,7 +701,7 @@ Options:
 
           Possible values:
           - native: btmux's own editor
-          - pane:   The pane's foreground Neovim, or `$EDITOR` in its shell
+          - pane:   The pane's foreground Neovim, or `$EDITOR` in its shell (for `prefix + [`, in a popup)
           - neovim: The built-in Neovim
           - vscode: VS Code
 

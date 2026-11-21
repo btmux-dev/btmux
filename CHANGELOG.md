@@ -16,6 +16,14 @@ actions, saved state, and API types can change in any release.
 - Panes grow and shrink into place when they split, close, or change layout.
   The programs in them resize once, at the start, so prompts don't flicker.
   ([#182](https://github.com/btmux-dev/btmux/pull/182))
+- `btmux events` prints server events as they happen: sessions, windows, and
+  panes created, renamed, selected, or closed, agent state changes,
+  notifications, and widgets and popups, one line each or as JSON with
+  `--json`. `GET /api/events` streams the same.
+- `btmux skill setup` installs a skill that teaches Claude Code and Codex the
+  btmux CLI, and a hook that tells them which pane they run in. Both take
+  their text from the installed btmux, so upgrading it updates them.
+  `btmux skill show` prints the guide.
 - Settings' **Show TOML** panel can show the settings as Home Manager's
   `programs.btmux.settings` in Nix, ready to paste.
   ([#180](https://github.com/btmux-dev/btmux/pull/180))

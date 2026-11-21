@@ -14,6 +14,7 @@ mod connect;
 #[allow(dead_code)]
 mod discovery;
 mod editor;
+mod events;
 mod file_git;
 mod file_git_ops;
 mod file_search;
@@ -46,6 +47,7 @@ mod server;
 mod service;
 mod session;
 mod shell;
+mod skill;
 mod smart_case;
 mod system_info;
 mod tailscale;
@@ -197,6 +199,12 @@ async fn main() {
         }) => std::process::exit(widget::confirm(message, *default_yes).await),
         Some(config::SubCommand::Input { prompt, default }) => {
             std::process::exit(widget::input(prompt.as_deref(), default.as_deref()).await)
+        }
+        Some(config::SubCommand::Events { session, json }) => {
+            std::process::exit(events::run(args.profile.as_deref(), session.clone(), *json).await)
+        }
+        Some(config::SubCommand::Skill { command }) => {
+            std::process::exit(skill::run(args.profile.as_deref(), command).await)
         }
         Some(config::SubCommand::Agents) => {
             std::process::exit(agent_cli::agents(args.profile.as_deref()).await)
@@ -671,6 +679,7 @@ async fn main() {
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let serve = axum::serve(listener, app).with_graceful_shutdown(async move {
         shutdown_signal(args.desktop_parent_pid).await;
+        events::shutdown();
         let _ = shutdown_tx.send(());
     });
     tokio::select! {

@@ -430,6 +430,26 @@ pub enum SubCommand {
         #[arg(long)]
         default: Option<String>,
     },
+    /// Print server events as they happen, one line each, until interrupted:
+    /// sessions, windows, and panes created, renamed, selected, or closed;
+    /// agent state changes; notifications; widgets and popups. Inside a btmux
+    /// pane this targets that pane's server; otherwise the `--profile`
+    /// server. Reconnects after the server restarts or upgrades.
+    Events {
+        /// Only this session's events (ID or name), exiting once it closes.
+        #[arg(short, long)]
+        session: Option<String>,
+        /// Print each event as one line of JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Set up coding agents (Claude Code, Codex) to use btmux: a skill that
+    /// teaches them its CLI, and a hook that tells them which pane they run
+    /// in. Both take their text from the installed btmux when they run.
+    Skill {
+        #[command(subcommand)]
+        command: crate::skill::SkillCommand,
+    },
     /// Print the panes running a coding agent, with their states, as JSON.
     /// Inside a btmux pane this targets that pane's server; otherwise the
     /// `--profile` server.

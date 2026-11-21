@@ -17,7 +17,7 @@ const help = (...args) =>
 // Sections in reading order; a command not listed here fails the run.
 const groups = {
   "Service and upgrades": ["install", "uninstall", "restart", "upgrade", "connect", "version"],
-  "Agents": ["claude", "codex", "agents", "wait", "prompt"],
+  "Agents": ["claude", "codex", "skill", "agents", "wait", "prompt", "events"],
   "From a pane": ["open-editor", "popup", "pick", "fzf", "confirm", "input", "send-notification"],
   "Sessions, windows, and panes": [
     "list-sessions", "list-windows", "list-panes", "new-session", "new-window",
@@ -47,8 +47,8 @@ if (missing.length || gone.length)
   throw new Error(`update groups: missing ${missing}; gone ${gone}`);
 
 const fence = (text) => "```text\n" + text + "\n```\n";
-const section = (name) => {
-  const text = help(name);
+const section = (name, level = 3) => {
+  const text = help(...name.split(" "));
   const usage = text.indexOf("Usage:");
   const about = text.slice(0, usage).trim().replace(/\s*\n\s*/g, " ");
   // Without the help flag every command has, and an Options heading it leaves empty.
@@ -57,7 +57,19 @@ const section = (name) => {
     .replace(/^ +(-h, )?--help +Print help.*\n?/gm, "")
     .replace(/\n+Options:\s*$/, "")
     .trimEnd();
-  return `### \`btmux ${name}\`\n\n${about}\n\n${fence(body)}`;
+  // Each subcommand gets its own section.
+  const commands = text.includes(`Usage: btmux ${name} <COMMAND>`)
+    ? text
+        .slice(text.indexOf("Commands:"), text.indexOf("Options:"))
+        .split("\n")
+        .map((line) => line.match(/^  ([a-z0-9-]+) /)?.[1])
+        .filter((sub) => sub && sub !== "help")
+    : [];
+  const heading = "#".repeat(level);
+  return [
+    `${heading} \`btmux ${name}\`\n\n${about}\n\n${fence(body)}`,
+    ...commands.map((sub) => section(`${name} ${sub}`, level + 1)),
+  ].join("\n");
 };
 
 const page = `---
@@ -93,7 +105,7 @@ token file, and \`BTMUX_CONSOLE_LOG\` and \`BTMUX_FILE_LOG\` override the
 \`[log]\` levels.
 
 ${Object.entries(groups)
-  .map(([title, names]) => `## ${title}\n\n${names.map(section).join("\n")}`)
+  .map(([title, names]) => `## ${title}\n\n${names.map((name) => section(name)).join("\n")}`)
   .join("\n")}`;
 
 writeFileSync(out, page);

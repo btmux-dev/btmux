@@ -25,7 +25,7 @@ pub enum Target {
 }
 
 impl Target {
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             Self::ClaudeCode => "Claude Code",
             Self::Codex => "Codex",
@@ -41,7 +41,7 @@ impl Target {
         }
     }
 
-    fn config_path(self) -> Result<PathBuf, String> {
+    pub fn config_path(self) -> Result<PathBuf, String> {
         let home = dirs::home_dir()
             .ok_or_else(|| format!("cannot resolve home directory for {} hooks", self.label()))?;
         Ok(match self {
@@ -61,22 +61,38 @@ pub fn install(target: Target) -> Result<PathBuf, String> {
     let path = target.config_path()?;
     let generated: Value = serde_json::from_str(target.snippet())
         .map_err(|error| format!("invalid embedded {} hook JSON: {error}", target.label()))?;
-    let generated_hooks = generated
-        .get("hooks")
-        .and_then(Value::as_object)
-        .ok_or_else(|| format!("embedded {} hooks have no hooks object", target.label()))?;
+    let config = merged(&path, read(&path)?, &generated, is_btmux_hook)?;
+    write_json(&path, &config)?;
+    Ok(path)
+}
 
-    let mut config = match fs::read_to_string(&path) {
-        Ok(contents) => serde_json::from_str(&contents).map_err(|error| {
+/// The JSON config at `path`; `None` if there is none.
+pub fn read(path: &Path) -> Result<Option<Value>, String> {
+    match fs::read_to_string(path) {
+        Ok(contents) => serde_json::from_str(&contents).map(Some).map_err(|error| {
             format!(
                 "cannot parse {}: {error}; file was left unchanged",
                 path.display()
             )
-        })?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => generated.clone(),
-        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
-    };
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("cannot read {}: {error}", path.display())),
+    }
+}
 
+/// `config` (read from `path`) with `generated`'s hooks in place of the ones
+/// `is_ours` picks out, which are kept where they were.
+pub fn merged(
+    path: &Path,
+    config: Option<Value>,
+    generated: &Value,
+    is_ours: fn(&Value) -> bool,
+) -> Result<Value, String> {
+    let generated_hooks = generated
+        .get("hooks")
+        .and_then(Value::as_object)
+        .ok_or("embedded hooks have no hooks object")?;
+    let mut config = config.unwrap_or_else(|| generated.clone());
     let config_object = config.as_object_mut().ok_or_else(|| {
         format!(
             "{} must contain a JSON object; file was left unchanged",
@@ -104,7 +120,7 @@ pub fn install(target: Target) -> Result<PathBuf, String> {
         )
     })?;
     for (event, generated_groups) in generated_hooks {
-        merge_event_hooks(hooks_object, event, generated_groups).map_err(|error| {
+        merge_event_hooks(hooks_object, event, generated_groups, is_ours).map_err(|error| {
             format!(
                 "cannot merge {} hooks in {}: {error}",
                 event,
@@ -112,18 +128,51 @@ pub fn install(target: Target) -> Result<PathBuf, String> {
             )
         })?;
     }
+    Ok(config)
+}
 
-    let mut contents = serde_json::to_string_pretty(&config)
+/// `config` without the hooks `is_ours` picks out, dropping groups and
+/// events they leave empty; `None` if it had none.
+pub fn without(config: &Value, is_ours: fn(&Value) -> bool) -> Option<Value> {
+    let mut config = config.clone();
+    let hooks = config.get_mut("hooks")?.as_object_mut()?;
+    let mut found = false;
+    hooks.retain(|_, groups| {
+        let Some(groups) = groups.as_array_mut() else {
+            return true;
+        };
+        groups.retain_mut(|group| {
+            let Some(handlers) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
+                return true;
+            };
+            let before = handlers.len();
+            handlers.retain(|handler| !is_ours(handler));
+            found |= handlers.len() != before;
+            !(handlers.is_empty() && before > 0)
+        });
+        !groups.is_empty()
+    });
+    found.then_some(config)
+}
+
+/// Whether `config` has a hook `is_ours` picks out.
+pub fn contains(config: &Value, is_ours: fn(&Value) -> bool) -> bool {
+    without(config, is_ours).is_some()
+}
+
+/// Writes `config` as pretty JSON.
+pub fn write_json(path: &Path, config: &Value) -> Result<(), String> {
+    let mut contents = serde_json::to_string_pretty(config)
         .map_err(|error| format!("cannot serialize {}: {error}", path.display()))?;
     contents.push('\n');
-    write_config(&path, &contents)?;
-    Ok(path)
+    write_config(path, &contents)
 }
 
 fn merge_event_hooks(
     destination: &mut Map<String, Value>,
     event: &str,
     generated_groups: &Value,
+    is_ours: fn(&Value) -> bool,
 ) -> Result<(), String> {
     let generated_groups = generated_groups
         .as_array()
@@ -132,7 +181,7 @@ fn merge_event_hooks(
         .iter()
         .filter_map(|group| group.get("hooks").and_then(Value::as_array))
         .flatten()
-        .filter(|handler| is_btmux_hook(handler))
+        .filter(|handler| is_ours(handler))
         .cloned()
         .collect();
     let replacement = generated_handlers
@@ -159,7 +208,7 @@ fn merge_event_hooks(
                 let old_handlers = std::mem::take(handlers);
                 let mut kept_handlers = Vec::with_capacity(old_handlers.len());
                 for handler in old_handlers {
-                    if is_btmux_hook(&handler) {
+                    if is_ours(&handler) {
                         if !found_btmux {
                             kept_handlers.push(replacement.clone());
                             found_btmux = true;

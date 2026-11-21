@@ -37,10 +37,8 @@ btmux kill-pane -t "$pane"
 | `remove-worktree`            | `-t`                             |
 | `display-popup` (`popup`)    | `-t -d -e -T -E`; see [Popups](popups.md) |
 
-For coding agents, [`skills/btmux`](../../../../../skills/btmux/SKILL.md) is an
-[Agent Skill](https://agentskills.io) that teaches these commands. Install it
-with `npx skills add btmux-dev/btmux`, or copy the folder into your agent's skills
-directory (`~/.claude/skills/` for Claude Code).
+Coding agents learn these commands from the btmux skill; see
+[Agent skill](../agents/index.md#agent-skill).
 
 ## Differences from tmux
 

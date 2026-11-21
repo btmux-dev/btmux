@@ -1,7 +1,7 @@
 ---
 title: "Notifications"
 sidebar:
-  order: 7
+  order: 8
 ---
 
 `btmux send-notification` shows a notification in every connected client:

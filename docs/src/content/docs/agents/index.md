@@ -30,6 +30,42 @@ Codex runs hooks in a shared background daemon, which reports every turn to the
 pane that started it. Run `codex --no-daemon` to report to the right pane.
 :::
 
+## Agent skill
+
+`btmux skill setup` teaches Claude Code and Codex to use btmux: to open
+windows and panes, run commands there and read their output, ask you with
+[widgets](../automation/widgets.md), and coordinate other agents. It installs
+two things into each agent it finds:
+
+- **A skill**, `btmux`, in `~/.claude/skills/btmux` for Claude Code and
+  `~/.agents/skills/btmux` for Codex and other agents. It tells the agent to
+  read the guide that `btmux skill show` prints.
+- **A SessionStart hook**, added to the agent's settings beside the hooks
+  above. At the start of each session it tells the agent which btmux
+  session, window, and pane it runs in.
+
+Both get their text from the installed `btmux` when the agent uses them, so
+upgrading btmux updates what agents are told. Run setup once; running it again
+is safe and updates what an older btmux installed.
+
+| Command               | Does                                                       |
+| --------------------- | ---------------------------------------------------------- |
+| `btmux skill setup`   | Install or update the skill and hook                       |
+| `btmux skill status`  | Show what is installed for each agent                      |
+| `btmux skill remove`  | Remove them, leaving your other hooks alone                |
+| `btmux skill show`    | Print the guide                                            |
+
+`setup` and `remove` take `--agent claude` or `--agent codex` (repeatable),
+`--dry-run` to report what would change, and `--json`. With no agent found,
+setup puts the skill alone in `~/.agents/skills`. A `btmux` skill that btmux
+didn't install is left alone and reported as a conflict; `--force` moves it to
+the trash and replaces it. Restart running agents to load a new hook.
+
+The same guide is in the repository as
+[`skills/btmux`](../../../../../skills/btmux/SKILL.md), which
+`npx skills add btmux-dev/btmux` installs as a copy that doesn't follow
+upgrades.
+
 ## States
 
 | State       | Meaning                                                       |

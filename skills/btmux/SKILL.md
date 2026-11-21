@@ -8,10 +8,31 @@ description: Control btmux, a browser-based tmux, from the shell. Use when runni
 btmux is a tmux-like terminal multiplexer whose panes the user sees in a
 browser. The `btmux` CLI talks to the running server. Inside a btmux pane,
 `$BTMUX_PANE_ID` is your pane's ID and commands reach this server without
-setup; outside one, they use the default server (or `--profile NAME`).
+setup; outside one, they use the default server (or `--profile NAME`). If
+`btmux` isn't on `PATH`, `"$BTMUX_BIN"` is the server's own binary.
 
 The commands mirror tmux, so use what you know from tmux, except for the
-differences below. `btmux <command> --help` lists each command's flags.
+differences below. `btmux --help` lists the commands and
+`btmux <command> --help` each one's flags.
+
+## Where you are
+
+The context at the start of your session may name your session, window, and
+pane. It comes from your environment and wasn't checked since; if a target
+isn't found, look again:
+
+```sh
+btmux list-panes -a -F '#{pane_id} #{session_name}:#{window_index}.#{pane_index} #{pane_active}' |
+  grep "$BTMUX_PANE_ID"
+```
+
+That is where you run, not necessarily what the user is looking at.
+
+- **"Here", "beside you", or no place named:** your pane, the default target.
+- **"The current window" or "the pane I'm in":** the active window of the
+  session (`#{window_active}`) and its active pane (`#{pane_active}`).
+- **A session, window, or pane by name:** find it in a listing; it wins over
+  where you run.
 
 ## Panes, windows, sessions
 
@@ -71,6 +92,47 @@ with wrapped lines joined. Output arrives asynchronously: after sending a
 command, poll `capture-pane` until its result or the next prompt appears rather
 than assuming it finished.
 
+## Watching for changes
+
+```sh
+btmux events                      # one line per event, until interrupted
+btmux events --json | jq -c 'select(.type == "agent_status_changed")'
+btmux events -s work --json       # one session; exits once it closes
+```
+
+Events cover sessions, windows, and panes created, renamed, selected, moved,
+or closed, pane titles and directories, agent state changes, notifications,
+and widgets and popups opening and closing. With `--json`, each line has
+`type`, `time` (Unix milliseconds), and the `session_id`, `window_id`, and
+`pane_id` it is about, with names; the first is `ready`. It reconnects after
+the server restarts or upgrades, printing `ready` again; changes in between
+are missed, so list what you track again then. Run it in the background and
+stop it when you are done.
+
+## Asking the user
+
+These open over your pane in the browser and print the answer:
+
+```sh
+choice=$(printf 'main\ndevelop\nrelease\tthe next release\n' | btmux pick --prompt 'Branch')
+btmux confirm 'Delete the build directory?' && rm -rf build
+name=$(btmux input --prompt 'Window name' --default server)
+btmux popup -T 'Review' -- git add -p    # a program over the pane; exits with its status
+```
+
+`pick` items are stdin's lines; a tab starts a description that isn't printed
+(`-m` picks several). `confirm` exits 0 for yes and 1 for no. `pick`,
+`confirm`, and `input` exit 130 if the user cancels and 2 if no browser tab
+shows the pane; ask in your reply instead then. `popup` runs the program in
+place when no tab shows the pane. Ask this way only when a choice in the
+browser beats asking in the conversation, such as picking from a long list.
+
+## Opening files
+
+```sh
+btmux open-editor src/main.rs 120   # over your pane in the user's editor, at line 120
+```
+
 ## Other agents
 
 ```sh
@@ -79,8 +141,9 @@ btmux wait "$pane"                    # until it is idle, done, or blocked
 btmux wait "$pane" --state done --timeout 1800
 ```
 
-States are `working`, `blocked` (waiting for approval or input), `done`
-(finished a turn), `idle`, and `unknown`. `--timeout` is in seconds (default
+States are `working`, `waiting` (its turn ended, but background work will
+resume it), `blocked` (waiting for approval or input), `done` (finished a
+turn), `idle`, and `unknown`. `--timeout` is in seconds (default
 600, at most 3600); `btmux wait` exits 2 on timeout.
 
 To give an agent a prompt, use `btmux prompt` instead of `send-keys`: it
@@ -108,6 +171,14 @@ btmux send-notification 'Tests passed' --body '42 passed' --level success
 ```
 
 Levels are `info`, `attention`, `success`, and `error`.
+
+## MCP and REST
+
+The same server offers an MCP server at `$BTMUX_API_URL/mcp` and a REST API
+described by `$BTMUX_API_URL/api/openapi.json`, both taking
+`Authorization: Bearer $BTMUX_AUTH_TOKEN`. Prefer the CLI from a shell; use
+MCP tools (`list_sessions`, `send_keys`, `read_pane_output`, `run_command`,
+`wait_for_agent`, `send_prompt`, ...) when they are already connected.
 
 ## Etiquette
 

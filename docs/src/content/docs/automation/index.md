@@ -17,6 +17,7 @@ The CLI, REST API, and MCP server use the same btmux server as the UI, at
 | Run a program over a pane                  | [Popups](popups.md)                   |
 | Tell the user something                    | [Notifications](notifications.md)     |
 | Hand work to agents and wait for it        | [Orchestrating agents](../agents/orchestrating.md) |
+| React to changes as they happen            | [Events](events.md)                   |
 
 ## Authentication
 
