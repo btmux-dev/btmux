@@ -11,8 +11,8 @@ screen rules btmux uses to detect it.
 
 btmux combines four kinds of evidence:
 
-- **Processes.** It detects interactive Codex, Claude Code, and Gemini CLI
-  processes under each pane's shell, including known Node/Bun entry points,
+- **Processes.** It detects interactive Codex, Claude Code, Gemini CLI,
+  Antigravity CLI, and OpenCode processes under each pane's shell, including known Node/Bun entry points,
   about once a second. The foreground job selects the agent whose screen it
   reads. A confirmed process exit clears the status even when Ctrl+C skips the
   end hook. Suspended or background agents stay listed with unknown activity,
@@ -57,6 +57,10 @@ btmux uses these rules to resolve conflicting reports.
   it, as its own `Stop` notifies; without one, it is shown once that turn
   ends. Seeing the result, or a newer `Stop`, also drops it, and an upgrade
   shows it. An `idle_prompt` while waiting isn't shown.
+- Antigravity CLI reports one `Stop` per turn, with a reason: a canceled turn
+  is interrupted, and an error or a step, invocation, or token limit fails.
+  One sent while background tasks still run (`fullyIdle: false`) doesn't end
+  the turn, since those tasks resume it; its last `Stop` does.
 - Hooks may report a wrapper's child process; the process scan's own choice
   identifies the agent and selects its rules. Names reported by hooks take
   precedence over process names. A newly detected agent ignores OSC titles

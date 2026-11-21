@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# A fake `agy` for browser tests, so none runs the real one. While
+# $BTMUX_FAKE_AGY/hold exists, --version waits. `-p /usage` prints
+# $BTMUX_FAKE_AGY/usage.json, else exits 2 (no account quota).
+set -euo pipefail
+state="${BTMUX_FAKE_AGY:-}"
+if [ "${1:-}" = --version ]; then
+  while [ -n "$state" ] && [ -e "$state/hold" ]; do sleep 0.05; done
+  echo "1.5.14"
+  exit 0
+fi
+if [ "$*" = "-p /usage --output-format json" ] && [ -n "$state" ] && [ -f "$state/usage.json" ]; then
+  cat "$state/usage.json"
+  exit 0
+fi
+exit 2

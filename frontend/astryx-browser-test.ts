@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { waitForAsync } from './browser-test-utils';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createConnection, createServer, type AddressInfo, type Socket } from 'node:net';
@@ -950,14 +950,29 @@ try {
       origin: new URL(page.url()).origin,
     } as never);
   await clipboardPermission('denied');
+  // Hold the fake agy's version, so its row is still checking while others finish.
+  const agy = process.env.BTMUX_TEST_AGY;
+  if (agy) {
+    mkdirSync(agy, { recursive: true });
+    writeFileSync(path.join(agy, 'hold'), '');
+  }
   await page.getByRole('button', { name: 'Commands', exact: true }).click();
   await page.keyboard.type('about: health');
   await page.keyboard.press('Enter');
   const health = page.getByRole('tabpanel', { name: 'Health' });
+  await health.getByText('Git mode, worktrees, and the branch names on sessions.').waitFor();
+  if (agy) {
+    assert(await health.getByRole('status', { name: 'Checking Antigravity CLI' }).isVisible());
+    rmSync(path.join(agy, 'hold'));
+  }
   await health.getByText('Default shell', { exact: true }).waitFor();
   await health.getByText('Neovim', { exact: true }).waitFor();
   await health.getByText('Claude Code', { exact: true }).waitFor();
+  await health.getByText('Antigravity CLI', { exact: true }).waitFor();
   await health.getByText('ripgrep', { exact: true }).waitFor();
+  // Results stream in after the list of checks.
+  await page.waitForFunction(() => !document.querySelector('[data-health-checking]'));
+  await health.getByText('No problems found').or(health.getByText(/^Needs attention/)).waitFor();
   await health.getByText('This browser', { exact: true }).waitFor();
   await health.getByText('WebGPU', { exact: true }).waitFor();
   await health.getByText("Allow clipboard access in the browser's site settings.").waitFor();

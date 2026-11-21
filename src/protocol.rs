@@ -94,6 +94,8 @@ fn generated_protocol_is_current() {
         crate::health::HealthGroup::decl(&config),
         crate::health::HealthCheck::decl(&config),
         crate::health::HealthStatus::decl(&config),
+        crate::health::HealthEvent::decl(&config),
+        crate::health::HealthGroupPlan::decl(&config),
         crate::tailscale::TailscaleStatus::decl(&config),
         crate::connect::status::ConnectStatus::decl(&config),
         crate::connect::status::TunnelState::decl(&config),

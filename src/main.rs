@@ -336,6 +336,11 @@ async fn main() {
         return;
     }
 
+    if let Some(config::SubCommand::GenerateAntigravityHooks) = args.command {
+        print!("{}", agent_hooks::antigravity());
+        return;
+    }
+
     if let Some(config::SubCommand::GenerateFishTheme) = args.command {
         print!("{}", fish_integration::theme());
         return;

@@ -33,8 +33,8 @@ const SHELL_PATH_RETRY: Duration = Duration::from_secs(600);
 /// Shell startup can print anything, even on the line of an unterminated escape.
 #[cfg(unix)]
 const SHELL_PATH_MARKER: &str = "__btmux_path__";
-/// Codex doesn't grade its windows; Claude's come graded.
-const CODEX_WARNING_PERCENT: f64 = 80.0;
+/// Codex and Antigravity don't grade their windows; Claude's come graded.
+const WARNING_PERCENT: f64 = 80.0;
 const CODEX_DEFAULT_LIMIT: &str = "codex";
 /// JSON-RPC invalid request: Codex's answer without a ChatGPT login.
 const CODEX_NOT_SUBSCRIBED: i64 = -32600;
@@ -52,6 +52,11 @@ const CLAUDE_ARGS: &[&str] = &[
     "--verbose",
 ];
 const CODEX_ARGS: &[&str] = &["app-server"];
+/// Answered locally, without a model turn.
+const AGY_ARGS: &[&str] = &["-p", "/usage", "--output-format", "json"];
+const AGY_PROGRAM: &str = "agy";
+/// agy's exit status when there is no account quota, as with an API key.
+const AGY_NO_QUOTA: i32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -93,12 +98,20 @@ type Read = Result<Option<AgentLimits>, String>;
 struct Slot {
     limits: Option<AgentLimits>,
     read_at: Option<Instant>,
+    /// When the last read, successful or not, ended.
+    fetched_at: Option<Instant>,
     /// Logged once per change, as tabs poll every minute.
     error: Option<String>,
 }
 
 impl Slot {
+    fn due(&self, now: Instant) -> bool {
+        self.fetched_at
+            .is_none_or(|at| now.duration_since(at) >= CACHE_FOR)
+    }
+
     fn update(&mut self, read: Read, now: Instant) {
+        self.fetched_at = Some(now);
         match read {
             Ok(limits) => {
                 self.limits = limits;
@@ -121,15 +134,49 @@ impl Slot {
     }
 }
 
-#[derive(Default)]
-struct Cache {
-    fetched_at: Option<Instant>,
-    claude: Slot,
-    codex: Slot,
+#[derive(Clone, Copy)]
+enum Source {
+    Claude,
+    Codex,
+    Agy,
 }
 
-/// Held across a read, so concurrent tabs share it.
-static CACHE: LazyLock<Mutex<Cache>> = LazyLock::new(Mutex::default);
+const SOURCES: [Source; 3] = [Source::Claude, Source::Codex, Source::Agy];
+
+impl Source {
+    async fn read(self, path: Option<OsString>) -> Read {
+        match self {
+            Source::Claude => read_claude(path).await,
+            Source::Codex => read_codex(path).await,
+            Source::Agy => read_agy(path).await,
+        }
+    }
+}
+
+/// One agent's limits, refreshed on its own, so a slow CLI holds up no other.
+#[derive(Default)]
+struct Reader {
+    slot: std::sync::Mutex<Slot>,
+    /// Held across a read, so concurrent tabs share it.
+    reading: Mutex<()>,
+}
+
+impl Reader {
+    fn slot(&self) -> std::sync::MutexGuard<'_, Slot> {
+        self.slot.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    async fn refresh(&self, source: Source, path: Option<OsString>) {
+        let _reading = self.reading.lock().await;
+        if !self.slot().due(Instant::now()) {
+            return;
+        }
+        let read = source.read(path).await;
+        self.slot().update(read, Instant::now());
+    }
+}
+
+static READERS: LazyLock<[Reader; 3]> = LazyLock::new(Default::default);
 /// Shared with the Health tab, so it finds the CLIs where limits run them.
 static SHELL_PATH: LazyLock<Mutex<ShellPath>> = LazyLock::new(Mutex::default);
 
@@ -143,26 +190,38 @@ pub fn routes() -> Router<AppState> {
     tag = "Agents",
     operation_id = "agent-limits",
     summary = "Subscription limits",
-    description = "How much of each subscription limit Claude Code and Codex accounts on the server have used, and when each resets. Agents using an API key, or not logged in, aren't listed.",
+    description = "How much of each subscription limit Claude Code, Codex, and Antigravity accounts on the server have used, and when each resets. Agents using an API key, or not logged in, aren't listed.",
     responses(
         (status = 200, description = "Each logged-in agent's limits", body = Vec<AgentLimits>),
     ),
 ))]
 pub(crate) async fn limits(State(state): State<AppState>) -> Json<Vec<AgentLimits>> {
-    let mut cache = CACHE.lock().await;
-    if cache.fetched_at.is_none_or(|at| at.elapsed() >= CACHE_FOR) {
+    let readers: &'static [Reader; 3] = &READERS;
+    let now = Instant::now();
+    if readers.iter().any(|reader| reader.slot().due(now)) {
         let shell = state.read().await.shell().to_owned();
-        let [claude, codex] = agent_paths(&shell).await;
-        let (claude, codex) = tokio::join!(read_claude(claude), read_codex(codex));
-        let now = Instant::now();
-        cache.claude.update(claude, now);
-        cache.codex.update(codex, now);
-        cache.fetched_at = Some(now);
+        let paths = agent_paths(&shell).await;
+        // Later refreshes run behind the last limits; only a first read is waited for.
+        let mut first = Vec::new();
+        for ((reader, source), path) in readers.iter().zip(SOURCES).zip(paths) {
+            let slot = reader.slot();
+            if !slot.due(now) {
+                continue;
+            }
+            let never_read = slot.fetched_at.is_none();
+            drop(slot);
+            if never_read {
+                first.push(reader.refresh(source, path));
+            } else {
+                tokio::spawn(reader.refresh(source, path));
+            }
+        }
+        futures_util::future::join_all(first).await;
     }
     Json(
-        [&cache.claude, &cache.codex]
-            .into_iter()
-            .filter_map(|slot| slot.limits.clone())
+        readers
+            .iter()
+            .filter_map(|reader| reader.slot().limits.clone())
             .collect(),
     )
 }
@@ -174,14 +233,17 @@ fn now_seconds() -> f64 {
         .as_secs_f64()
 }
 
-/// The `PATH` the Claude and Codex CLIs run with, `None` for the server's own.
-pub(crate) async fn agent_paths(shell: &str) -> [Option<OsString>; 2] {
-    programs_paths(
+/// The `PATH` the Claude, Codex, and Antigravity CLIs run with, `None` for the server's own.
+/// Fewer have agy, so its absence alone doesn't start the shell again.
+async fn agent_paths(shell: &str) -> [Option<OsString>; 3] {
+    let [claude, codex] = programs_paths(
         shell,
-        [Agent::Claude, Agent::Codex].map(agent_program),
+        [agent_program(Agent::Claude), agent_program(Agent::Codex)],
         AskShell::Retry,
     )
-    .await
+    .await;
+    let [agy] = programs_paths(shell, [AGY_PROGRAM.into()], AskShell::Once).await;
+    [claude, codex, agy]
 }
 
 /// When a program missing from both `PATH`s starts the shell.
@@ -395,6 +457,106 @@ async fn read_codex(path: Option<OsString>) -> Read {
     parse_codex(&reply, now_seconds())
 }
 
+/// Answers `/usage` itself only from 1.1.11; older ones would send it as a prompt.
+const AGY_MIN_VERSION: [u64; 3] = [1, 1, 11];
+const AGY_VERSION_TIMEOUT: Duration = Duration::from_secs(5);
+
+async fn read_agy(path: Option<OsString>) -> Read {
+    let search = path.clone().or_else(|| std::env::var_os("PATH"));
+    let program = search
+        .and_then(|search| find_in(OsStr::new(AGY_PROGRAM), &search))
+        .ok_or_else(|| format!("{AGY_PROGRAM}: not found"))?;
+    read_agy_at(&program, path, READ_TIMEOUT).await
+}
+
+/// Checks the version of the same executable first, so no read can start a
+/// model turn.
+async fn read_agy_at(program: &Path, path: Option<OsString>, timeout: Duration) -> Read {
+    // With the `PATH` it reads with, which a shim may need.
+    let probed = run_to_end(program, path.clone(), &["--version"], AGY_VERSION_TIMEOUT).await?;
+    let output = String::from_utf8_lossy(&probed.stdout);
+    let version = probed
+        .status
+        .success()
+        .then(|| crate::system_info::version(&output))
+        .flatten()
+        .ok_or_else(|| format!("{AGY_PROGRAM}: no version, so /usage may not be safe"))?;
+    if !version_at_least(version, AGY_MIN_VERSION) {
+        return Err(format!(
+            "{AGY_PROGRAM} {version} predates 1.1.11, which answers /usage without a model turn"
+        ));
+    }
+    let output = run_to_end(program, path, AGY_ARGS, timeout).await?;
+    if output.status.code() == Some(AGY_NO_QUOTA) {
+        return Ok(None);
+    }
+    if !output.status.success() {
+        return Err(format!("{AGY_PROGRAM} /usage failed: {}", output.status));
+    }
+    let reply = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .rev()
+        .find_map(|line| serde_json::from_str::<Value>(line).ok())
+        .ok_or_else(|| format!("{AGY_PROGRAM} /usage printed no JSON"))?;
+    parse_agy(&reply, now_seconds())
+}
+
+/// Whether a dotted version is `min` or newer; a missing part counts as 0.
+fn version_at_least(version: &str, min: [u64; 3]) -> bool {
+    let mut parts = version
+        .split(['.', '-', '+'])
+        .map(|part| part.parse::<u64>());
+    let mut have = [0; 3];
+    for slot in &mut have {
+        match parts.next() {
+            Some(Ok(part)) => *slot = part,
+            Some(Err(_)) => return false,
+            None => break,
+        }
+    }
+    have >= min
+}
+
+/// Runs `program` to its exit, without input. A timeout or cancellation kills
+/// its whole tree, since hooks and wrappers can leave children behind.
+async fn run_to_end(
+    program: &Path,
+    path: Option<OsString>,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<std::process::Output, String> {
+    let name = program.display().to_string();
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .current_dir(std::env::temp_dir())
+        // No hook runs for `/usage`, but this is no pane's agent if one does.
+        .env_remove("BTMUX_PANE_ID")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
+    #[cfg(unix)]
+    command.process_group(0);
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    let child = command
+        .spawn()
+        .map_err(|error| format!("{name}: {error}"))?;
+    let tree = crate::health::ProcessTree::new(&child);
+    let output = tokio::time::timeout(timeout, child.wait_with_output())
+        .await
+        .map_err(|_| format!("{name}: timed out"))?
+        .map_err(|error| format!("{name}: {error}"))?;
+    if let Some(tree) = tree {
+        tree.release();
+    }
+    Ok(output)
+}
+
 /// Writes one JSON line per request, then returns the first output line `reply` accepts.
 async fn exchange(
     program: OsString,
@@ -579,14 +741,88 @@ fn codex_limit(snapshot: &Value, window: &Value) -> Option<AgentLimit> {
         },
         percent,
         resets_at: window["resetsAt"].as_f64(),
-        severity: if percent >= 100.0 {
-            LimitSeverity::Critical
-        } else if percent >= CODEX_WARNING_PERCENT {
-            LimitSeverity::Warning
-        } else {
-            LimitSeverity::Normal
-        },
+        severity: graded(percent),
     })
+}
+
+fn graded(percent: f64) -> LimitSeverity {
+    if percent >= 100.0 {
+        LimitSeverity::Critical
+    } else if percent >= WARNING_PERCENT {
+        LimitSeverity::Warning
+    } else {
+        LimitSeverity::Normal
+    }
+}
+
+/// Groups of models share each bucket, so buckets are named by window and group.
+fn parse_agy(reply: &Value, now: f64) -> Read {
+    let groups = reply["command"]["data"]["groups"]
+        .as_array()
+        .ok_or("Antigravity reported no usage groups")?;
+    let limits: Vec<_> = groups
+        .iter()
+        .flat_map(|group| {
+            let name = group["name"].as_str();
+            group["buckets"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(move |bucket| agy_limit(name, bucket))
+        })
+        .collect();
+    Ok((!limits.is_empty()).then(|| AgentLimits {
+        agent: "Antigravity".into(),
+        plan: None,
+        updated_at: now,
+        limits,
+    }))
+}
+
+fn agy_limit(group: Option<&str>, bucket: &Value) -> Option<AgentLimit> {
+    let window = bucket["window"].as_str();
+    // Its JSON leaves out zero values, so a used-up bucket has no fraction.
+    let remaining = match &bucket["remaining_fraction"] {
+        Value::Null => 0.0,
+        fraction => fraction.as_f64()?,
+    };
+    let percent = ((1.0 - remaining) * 100.0).clamp(0.0, 100.0);
+    let base = match window.and_then(agy_window_minutes) {
+        Some(minutes) => window_label(minutes),
+        None => bucket["name"].as_str().or(window)?.to_string(),
+    };
+    Some(AgentLimit {
+        label: match group {
+            Some(group) => format!("{base} ({group})"),
+            None => base,
+        },
+        percent,
+        resets_at: bucket["reset_time"]
+            .as_str()
+            .and_then(|at| OffsetDateTime::parse(at, &Rfc3339).ok())
+            .map(|at| at.unix_timestamp() as f64),
+        severity: graded(percent),
+    })
+}
+
+/// `weekly`, `daily`, or a count with `m`, `h`, `d`, or `w`, like `5h`.
+fn agy_window_minutes(window: &str) -> Option<u64> {
+    match window {
+        "weekly" => return Some(7 * 24 * 60),
+        "daily" => return Some(24 * 60),
+        "hourly" => return Some(60),
+        _ => {}
+    }
+    let unit = window.chars().last()?;
+    let count: u64 = window[..window.len() - unit.len_utf8()].parse().ok()?;
+    let minutes = match unit {
+        'm' => 1,
+        'h' => 60,
+        'd' => 24 * 60,
+        'w' => 7 * 24 * 60,
+        _ => return None,
+    };
+    Some(count * minutes).filter(|m| *m > 0)
 }
 
 fn window_label(minutes: u64) -> String {
@@ -753,6 +989,46 @@ mod tests {
     }
 
     #[test]
+    fn agy_names_buckets_by_window_and_group() {
+        let reply = json!({ "status": "SUCCESS", "command": { "name": "usage", "data": { "groups": [
+            { "name": "Gemini Models", "buckets": [
+                { "id": "gemini-weekly", "name": "Weekly Limit Remaining", "window": "weekly",
+                  "remaining_fraction": 0.75, "reset_time": "2026-11-09T14:00:00Z" },
+                { "id": "gemini-5h", "name": "Five Hour Limit Remaining", "window": "5h",
+                  "remaining_fraction": 0.125 },
+            ] },
+            { "name": "Gemini 4 Argon", "buckets": [
+                { "name": "Argon Monthly Limit", "window": "monthly", "remaining_fraction": 0 },
+                { "id": "argon-weekly", "name": "Used up", "window": "weekly" },
+                { "name": "Not a number", "window": "weekly", "remaining_fraction": "x" },
+            ] },
+        ] } } });
+        let parsed = parse_agy(&reply, NOW).unwrap().unwrap();
+        assert_eq!(parsed.agent, "Antigravity");
+        assert_eq!(
+            parsed.limits,
+            [
+                limit("Weekly (Gemini Models)", 25.0, Some(1_794_232_800.0)),
+                AgentLimit {
+                    severity: LimitSeverity::Warning,
+                    ..limit("5-hour (Gemini Models)", 87.5, None)
+                },
+                AgentLimit {
+                    severity: LimitSeverity::Critical,
+                    ..limit("Argon Monthly Limit (Gemini 4 Argon)", 100.0, None)
+                },
+                AgentLimit {
+                    severity: LimitSeverity::Critical,
+                    ..limit("Weekly (Gemini 4 Argon)", 100.0, None)
+                },
+            ]
+        );
+        assert!(parse_agy(&json!({ "status": "SUCCESS" }), NOW).is_err());
+        let empty = json!({ "command": { "data": { "groups": [] } } });
+        assert_eq!(parse_agy(&empty, NOW), Ok(None));
+    }
+
+    #[test]
     fn failures_keep_recent_limits_until_they_expire() {
         let start = Instant::now();
         let limits = AgentLimits {
@@ -779,10 +1055,96 @@ mod tests {
         assert_eq!(slot.error, None);
     }
 
+    #[test]
+    fn agy_versions_are_compared_by_number() {
+        for (version, ok) in [
+            ("1.1.11", true),
+            ("1.5.14", true),
+            ("1.10.0", true),
+            ("2.0", true),
+            ("1.1.10", false),
+            ("1.0.99", false),
+            ("1", false),
+            ("dev", false),
+        ] {
+            assert_eq!(version_at_least(version, AGY_MIN_VERSION), ok, "{version}");
+        }
+    }
+
     #[cfg(unix)]
     mod exchange {
         use super::*;
         use crate::health::tests::{assert_child_exits, spawns_child, test_script, CHILD_STARTED};
+
+        /// An agy that reports `version` and logs the arguments of other runs.
+        fn fake_agy(version: &str, usage: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+            test_script(
+                &format!(
+                    "if [ \"$1\" = --version ]; then echo {version}; exit 0; fi\n\
+                     echo \"$@\" >> \"$0.calls\"\n{usage}"
+                ),
+                0o755,
+            )
+        }
+
+        #[tokio::test]
+        async fn agy_reads_only_from_a_version_that_answers_usage_itself() {
+            let reply = r#"{"command":{"data":{"groups":[{"name":"G","buckets":[{"window":"5h","remaining_fraction":0.5}]}]}}}"#;
+            let (dir, path) = fake_agy("1.1.10", &format!("echo '{reply}'"));
+            assert!(read_agy_at(&path, None, CHILD_STARTED).await.is_err());
+            // Never asked, so it can't have sent `/usage` as a prompt.
+            assert!(!dir.join("tool.calls").exists());
+            std::fs::remove_dir_all(&dir).unwrap();
+
+            let (dir, path) = fake_agy("1.5.14", &format!("echo '{reply}'"));
+            let limits = read_agy_at(&path, None, CHILD_STARTED)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(limits.limits[0].label, "5-hour (G)");
+            assert_eq!(
+                std::fs::read_to_string(dir.join("tool.calls"))
+                    .unwrap()
+                    .trim(),
+                AGY_ARGS.join(" ")
+            );
+            std::fs::remove_dir_all(&dir).unwrap();
+
+            // An API key has no account quota.
+            let (dir, path) = fake_agy("1.5.14", "exit 2");
+            assert_eq!(read_agy_at(&path, None, CHILD_STARTED).await, Ok(None));
+            std::fs::remove_dir_all(&dir).unwrap();
+
+            // A shim answers its version only with the `PATH` it was found on.
+            let (dir, path) = test_script(
+                "case \":$PATH:\" in *:/btmux-shim:*) ;; *) exit 1;; esac\n\
+                 if [ \"$1\" = --version ]; then echo 1.5.14; else exit 2; fi",
+                0o755,
+            );
+            assert!(read_agy_at(&path, None, CHILD_STARTED).await.is_err());
+            let shim = Some(OsString::from("/btmux-shim:/usr/bin:/bin"));
+            assert_eq!(read_agy_at(&path, shim, CHILD_STARTED).await, Ok(None));
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+
+        #[tokio::test]
+        async fn agy_timeouts_and_cancellation_kill_its_children() {
+            let (dir, path) = test_script(&spawns_child("wait"), 0o755);
+            let timed_out = run_to_end(&path, None, &[], CHILD_STARTED).await;
+            assert!(timed_out.unwrap_err().ends_with("timed out"));
+            assert_child_exits(&dir).await;
+            std::fs::remove_dir_all(&dir).unwrap();
+
+            let (dir, path) = test_script(&spawns_child("wait"), 0o755);
+            let cancelled = tokio::time::timeout(
+                CHILD_STARTED,
+                run_to_end(&path, None, &[], Duration::from_secs(30)),
+            )
+            .await;
+            assert!(cancelled.is_err());
+            assert_child_exits(&dir).await;
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
 
         async fn run(script: &str, timeout: Duration) -> Result<Value, String> {
             let args = ["-c", script];

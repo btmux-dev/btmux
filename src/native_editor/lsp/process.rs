@@ -374,16 +374,56 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn logs_all_of_stderr_and_the_exit() {
+    /// Never enabled, but never rules a callsite out: tracing caches each
+    /// callsite's interest globally, so one first hit on another test's
+    /// thread, with no subscriber, would stay disabled for this thread's.
+    struct Undecided;
+
+    impl tracing::Subscriber for Undecided {
+        fn register_callsite(
+            &self,
+            _: &'static tracing::Metadata<'static>,
+        ) -> tracing::subscriber::Interest {
+            tracing::subscriber::Interest::sometimes()
+        }
+        fn max_level_hint(&self) -> Option<tracing::level_filters::LevelFilter> {
+            Some(tracing::level_filters::LevelFilter::INFO)
+        }
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            false
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, _: &tracing::Event<'_>) {}
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    /// Captures this thread's logs.
+    fn capture() -> (Captured, tracing::subscriber::DefaultGuard) {
+        static UNDECIDED: std::sync::Once = std::sync::Once::new();
+        UNDECIDED.call_once(|| {
+            let _ = tracing::subscriber::set_global_default(Undecided);
+        });
         let captured = Captured::default();
         let writer = captured.clone();
         let subscriber = tracing_subscriber::fmt()
             .with_writer(move || writer.clone())
             .with_ansi(false)
             .finish();
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let guard = tracing::subscriber::set_default(subscriber);
+        // Callsites registered as no one's before `Undecided` was installed.
+        tracing::callsite::rebuild_interest_cache();
+        (captured, guard)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn logs_all_of_stderr_and_the_exit() {
+        let (captured, _guard) = capture();
         let mut command = tokio::process::Command::new("sh");
         command.args(["-c", r"printf 'a\n\377\nb\n' >&2; exit 127"]);
         let config = LanguageServerConfig {

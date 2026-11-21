@@ -245,6 +245,7 @@ const UNDOCUMENTED: &[&str] = &[
     "/api/config/preview",
     "/api/editors",
     "/api/file",
+    "/api/health/stream",
     "/api/multipass",
     "/api/multipass/{action}",
     "/api/nvim/file",

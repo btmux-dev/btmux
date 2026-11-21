@@ -569,13 +569,13 @@ Options:
 
 ### `btmux skill`
 
-Set up coding agents (Claude Code, Codex) to use btmux: a skill that teaches them its CLI, and a hook that tells them which pane they run in. Both take their text from the installed btmux when they run
+Set up coding agents (Claude Code, Codex, Antigravity CLI) to use btmux: a skill that teaches them its CLI, and a hook that tells them which pane they run in. Both take their text from the installed btmux when they run
 
 ```text
 Usage: btmux skill <COMMAND>
 
 Commands:
-  setup   Set up the agents found here (Claude Code, Codex, Gemini CLI), or those given with --agent: hooks that report their state to btmux, and for Claude Code and Codex the btmux skill and a hook telling them their pane. With no agent found, the skill alone goes into ~/.agents/skills, which most agents read. Safe to run again; it updates what an older btmux installed
+  setup   Set up the agents found here (Claude Code, Codex, Gemini CLI, Antigravity CLI), or those given with --agent: hooks that report their state to btmux, and for all but Gemini CLI the btmux skill and a hook telling them their pane. With no agent found, the skill alone goes into ~/.agents/skills, which most agents read. Safe to run again; it updates what an older btmux installed
   status  Report what is installed for each agent
   remove  Remove what setup installed, leaving a skill btmux didn't install and every other hook alone
   show    Print the guide the skill gives agents
@@ -584,13 +584,13 @@ Commands:
 
 #### `btmux skill setup`
 
-Set up the agents found here (Claude Code, Codex, Gemini CLI), or those given with --agent: hooks that report their state to btmux, and for Claude Code and Codex the btmux skill and a hook telling them their pane. With no agent found, the skill alone goes into ~/.agents/skills, which most agents read. Safe to run again; it updates what an older btmux installed
+Set up the agents found here (Claude Code, Codex, Gemini CLI, Antigravity CLI), or those given with --agent: hooks that report their state to btmux, and for all but Gemini CLI the btmux skill and a hook telling them their pane. With no agent found, the skill alone goes into ~/.agents/skills, which most agents read. Safe to run again; it updates what an older btmux installed
 
 ```text
 Usage: btmux skill setup [OPTIONS]
 
 Options:
-      --agent <AGENT>  Only this agent. Repeatable [possible values: claude, codex, gemini]
+      --agent <AGENT>  Only this agent. Repeatable [possible values: claude, codex, gemini, agy]
       --dry-run        Report what would change without changing anything
       --force          Replace a skill named btmux that btmux didn't install (moved to the trash)
       --json           Print the result as JSON
@@ -615,7 +615,7 @@ Remove what setup installed, leaving a skill btmux didn't install and every othe
 Usage: btmux skill remove [OPTIONS]
 
 Options:
-      --agent <AGENT>  Only this agent. Repeatable [possible values: claude, codex, gemini]
+      --agent <AGENT>  Only this agent. Repeatable [possible values: claude, codex, gemini, agy]
       --dry-run        Report what would change without changing anything
       --json           Print the result as JSON
 ```
@@ -1316,6 +1316,14 @@ Print a Gemini CLI settings.json hooks snippet for btmux pane notifications
 
 ```text
 Usage: btmux generate-gemini-cli-hooks
+```
+
+### `btmux generate-antigravity-hooks`
+
+Print an Antigravity CLI hooks.json for btmux pane notifications
+
+```text
+Usage: btmux generate-antigravity-hooks
 ```
 
 ### `btmux install-fish-integration`

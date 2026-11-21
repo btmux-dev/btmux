@@ -3176,7 +3176,7 @@
           "Agents"
         ],
         "summary": "Subscription limits",
-        "description": "How much of each subscription limit Claude Code and Codex accounts on the server have used, and when each resets. Agents using an API key, or not logged in, aren't listed.",
+        "description": "How much of each subscription limit Claude Code, Codex, and Antigravity accounts on the server have used, and when each resets. Agents using an API key, or not logged in, aren't listed.",
         "operationId": "agent-limits",
         "responses": {
           "200": {
@@ -3799,7 +3799,7 @@
           "Notifications"
         ],
         "summary": "Report an agent event",
-        "description": "Takes an agent hook's JSON payload as is (Claude Code, Codex, Gemini CLI), or `event`, `title`, and `body` from other callers. Updates the pane's agent status and, for events worth attention, marks the pane and notifies every client.",
+        "description": "Takes an agent hook's JSON payload as is (Claude Code, Codex, Gemini CLI, Antigravity CLI), or `event`, `title`, and `body` from other callers. Updates the pane's agent status and, for events worth attention, marks the pane and notifies every client.",
         "operationId": "notify-pane",
         "parameters": [
           {
@@ -4470,6 +4470,24 @@
           "timed_out": {
             "type": "boolean"
           }
+        }
+      },
+      "AgyToolCall": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "args": {}
         }
       },
       "CpuInfo": {
@@ -6296,6 +6314,31 @@
           },
           "tool_input": {
             "description": "CC PermissionRequest: tool input object."
+          },
+          "toolCall": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AgyToolCall",
+                "description": "Antigravity PreToolUse and PostToolUse: the tool call."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "terminationReason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Antigravity Stop: why the loop ended, e.g. `NO_TOOL_CALL` or `USER_CANCELED`."
+          },
+          "fullyIdle": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Antigravity Stop: false while background tasks still run."
           },
           "error": {
             "type": [
