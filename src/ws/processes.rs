@@ -69,7 +69,7 @@ pub struct PortInfo {
     pub(crate) protocol: String,
     pub(crate) local_address: String,
     pub(crate) local_port: u16,
-    remote_address: Option<String>,
+    pub(crate) remote_address: Option<String>,
     pub(crate) state: String,
 }
 

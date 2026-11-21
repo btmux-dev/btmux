@@ -90,7 +90,7 @@ pub(crate) async fn api_pane_ports(
     State(state): State<AppState>,
     Path(pane_id): Path<Uuid>,
 ) -> Response {
-    match crate::pane_ports::pane_listeners(&state, pane_id, false).await {
+    match crate::pane_ports::pane_listeners(&state, pane_id).await {
         Ok(listeners) => Json(listeners).into_response(),
         Err(unavailable) => unavailable.into_response(),
     }

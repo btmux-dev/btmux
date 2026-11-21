@@ -483,8 +483,11 @@ where
     }
 }
 
+/// Surfaces that would act on the server's machine for a relayed tab, and
+/// port forwards, which would carry arbitrary TCP through the relay.
 fn refused(path: &str) -> bool {
     path == "/ws/browser"
+        || path.starts_with("/ws/forward/")
         || path == "/api/vscode"
         || path.starts_with("/api/vscode/")
         || path == "/vscode"
@@ -734,6 +737,7 @@ mod tests {
             ("/api/vscode/license", StatusCode::FORBIDDEN),
             ("/vscode/", StatusCode::FORBIDDEN),
             ("/vscode/static/x.js", StatusCode::FORBIDDEN),
+            ("/ws/forward/id?port=80", StatusCode::FORBIDDEN),
             ("/api/sessions", StatusCode::OK),
             ("/vscodex", StatusCode::OK),
         ] {

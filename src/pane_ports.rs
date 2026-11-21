@@ -1,7 +1,9 @@
-//! TCP ports that a pane's programs listen on, for `btmux forward`.
+//! TCP ports that a pane's programs listen on, for `btmux forward`, and which
+//! program accepted a connection the server made to one.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -10,8 +12,9 @@ use uuid::Uuid;
 
 use crate::ws::processes::{sample_ports, AncestorPanes};
 
-/// A dev server opens many connections at once; each would sample otherwise.
-const CACHE_FOR: Duration = Duration::from_secs(2);
+/// How old a sample may be for listing ports. Checking a connection always
+/// takes one started after it was made.
+pub const LIST_AGE: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(utoipa::ToSchema))]
@@ -22,45 +25,269 @@ pub struct Listener {
     pub pid: Option<u32>,
     /// The listening process's name.
     pub process: Option<String>,
-    /// A wildcard listener whose loopback port another program also holds,
-    /// so connecting over loopback would reach that one instead.
-    #[serde(skip)]
-    pub shadowed: bool,
 }
 
 impl Listener {
+    fn ip(&self) -> Option<IpAddr> {
+        self.address.parse().ok()
+    }
+
     /// Where the server connects: loopback for a wildcard listener.
-    pub fn connect_address(&self) -> std::net::SocketAddr {
-        use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-        let ip = match self.address.parse::<IpAddr>() {
-            Ok(IpAddr::V4(ip)) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
-            Ok(IpAddr::V6(ip)) if ip.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
-            Ok(ip) => ip,
-            Err(_) => IpAddr::V4(Ipv4Addr::LOCALHOST),
+    pub fn connect_address(&self) -> SocketAddr {
+        use std::net::{Ipv4Addr, Ipv6Addr};
+        let ip = match self.ip() {
+            Some(IpAddr::V4(ip)) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
+            Some(IpAddr::V6(ip)) if ip.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
+            Some(ip) => ip,
+            None => IpAddr::V4(Ipv4Addr::LOCALHOST),
         };
-        std::net::SocketAddr::new(ip, self.port)
+        SocketAddr::new(ip, self.port)
     }
 }
 
-type Sample = HashMap<Uuid, Vec<Listener>>;
+/// The listener for `port`, on `address` if given, else the pane's only
+/// listening port. A port held on several addresses by different programs
+/// needs `address`; one program's listeners on several addresses are one
+/// service, reached over the first.
+pub fn pick(
+    listeners: &[Listener],
+    port: Option<u16>,
+    address: Option<IpAddr>,
+) -> Result<Listener, String> {
+    let list = |listeners: &[&Listener]| {
+        listeners
+            .iter()
+            .map(|l| {
+                let at = SocketAddr::new(l.ip().unwrap_or(IpAddr::from([0, 0, 0, 0])), l.port);
+                format!("  {at:<22}  {}", l.process.as_deref().unwrap_or("?"))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let all: Vec<&Listener> = listeners.iter().collect();
+    let Some(port) = port.or_else(|| {
+        let first = listeners.first()?.port;
+        listeners.iter().all(|l| l.port == first).then_some(first)
+    }) else {
+        return Err(if listeners.is_empty() {
+            "no program in the pane listens on a TCP port".into()
+        } else {
+            format!(
+                "the pane listens on several ports; name one:\n{}",
+                list(&all)
+            )
+        });
+    };
+    let matching: Vec<&Listener> = all
+        .into_iter()
+        .filter(|l| l.port == port && address.is_none_or(|a| l.ip() == Some(a)))
+        .collect();
+    let Some(first) = matching.first() else {
+        return Err(match address {
+            Some(address) => format!(
+                "no program in the pane listens on {}",
+                SocketAddr::new(address, port)
+            ),
+            None => format!("no program in the pane listens on port {port}"),
+        });
+    };
+    if matching.iter().any(|l| l.pid != first.pid) {
+        return Err(format!(
+            "different programs in the pane listen on port {port}; name one as ADDRESS:PORT:\n{}",
+            list(&matching)
+        ));
+    }
+    Ok((*first).clone())
+}
 
-static CACHE: Mutex<Option<(Instant, Sample)>> = Mutex::new(None);
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Socket {
+    local: SocketAddr,
+    remote: Option<SocketAddr>,
+    listening: bool,
+    pid: Option<u32>,
+}
 
-/// Each pane's TCP listeners, from a sample at most `CACHE_FOR` old unless
-/// `fresh`. `shells` maps shell pids to panes, as `shell_pids` gives them.
-pub async fn listeners(shells: HashMap<u32, Uuid>, fresh: bool) -> Result<Sample, String> {
-    if !fresh {
-        if let Some((at, sample)) = CACHE.lock().unwrap().as_ref() {
-            if at.elapsed() < CACHE_FOR {
-                return Ok(sample.clone());
+/// One sample of every TCP socket and the process tree.
+pub struct Snapshot {
+    started: Instant,
+    sockets: Vec<Socket>,
+    parents: HashMap<u32, u32>,
+    sessions: HashMap<u32, u32>,
+    names: HashMap<u32, String>,
+}
+
+/// The latest snapshot. Holding the lock while sampling lets connections that
+/// arrive together share one.
+static LATEST: tokio::sync::Mutex<Option<Arc<Snapshot>>> = tokio::sync::Mutex::const_new(None);
+
+/// A snapshot started no earlier than `not_before`.
+pub async fn snapshot(not_before: Instant) -> Result<Arc<Snapshot>, String> {
+    let mut latest = LATEST.lock().await;
+    if let Some(snapshot) = latest.as_ref().filter(|s| s.started >= not_before) {
+        return Ok(snapshot.clone());
+    }
+    let snapshot = Arc::new(
+        tokio::task::spawn_blocking(Snapshot::take)
+            .await
+            .map_err(|e| e.to_string())??,
+    );
+    *latest = Some(snapshot.clone());
+    Ok(snapshot)
+}
+
+/// Unmapped, so `::ffff:127.0.0.1` matches `127.0.0.1`.
+fn canonical(address: SocketAddr) -> SocketAddr {
+    SocketAddr::new(address.ip().to_canonical(), address.port())
+}
+
+impl Snapshot {
+    fn take() -> Result<Self, String> {
+        let started = Instant::now();
+        let mut system = System::new().map_err(|e| e.to_string())?;
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing(),
+        );
+        let mut snapshot = Snapshot {
+            started,
+            sockets: Vec::new(),
+            parents: HashMap::new(),
+            sessions: HashMap::new(),
+            names: HashMap::new(),
+        };
+        for process in system.processes().values() {
+            let pid = process.pid().as_u32();
+            if let Some(parent) = process.parent() {
+                snapshot.parents.insert(pid, parent.as_u32());
             }
+            // On Windows this is a Terminal Services session.
+            if let Some(session) = process.session_id().filter(|_| cfg!(unix)) {
+                snapshot.sessions.insert(pid, session.as_u32());
+            }
+            snapshot
+                .names
+                .insert(pid, process.name().to_string_lossy().into_owned());
+        }
+        for port in sample_ports()? {
+            if port.protocol != "TCP" {
+                continue;
+            }
+            let Ok(ip) = port.local_address.parse::<IpAddr>() else {
+                continue;
+            };
+            snapshot.sockets.push(Socket {
+                local: canonical(SocketAddr::new(ip, port.local_port)),
+                remote: port
+                    .remote_address
+                    .and_then(|r| r.parse().ok())
+                    .map(canonical),
+                listening: port.state == "LISTEN",
+                pid: port.pid,
+            });
+        }
+        Ok(snapshot)
+    }
+
+    fn owner(&self, shells: &HashMap<u32, Uuid>, pid: u32) -> Option<Uuid> {
+        AncestorPanes::new(self.parents.clone(), shells)
+            .owner(pid, || self.sessions.get(&pid).copied())
+    }
+
+    fn describe(&self, pid: u32) -> String {
+        match self.names.get(&pid) {
+            Some(name) => format!("{name} (pid {pid})"),
+            None => format!("pid {pid}"),
         }
     }
-    let sample = tokio::task::spawn_blocking(move || sample_listeners(&shells))
-        .await
-        .map_err(|e| e.to_string())??;
-    *CACHE.lock().unwrap() = Some((Instant::now(), sample.clone()));
-    Ok(sample)
+
+    /// The TCP listeners of `pane`'s programs, by port and address.
+    pub fn listeners(&self, shells: &HashMap<u32, Uuid>, pane: Uuid) -> Vec<Listener> {
+        let mut panes = AncestorPanes::new(self.parents.clone(), shells);
+        let mut listeners: Vec<Listener> = self
+            .sockets
+            .iter()
+            .filter(|s| s.listening)
+            .filter_map(|s| {
+                let pid = s.pid?;
+                (panes.owner(pid, || self.sessions.get(&pid).copied()) == Some(pane)).then(|| {
+                    Listener {
+                        port: s.local.port(),
+                        address: s.local.ip().to_string(),
+                        pid: Some(pid),
+                        process: self.names.get(&pid).cloned(),
+                    }
+                })
+            })
+            .collect();
+        listeners.sort_by(|a, b| (a.port, &a.address).cmp(&(b.port, &b.address)));
+        listeners.dedup();
+        listeners
+    }
+
+    /// Checks that the connection from `ours` to `theirs` reached a program
+    /// in `pane`: the one that accepted it, else every listener the kernel
+    /// could have queued it on, which is the most specific for `theirs`.
+    pub fn check(
+        &self,
+        shells: &HashMap<u32, Uuid>,
+        pane: Uuid,
+        ours: SocketAddr,
+        theirs: SocketAddr,
+    ) -> Result<(), String> {
+        let (ours, theirs) = (canonical(ours), canonical(theirs));
+        let in_pane = |pid: u32| self.owner(shells, pid) == Some(pane);
+        let accepted = self
+            .sockets
+            .iter()
+            .find(|s| !s.listening && s.local == theirs && s.remote == Some(ours))
+            .and_then(|s| s.pid);
+        if let Some(pid) = accepted {
+            return if in_pane(pid) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "{theirs} is held by {}, not a program in the pane",
+                    self.describe(pid)
+                ))
+            };
+        }
+        let on_port = || {
+            self.sockets
+                .iter()
+                .filter(move |s| s.listening && s.local.port() == theirs.port())
+        };
+        let exact: Vec<&Socket> = on_port().filter(|s| s.local.ip() == theirs.ip()).collect();
+        let candidates = if exact.is_empty() {
+            on_port()
+                .filter(|s| {
+                    s.local.ip().is_unspecified()
+                        // A dual-stack IPv6 wildcard takes IPv4 too.
+                        && (s.local.is_ipv4() == theirs.is_ipv4() || s.local.is_ipv6())
+                })
+                .collect()
+        } else {
+            exact
+        };
+        if candidates.is_empty() {
+            return Err(format!("nothing listens on {theirs} any more"));
+        }
+        for socket in candidates {
+            match socket.pid {
+                None => return Err(format!("can't tell which program listens on {theirs}")),
+                Some(pid) if !in_pane(pid) => {
+                    return Err(format!(
+                        "{} is held by {}, not a program in the pane",
+                        socket.local,
+                        self.describe(pid)
+                    ))
+                }
+                Some(_) => {}
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Why a pane's listeners can't be listed.
@@ -88,95 +315,41 @@ impl axum::response::IntoResponse for Unavailable {
     }
 }
 
+/// The oldest start a snapshot for listing ports may have.
+pub fn listing_age() -> Instant {
+    Instant::now()
+        .checked_sub(LIST_AGE)
+        .unwrap_or_else(Instant::now)
+}
+
+/// Shell pids by pane, for a pane whose ports can be listed.
+pub async fn pane_shells(
+    state: &crate::AppState,
+    pane: Uuid,
+) -> Result<HashMap<u32, Uuid>, Unavailable> {
+    let manager = state.read().await;
+    if manager.find_pane(pane).is_none() {
+        return Err(Unavailable::NoPane);
+    }
+    if manager.is_guest_pane(pane) {
+        return Err(Unavailable::Guest);
+    }
+    // A popup's programs count for its pane.
+    Ok(manager
+        .shell_pids()
+        .into_iter()
+        .map(|(pane, shell, _)| (shell, pane))
+        .collect())
+}
+
 /// The TCP listeners of `pane`'s programs, including its popups'.
 pub async fn pane_listeners(
     state: &crate::AppState,
     pane: Uuid,
-    fresh: bool,
 ) -> Result<Vec<Listener>, Unavailable> {
-    let shells = {
-        let manager = state.read().await;
-        if manager.find_pane(pane).is_none() {
-            return Err(Unavailable::NoPane);
-        }
-        if manager.is_guest_pane(pane) {
-            return Err(Unavailable::Guest);
-        }
-        manager
-            .shell_pids()
-            .into_iter()
-            .map(|(pane, shell, _)| (shell, pane))
-            .collect()
-    };
-    let mut sample = listeners(shells, fresh)
-        .await
-        .map_err(Unavailable::Failed)?;
-    Ok(sample.remove(&pane).unwrap_or_default())
-}
-
-fn sample_listeners(shells: &HashMap<u32, Uuid>) -> Result<Sample, String> {
-    let mut system = System::new().map_err(|e| e.to_string())?;
-    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
-    let processes = system.processes();
-    let mut panes = AncestorPanes::new(
-        processes
-            .values()
-            .filter_map(|p| Some((p.pid().as_u32(), p.parent()?.as_u32())))
-            .collect(),
-        shells,
-    );
-    let mut sample = Sample::new();
-    // Every listener's address, port, and pane, to find shadowed ones.
-    let mut all = Vec::new();
-    for port in sample_ports()? {
-        if port.protocol != "TCP" || port.state != "LISTEN" {
-            continue;
-        }
-        let Some(pid) = port.pid else { continue };
-        let process = processes.get(&sysinfo::Pid::from_u32(pid));
-        let session = || {
-            process
-                .and_then(|p| p.session_id())
-                .filter(|_| cfg!(unix))
-                .map(|s| s.as_u32())
-        };
-        let owner = panes.owner(pid, session);
-        all.push((port.local_address.clone(), port.local_port, owner));
-        let Some(pane) = owner else {
-            continue;
-        };
-        let listeners = sample.entry(pane).or_default();
-        let listener = Listener {
-            port: port.local_port,
-            address: port.local_address,
-            pid: Some(pid),
-            process: process.map(|p| p.name().to_string_lossy().into_owned()),
-            shadowed: false,
-        };
-        if !listeners.contains(&listener) {
-            listeners.push(listener);
-        }
-    }
-    mark_shadowed(&mut sample, &all);
-    for listeners in sample.values_mut() {
-        listeners.sort_by(|a, b| (a.port, &a.address).cmp(&(b.port, &b.address)));
-    }
-    Ok(sample)
-}
-
-/// Marks wildcard listeners whose loopback address and port another pane's
-/// program, or one in no pane, also listens on. `all` holds every listener's
-/// address, port, and pane.
-fn mark_shadowed(sample: &mut Sample, all: &[(String, u16, Option<Uuid>)]) {
-    for (pane, listeners) in sample.iter_mut() {
-        for listener in listeners.iter_mut() {
-            let loopback = listener.connect_address().ip().to_string();
-            listener.shadowed = listener.address != loopback
-                && all.iter().any(|(address, port, owner)| {
-                    *port == listener.port && *address == loopback && *owner != Some(*pane)
-                });
-        }
-    }
+    let shells = pane_shells(state, pane).await?;
+    let snapshot = snapshot(listing_age()).await.map_err(Unavailable::Failed)?;
+    Ok(snapshot.listeners(&shells, pane))
 }
 
 #[cfg(test)]
@@ -190,8 +363,9 @@ mod tests {
         let pane = Uuid::new_v4();
         // This test process stands in for the pane's shell.
         let shells = HashMap::from([(std::process::id(), pane)]);
-        let sample = listeners(shells, true).await.unwrap();
-        let found = sample[&pane].iter().find(|l| l.port == port).unwrap();
+        let snapshot = snapshot(Instant::now()).await.unwrap();
+        let listeners = snapshot.listeners(&shells, pane);
+        let found = listeners.iter().find(|l| l.port == port).unwrap();
         assert_eq!(found.address, "127.0.0.1");
         assert_eq!(found.pid, Some(std::process::id()));
 
@@ -201,61 +375,145 @@ mod tests {
             .spawn()
             .unwrap();
         let other = Uuid::new_v4();
-        let sample = listeners(HashMap::from([(child.id(), other)]), true)
-            .await
-            .unwrap();
+        let snapshot = super::snapshot(Instant::now()).await.unwrap();
+        let listeners = snapshot.listeners(&HashMap::from([(child.id(), other)]), other);
         child.kill().unwrap();
         child.wait().unwrap();
-        assert!(!sample.contains_key(&other));
+        assert!(listeners.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_live_connection_is_checked_against_its_acceptor() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let theirs = listener.local_addr().unwrap();
+        let client = std::net::TcpStream::connect(theirs).unwrap();
+        let (_accepted, _) = listener.accept().unwrap();
+        let ours = client.local_addr().unwrap();
+        let pane = Uuid::new_v4();
+        let snapshot = snapshot(Instant::now()).await.unwrap();
+        let mine = HashMap::from([(std::process::id(), pane)]);
+        assert_eq!(snapshot.check(&mine, pane, ours, theirs), Ok(()));
+        let error = snapshot
+            .check(&HashMap::new(), pane, ours, theirs)
+            .unwrap_err();
+        assert!(error.contains("not a program in the pane"), "{error}");
+    }
+
+    fn fixture(sockets: Vec<Socket>) -> Snapshot {
+        Snapshot {
+            started: Instant::now(),
+            sockets,
+            // Pid 10 is the pane's shell, 11 its child; 20 is elsewhere.
+            parents: HashMap::from([(11, 10), (20, 1)]),
+            sessions: HashMap::new(),
+            names: HashMap::from([(20, "btmux".into())]),
+        }
+    }
+
+    fn listen(address: &str, pid: Option<u32>) -> Socket {
+        Socket {
+            local: address.parse().unwrap(),
+            remote: None,
+            listening: true,
+            pid,
+        }
     }
 
     #[test]
-    fn wildcard_listeners_are_shadowed_by_another_loopback_listener() {
+    fn check_finds_the_listener_the_kernel_chose() {
         let pane = Uuid::new_v4();
-        let listener = |address: &str| Listener {
-            port: 8125,
+        let shells = HashMap::from([(10, pane)]);
+        let ours: SocketAddr = "127.0.0.1:50000".parse().unwrap();
+        let check = |sockets: Vec<Socket>, theirs: &str| {
+            fixture(sockets).check(&shells, pane, ours, theirs.parse().unwrap())
+        };
+        // A wildcard listener in the pane takes loopback connections.
+        assert_eq!(
+            check(vec![listen("0.0.0.0:8125", Some(11))], "127.0.0.1:8125"),
+            Ok(())
+        );
+        assert_eq!(
+            check(vec![listen("[::]:8125", Some(11))], "127.0.0.1:8125"),
+            Ok(())
+        );
+        // A more specific listener elsewhere shadows it.
+        let shadowed = check(
+            vec![
+                listen("0.0.0.0:8125", Some(11)),
+                listen("127.0.0.1:8125", Some(20)),
+            ],
+            "127.0.0.1:8125",
+        )
+        .unwrap_err();
+        assert!(shadowed.contains("btmux (pid 20)"), "{shadowed}");
+        // Unknown owners and vanished listeners are refused.
+        assert!(
+            check(vec![listen("127.0.0.1:8125", None)], "127.0.0.1:8125")
+                .unwrap_err()
+                .contains("can't tell")
+        );
+        assert!(check(vec![], "127.0.0.1:8125")
+            .unwrap_err()
+            .contains("any more"));
+        // An accepted socket decides, whatever listens.
+        let accepted = Socket {
+            local: "127.0.0.1:8125".parse().unwrap(),
+            remote: Some(ours),
+            listening: false,
+            pid: Some(20),
+        };
+        assert!(check(
+            vec![listen("127.0.0.1:8125", Some(11)), accepted],
+            "127.0.0.1:8125"
+        )
+        .is_err());
+    }
+
+    fn listener(address: &str, port: u16, pid: u32) -> Listener {
+        Listener {
+            port,
             address: address.into(),
-            pid: Some(1),
-            process: None,
-            shadowed: false,
-        };
-        let check = |mine: &[&str], other: Option<Uuid>| {
-            let mut sample = Sample::from([(pane, mine.iter().map(|a| listener(a)).collect())]);
-            let mut all: Vec<_> = mine
-                .iter()
-                .map(|a| (a.to_string(), 8125, Some(pane)))
-                .collect();
-            all.push(("127.0.0.1".into(), 8125, other));
-            mark_shadowed(&mut sample, &all);
-            sample[&pane].iter().map(|l| l.shadowed).collect::<Vec<_>>()
-        };
-        // A `btmux forward` (in no pane) on the same machine.
-        assert_eq!(check(&["0.0.0.0"], None), [true]);
-        assert_eq!(check(&["0.0.0.0"], Some(Uuid::new_v4())), [true]);
-        // The pane's own loopback listener, and a listener on loopback itself.
-        assert_eq!(check(&["0.0.0.0"], Some(pane)), [false]);
-        assert_eq!(check(&["127.0.0.1"], None), [false]);
-        // IPv6 wildcards connect over ::1, which nothing else holds.
-        assert_eq!(check(&["::"], None), [false]);
+            pid: Some(pid),
+            process: Some("node".into()),
+        }
+    }
+
+    #[test]
+    fn pick_takes_the_only_port_or_the_named_one() {
+        let ip = |s: &str| s.parse::<IpAddr>().ok();
+        assert_eq!(
+            pick(&[listener("127.0.0.1", 5173, 1)], None, None)
+                .unwrap()
+                .port,
+            5173
+        );
+        // One program on two addresses is one service.
+        let one = [listener("127.0.0.1", 5173, 1), listener("::1", 5173, 1)];
+        assert_eq!(pick(&one, None, None).unwrap().address, "127.0.0.1");
+        // Two programs on one port need an address.
+        let two = [listener("127.0.0.1", 5173, 1), listener("::1", 5173, 2)];
+        assert!(pick(&two, Some(5173), None)
+            .unwrap_err()
+            .contains("ADDRESS:PORT"));
+        assert_eq!(pick(&two, Some(5173), ip("::1")).unwrap().pid, Some(2));
+        assert!(pick(&two, Some(5173), ip("10.0.0.1")).is_err());
+        let ports = [
+            listener("127.0.0.1", 3000, 1),
+            listener("127.0.0.1", 5173, 1),
+        ];
+        assert!(pick(&ports, None, None)
+            .unwrap_err()
+            .contains("several ports"));
+        assert_eq!(pick(&ports, Some(3000), None).unwrap().port, 3000);
+        assert!(pick(&ports, Some(1), None).is_err());
+        assert!(pick(&[], None, None).is_err());
     }
 
     #[test]
     fn wildcard_listeners_connect_over_loopback() {
-        let listener = |address: &str| Listener {
-            port: 80,
-            address: address.into(),
-            pid: None,
-            process: None,
-            shadowed: false,
-        };
-        assert_eq!(
-            listener("0.0.0.0").connect_address().to_string(),
-            "127.0.0.1:80"
-        );
-        assert_eq!(listener("::").connect_address().to_string(), "[::1]:80");
-        assert_eq!(
-            listener("10.0.0.2").connect_address().to_string(),
-            "10.0.0.2:80"
-        );
+        let at = |address: &str| listener(address, 80, 1).connect_address().to_string();
+        assert_eq!(at("0.0.0.0"), "127.0.0.1:80");
+        assert_eq!(at("::"), "[::1]:80");
+        assert_eq!(at("10.0.0.2"), "10.0.0.2:80");
     }
 }

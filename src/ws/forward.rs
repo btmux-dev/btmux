@@ -1,22 +1,25 @@
-//! `/ws/forward/{pane_id}?port=N`: one TCP connection to a port that a pane's
-//! program listens on, as binary frames. `btmux forward` opens one per
-//! connection it accepts.
+//! `/ws/forward/{pane_id}?port=N[&address=IP]`: one TCP connection to a port
+//! that a pane's program listens on, as binary frames, with an `eof` text
+//! frame for each direction's end. `btmux forward` opens one per connection
+//! it accepts.
 
 use std::collections::HashSet;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Mutex;
+use std::time::Instant;
 
+use axum::body::Bytes;
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{Path, Query, State, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use uuid::Uuid;
 
-use crate::pane_ports::pane_listeners;
+use crate::pane_ports::{listing_age, pane_shells, pick, snapshot, Unavailable};
 use crate::AppState;
 
 const READ_SIZE: usize = 64 * 1024;
@@ -63,9 +66,87 @@ impl Drop for Outbound {
     }
 }
 
+/// Sent as text when a side's TCP read ends, so the other shuts down its
+/// write side and keeps relaying replies: a client may close its request
+/// before reading the response.
+pub const EOF: &str = "eof";
+
+/// What travels over a forward's WebSocket, on either side.
+pub enum Frame {
+    Data(Bytes),
+    /// The sender's TCP connection sent everything.
+    Eof,
+    /// Abandons the connection, or ends it once both sides sent `Eof`.
+    Close,
+    /// Pings and the like.
+    Other,
+}
+
+/// Relays between a TCP connection and a forward's frames until both
+/// directions reach EOF, or either side fails or closes.
+pub async fn pipe<Tx, Rx>(tx: Tx, mut rx: Rx, tcp: TcpStream)
+where
+    Tx: Sink<Frame> + Unpin,
+    Rx: Stream<Item = Frame> + Unpin,
+{
+    let (mut tcp_rx, mut tcp_tx) = tcp.into_split();
+    let incoming = async {
+        loop {
+            match rx.next().await {
+                Some(Frame::Data(bytes)) => tcp_tx.write_all(&bytes).await.map_err(|_| ())?,
+                Some(Frame::Eof) => {
+                    let _ = tcp_tx.shutdown().await;
+                    return Ok(());
+                }
+                Some(Frame::Other) => {}
+                Some(Frame::Close) | None => return Err(()),
+            }
+        }
+    };
+    let outgoing = async move {
+        let mut tx = tx;
+        let mut buffer = vec![0; READ_SIZE];
+        loop {
+            match tcp_rx.read(&mut buffer).await {
+                Ok(0) => {
+                    tx.send(Frame::Eof).await.map_err(|_| ())?;
+                    return Ok(tx);
+                }
+                Ok(n) => {
+                    let bytes = Bytes::copy_from_slice(&buffer[..n]);
+                    tx.send(Frame::Data(bytes)).await.map_err(|_| ())?;
+                }
+                Err(_) => return Err(()),
+            }
+        }
+    };
+    tokio::pin!(incoming, outgoing);
+    let (mut received, mut sent) = (false, None);
+    loop {
+        tokio::select! {
+            result = &mut incoming, if !received => match result {
+                Ok(()) => received = true,
+                Err(()) => return,
+            },
+            result = &mut outgoing, if sent.is_none() => match result {
+                Ok(tx) => sent = Some(tx),
+                Err(()) => return,
+            },
+        }
+        if received {
+            if let Some(mut tx) = sent.take() {
+                let _ = tx.send(Frame::Close).await;
+                return;
+            }
+        }
+    }
+}
+
 #[derive(Deserialize)]
 pub struct ForwardQuery {
     port: u16,
+    /// The listener's address, when the pane holds the port on several.
+    address: Option<IpAddr>,
 }
 
 pub async fn handle(
@@ -80,99 +161,96 @@ pub async fn handle(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.parse::<SocketAddr>().ok());
     if peer.is_some_and(Outbound::contains) {
-        return (
-            StatusCode::CONFLICT,
+        return conflict(
             "this connection came from the server's own forward: a `btmux forward` on the \
              server's machine listens where the pane's program does",
-        )
-            .into_response();
+        );
     }
-    let mut listener = None;
-    // A cached sample can predate a server that just started.
-    for fresh in [false, true] {
-        match pane_listeners(&state, pane, fresh).await {
-            Ok(listeners) => {
-                listener = listeners.into_iter().find(|l| l.port == query.port);
-                if listener.is_some() {
-                    break;
-                }
-            }
-            Err(unavailable) => return unavailable.into_response(),
+    let shells = match pane_shells(&state, pane).await {
+        Ok(shells) => shells,
+        Err(unavailable) => return unavailable.into_response(),
+    };
+    let mut picked = Err(String::new());
+    // A recent sample can predate a program that just started listening.
+    for not_before in [listing_age(), Instant::now()] {
+        let snapshot = match snapshot(not_before).await {
+            Ok(snapshot) => snapshot,
+            Err(error) => return Unavailable::Failed(error).into_response(),
+        };
+        picked = pick(
+            &snapshot.listeners(&shells, pane),
+            Some(query.port),
+            query.address,
+        );
+        if picked.is_ok() {
+            break;
         }
     }
-    let Some(listener) = listener else {
-        return (
-            StatusCode::CONFLICT,
-            format!("no program in the pane listens on port {}", query.port),
-        )
-            .into_response();
+    let listener = match picked {
+        Ok(listener) => listener,
+        Err(error) => return conflict(error),
     };
-    if listener.shadowed {
-        return (
-            StatusCode::CONFLICT,
-            format!(
-                "port {} listens on every address, but another program here holds its loopback \
-                 address (a `btmux forward` on this machine?)",
-                query.port
-            ),
-        )
-            .into_response();
-    }
     let tcp = match TcpStream::connect(listener.connect_address()).await {
         Ok(tcp) => tcp,
         Err(error) => {
             return (
                 StatusCode::BAD_GATEWAY,
-                format!("could not connect to port {}: {error}", query.port),
+                format!(
+                    "could not connect to {}: {error}",
+                    listener.connect_address()
+                ),
             )
                 .into_response()
         }
     };
-    let _ = tcp.set_nodelay(true);
     let outbound = Outbound::new(&tcp);
+    // Whatever accepted it must still be the pane's program: the listener can
+    // have changed hands since the sample, or another can shadow it.
+    let dialed = Instant::now();
+    let checked = match (tcp.local_addr(), tcp.peer_addr()) {
+        (Ok(ours), Ok(theirs)) => match snapshot(dialed).await {
+            Ok(snapshot) => snapshot.check(&shells, pane, ours, theirs),
+            Err(error) => return Unavailable::Failed(error).into_response(),
+        },
+        _ => Err("the connection closed".into()),
+    };
+    if let Err(error) = checked {
+        return conflict(error);
+    }
+    let _ = tcp.set_nodelay(true);
     ws.on_upgrade(move |socket| async move {
         relay(socket, tcp).await;
         drop(outbound);
     })
 }
 
-/// Copies bytes both ways until either side closes.
+/// The server's relay, for the CLI's tests.
+#[cfg(test)]
+pub async fn relay_for_tests(socket: WebSocket, tcp: TcpStream) {
+    relay(socket, tcp).await
+}
+
+fn conflict(message: impl Into<String>) -> Response {
+    (StatusCode::CONFLICT, message.into()).into_response()
+}
+
+/// `pipe` over the server's WebSocket.
 async fn relay(socket: WebSocket, tcp: TcpStream) {
-    let (mut ws_tx, mut ws_rx) = socket.split();
-    let (mut tcp_rx, mut tcp_tx) = tcp.into_split();
-    let inbound = async {
-        while let Some(Ok(message)) = ws_rx.next().await {
-            match message {
-                Message::Binary(bytes) => {
-                    if tcp_tx.write_all(&bytes).await.is_err() {
-                        break;
-                    }
-                }
-                Message::Close(_) => break,
-                _ => {}
-            }
-        }
-        let _ = tcp_tx.shutdown().await;
-    };
-    let outbound = async {
-        let mut buffer = vec![0; READ_SIZE];
-        loop {
-            match tcp_rx.read(&mut buffer).await {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    let bytes = axum::body::Bytes::copy_from_slice(&buffer[..n]);
-                    if ws_tx.send(Message::Binary(bytes)).await.is_err() {
-                        return;
-                    }
-                }
-            }
-        }
-        let _ = ws_tx.send(Message::Close(None)).await;
-    };
-    tokio::select! {
-        () = inbound => {}
-        () = outbound => {}
-    }
+    let (tx, rx) = socket.split();
+    let tx = tx.with(|frame: Frame| async move {
+        Ok::<_, axum::Error>(match frame {
+            Frame::Data(bytes) => Message::Binary(bytes),
+            Frame::Eof => Message::Text(EOF.into()),
+            Frame::Close | Frame::Other => Message::Close(None),
+        })
+    });
+    let rx = rx.map(|message| match message {
+        Ok(Message::Binary(bytes)) => Frame::Data(bytes),
+        Ok(Message::Text(text)) if text.as_str() == EOF => Frame::Eof,
+        Ok(Message::Close(_)) | Err(_) => Frame::Close,
+        Ok(_) => Frame::Other,
+    });
+    pipe(Box::pin(tx), Box::pin(rx), tcp).await;
 }
 
 #[cfg(test)]
@@ -289,11 +367,16 @@ mod tests {
         while let Some(message) = socket.next().await {
             match message.unwrap() {
                 Client::Binary(bytes) => received.extend_from_slice(&bytes),
-                Client::Close(_) => break,
-                _ => {}
+                Client::Text(text) if text.as_str() == EOF => break,
+                other => panic!("{other:?}"),
             }
         }
-        // The echo server closing ends the stream.
+        // The echo server closing sends EOF, and ours ends the connection.
         assert_eq!(received, b"HELLO");
+        socket.send(Client::Text(EOF.into())).await.unwrap();
+        assert!(matches!(
+            socket.next().await,
+            Some(Ok(Client::Close(_))) | None
+        ));
     }
 }
