@@ -62,6 +62,7 @@ use crate::{agent_limits, health, popup, server, system_info, telemetry};
         panes::api_split_pane_by_id,
         panes::api_kill_pane_by_id,
         panes::api_select_pane_by_id,
+        panes::api_pane_ports,
         server::api_focus_pane,
         server::api_open_file_browser,
         server::api_open_editor,
@@ -766,6 +767,27 @@ mod tests {
                 template,
                 &format!("/api/panes/{NIL}/split"),
                 Some(json!({"direction": "right"})),
+            )
+            .await;
+        let ports = "/api/panes/{pane_id}/ports";
+        // The pane's shell hasn't started, so nothing listens.
+        let listeners = check
+            .expect(
+                S::OK,
+                M::GET,
+                ports,
+                &format!("/api/panes/{pane}/ports"),
+                None,
+            )
+            .await;
+        assert_eq!(listeners, json!([]));
+        check
+            .expect(
+                S::NOT_FOUND,
+                M::GET,
+                ports,
+                &format!("/api/panes/{NIL}/ports"),
+                None,
             )
             .await;
 

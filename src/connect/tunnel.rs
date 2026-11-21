@@ -582,7 +582,7 @@ impl tokio::io::AsyncWrite for RelayStream {
 }
 
 /// Explicit, since other dependencies enable ring too.
-pub(super) fn provider() -> Arc<rustls::crypto::CryptoProvider> {
+pub(crate) fn provider() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(rustls::crypto::aws_lc_rs::default_provider())
 }
 

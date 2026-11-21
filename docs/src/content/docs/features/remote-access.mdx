@@ -65,6 +65,57 @@ Put btmux behind a reverse proxy that terminates HTTPS, and tell btmux its
 public address with `--public-url`. See
 [Reverse proxies](../configuration/access.md#reverse-proxies).
 
+## Forwarding a pane's port
+
+A dev server started in a pane listens on the server's machine. To open it in
+your own browser, with its devtools and extensions, or to reach a port that
+isn't HTTP, such as a database or a debugger, forward the pane's port to your
+computer:
+
+```sh
+btmux forward -t work:1.0            # the pane's only listening port
+btmux forward -t work:1.0 5432       # one of several
+btmux forward -t work:1.0 [::1]:8000 # a port held on several addresses
+```
+
+`btmux forward` prints a local URL, such as `http://127.0.0.1:5173/`, and
+forwards each connection to it until you press `Ctrl+C`. It uses the pane's
+port number locally when it's free, so sign-in redirects to `localhost` keep
+working; `--local-port` picks another and `--open` opens the URL in your
+browser. With several ports and none named, it lists them and exits 1, as it
+does when different programs hold one port on different addresses: name one
+as `ADDRESS:PORT`. When the pane closes, it exits 3.
+
+Before printing the URL, it asks the server whether a connection would reach
+the pane's program, without connecting to it, so a program that takes only one
+connection, like a debugger, keeps it for you. On the server's own machine,
+taking the pane's port number can stand in front of a program that listens on
+every address; it then takes any free port instead.
+
+In a pane, it forwards to your client's machine only if that is the server's
+too. From another computer with btmux installed, name the server's URL; the
+access token comes from `BTMUX_AUTH_TOKEN`, never the command line:
+
+```sh
+export BTMUX_AUTH_TOKEN=...          # the server's access token
+btmux forward --server https://machine.tailnet.ts.net:8004 -t work:1.0
+```
+
+Only programs in the pane, or in its popups, can be reached. The server checks
+each connection after making it: the program that accepted it, or the one
+listening where it arrived, must be in the pane, so a program that took over
+the port, or another listening on a more specific address, gets nothing.
+`btmux list-panes` in a pane on the server shows pane IDs, and
+`GET /api/panes/{id}/ports` the ports.
+
+- A client may close its side of a connection and keep reading the reply.
+- Connections open during a `btmux upgrade` or restart are reset. New ones
+  wait up to 10 seconds for the server, including through a proxy answering
+  502, 503, or 504 meanwhile.
+- Panes of sandboxed sessions can't be forwarded yet.
+- btmux connect doesn't carry forwards, so forwarding needs Tailscale, a
+  reverse proxy, or the same network.
+
 ## On a phone or tablet
 
 Touch devices get a key bar above the status bar with the keys on-screen

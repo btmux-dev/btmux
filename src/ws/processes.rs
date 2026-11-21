@@ -65,15 +65,15 @@ struct ProcessInfo {
 #[derive(Debug, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct PortInfo {
-    pid: Option<u32>,
-    protocol: String,
-    local_address: String,
-    local_port: u16,
-    remote_address: Option<String>,
-    state: String,
+    pub(crate) pid: Option<u32>,
+    pub(crate) protocol: String,
+    pub(crate) local_address: String,
+    pub(crate) local_port: u16,
+    pub(crate) remote_address: Option<String>,
+    pub(crate) state: String,
 }
 
-fn sample_ports() -> Result<Vec<PortInfo>, String> {
+pub(crate) fn sample_ports() -> Result<Vec<PortInfo>, String> {
     let sockets = iterate_sockets_info(
         AddressFamilyFlags::IPV4 | AddressFamilyFlags::IPV6,
         ProtocolFlags::TCP | ProtocolFlags::UDP,
@@ -230,14 +230,14 @@ impl UserNames {
 }
 
 /// Finds the nearest ancestor that is a pane's shell, memoizing the chain.
-struct AncestorPanes<'a> {
+pub(crate) struct AncestorPanes<'a> {
     parents: HashMap<u32, u32>,
     shells: &'a HashMap<u32, Uuid>,
     memo: HashMap<u32, Option<Uuid>>,
 }
 
 impl<'a> AncestorPanes<'a> {
-    fn new(parents: HashMap<u32, u32>, shells: &'a HashMap<u32, Uuid>) -> Self {
+    pub(crate) fn new(parents: HashMap<u32, u32>, shells: &'a HashMap<u32, Uuid>) -> Self {
         Self {
             parents,
             shells,
@@ -269,7 +269,11 @@ impl<'a> AncestorPanes<'a> {
     /// The nearest ancestor pane, else that of the shell leading the session
     /// (orphans reparented to init). Processes that call `setsid` and reparent,
     /// like daemons, belong to no pane.
-    fn owner(&mut self, pid: u32, session: impl FnOnce() -> Option<u32>) -> Option<Uuid> {
+    pub(crate) fn owner(
+        &mut self,
+        pid: u32,
+        session: impl FnOnce() -> Option<u32>,
+    ) -> Option<Uuid> {
         self.find(pid)
             .or_else(|| self.shells.get(&session()?).copied())
     }

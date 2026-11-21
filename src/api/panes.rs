@@ -62,6 +62,38 @@ pub fn router() -> Router<AppState> {
             "/api/panes/{pane_id}/select",
             axum::routing::post(api_select_pane_by_id),
         )
+        .route(
+            "/api/panes/{pane_id}/ports",
+            axum::routing::get(api_pane_ports),
+        )
+}
+
+/// The TCP ports that the pane's programs listen on, as `btmux forward` can
+/// forward them.
+#[cfg_attr(test, utoipa::path(
+    get,
+    path = "/api/panes/{pane_id}/ports",
+    tag = "Panes",
+    operation_id = "list-pane-ports",
+    summary = "List a pane's listening ports",
+    description = "The TCP ports that the pane's programs listen on, including its popups', as `btmux forward` can forward them.",
+    params(
+        ("pane_id", description = "Pane ID"),
+    ),
+    responses(
+        (status = 200, description = "The listeners, by port", body = Vec<crate::pane_ports::Listener>),
+        (status = 404, description = "No such pane"),
+        (status = 409, description = "The pane is in a sandboxed session", body = String, content_type = "text/plain"),
+    ),
+))]
+pub(crate) async fn api_pane_ports(
+    State(state): State<AppState>,
+    Path(pane_id): Path<Uuid>,
+) -> Response {
+    match crate::pane_ports::pane_listeners(&state, pane_id).await {
+        Ok(listeners) => Json(listeners).into_response(),
+        Err(unavailable) => unavailable.into_response(),
+    }
 }
 
 #[cfg_attr(test, utoipa::path(
