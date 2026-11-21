@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'",
+            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}' # btmux-notify",
             "timeout": 5
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'",
+            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}' # btmux-notify",
             "timeout": 5
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'",
+            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}' # btmux-notify",
             "timeout": 3
           }
         ]
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'",
+            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}' # btmux-notify",
             "timeout": 5
           }
         ]
@@ -50,7 +50,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'",
+            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}' # btmux-notify",
             "timeout": 5
           }
         ]
@@ -61,7 +61,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'",
+            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}' # btmux-notify",
             "timeout": 5
           }
         ]
@@ -72,7 +72,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'",
+            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}' # btmux-notify",
             "timeout": 5,
             "description": "Resume a blocked agent after its tool finishes"
           }
@@ -84,7 +84,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}'",
+            "command": "curl --connect-timeout 1 --max-time 2 -H \"X-Btmux-Agent-Pid: ${PPID}\" -H \"Authorization: Bearer ${BTMUX_AUTH_TOKEN}\" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\" >/dev/null 2>&1 || true; printf '{}' # btmux-notify",
             "timeout": 3
           }
         ]

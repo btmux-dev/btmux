@@ -175,6 +175,39 @@ open or with at most one candidate, and redo keeps Ctrl-R in vi and hybrid norma
 mode, also named `default`, found from fish's preset. It checks at the first prompt,
 as conf.d runs before config.fish, so it changes nothing when off.
 
+### Events and the agent skill
+
+`events.rs` serves `GET /api/events` (`btmux events`): newline-delimited
+JSON. One `Feed` per server (`SessionManager::events_feed`, started on first
+use) translates the control broadcast once: `State` snapshots are diffed
+against the last (`diff`: creations, then changes, then closings), widget and
+popup lists too (each keeps where it opened, and a widget over a popup is
+placed at the popup's pane with `popup_id`), and notifications, config, and
+toasts pass through; UI directives and telemetry are dropped. Streams
+subscribe to its batches and filter by `?session=`, ending after it closes.
+`ready` carries the sessions a stream starts from, taken with its
+subscription; a feed or stream that lags diffs its last state against the
+current one and sends `resync` first. Empty lines every 30 s keep proxies
+open, and `events::shutdown` ends streams so they don't hold up shutdown.
+The CLI escapes control characters in its human lines, reconnects after a
+drop (by the session ID `ready` named), fails at once if the first connection
+does, and exits once stdout's reader goes away (`poll` for `POLLOUT`, which
+macOS needs to report it).
+
+`skill.rs` implements `btmux skill setup|status|remove|show`: per agent, the
+status hooks (`extras/*/hooks.json`), and for Claude Code and Codex a skill
+and a context hook. The guide is `skills/btmux/SKILL.md` (also what `npx
+skills add` copies), which `show` prints without its frontmatter; the skill
+is a marked stub telling the agent to run `btmux skill show`, in
+`$CLAUDE_CONFIG_DIR/skills/btmux` (`~/.claude`) and `~/.agents/skills/btmux`
+(Codex). A foreign skill is a conflict without `--force` (which trashes it),
+and its agent's context hook is skipped. The context hook runs the hidden
+`btmux skill context --agent NAME`, which prints
+`hookSpecificOutput.additionalContext` naming the pane. Hooks merge and remove
+through `agent_hooks.rs` (`merged`, `without`, scoped to the generated
+events), owned by a trailing marker comment (`# btmux-notify`,
+`# btmux-context`); status hooks from before the marker match exactly.
+
 ### Popups
 
 `popup.rs` implements `btmux popup` (alias `display-popup`): a program in a PTY

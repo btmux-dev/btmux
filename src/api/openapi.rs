@@ -17,7 +17,7 @@ use utoipa::openapi::{RefOr, Response};
 use utoipa::{Modify, OpenApi};
 
 use super::{pane_io, panes, sessions, windows, worktrees};
-use crate::{agent_limits, health, popup, server, system_info, telemetry};
+use crate::{agent_limits, events, health, popup, server, system_info, telemetry};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -41,6 +41,7 @@ use crate::{agent_limits, health, popup, server, system_info, telemetry};
         (name = "Agents", description = "Coding agents running in panes."),
         (name = "Worktrees", description = "Git worktrees, each with its own window."),
         (name = "Popups", description = "Programs in a popup over a pane."),
+        (name = "Events", description = "Changes to sessions, windows, panes, and agents, as they happen."),
         (name = "Notifications"),
         (name = "Server"),
     ),
@@ -90,6 +91,7 @@ use crate::{agent_limits, health, popup, server, system_info, telemetry};
         worktrees::api_remove_worktree,
         popup::api_popup,
         popup::api_wait,
+        events::api_events,
         server::api_notify,
         server::api_pane_notify,
         server::api_pane_notify_clear,
@@ -992,6 +994,16 @@ mod tests {
         }
         check
             .expect(S::OK, M::DELETE, "/api/sessions", "/api/sessions", None)
+            .await;
+
+        check
+            .expect(
+                S::NOT_FOUND,
+                M::GET,
+                "/api/events",
+                "/api/events?session=nope",
+                None,
+            )
             .await;
 
         let served = check

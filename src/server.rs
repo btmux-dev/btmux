@@ -136,6 +136,7 @@ pub fn create_app(state: AppState) -> Router {
             axum::routing::post(api_create_window),
         )
         .route("/api/notify", axum::routing::post(api_notify))
+        .route("/api/events", get(crate::events::api_events))
         .route(
             "/api/multipass/bridge",
             axum::routing::post(crate::multipass::api_bridge),

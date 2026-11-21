@@ -14,6 +14,7 @@ mod connect;
 #[allow(dead_code)]
 mod discovery;
 mod editor;
+mod events;
 mod file_git;
 mod file_git_ops;
 mod file_search;
@@ -46,6 +47,7 @@ mod server;
 mod service;
 mod session;
 mod shell;
+mod skill;
 mod smart_case;
 mod system_info;
 mod tailscale;
@@ -198,6 +200,12 @@ async fn main() {
         Some(config::SubCommand::Input { prompt, default }) => {
             std::process::exit(widget::input(prompt.as_deref(), default.as_deref()).await)
         }
+        Some(config::SubCommand::Events { session, json }) => {
+            std::process::exit(events::run(args.profile.as_deref(), session.clone(), *json).await)
+        }
+        Some(config::SubCommand::Skill { command }) => {
+            std::process::exit(skill::run(args.profile.as_deref(), command).await)
+        }
         Some(config::SubCommand::Agents) => {
             std::process::exit(agent_cli::agents(args.profile.as_deref()).await)
         }
@@ -324,21 +332,6 @@ async fn main() {
 
     if let Some(config::SubCommand::GenerateGeminiCliHooks) = args.command {
         print!("{}", agent_hooks::gemini_cli());
-        return;
-    }
-
-    if let Some(config::SubCommand::InstallClaudeCodeHooks) = args.command {
-        install_agent_hooks(agent_hooks::Target::ClaudeCode);
-        return;
-    }
-
-    if let Some(config::SubCommand::InstallCodexHooks) = args.command {
-        install_agent_hooks(agent_hooks::Target::Codex);
-        return;
-    }
-
-    if let Some(config::SubCommand::InstallGeminiCliHooks) = args.command {
-        install_agent_hooks(agent_hooks::Target::GeminiCli);
         return;
     }
 
@@ -671,6 +664,7 @@ async fn main() {
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let serve = axum::serve(listener, app).with_graceful_shutdown(async move {
         shutdown_signal(args.desktop_parent_pid).await;
+        events::shutdown();
         let _ = shutdown_tx.send(());
     });
     tokio::select! {
@@ -806,16 +800,6 @@ fn changes_config(kind: notify::EventKind) -> bool {
     match kind {
         notify::EventKind::Access(kind) => kind == AccessKind::Close(AccessMode::Write),
         _ => true,
-    }
-}
-
-fn install_agent_hooks(target: agent_hooks::Target) {
-    match agent_hooks::install(target) {
-        Ok(path) => println!("Installed btmux hooks in {}", path.display()),
-        Err(error) => {
-            eprintln!("btmux: {error}");
-            std::process::exit(1);
-        }
     }
 }
 

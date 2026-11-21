@@ -68,9 +68,10 @@ pub enum WidgetRequest {
     },
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Debug)]
 #[serde(rename_all = "snake_case")]
 #[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
 pub enum WidgetKind {
     Pick,
     Confirm,

@@ -73,6 +73,8 @@ pub struct SessionManager {
     pub telemetry: crate::telemetry::TelemetryStore,
     pub widgets: crate::widget::Widgets,
     pub popups: crate::popup::Popups,
+    /// `GET /api/events`'s translation of `events`, started on first use.
+    pub events_feed: std::sync::OnceLock<std::sync::Arc<crate::events::Feed>>,
     shell: String,
     cli_shell: Option<String>,
     /// The config as last read from disk. Kept so a session-only override can be
@@ -174,6 +176,7 @@ impl SessionManager {
             events,
             statuses,
             agents: HashMap::new(),
+            events_feed: std::sync::OnceLock::new(),
             handed_since: HashMap::new(),
             handed_until: None,
             detector: None,

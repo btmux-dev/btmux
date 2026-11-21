@@ -3551,6 +3551,72 @@
         }
       }
     },
+    "/api/events": {
+      "get": {
+        "tags": [
+          "Events"
+        ],
+        "summary": "Stream events",
+        "description": "Newline-delimited JSON, one event per line, until the client disconnects. The first is `ready`, with the sessions the events after it change; `resync` marks where events were lost. Empty lines keep the connection alive. Each event is `{time, type, ...}`, `time` in Unix milliseconds. Guest (sandboxed) credentials can't use it.",
+        "operationId": "stream-events",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "query",
+            "description": "A session ID or name: only that session's events, ending once it closes.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One event per line",
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/Event"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed query parameter",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such session",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/notify": {
       "post": {
         "tags": [
@@ -4515,6 +4581,772 @@
           "vscode"
         ]
       },
+      "Event": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/EventKind"
+          },
+          {
+            "type": "object",
+            "required": [
+              "time"
+            ],
+            "properties": {
+              "time": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Unix milliseconds.",
+                "minimum": 0
+              }
+            }
+          }
+        ],
+        "description": "One line of the stream."
+      },
+      "EventKind": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "First on every stream: the state the events after it change, and the\nsession `session` named, if any.",
+            "required": [
+              "version",
+              "sessions",
+              "type"
+            ],
+            "properties": {
+              "version": {
+                "type": "string"
+              },
+              "session_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uuid"
+              },
+              "sessions": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SessionSnapshot"
+                }
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "ready"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The stream fell behind and events were lost. The events after it\nreport the session, window, and pane changes since the last event\nbefore it, but not transitions that reversed in between, nor lost\nnotifications, widgets, and popups.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "resync"
+                ]
+              }
+            }
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SessionRef"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "session_created"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SessionRef"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "old_name"
+                ],
+                "properties": {
+                  "old_name": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "session_renamed"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SessionRef"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "session_closed"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/WindowRef"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "window_created"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/WindowRef"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "old_name"
+                ],
+                "properties": {
+                  "old_name": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "window_renamed"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/WindowRef"
+              },
+              {
+                "type": "object",
+                "description": "The session's active window changed.",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "window_selected"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "The session's active window changed."
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/WindowRef"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "window_closed"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PaneRef"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "pane_created"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PaneRef"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "from_window_id"
+                ],
+                "properties": {
+                  "from_window_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "description": "The pane went to another window.",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "pane_moved"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "The pane went to another window."
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PaneRef"
+              },
+              {
+                "type": "object",
+                "description": "The window's active pane changed.",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "pane_selected"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "The window's active pane changed."
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PaneRef"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "zoomed"
+                ],
+                "properties": {
+                  "zoomed": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "pane_zoomed"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PaneRef"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "pane_title_changed"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PaneRef"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "cwd": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "pane_cwd_changed"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PaneRef"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "pane_closed"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PaneRef"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "previous",
+                  "status"
+                ],
+                "properties": {
+                  "previous": {
+                    "$ref": "#/components/schemas/AgentState"
+                  },
+                  "status": {
+                    "$ref": "#/components/schemas/AgentStatus"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "description": "The pane's agent changed state, or another agent took over.",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "agent_status_changed"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "The pane's agent changed state, or another agent took over."
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PaneRef"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "event",
+                  "level"
+                ],
+                "properties": {
+                  "event": {
+                    "type": "string"
+                  },
+                  "level": {
+                    "$ref": "#/components/schemas/NotificationLevel"
+                  },
+                  "title": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "body": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "description": "An agent hook or `btmux` alert for a pane.",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "pane_notification"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "An agent hook or `btmux` alert for a pane."
+          },
+          {
+            "type": "object",
+            "description": "`btmux send-notification` or `POST /api/notify`.",
+            "required": [
+              "level",
+              "title",
+              "type"
+            ],
+            "properties": {
+              "level": {
+                "$ref": "#/components/schemas/NotificationLevel"
+              },
+              "title": {
+                "type": "string"
+              },
+              "body": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "notification"
+                ]
+              }
+            }
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PaneRef"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "widget_id",
+                  "kind"
+                ],
+                "properties": {
+                  "widget_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "kind": {
+                    "$ref": "#/components/schemas/WidgetKind"
+                  },
+                  "popup_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uuid"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "description": "A `btmux pick`, `confirm`, or `input` opened over the pane, or over\nits popup `popup_id`.",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "widget_opened"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "A `btmux pick`, `confirm`, or `input` opened over the pane, or over\nits popup `popup_id`."
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PaneRef"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "widget_id",
+                  "kind"
+                ],
+                "properties": {
+                  "widget_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "kind": {
+                    "$ref": "#/components/schemas/WidgetKind"
+                  },
+                  "popup_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uuid"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "widget_closed"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PaneRef"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "popup_id",
+                  "title"
+                ],
+                "properties": {
+                  "popup_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "popup_opened"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PaneRef"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "popup_id",
+                  "title"
+                ],
+                "properties": {
+                  "popup_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "popup_closed"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "type": "object",
+            "description": "The config was reloaded or overridden; `error` if the file failed to load.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "error": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "config_changed"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A server message for every tab, such as an upgrade starting.",
+            "required": [
+              "level",
+              "message",
+              "type"
+            ],
+            "properties": {
+              "level": {
+                "$ref": "#/components/schemas/NotificationLevel"
+              },
+              "message": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "toast"
+                ]
+              }
+            }
+          }
+        ]
+      },
       "FileBrowserMode": {
         "type": "string",
         "enum": [
@@ -5324,6 +6156,25 @@
           }
         }
       },
+      "PaneRef": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/WindowRef"
+          },
+          {
+            "type": "object",
+            "required": [
+              "pane_id"
+            ],
+            "properties": {
+              "pane_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          }
+        ]
+      },
       "PaneSnapshot": {
         "type": "object",
         "required": [
@@ -5773,6 +6624,23 @@
           }
         }
       },
+      "SessionRef": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "session"
+        ],
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "session": {
+            "type": "string",
+            "description": "The session's name."
+          }
+        }
+      },
       "SessionSnapshot": {
         "type": "object",
         "required": [
@@ -6105,6 +6973,43 @@
           }
         }
       },
+      "WidgetKind": {
+        "type": "string",
+        "enum": [
+          "pick",
+          "confirm",
+          "input"
+        ]
+      },
+      "WindowRef": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/SessionRef"
+          },
+          {
+            "type": "object",
+            "required": [
+              "window_id",
+              "window",
+              "window_index"
+            ],
+            "properties": {
+              "window_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "window": {
+                "type": "string",
+                "description": "The window's name."
+              },
+              "window_index": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        ]
+      },
       "WindowSnapshot": {
         "type": "object",
         "required": [
@@ -6188,6 +7093,10 @@
     {
       "name": "Popups",
       "description": "Programs in a popup over a pane."
+    },
+    {
+      "name": "Events",
+      "description": "Changes to sessions, windows, panes, and agents, as they happen."
     },
     {
       "name": "Notifications"
