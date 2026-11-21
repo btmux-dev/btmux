@@ -67,14 +67,25 @@ pub fn codex_dir(home: &Path) -> PathBuf {
 /// Ends every status hook's command, marking it as btmux's.
 const NOTIFY_MARKER: &str = " # btmux-notify";
 
-/// Status hook commands from before they were marked.
+/// Status hook commands from before they were marked: today's without the
+/// marker, and every earlier release's.
 static UNMARKED: std::sync::LazyLock<Vec<String>> = std::sync::LazyLock::new(|| {
     [Target::ClaudeCode, Target::Codex, Target::GeminiCli]
         .into_iter()
         .flat_map(|target| commands(&target.generated()))
         .filter_map(|command| command.strip_suffix(NOTIFY_MARKER).map(str::to_owned))
+        .chain(EARLIER.iter().map(|command| command.to_string()))
         .collect()
 });
+
+/// Status hook commands earlier releases installed, before the agent pid
+/// and timeouts. Exact, so a hook someone wrote to `/notify` stays theirs.
+const EARLIER: &[&str] = &[
+    r#"curl -s -X POST -H 'Content-Type: application/json' --data-binary @- "${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify" >/dev/null"#,
+    r#"curl -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- "${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify" >/dev/null 2>&1 || true; printf '{}'"#,
+    r#"curl -H "Authorization: Bearer ${BTMUX_AUTH_TOKEN}" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- "${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify" >/dev/null 2>&1 || true"#,
+    r#"curl -H "Authorization: Bearer ${BTMUX_AUTH_TOKEN}" -sS --fail -X POST -H 'Content-Type: application/json' --data-binary @- "${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify" >/dev/null 2>&1 || true; printf '{}'"#,
+];
 
 fn commands(config: &Value) -> Vec<String> {
     let Some(hooks) = config.get("hooks").and_then(Value::as_object) else {
@@ -358,5 +369,33 @@ mod tests {
         }
         let own = serde_json::json!({ "command": "curl \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\"" });
         assert!(!is_btmux_hook(&own));
+    }
+
+    /// An earlier release's hook is replaced, not joined by a second one.
+    #[test]
+    fn earlier_releases_hooks_are_replaced() {
+        let generated: Value = serde_json::from_str(claude_code()).unwrap();
+        for command in EARLIER {
+            assert!(is_btmux_hook(&serde_json::json!({ "command": command })));
+            let installed = serde_json::json!({ "hooks": { "Stop": [
+                { "hooks": [{ "type": "command", "command": command }] }
+            ]}});
+            let merged = merged(
+                Path::new("settings.json"),
+                Some(installed),
+                &generated,
+                is_btmux_hook,
+            )
+            .unwrap();
+            let stop: Vec<&str> = merged["hooks"]["Stop"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .flat_map(|group| group["hooks"].as_array().unwrap())
+                .filter_map(|handler| handler["command"].as_str())
+                .collect();
+            assert_eq!(stop.len(), 1, "{stop:?}");
+            assert!(stop[0].ends_with(NOTIFY_MARKER));
+        }
     }
 }

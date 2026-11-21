@@ -283,8 +283,29 @@ fn skill_state(dir: &Path) -> Installed {
     match fs::read_to_string(dir.join("SKILL.md")) {
         Ok(text) if text == stub() => Installed::Current,
         Ok(text) if text.contains(MARKER) => Installed::Outdated,
+        // An empty directory, or a symlink whose target is gone, as a skill
+        // shared through a symlink leaves after its removal.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && holds_nothing(dir) => {
+            Installed::Missing
+        }
         _ => Installed::Foreign,
     }
+}
+
+fn holds_nothing(dir: &Path) -> bool {
+    match fs::read_dir(dir) {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+    }
+}
+
+/// `dir`, or a dangling symlink's target, created.
+fn create_skill_dir(dir: &Path) -> Result<(), String> {
+    let target = match fs::read_link(dir) {
+        Ok(target) if !dir.exists() => dir.parent().map_or(target.clone(), |p| p.join(target)),
+        _ => dir.to_path_buf(),
+    };
+    fs::create_dir_all(&target).map_err(|e| format!("cannot create {}: {e}", target.display()))
 }
 
 fn hooks_state(
@@ -370,7 +391,7 @@ fn write_skill(dir: &Path, replace: bool) -> Result<(), String> {
         trash::delete(dir)
             .map_err(|e| format!("cannot move {} to the trash: {e}", dir.display()))?;
     }
-    fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    create_skill_dir(dir)?;
     let file = dir.join("SKILL.md");
     fs::write(&file, stub()).map_err(|e| format!("cannot write {}: {e}", file.display()))
 }
@@ -810,6 +831,32 @@ mod tests {
         fs::write(dir.join("SKILL.md"), stub()).unwrap();
         remove_skill(&dir).unwrap();
         assert!(!dir.exists());
+        // An empty directory isn't a skill.
+        fs::create_dir_all(&dir).unwrap();
+        assert_eq!(skill_state(&dir), Installed::Missing);
+        fs::write(dir.join("notes.txt"), "mine").unwrap();
+        assert_eq!(skill_state(&dir), Installed::Foreign);
+    }
+
+    /// A skill directory symlinked to another, as after one removal through
+    /// it, is set up again through the link.
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_skill_link_is_set_up_again() {
+        let root = temp();
+        fs::create_dir_all(&root).unwrap();
+        let shared = root.join("shared");
+        let link = root.join("link");
+        std::os::unix::fs::symlink(&shared, &link).unwrap();
+        assert_eq!(skill_state(&link), Installed::Missing);
+        write_skill(&link, false).unwrap();
+        assert_eq!(skill_state(&link), Installed::Current);
+        assert_eq!(skill_state(&shared), Installed::Current);
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]

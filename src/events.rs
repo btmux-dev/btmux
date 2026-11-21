@@ -423,7 +423,11 @@ pub fn diff(old: &[SessionSnapshot], new: &[SessionSnapshot]) -> Vec<EventKind> 
                     });
                 }
                 let (was, is) = (&before.agent_status, &pane.agent_status);
-                if was.state != is.state || was.agent != is.agent {
+                // A new agent in the pane counts even in the same state.
+                if was.state != is.state
+                    || was.agent != is.agent
+                    || before.agent_id != pane.agent_id
+                {
                     changed.push(EventKind::AgentStatusChanged {
                         at: at(),
                         previous: was.state.clone(),
@@ -490,6 +494,19 @@ struct View {
     sessions: Arc<Vec<SessionSnapshot>>,
     widgets: Vec<Open>,
     popups: Vec<Open>,
+    /// The last config, without what follows the shown color mode.
+    config: Value,
+}
+
+/// A config as `config_changed` compares it: a tab reporting the system's
+/// light or dark mode changes only the shown variant, not the config.
+fn comparable_config(mut config: Value) -> Value {
+    if let Some(config) = config.as_object_mut() {
+        for key in ["color_mode", "theme", "color_palette"] {
+            config.remove(key);
+        }
+    }
+    config
 }
 
 impl View {
@@ -498,6 +515,7 @@ impl View {
             sessions: Arc::new(mgr.all_snapshots()),
             widgets: Vec::new(),
             popups: Vec::new(),
+            config: comparable_config(serde_json::to_value(mgr.config()).unwrap_or_default()),
         };
         let (widgets, popups) = lists(mgr);
         view.popups(popups);
@@ -559,9 +577,16 @@ impl View {
                     }]
                 })
             }
-            "config" => Some(vec![EventKind::ConfigChanged {
-                error: parse(take(&mut message["config"], "config_error")),
-            }]),
+            "config" => {
+                let config = comparable_config(take(&mut message, "config").unwrap_or_default());
+                if config == self.config {
+                    Some(Vec::new())
+                } else {
+                    let error = parse(config.get("config_error").cloned());
+                    self.config = config;
+                    Some(vec![EventKind::ConfigChanged { error }])
+                }
+            }
             "toast" => {
                 let level = parse(take(&mut message, "level"));
                 let text = parse(take(&mut message, "message"));
@@ -695,16 +720,14 @@ impl Feed {
     fn get(state: &AppState, mgr: &SessionManager) -> Arc<Feed> {
         mgr.events_feed
             .get_or_init(|| {
+                // Subscribed first, so nothing falls between the two; a message
+                // the view already has changes nothing.
+                let messages = mgr.events().subscribe();
                 let view = View::new(mgr);
                 let feed = Arc::new(Feed {
                     latest: Mutex::new((view.sessions.clone(), broadcast::channel(BACKLOG).0)),
                 });
-                tokio::spawn(translate(
-                    feed.clone(),
-                    state.clone(),
-                    mgr.events().subscribe(),
-                    view,
-                ));
+                tokio::spawn(translate(feed.clone(), state.clone(), messages, view));
                 feed
             })
             .clone()
@@ -732,11 +755,13 @@ async fn translate(
             }
             Err(broadcast::error::RecvError::Closed) => return,
         };
+        let mut latest = feed.latest.lock().unwrap();
+        // Kept current for `ready` even when nothing is worth an event, such as
+        // a divider dragged.
+        latest.0 = view.sessions.clone();
         if events.is_empty() && !lost {
             continue;
         }
-        let mut latest = feed.latest.lock().unwrap();
-        latest.0 = view.sessions.clone();
         let _ = latest.1.send(Arc::new(Batch {
             events,
             sessions: view.sessions.clone(),
@@ -879,6 +904,21 @@ pub(crate) async fn api_events(
         (Feed::get(&state, &mgr), session)
     };
     let (sessions, batches) = feed.subscribe();
+    // The session can close between finding it and subscribing; if the feed
+    // has also passed its close, nothing would ever end the stream.
+    if let Some(id) = session {
+        if !sessions.iter().any(|s| s.id == id)
+            && !state
+                .read()
+                .await
+                .all_snapshots()
+                .iter()
+                .any(|s| s.id == id)
+        {
+            let name = query.session.as_deref().unwrap_or_default();
+            return (StatusCode::NOT_FOUND, format!("no session {name}")).into_response();
+        }
+    }
     let ready = EventKind::Ready {
         version: crate::config::VERSION.into(),
         session_id: session,
@@ -930,7 +970,7 @@ pub async fn run(profile: Option<&str>, session: Option<String>, json: bool) -> 
     let mut format = Format::new(json);
     let mut reconnecting = false;
     loop {
-        match stream_once(profile, &mut session, &mut format).await {
+        match stream_once(profile, &mut session, &mut format, reconnecting).await {
             Stop::Done => return 0,
             Stop::Fatal(error) => {
                 eprintln!("btmux: {error}");
@@ -959,6 +999,7 @@ async fn stream_once(
     profile: Option<&str>,
     session: &mut Option<String>,
     format: &mut Format,
+    reconnecting: bool,
 ) -> Stop {
     let lost = |error: String| Stop::Lost {
         error,
@@ -994,6 +1035,11 @@ async fn stream_once(
         return Stop::Fatal(
             "the server refused to stream events; a sandboxed pane's credential can't".into(),
         );
+    }
+    // The filtered session closed while the connection was down.
+    if status == reqwest::StatusCode::NOT_FOUND && reconnecting && session.is_some() {
+        eprintln!("btmux: the session closed");
+        return Stop::Done;
     }
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
@@ -1051,7 +1097,7 @@ async fn stream_once(
             {
                 format.session_closed = true;
             }
-            if format.print(&event).is_err() {
+            if format.print(&event, &line).is_err() {
                 return Stop::Done;
             }
         }
@@ -1106,10 +1152,11 @@ impl Format {
         }
     }
 
-    fn print(&self, event: &Value) -> std::io::Result<()> {
+    /// Prints `event`; with `--json`, `line` as the server sent it.
+    fn print(&self, event: &Value, line: &[u8]) -> std::io::Result<()> {
         let mut out = std::io::stdout().lock();
         if self.json {
-            writeln!(out, "{event}")?;
+            out.write_all(line)?;
         } else {
             writeln!(out, "{}", human(event, self.offset))?;
         }
@@ -1278,7 +1325,78 @@ mod tests {
             sessions: Arc::new(sessions),
             widgets: Vec::new(),
             popups: Vec::new(),
+            config: Value::Null,
         }
+    }
+
+    #[tokio::test]
+    async fn ready_starts_from_the_latest_sessions_even_without_events() {
+        let [s, w, p] = ids();
+        let before = vec![session(s, "a", vec![window(w, "w", &[p])])];
+        let feed = Arc::new(Feed {
+            latest: Mutex::new((Arc::new(before.clone()), broadcast::channel(4).0)),
+        });
+        let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let (meta_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let manager = crate::session::manager::SessionManager::new(
+            "/bin/sh".into(),
+            crate::config::FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8004,
+            None,
+        );
+        let state = Arc::new(tokio::sync::RwLock::new(manager));
+        let (tx, rx) = broadcast::channel(4);
+        tokio::spawn(translate(feed.clone(), state, rx, view(before.clone())));
+        // Only an agent's message changes: no event, but new streams see it.
+        let mut after = before.clone();
+        after[0].windows[0].panes[0].agent_status.message = Some("thinking".into());
+        let message = serde_json::json!({ "type": "state", "sessions": [], "all_sessions": after });
+        tx.send(message.to_string()).unwrap();
+        for _ in 0..50 {
+            if feed.subscribe().0[0].windows[0].panes[0]
+                .agent_status
+                .message
+                .is_some()
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("ready kept the old sessions");
+    }
+
+    #[test]
+    fn a_new_agent_in_the_same_state_is_a_change() {
+        let [s, w, p] = ids();
+        let before = vec![session(s, "a", vec![window(w, "w", &[p])])];
+        let mut after = before.clone();
+        after[0].windows[0].panes[0].agent_id = Some(2);
+        assert_eq!(types(&diff(&before, &after)), ["agent_status_changed"]);
+    }
+
+    #[test]
+    fn config_changes_ignore_the_shown_color_mode() {
+        let mut view = view(Vec::new());
+        let config = |mode: &str, palette: &str, dark: &str| {
+            serde_json::json!({ "type": "config", "config": {
+                "color_mode": mode, "theme": palette, "color_palette": palette,
+                "dark_theme": dark, "config_error": null,
+            }})
+            .to_string()
+        };
+        assert_eq!(
+            types(&view.handle(&config("dark", "d", "d"))),
+            ["config_changed"]
+        );
+        // A tab reports the system went light: only the shown variant changes.
+        assert!(view.handle(&config("light", "l", "d")).is_empty());
+        // An edited dark scheme is a change.
+        assert_eq!(
+            types(&view.handle(&config("light", "l", "d2"))),
+            ["config_changed"]
+        );
     }
 
     fn ids<const N: usize>() -> [Uuid; N] {

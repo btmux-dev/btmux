@@ -1130,13 +1130,23 @@ fn install_btmux(instance: &str) -> Result<(), String> {
     );
     run(&["exec", instance, "-n", "--", "sh", "-c", &script])?;
     // An older release, installed when this version has none, has only the
-    // install-*-hooks commands.
+    // install-*-hooks commands. A failed setup says why on stdout.
     let hooks = format!(
-        "{GUEST_BIN} skill setup --agent claude --agent codex >/dev/null 2>&1 \
-         || {{ {GUEST_BIN} install-claude-code-hooks; {GUEST_BIN} install-codex-hooks; }} >/dev/null 2>&1; \
+        "if {GUEST_BIN} skill --help >/dev/null 2>&1; then \
+           out=$({GUEST_BIN} skill setup --agent claude --agent codex 2>&1 >/dev/null) \
+             || printf '%s\\n' \"$out\"; \
+         else \
+           {{ {GUEST_BIN} install-claude-code-hooks; {GUEST_BIN} install-codex-hooks; }} >/dev/null 2>&1; \
+         fi; \
          command -v fish >/dev/null && {GUEST_BIN} install-fish-integration >/dev/null; true"
     );
-    run(&["exec", instance, "-n", "--", "sh", "-c", &hooks])?;
+    let failed = run(&["exec", instance, "-n", "--", "sh", "-c", &hooks])?;
+    if !failed.trim().is_empty() {
+        say(&format!(
+            "couldn't set up agent hooks: {}",
+            failed.trim().trim_start_matches("btmux: ")
+        ));
+    }
     Ok(())
 }
 

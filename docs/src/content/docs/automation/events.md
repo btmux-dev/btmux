@@ -65,7 +65,8 @@ then `window_id`, `window`, and `window_index`, then `pane_id`.
 
 A change that creates or closes several things reports each one: closing a
 session reports its panes, then its windows, then the session. Events about a
-closed pane, window, or widget name it as it was.
+closed pane, window, or widget name it as it was. A client reporting the
+system's light or dark mode isn't a `config_changed`.
 
 ## Keeping track
 
@@ -82,7 +83,8 @@ between (an agent that went to `working` and back), notifications, toasts,
 and widgets and popups opening or closing.
 
 With `-s` (`--session`, an ID or a name), only that session's events are
-reported, and the command exits once the session closes. Notifications not
+reported, and the command exits once the session closes, also if it closed
+while the connection was down. Notifications not
 about a pane, config changes, and toasts are left out.
 
 ## Reconnecting
