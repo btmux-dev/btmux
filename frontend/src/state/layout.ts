@@ -118,3 +118,42 @@ export function computeRectsAndDividers(
       return { rects: [], dividers: [] };
   }
 }
+
+/**
+ * Space between panes and around the pane area. Layout percentages map onto
+ * the area inset by half of it; each pane then gives up half on every side.
+ */
+export const PANE_GAP = 'var(--spacing-1)';
+
+/** Where a layout percentage's pane edge starts along one axis. */
+const paneStart = (pct: number) => `calc(${pct / 100} * (100% - ${PANE_GAP}) + ${PANE_GAP})`;
+/** How long a span of layout percentage is along one axis, less the gap. */
+const paneSize = (pct: number) => `calc(${pct / 100} * (100% - ${PANE_GAP}) - ${PANE_GAP})`;
+
+/** Absolute position for a pane, or a surface over it, in the pane area. */
+export function paneRectStyle(rect: Bounds) {
+  return {
+    top: paneStart(rect.top),
+    left: paneStart(rect.left),
+    width: paneSize(rect.width),
+    height: paneSize(rect.height),
+  };
+}
+
+/** Absolute position for a divider's touch target, centered in its gap. */
+export function dividerStyle(divider: Divider) {
+  const along = `calc(${divider.position / 100} * (100% - ${PANE_GAP}) + ${PANE_GAP} / 2)`;
+  const crossStart = paneStart(divider.crossStart);
+  const crossSize = paneSize(divider.crossSize);
+  return divider.orientation === 'vertical'
+    ? { top: crossStart, left: along, height: crossSize }
+    : { top: along, left: crossStart, width: crossSize };
+}
+
+/**
+ * The layout percentage at a pointer offset (px) along an axis of the pane
+ * area, the inverse of `dividerStyle`. `gap` is `PANE_GAP` in px.
+ */
+export function layoutPercent(offset: number, size: number, gap: number): number {
+  return ((offset - gap / 2) / (size - gap)) * 100;
+}

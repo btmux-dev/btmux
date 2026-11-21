@@ -25,6 +25,7 @@ import { useStore } from '../state/store';
 import { runAction } from '../hooks/useKeybindings';
 import { WhichKey } from './WhichKey';
 import { STARTUP_THEME } from '../state/startupTheme';
+import { paneRectStyle } from '../state/layout';
 import {
   getAnimations,
   getTerminalFontFamily,
@@ -300,12 +301,10 @@ export function NativeEditor({
       }}
       style={{
         position: 'absolute',
-        top: `${rect.top}%`,
-        left: `${rect.left}%`,
-        width: `${rect.width}%`,
-        height: `${rect.height}%`,
+        ...paneRectStyle(rect),
         // Mirrors TerminalPane's border.
         border: `1px solid ${zoomed ? theme.magenta : focused ? theme.blue : theme.selectionBackground}`,
+        borderRadius: 'var(--radius-container)',
         zIndex: 30,
         display: 'flex',
         flexDirection: 'column',

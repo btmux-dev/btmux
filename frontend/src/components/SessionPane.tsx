@@ -8,7 +8,15 @@ import { PopupDialog } from './PopupDialog';
 import { wideDialogProps } from '../lib/wideDialog';
 import { ProcessOverlay } from './ProcessOverlay';
 import { ClientConfig, LayoutRect } from '../state/types';
-import { computeRectsAndDividers, paneIdsInOrder, Divider } from '../state/layout';
+import {
+  computeRectsAndDividers,
+  dividerStyle,
+  layoutPercent,
+  PANE_GAP,
+  paneIdsInOrder,
+  paneRectStyle,
+  Divider,
+} from '../state/layout';
 import { ClientMessage } from '../protocol/messages';
 import { githubKey, useStore } from '../state/store';
 import { useFileStore } from '../state/fileStore';
@@ -197,11 +205,13 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
 
       const containerRect = container.getBoundingClientRect();
       const isVertical = divider.orientation === 'vertical';
+      // The root's `column-gap` resolves PANE_GAP to px.
+      const gap = parseFloat(getComputedStyle(container).columnGap) || 0;
 
       const computeRatio = (clientX: number, clientY: number): number => {
         const containerSize = isVertical ? containerRect.width : containerRect.height;
         const mousePos = isVertical ? clientX - containerRect.left : clientY - containerRect.top;
-        const mousePct = (mousePos / containerSize) * 100;
+        const mousePct = layoutPercent(mousePos, containerSize, gap);
         const ratio = (mousePct - divider.boundsStart) / divider.boundsSize;
         return Math.max(0.05, Math.min(0.95, ratio));
       };
@@ -300,6 +310,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
         display: isActiveSession ? undefined : 'none',
         position: 'absolute',
         inset: 0,
+        columnGap: PANE_GAP,
       }}
     >
       {windows
@@ -365,20 +376,16 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
               divider.orientation === 'vertical'
                 ? {
                     position: 'absolute',
-                    top: `${divider.crossStart}%`,
-                    left: `${divider.position}%`,
+                    ...dividerStyle(divider),
                     transform: 'translateX(-50%)',
                     width: '8px',
-                    height: `${divider.crossSize}%`,
                     cursor: 'col-resize',
                     zIndex: 10,
                   }
                 : {
                     position: 'absolute',
-                    top: `${divider.position}%`,
-                    left: `${divider.crossStart}%`,
+                    ...dividerStyle(divider),
                     transform: 'translateY(-50%)',
-                    width: `${divider.crossSize}%`,
                     height: '8px',
                     cursor: 'row-resize',
                     zIndex: 10,
@@ -427,10 +434,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
               key={`num-${rect.paneId}`}
               style={{
                 position: 'absolute',
-                top: `${rect.top}%`,
-                left: `${rect.left}%`,
-                width: `${rect.width}%`,
-                height: `${rect.height}%`,
+                ...paneRectStyle(rect),
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',

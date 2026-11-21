@@ -19,6 +19,8 @@ actions, saved state, and API types can change in any release.
 
 ### Changed
 
+- Panes, and the editors and browser shown over them, have rounded corners
+  and a small gap between them and around the pane area.
 - Python files in the native editor get ty and ruff instead of pyright, so
   formatting works: ruff formats and lints, ty checks types.
   ([#181](https://github.com/btmux-dev/btmux/pull/181))

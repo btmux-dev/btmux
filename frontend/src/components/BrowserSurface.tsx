@@ -25,6 +25,7 @@ import { IS_MAC, RESERVED_CMD_KEYS } from '../lib/nvimKeys';
 import { ClientConfig, LayoutRect } from '../state/types';
 import { useStore } from '../state/store';
 import { STARTUP_THEME } from '../state/startupTheme';
+import { paneRectStyle } from '../state/layout';
 import { DOUBLE_ESC_MS } from './NvimSurface';
 
 const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/browser`;
@@ -426,11 +427,10 @@ export function BrowserSurface({
       gap={0}
       className="absolute overflow-hidden"
       style={{
-        ...(rect
-          ? { top: `${rect.top}%`, left: `${rect.left}%`, width: `${rect.width}%`, height: `${rect.height}%` }
-          : { inset: 0 }),
+        ...(rect ? paneRectStyle(rect) : { inset: 0 }),
         // Mirrors TerminalPane's border.
         border: `1px solid ${zoomed ? theme.magenta : focused ? theme.blue : theme.selectionBackground}`,
+        borderRadius: 'var(--radius-container)',
         zIndex: 30,
         visibility: visible ? undefined : 'hidden',
         background: theme.background,

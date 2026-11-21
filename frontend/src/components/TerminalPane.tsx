@@ -5,6 +5,7 @@ import { editorShown, useStore } from '../state/store';
 import { AgentStatus, LayoutRect, ClientConfig } from '../state/types';
 import { ClientMessage } from '../protocol/messages';
 import { STARTUP_THEME } from '../state/startupTheme';
+import { paneRectStyle } from '../state/layout';
 import { PaneCorner, PaneTitleBar } from './PaneTitleBar';
 import { mix, withAlpha } from '../lib/chrome-colors';
 import { findPaneBorderStyle } from '../lib/paneSwitchBorder';
@@ -338,11 +339,9 @@ export function TerminalPane({
         opacity: nvimOpen ? 0 : undefined,
         flexDirection: 'column',
         position: 'absolute',
-        top: `${rect.top}%`,
-        left: `${rect.left}%`,
-        width: `${rect.width}%`,
-        height: `${rect.height}%`,
+        ...paneRectStyle(rect),
         border: `1px solid ${isActive || isZoomed ? 'transparent' : borderColor}`,
+        borderRadius: 'var(--radius-container)',
         overflow: 'hidden',
         caretColor: 'transparent',
         // A zoomed pane fills the grid and must paint over the panes it covers
@@ -397,6 +396,8 @@ export function TerminalPane({
             position: 'absolute',
             inset: 0,
             border: `1.5px solid ${borderColor}`,
+            // Concentric inside the pane's 1px border.
+            borderRadius: 'max(0px, calc(var(--radius-container) - 1px))',
             boxShadow: `0 0 0 1px ${borderColor}, 0 0 26px ${accentGlow}`,
             pointerEvents: 'none',
             animation: animations ? 'btm-bloom .3s cubic-bezier(.2,.8,.2,1)' : undefined,
