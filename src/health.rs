@@ -103,7 +103,7 @@ impl Drop for ProcessTree {
 }
 
 #[cfg(windows)]
-struct ProcessTree(windows_sys::Win32::Foundation::HANDLE);
+pub(crate) struct ProcessTree(windows_sys::Win32::Foundation::HANDLE);
 
 // SAFETY: a job handle can be used from any thread.
 #[cfg(windows)]
@@ -111,7 +111,7 @@ unsafe impl Send for ProcessTree {}
 
 #[cfg(windows)]
 impl ProcessTree {
-    fn new(child: &tokio::process::Child) -> Option<Self> {
+    pub(crate) fn new(child: &tokio::process::Child) -> Option<Self> {
         use windows_sys::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW};
         let process = child.raw_handle()?;
         // SAFETY: null attributes and name are allowed, and `process` is the live child's.
@@ -125,7 +125,7 @@ impl ProcessTree {
         }
     }
 
-    fn release(self) {
+    pub(crate) fn release(self) {
         // SAFETY: the handle is owned, and `forget` keeps `drop` from closing it again.
         unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
         std::mem::forget(self);

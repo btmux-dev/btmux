@@ -58,7 +58,9 @@ hooks until you trust them: run `/hooks` in Codex and trust btmux's after
 setup, and again after an upgrade changes them.
 
 Antigravity CLI's hooks go in `~/.gemini/config/hooks.json`, as hooks named
-`btmux` and `btmux-context` beside your own. It has no hook for permission
+`btmux` and `btmux-context` beside your own. A hook of yours with one of those
+names is left alone and reported as a conflict, and turning btmux's off with
+`"enabled": false` survives setup. Antigravity has no hook for permission
 requests, so btmux sees those on the screen.
 
 To paste the status hooks yourself instead, print them with

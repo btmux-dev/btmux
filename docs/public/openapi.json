@@ -6333,6 +6333,13 @@
             ],
             "description": "Antigravity Stop: why the loop ended, e.g. `NO_TOOL_CALL` or `USER_CANCELED`."
           },
+          "fullyIdle": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Antigravity Stop: false while background tasks still run."
+          },
           "error": {
             "type": [
               "string",

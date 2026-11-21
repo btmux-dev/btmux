@@ -220,9 +220,68 @@ pub fn contains(config: &Value, generated: &Value, is_ours: fn(&Value) -> bool) 
     without(config, generated, is_ours).is_some()
 }
 
+/// Who has the hook of a name in Antigravity's `hooks.json`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Owner {
+    Absent,
+    /// Every handler in it is one `is_ours` picks out.
+    Ours,
+    /// The user's, or one btmux didn't write.
+    Foreign,
+}
+
+/// The handlers in a named hook: listed under each event, or, for tool
+/// events, under a matcher's `hooks`.
+fn named_handlers(hook: &Value) -> Vec<&Value> {
+    let Some(events) = hook.as_object() else {
+        return Vec::new();
+    };
+    events
+        .iter()
+        .filter(|(key, _)| key.as_str() != "enabled")
+        .filter_map(|(_, entries)| entries.as_array())
+        .flatten()
+        .flat_map(|entry| match entry.get("hooks").and_then(Value::as_array) {
+            Some(handlers) => handlers.iter().collect(),
+            None => vec![entry],
+        })
+        .collect()
+}
+
+fn named_owner(hook: Option<&Value>, is_ours: fn(&Value) -> bool) -> Owner {
+    let Some(hook) = hook else {
+        return Owner::Absent;
+    };
+    let handlers = named_handlers(hook);
+    if !handlers.is_empty() && handlers.into_iter().all(is_ours) {
+        Owner::Ours
+    } else {
+        Owner::Foreign
+    }
+}
+
+/// Who has `generated`'s names in `config`: foreign if any is, else ours
+/// if any is.
+pub fn named_owners(config: &Value, generated: &Value, is_ours: fn(&Value) -> bool) -> Owner {
+    let names = generated.as_object().into_iter().flat_map(|g| g.keys());
+    names.fold(Owner::Absent, |owner, name| {
+        match (owner, named_owner(config.get(name), is_ours)) {
+            (Owner::Foreign, _) | (_, Owner::Foreign) => Owner::Foreign,
+            (Owner::Ours, _) | (_, Owner::Ours) => Owner::Ours,
+            _ => Owner::Absent,
+        }
+    })
+}
+
 /// `config` (read from `path`) with `generated`'s named hooks in place of
-/// those of the same names, as Antigravity's `hooks.json` names them.
-pub fn with_named(path: &Path, config: Option<Value>, generated: &Value) -> Result<Value, String> {
+/// btmux's of the same names, as Antigravity's `hooks.json` names them. A
+/// refreshed hook keeps the user's `enabled`; foreign hooks stay as they are.
+pub fn with_named(
+    path: &Path,
+    config: Option<Value>,
+    generated: &Value,
+    is_ours: fn(&Value) -> bool,
+) -> Result<Value, String> {
     let mut config = config.unwrap_or_else(|| Value::Object(Map::new()));
     let object = config.as_object_mut().ok_or_else(|| {
         format!(
@@ -234,18 +293,33 @@ pub fn with_named(path: &Path, config: Option<Value>, generated: &Value) -> Resu
         .as_object()
         .ok_or("embedded named hooks are not an object")?;
     for (name, hook) in generated {
-        object.insert(name.clone(), hook.clone());
+        let existing = object.get(name);
+        if named_owner(existing, is_ours) == Owner::Foreign {
+            continue;
+        }
+        let mut hook = hook.clone();
+        if let Some(enabled) = existing.and_then(|e| e.get("enabled")) {
+            hook["enabled"] = enabled.clone();
+        }
+        object.insert(name.clone(), hook);
     }
     Ok(config)
 }
 
-/// `config` without `generated`'s named hooks; `None` if it had none.
-pub fn without_named(config: &Value, generated: &Value) -> Option<Value> {
+/// `config` without btmux's hooks of `generated`'s names; `None` if it had none.
+pub fn without_named(
+    config: &Value,
+    generated: &Value,
+    is_ours: fn(&Value) -> bool,
+) -> Option<Value> {
     let mut config = config.clone();
     let object = config.as_object_mut()?;
     let mut found = false;
     for name in generated.as_object()?.keys() {
-        found |= object.remove(name).is_some();
+        if named_owner(object.get(name), is_ours) == Owner::Ours {
+            object.remove(name);
+            found = true;
+        }
     }
     found.then_some(config)
 }
@@ -438,13 +512,44 @@ mod tests {
         }
         let path = Path::new("hooks.json");
         let own = serde_json::json!({ "mine": { "Stop": [] } });
-        let merged = with_named(path, Some(own.clone()), &parsed).unwrap();
+        let merged = with_named(path, Some(own.clone()), &parsed, is_btmux_hook).unwrap();
+        assert_eq!(named_owners(&merged, &parsed, is_btmux_hook), Owner::Ours);
         assert_eq!(
-            with_named(path, Some(merged.clone()), &parsed).unwrap(),
+            with_named(path, Some(merged.clone()), &parsed, is_btmux_hook).unwrap(),
             merged
         );
-        assert_eq!(without_named(&merged, &parsed), Some(own.clone()));
-        assert_eq!(without_named(&own, &parsed), None);
+        assert_eq!(
+            without_named(&merged, &parsed, is_btmux_hook),
+            Some(own.clone())
+        );
+        assert_eq!(without_named(&own, &parsed, is_btmux_hook), None);
+
+        // A hook of the same name the user wrote is theirs.
+        let theirs = serde_json::json!({ "btmux": { "Stop": [{ "command": "echo mine" }] } });
+        assert_eq!(
+            named_owners(&theirs, &parsed, is_btmux_hook),
+            Owner::Foreign
+        );
+        assert_eq!(
+            with_named(path, Some(theirs.clone()), &parsed, is_btmux_hook).unwrap(),
+            theirs
+        );
+        assert_eq!(without_named(&theirs, &parsed, is_btmux_hook), None);
+        // So is ours with a handler of theirs added.
+        let mut mixed = merged.clone();
+        mixed["btmux"]["Stop"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({ "command": "echo mine" }));
+        assert_eq!(named_owners(&mixed, &parsed, is_btmux_hook), Owner::Foreign);
+
+        // Turning ours off sticks.
+        let mut off = merged.clone();
+        off["btmux"]["enabled"] = false.into();
+        off["btmux"]["Stop"] = serde_json::json!([]);
+        let refreshed = with_named(path, Some(off), &parsed, is_btmux_hook).unwrap();
+        assert_eq!(refreshed["btmux"]["enabled"], false);
+        assert_eq!(refreshed["btmux"]["Stop"], parsed["btmux"]["Stop"]);
     }
 
     /// An earlier release's hook is replaced, not joined by a second one.

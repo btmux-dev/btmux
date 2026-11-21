@@ -98,12 +98,20 @@ type Read = Result<Option<AgentLimits>, String>;
 struct Slot {
     limits: Option<AgentLimits>,
     read_at: Option<Instant>,
+    /// When the last read, successful or not, ended.
+    fetched_at: Option<Instant>,
     /// Logged once per change, as tabs poll every minute.
     error: Option<String>,
 }
 
 impl Slot {
+    fn due(&self, now: Instant) -> bool {
+        self.fetched_at
+            .is_none_or(|at| now.duration_since(at) >= CACHE_FOR)
+    }
+
     fn update(&mut self, read: Read, now: Instant) {
+        self.fetched_at = Some(now);
         match read {
             Ok(limits) => {
                 self.limits = limits;
@@ -126,16 +134,49 @@ impl Slot {
     }
 }
 
-#[derive(Default)]
-struct Cache {
-    fetched_at: Option<Instant>,
-    claude: Slot,
-    codex: Slot,
-    agy: Slot,
+#[derive(Clone, Copy)]
+enum Source {
+    Claude,
+    Codex,
+    Agy,
 }
 
-/// Held across a read, so concurrent tabs share it.
-static CACHE: LazyLock<Mutex<Cache>> = LazyLock::new(Mutex::default);
+const SOURCES: [Source; 3] = [Source::Claude, Source::Codex, Source::Agy];
+
+impl Source {
+    async fn read(self, path: Option<OsString>) -> Read {
+        match self {
+            Source::Claude => read_claude(path).await,
+            Source::Codex => read_codex(path).await,
+            Source::Agy => read_agy(path).await,
+        }
+    }
+}
+
+/// One agent's limits, refreshed on its own, so a slow CLI holds up no other.
+#[derive(Default)]
+struct Reader {
+    slot: std::sync::Mutex<Slot>,
+    /// Held across a read, so concurrent tabs share it.
+    reading: Mutex<()>,
+}
+
+impl Reader {
+    fn slot(&self) -> std::sync::MutexGuard<'_, Slot> {
+        self.slot.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    async fn refresh(&self, source: Source, path: Option<OsString>) {
+        let _reading = self.reading.lock().await;
+        if !self.slot().due(Instant::now()) {
+            return;
+        }
+        let read = source.read(path).await;
+        self.slot().update(read, Instant::now());
+    }
+}
+
+static READERS: LazyLock<[Reader; 3]> = LazyLock::new(Default::default);
 /// Shared with the Health tab, so it finds the CLIs where limits run them.
 static SHELL_PATH: LazyLock<Mutex<ShellPath>> = LazyLock::new(Mutex::default);
 
@@ -155,22 +196,32 @@ pub fn routes() -> Router<AppState> {
     ),
 ))]
 pub(crate) async fn limits(State(state): State<AppState>) -> Json<Vec<AgentLimits>> {
-    let mut cache = CACHE.lock().await;
-    if cache.fetched_at.is_none_or(|at| at.elapsed() >= CACHE_FOR) {
+    let readers: &'static [Reader; 3] = &READERS;
+    let now = Instant::now();
+    if readers.iter().any(|reader| reader.slot().due(now)) {
         let shell = state.read().await.shell().to_owned();
-        let [claude, codex, agy] = agent_paths(&shell).await;
-        let (claude, codex, agy) =
-            tokio::join!(read_claude(claude), read_codex(codex), read_agy(agy));
-        let now = Instant::now();
-        cache.claude.update(claude, now);
-        cache.codex.update(codex, now);
-        cache.agy.update(agy, now);
-        cache.fetched_at = Some(now);
+        let paths = agent_paths(&shell).await;
+        // Later refreshes run behind the last limits; only a first read is waited for.
+        let mut first = Vec::new();
+        for ((reader, source), path) in readers.iter().zip(SOURCES).zip(paths) {
+            let slot = reader.slot();
+            if !slot.due(now) {
+                continue;
+            }
+            let never_read = slot.fetched_at.is_none();
+            drop(slot);
+            if never_read {
+                first.push(reader.refresh(source, path));
+            } else {
+                tokio::spawn(reader.refresh(source, path));
+            }
+        }
+        futures_util::future::join_all(first).await;
     }
     Json(
-        [&cache.claude, &cache.codex, &cache.agy]
-            .into_iter()
-            .filter_map(|slot| slot.limits.clone())
+        readers
+            .iter()
+            .filter_map(|reader| reader.slot().limits.clone())
             .collect(),
     )
 }
@@ -407,26 +458,37 @@ async fn read_codex(path: Option<OsString>) -> Read {
     parse_codex(&reply, now_seconds())
 }
 
+/// Answers `/usage` itself only from 1.1.11; older ones would send it as a prompt.
+const AGY_MIN_VERSION: [u64; 3] = [1, 1, 11];
+
 async fn read_agy(path: Option<OsString>) -> Read {
-    let mut command = Command::new(AGY_PROGRAM);
-    command
-        .args(AGY_ARGS)
-        .current_dir(std::env::temp_dir())
-        // Hooks run even here; this is no pane's agent.
-        .env_remove("BTMUX_PANE_ID")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-    if let Some(path) = path {
-        command.env("PATH", path);
+    let search = path.clone().or_else(|| std::env::var_os("PATH"));
+    let program = search
+        .and_then(|search| find_in(OsStr::new(AGY_PROGRAM), &search))
+        .ok_or_else(|| format!("{AGY_PROGRAM}: not found"))?;
+    read_agy_at(&program, path, READ_TIMEOUT).await
+}
+
+/// Checks the version of the same executable first, so no read can start a
+/// model turn.
+async fn read_agy_at(program: &Path, path: Option<OsString>, timeout: Duration) -> Read {
+    let probe = crate::health::probe(
+        Some(program.to_path_buf()),
+        &["--version"],
+        Duration::from_secs(5),
+    )
+    .await;
+    let version = probe
+        .output
+        .as_deref()
+        .and_then(crate::system_info::version)
+        .ok_or_else(|| format!("{AGY_PROGRAM}: no version, so /usage may not be safe"))?;
+    if !version_at_least(version, AGY_MIN_VERSION) {
+        return Err(format!(
+            "{AGY_PROGRAM} {version} predates 1.1.11, which answers /usage without a model turn"
+        ));
     }
-    #[cfg(windows)]
-    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    let output = tokio::time::timeout(READ_TIMEOUT, command.output())
-        .await
-        .map_err(|_| format!("{AGY_PROGRAM}: timed out"))?
-        .map_err(|error| format!("{AGY_PROGRAM}: {error}"))?;
+    let output = run_to_end(program, path, AGY_ARGS, timeout).await?;
     if output.status.code() == Some(AGY_NO_QUOTA) {
         return Ok(None);
     }
@@ -439,6 +501,62 @@ async fn read_agy(path: Option<OsString>) -> Read {
         .find_map(|line| serde_json::from_str::<Value>(line).ok())
         .ok_or_else(|| format!("{AGY_PROGRAM} /usage printed no JSON"))?;
     parse_agy(&reply, now_seconds())
+}
+
+/// Whether a dotted version is `min` or newer; a missing part counts as 0.
+fn version_at_least(version: &str, min: [u64; 3]) -> bool {
+    let mut parts = version
+        .split(['.', '-', '+'])
+        .map(|part| part.parse::<u64>());
+    let mut have = [0; 3];
+    for slot in &mut have {
+        match parts.next() {
+            Some(Ok(part)) => *slot = part,
+            Some(Err(_)) => return false,
+            None => break,
+        }
+    }
+    have >= min
+}
+
+/// Runs `program` to its exit, without input. A timeout or cancellation kills
+/// its whole tree, since hooks and wrappers can leave children behind.
+async fn run_to_end(
+    program: &Path,
+    path: Option<OsString>,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<std::process::Output, String> {
+    let name = program.display().to_string();
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .current_dir(std::env::temp_dir())
+        // No hook runs for `/usage`, but this is no pane's agent if one does.
+        .env_remove("BTMUX_PANE_ID")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
+    #[cfg(unix)]
+    command.process_group(0);
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    let child = command
+        .spawn()
+        .map_err(|error| format!("{name}: {error}"))?;
+    let tree = crate::health::ProcessTree::new(&child);
+    let output = tokio::time::timeout(timeout, child.wait_with_output())
+        .await
+        .map_err(|_| format!("{name}: timed out"))?
+        .map_err(|error| format!("{name}: {error}"))?;
+    if let Some(tree) = tree {
+        tree.release();
+    }
+    Ok(output)
 }
 
 /// Writes one JSON line per request, then returns the first output line `reply` accepts.
@@ -930,9 +1048,84 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn agy_versions_are_compared_by_number() {
+        for (version, ok) in [
+            ("1.1.11", true),
+            ("1.5.14", true),
+            ("1.10.0", true),
+            ("2.0", true),
+            ("1.1.10", false),
+            ("1.0.99", false),
+            ("1", false),
+            ("dev", false),
+        ] {
+            assert_eq!(version_at_least(version, AGY_MIN_VERSION), ok, "{version}");
+        }
+    }
+
     mod exchange {
         use super::*;
         use crate::health::tests::{assert_child_exits, spawns_child, test_script, CHILD_STARTED};
+
+        /// An agy that reports `version` and logs the arguments of other runs.
+        fn fake_agy(version: &str, usage: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+            test_script(
+                &format!(
+                    "if [ \"$1\" = --version ]; then echo {version}; exit 0; fi\n\
+                     echo \"$@\" >> \"$0.calls\"\n{usage}"
+                ),
+                0o755,
+            )
+        }
+
+        #[tokio::test]
+        async fn agy_reads_only_from_a_version_that_answers_usage_itself() {
+            let reply = r#"{"command":{"data":{"groups":[{"name":"G","buckets":[{"window":"5h","remaining_fraction":0.5}]}]}}}"#;
+            let (dir, path) = fake_agy("1.1.10", &format!("echo '{reply}'"));
+            assert!(read_agy_at(&path, None, CHILD_STARTED).await.is_err());
+            // Never asked, so it can't have sent `/usage` as a prompt.
+            assert!(!dir.join("tool.calls").exists());
+            std::fs::remove_dir_all(&dir).unwrap();
+
+            let (dir, path) = fake_agy("1.5.14", &format!("echo '{reply}'"));
+            let limits = read_agy_at(&path, None, CHILD_STARTED)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(limits.limits[0].label, "5-hour (G)");
+            assert_eq!(
+                std::fs::read_to_string(dir.join("tool.calls"))
+                    .unwrap()
+                    .trim(),
+                AGY_ARGS.join(" ")
+            );
+            std::fs::remove_dir_all(&dir).unwrap();
+
+            // An API key has no account quota.
+            let (dir, path) = fake_agy("1.5.14", "exit 2");
+            assert_eq!(read_agy_at(&path, None, CHILD_STARTED).await, Ok(None));
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+
+        #[tokio::test]
+        async fn agy_timeouts_and_cancellation_kill_its_children() {
+            let (dir, path) = test_script(&spawns_child("wait"), 0o755);
+            let timed_out = run_to_end(&path, None, &[], CHILD_STARTED).await;
+            assert!(timed_out.unwrap_err().ends_with("timed out"));
+            assert_child_exits(&dir).await;
+            std::fs::remove_dir_all(&dir).unwrap();
+
+            let (dir, path) = test_script(&spawns_child("wait"), 0o755);
+            let cancelled = tokio::time::timeout(
+                CHILD_STARTED,
+                run_to_end(&path, None, &[], Duration::from_secs(30)),
+            )
+            .await;
+            assert!(cancelled.is_err());
+            assert_child_exits(&dir).await;
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
 
         async fn run(script: &str, timeout: Duration) -> Result<Value, String> {
             let args = ["-c", script];

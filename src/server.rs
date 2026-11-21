@@ -534,6 +534,9 @@ pub(crate) struct PaneNotifyRequest {
     /// Antigravity Stop: why the loop ended, e.g. `NO_TOOL_CALL` or `USER_CANCELED`.
     #[serde(rename = "terminationReason")]
     termination_reason: Option<String>,
+    /// Antigravity Stop: false while background tasks still run.
+    #[serde(rename = "fullyIdle")]
+    fully_idle: Option<bool>,
     /// CC StopFailure: error category.
     error: Option<String>,
     /// CC SubagentStop: agent type.
@@ -560,12 +563,41 @@ impl PaneNotifyRequest {
             .clone()
             .or_else(|| self.event.clone())
             .unwrap_or_else(|| "unknown".to_string());
-        // Antigravity has one Stop event, with a reason.
-        match (event.as_str(), self.termination_reason.as_deref()) {
-            ("Stop", Some("USER_CANCELED")) => "Interrupt".into(),
-            ("Stop", Some("ERROR")) => "StopFailure".into(),
+        // Antigravity has one Stop event, with a reason. Its docs spell
+        // reasons in lowercase; 1.5.14 sends them in uppercase.
+        let reason = self
+            .termination_reason
+            .as_deref()
+            .map(str::to_ascii_uppercase);
+        match (event.as_str(), reason.as_deref()) {
+            ("Stop", Some("USER_CANCELED" | "USER_CANCELLED")) => "Interrupt".into(),
+            // Step, invocation, and token limits end the turn unfinished.
+            ("Stop", Some(reason)) if reason == "ERROR" || reason.starts_with("MAX_") => {
+                "StopFailure".into()
+            }
             _ => event,
         }
+    }
+
+    /// An Antigravity turn that ended with background tasks still running:
+    /// they resume it, and its last Stop finishes it.
+    fn awaits_background_work(&self, event: &str) -> bool {
+        event == "Stop" && self.fully_idle == Some(false)
+    }
+
+    /// What a StopFailure failed with: its error, else Antigravity's reason.
+    fn failure(&self) -> String {
+        self.error
+            .as_deref()
+            .filter(|err| !err.trim().is_empty())
+            .map(str::to_owned)
+            .or_else(|| {
+                self.termination_reason
+                    .as_deref()
+                    .filter(|reason| !reason.eq_ignore_ascii_case("error"))
+                    .map(|reason| reason.to_ascii_lowercase().replace('_', " "))
+            })
+            .unwrap_or_else(|| "error".into())
     }
 
     /// Explicit `title`/`body` override the event's defaults field by field.
@@ -599,11 +631,7 @@ impl PaneNotifyRequest {
                 )
             }
             "StopFailure" => {
-                let err = self
-                    .error
-                    .as_deref()
-                    .filter(|err| !err.is_empty())
-                    .unwrap_or("error");
+                let err = self.failure();
                 (
                     Some(format!("Failed: {err}")),
                     self.last_assistant_message
@@ -776,6 +804,9 @@ pub(crate) async fn api_pane_notify(
     Json(body): Json<PaneNotifyRequest>,
 ) -> Response {
     let event = body.resolve_event();
+    if body.awaits_background_work(&event) {
+        return StatusCode::NO_CONTENT.into_response();
+    }
     let level = body.level.unwrap_or_else(|| infer_level(&event));
     let (title, notif_body) = body.resolve_title_body(&event);
     let lineage = if matches!(
@@ -2182,6 +2213,94 @@ mod pane_notification_tests {
             assert_eq!(response.status(), StatusCode::NO_CONTENT);
             let mgr = state.read().await;
             assert_eq!(mgr.agent_status(pane).unwrap().state, expected, "{hook}");
+        }
+    }
+
+    #[tokio::test]
+    async fn antigravity_turns_finish_once_background_work_ends() {
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let (meta_tx, _) = tokio::sync::mpsc::unbounded_channel();
+        let mut manager = crate::session::manager::SessionManager::new(
+            "/bin/sh".into(),
+            crate::config::FileConfig::default(),
+            exit_tx,
+            meta_tx,
+            8004,
+            None,
+        );
+        let session = manager.create_session(None).await;
+        let pane = manager.snapshot_by_id(session).unwrap().windows[0].panes[0].id;
+        let mut events = manager.events().subscribe();
+        let state = Arc::new(tokio::sync::RwLock::new(manager));
+        let app = create_app(state.clone());
+        let stop = |reason: &str, idle: bool, error: &str| {
+            serde_json::json!({"hookEventName": "Stop", "terminationReason": reason,
+                "fullyIdle": idle, "error": error, "continuationActive": false})
+        };
+        let start = serde_json::json!({"hookEventName": "PreInvocation", "invocationNum": 0});
+        // Payload shapes from agy 1.5.14 (uppercase reasons) and its docs (lowercase).
+        let hooks = [
+            (
+                serde_json::json!({"hookEventName": "SessionStart"}),
+                AgentState::Idle,
+                None,
+            ),
+            (start.clone(), AgentState::Working, None),
+            (stop("NO_TOOL_CALL", false, ""), AgentState::Working, None),
+            (start.clone(), AgentState::Working, None),
+            (
+                stop("NO_TOOL_CALL", true, ""),
+                AgentState::Done,
+                Some(("Done", "attention")),
+            ),
+            (start.clone(), AgentState::Working, None),
+            (
+                stop("error", true, "boom"),
+                AgentState::Done,
+                Some(("Failed: boom", "error")),
+            ),
+            (start.clone(), AgentState::Working, None),
+            (
+                stop("max_steps_exceeded", true, ""),
+                AgentState::Done,
+                Some(("Failed: max steps exceeded", "error")),
+            ),
+            (start, AgentState::Working, None),
+            (stop("USER_CANCELED", true, ""), AgentState::Idle, None),
+        ];
+        for (mut hook, expected, alert) in hooks {
+            hook["conversationId"] = "c1".into();
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::post(format!("/api/panes/{pane}/notify"))
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(hook.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NO_CONTENT);
+            let mut alerts = Vec::new();
+            while let Ok(event) = events.try_recv() {
+                let event: serde_json::Value = serde_json::from_str(&event).unwrap();
+                if event["type"] == "pane_notification" {
+                    alerts.push((
+                        event["title"].as_str().unwrap().to_string(),
+                        event["level"].as_str().unwrap().to_string(),
+                    ));
+                }
+            }
+            let alert = alert.map(|(title, level)| (title.to_string(), level.to_string()));
+            assert_eq!(alerts, alert.into_iter().collect::<Vec<_>>(), "{hook}");
+            let mut mgr = state.write().await;
+            assert_eq!(mgr.agent_status(pane).unwrap().state, expected, "{hook}");
+            // Seen, as a focused client would, so the next turn starts from idle.
+            if expected == AgentState::Done {
+                mgr.acknowledge_pane(pane);
+            }
         }
     }
 

@@ -13,7 +13,7 @@ use reqwest::Method;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use crate::agent_hooks::{self, Target};
+use crate::agent_hooks::{self, Owner, Target};
 
 /// The guide, also the skill `npx skills add btmux-dev/btmux` installs.
 const SKILL_SOURCE: &str = include_str!("../skills/btmux/SKILL.md");
@@ -172,7 +172,10 @@ impl Agent {
         );
         let handler = json!({ "type": "command", "command": command, "timeout": 5 });
         Some(match self {
-            Agent::Agy => Hooks::Named(json!({ "btmux-context": { "SessionStart": [handler] } })),
+            Agent::Agy => Hooks::Named {
+                generated: json!({ "btmux-context": { "SessionStart": [handler] } }),
+                is_ours: is_context_hook,
+            },
             _ => Hooks::Merged {
                 generated: json!({ "hooks": { "SessionStart": [{ "hooks": [handler] }] } }),
                 is_ours: is_context_hook,
@@ -184,7 +187,10 @@ impl Agent {
     fn status_hooks(self) -> Hooks {
         let generated = self.target().generated();
         match self {
-            Agent::Agy => Hooks::Named(generated),
+            Agent::Agy => Hooks::Named {
+                generated,
+                is_ours: agent_hooks::is_btmux_hook,
+            },
             _ => Hooks::Merged {
                 generated,
                 is_ours: agent_hooks::is_btmux_hook,
@@ -193,36 +199,48 @@ impl Agent {
     }
 }
 
-/// Hooks setup puts in an agent's config file.
+/// Hooks setup puts in an agent's config file. `is_ours` picks out the
+/// handlers btmux installed.
 enum Hooks {
-    /// Handlers in `hooks.<event>` groups, among the user's: `is_ours` picks
-    /// out the ones btmux installed.
+    /// Handlers in `hooks.<event>` groups, among the user's.
     Merged {
         generated: Value,
         is_ours: fn(&Value) -> bool,
     },
-    /// Antigravity's: whole hooks named at the top level, btmux's under its
-    /// own names.
-    Named(Value),
+    /// Antigravity's: whole hooks named at the top level. One of btmux's
+    /// names holding a handler btmux didn't write is the user's.
+    Named {
+        generated: Value,
+        is_ours: fn(&Value) -> bool,
+    },
 }
 
 impl Hooks {
-    /// `config` with these hooks; whether it had them before.
-    fn merged(&self, path: &Path, config: Option<Value>) -> Result<(Value, bool), String> {
-        Ok(match self {
+    fn owner(&self, config: &Value) -> Owner {
+        match self {
             Hooks::Merged { generated, is_ours } => {
-                let had = config
-                    .as_ref()
-                    .is_some_and(|c| agent_hooks::contains(c, generated, *is_ours));
-                (agent_hooks::merged(path, config, generated, *is_ours)?, had)
+                if agent_hooks::contains(config, generated, *is_ours) {
+                    Owner::Ours
+                } else {
+                    Owner::Absent
+                }
             }
-            Hooks::Named(generated) => {
-                let had = config
-                    .as_ref()
-                    .is_some_and(|c| agent_hooks::without_named(c, generated).is_some());
-                (agent_hooks::with_named(path, config, generated)?, had)
+            Hooks::Named { generated, is_ours } => {
+                agent_hooks::named_owners(config, generated, *is_ours)
             }
-        })
+        }
+    }
+
+    /// `config` with these hooks.
+    fn merged(&self, path: &Path, config: Option<Value>) -> Result<Value, String> {
+        match self {
+            Hooks::Merged { generated, is_ours } => {
+                agent_hooks::merged(path, config, generated, *is_ours)
+            }
+            Hooks::Named { generated, is_ours } => {
+                agent_hooks::with_named(path, config, generated, *is_ours)
+            }
+        }
     }
 
     /// `config` without these hooks; `None` if it had none.
@@ -231,7 +249,9 @@ impl Hooks {
             Hooks::Merged { generated, is_ours } => {
                 agent_hooks::without(config, generated, *is_ours)
             }
-            Hooks::Named(generated) => agent_hooks::without_named(config, generated),
+            Hooks::Named { generated, is_ours } => {
+                agent_hooks::without_named(config, generated, *is_ours)
+            }
         }
     }
 }
@@ -313,14 +333,14 @@ enum Change {
     Updated,
     Replaced,
     Unchanged,
-    /// A skill btmux didn't install is in the way.
+    /// A skill or named hook btmux didn't install is in the way.
     Conflict,
     /// Not installed, since the agent's skill wasn't.
     Skipped,
     Removed,
     /// Nothing to remove.
     Absent,
-    /// A skill btmux didn't install, left alone.
+    /// A skill or named hook btmux didn't install, left alone.
     Kept,
     Failed,
 }
@@ -398,26 +418,28 @@ fn hooks_state(path: &Path, hooks: &Hooks) -> Result<Installed, String> {
     let Some(config) = agent_hooks::read(path)? else {
         return Ok(Installed::Missing);
     };
-    let (merged, had) = hooks.merged(path, Some(config.clone()))?;
-    Ok(if !had {
-        Installed::Missing
-    } else if merged == config {
-        Installed::Current
-    } else {
-        Installed::Outdated
+    Ok(match hooks.owner(&config) {
+        Owner::Absent => Installed::Missing,
+        Owner::Foreign => Installed::Foreign,
+        Owner::Ours if hooks.merged(path, Some(config.clone()))? == config => Installed::Current,
+        Owner::Ours => Installed::Outdated,
     })
 }
 
 fn install_hooks(path: &Path, hooks: &Hooks, dry_run: bool) -> Result<Change, String> {
     let config = agent_hooks::read(path)?;
-    let (merged, had) = hooks.merged(path, config.clone())?;
+    let owner = config.as_ref().map_or(Owner::Absent, |c| hooks.owner(c));
+    if owner == Owner::Foreign {
+        return Ok(Change::Conflict);
+    }
+    let merged = hooks.merged(path, config.clone())?;
     if config.as_ref() == Some(&merged) {
         return Ok(Change::Unchanged);
     }
     if !dry_run {
         agent_hooks::write_json(path, &merged)?;
     }
-    Ok(if had {
+    Ok(if owner == Owner::Ours {
         Change::Updated
     } else {
         Change::Created
@@ -428,6 +450,9 @@ fn remove_hooks(path: &Path, hooks: &Hooks, dry_run: bool) -> Result<Change, Str
     let Some(config) = agent_hooks::read(path)? else {
         return Ok(Change::Absent);
     };
+    if hooks.owner(&config) == Owner::Foreign {
+        return Ok(Change::Kept);
+    }
     let Some(config) = hooks.without(&config) else {
         return Ok(Change::Absent);
     };
@@ -614,11 +639,22 @@ fn print_steps(action: &str, steps: &[Step], dry_run: bool, json: bool) -> i32 {
     if dry_run {
         println!("\nDry run: nothing was changed.");
     }
-    if steps.iter().any(|s| s.change == Change::Conflict) {
+    let conflict = |skill: bool| {
+        steps
+            .iter()
+            .any(|s| s.change == Change::Conflict && (s.part == Part::Skill) == skill)
+    };
+    if conflict(true) {
         println!(
             "\nA skill named btmux that btmux didn't install was left alone, and the \
              context hook that points at it wasn't added. Run again with --force to \
              replace it."
+        );
+    }
+    if conflict(false) {
+        println!(
+            "\nA hook btmux didn't write already has the name btmux uses, so it was \
+             left alone. Rename it and run setup again."
         );
     }
     let hook_changed = |agent: Option<Agent>| {
@@ -870,10 +906,10 @@ mod tests {
             "SessionStart": [{ "hooks": [{ "type": "command", "command": "btmux skill context --agent claude" }] }],
             "Stop": [{ "hooks": [{ "type": "command", "command": "echo skill context # btmux-context" }] }],
         } });
-        let once = hook.merged(path, Some(own.clone())).unwrap().0;
-        let once = status.merged(path, Some(once)).unwrap().0;
-        let twice = hook.merged(path, Some(once.clone())).unwrap().0;
-        let twice = status.merged(path, Some(twice)).unwrap().0;
+        let once = hook.merged(path, Some(own.clone())).unwrap();
+        let once = status.merged(path, Some(once)).unwrap();
+        let twice = hook.merged(path, Some(once.clone())).unwrap();
+        let twice = status.merged(path, Some(twice)).unwrap();
         assert_eq!(once, twice);
         let start = once["hooks"]["SessionStart"].as_array().unwrap();
         assert_eq!(
@@ -924,6 +960,45 @@ mod tests {
         assert_eq!(remove_hooks(&path, &status, false), Ok(Change::Absent));
         let left: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(left, own);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn antigravity_hooks_of_the_users_with_btmux_names_are_left_alone() {
+        let dir = temp();
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("hooks.json");
+        let theirs = json!({
+            "btmux": { "Stop": [{ "command": "echo mine" }] },
+            "btmux-context": { "SessionStart": [{ "command": "echo context" }] },
+        });
+        fs::write(&path, theirs.to_string()).unwrap();
+        let (context, status) = (
+            Agent::Agy.context_hook().unwrap(),
+            Agent::Agy.status_hooks(),
+        );
+        assert_eq!(hooks_state(&path, &status), Ok(Installed::Foreign));
+        assert_eq!(install_hooks(&path, &status, false), Ok(Change::Conflict));
+        assert_eq!(install_hooks(&path, &context, false), Ok(Change::Conflict));
+        assert_eq!(remove_hooks(&path, &status, false), Ok(Change::Kept));
+        assert_eq!(remove_hooks(&path, &context, false), Ok(Change::Kept));
+        let left: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(left, theirs);
+
+        // btmux's, turned off in Antigravity, stays off through an update.
+        fs::write(&path, "{}").unwrap();
+        install_hooks(&path, &status, false).unwrap();
+        let mut off: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        off["btmux"]["enabled"] = false.into();
+        off["btmux"]["Stop"] = json!([]);
+        fs::write(&path, off.to_string()).unwrap();
+        assert_eq!(hooks_state(&path, &status), Ok(Installed::Outdated));
+        assert_eq!(install_hooks(&path, &status, false), Ok(Change::Updated));
+        let updated: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(updated["btmux"]["enabled"], false);
+        assert!(!updated["btmux"]["Stop"].as_array().unwrap().is_empty());
+        assert_eq!(hooks_state(&path, &status), Ok(Installed::Current));
+        assert_eq!(remove_hooks(&path, &status, false), Ok(Change::Removed));
         fs::remove_dir_all(dir).unwrap();
     }
 

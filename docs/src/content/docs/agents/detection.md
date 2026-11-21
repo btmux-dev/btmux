@@ -57,6 +57,10 @@ btmux uses these rules to resolve conflicting reports.
   it, as its own `Stop` notifies; without one, it is shown once that turn
   ends. Seeing the result, or a newer `Stop`, also drops it, and an upgrade
   shows it. An `idle_prompt` while waiting isn't shown.
+- Antigravity CLI reports one `Stop` per turn, with a reason: a canceled turn
+  is interrupted, and an error or a step, invocation, or token limit fails.
+  One sent while background tasks still run (`fullyIdle: false`) doesn't end
+  the turn, since those tasks resume it; its last `Stop` does.
 - Hooks may report a wrapper's child process; the process scan's own choice
   identifies the agent and selects its rules. Names reported by hooks take
   precedence over process names. A newly detected agent ignores OSC titles

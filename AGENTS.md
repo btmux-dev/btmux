@@ -42,7 +42,8 @@ split into four `--shard I/N` jobs instead), with Vite's dependency cache built
 first (`vite optimize`) so concurrent stacks don't race to build it, and output
 printed per file as it ends. Stacks put a fake
 `multipass` (`frontend/test-bin`) first on the server's `PATH`, logging its calls
-to the stack's `multipass` dir (`sandbox-browser-test.ts`), so no test starts a VM;
+to the stack's `multipass` dir (`sandbox-browser-test.ts`), so no test starts a VM,
+and a fake `agy`, whose `--version` waits while the stack's `agy/hold` exists;
 its `test-editor` is the server's `$EDITOR`. Stack shells read `shrc` in the
 stack's config dir (`ENV`) if a file writes one. Async page predicates must
 use `waitForAsync` (`browser-test-utils.ts`): `page.waitForFunction` treats a
@@ -209,10 +210,14 @@ events), owned by a trailing marker comment (`# btmux-notify`,
 `# btmux-context`); status hooks from before the marker match exactly.
 Antigravity's `~/.gemini/config/hooks.json` names whole hooks at its top
 level, so btmux owns `btmux` and `btmux-context` there (`Hooks::Named`,
-`with_named`/`without_named`); its context hook prints `injectSteps`. Its
+`with_named`/`without_named`) while every handler in one is marked as btmux's;
+otherwise it is the user's (a conflict on setup, kept on remove). Refreshing
+one keeps its `enabled`. Its context hook prints `injectSteps`. Its
 camelCase payloads (`hookEventName`, `conversationId`, `toolCall`) reach
-`/notify` through serde aliases; `PreInvocation` starts a turn, and `Stop`'s
-`terminationReason` tells a cancel or error from a finished turn.
+`/notify` through serde aliases; `PreInvocation` starts a turn, `Stop`'s
+`terminationReason` (any case) tells a cancel, an error, or a `MAX_*` limit
+from a finished turn, and a `Stop` with `fullyIdle: false` is ignored, as
+background tasks resume the turn.
 
 ### Popups
 
@@ -248,7 +253,7 @@ and touch screens get a `MobileKeyBar` inside it, since the dialog is modal.
 
 ### Plan limits
 
-`agent_limits.rs` serves `GET /api/agent-limits`: the session, weekly, and per-model subscription limits above agent view's Usage tab (`AgentLimitsPanel.tsx`). It starts each CLI and asks without a prompt, so the CLI does its own auth and btmux never reads a credential: Claude's undocumented `get_usage` control request (`claude -p --safe-mode`; `--safe-mode` skips hooks, MCP, and plugins, while `--bare` skips OAuth too), Codex's experimental `account/rateLimits/read` (`codex app-server`), and Antigravity's `/usage` (`agy -p /usage --output-format json`, answered without a model turn; exit status 2 means no account quota, and its hooks still run, so it gets no `BTMUX_PANE_ID`). Only an open Usage tab in a visible browser tab polls (`useAgentLimits`), each read is shared for 50 s, and a failed one keeps the last limits for 10 minutes, with their age shown. A service's `PATH` lacks what shell startup adds, like `~/.local/bin`, so a CLI missing from it runs with the `PATH` of the pane shell, asked for without a terminal (again every 10 minutes while a CLI stays missing). The Health tab finds and runs them the same way. API keys and no login mean no limits, so that agent isn't shown; so does a CLI too old or changed to answer, with a warning logged once per distinct error. Claude's `limits[]` rows are shown in the server's order and severity, so a new meter needs no change; Codex's windows are named by duration, since the weekly one can be `primary` or `secondary`. Antigravity's buckets are named by window and model group, since groups of models share them.
+`agent_limits.rs` serves `GET /api/agent-limits`: the session, weekly, and per-model subscription limits above agent view's Usage tab (`AgentLimitsPanel.tsx`). It starts each CLI and asks without a prompt, so the CLI does its own auth and btmux never reads a credential: Claude's undocumented `get_usage` control request (`claude -p --safe-mode`; `--safe-mode` skips hooks, MCP, and plugins, while `--bare` skips OAuth too), Codex's experimental `account/rateLimits/read` (`codex app-server`), and Antigravity's `/usage` (`agy -p /usage --output-format json`, answered without a model turn or hooks from 1.1.11, so the same executable's `--version` is checked first; exit status 2 means no account quota; its process group is killed on timeout). Only an open Usage tab in a visible browser tab polls (`useAgentLimits`), each agent's read is shared for 50 s and refreshed on its own (`Reader`): only a first read is waited for, later ones run in the background behind the last limits, and a failed one keeps the last limits for 10 minutes, with their age shown. A service's `PATH` lacks what shell startup adds, like `~/.local/bin`, so a CLI missing from it runs with the `PATH` of the pane shell, asked for without a terminal (again every 10 minutes while a CLI stays missing). The Health tab finds and runs them the same way. API keys and no login mean no limits, so that agent isn't shown; so does a CLI too old or changed to answer, with a warning logged once per distinct error. Claude's `limits[]` rows are shown in the server's order and severity, so a new meter needs no change; Codex's windows are named by duration, since the weekly one can be `primary` or `secondary`. Antigravity's buckets are named by window and model group, since groups of models share them.
 
 ### PTY lifecycle (`src/pty/mod.rs`)
 
