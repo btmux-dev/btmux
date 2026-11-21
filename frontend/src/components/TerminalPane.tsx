@@ -326,6 +326,15 @@ export function TerminalPane({
   );
 
   const accentGlow = withAlpha(borderColor, 0.2);
+  // A quick connect (a new pane, a reconnect) shows no label, which would
+  // only flash by.
+  const [slowConnection, setSlowConnection] = useState(false);
+  useEffect(() => {
+    setSlowConnection(false);
+    if (connection === 'connected') return;
+    const timer = window.setTimeout(() => setSlowConnection(true), 1000);
+    return () => window.clearTimeout(timer);
+  }, [connection]);
   const borderPlaying = borderTraceNonce > 0 && animations && paneSwitchBorderStyle !== null;
 
   return (
@@ -353,7 +362,7 @@ export function TerminalPane({
         transition: animations ? 'border-color .15s ease, background .15s ease' : undefined,
       }}
     >
-      {connection !== 'connected' && (
+      {connection !== 'connected' && (slowConnection || connectionError) && (
         <div
           role="status"
           className={clsx(
@@ -423,16 +432,7 @@ export function TerminalPane({
       )}
       {/* The terminal fills the space below the (optional) title bar. inset-style
           padding around it keeps a small gutter so glyphs don't touch the border. */}
-      <div
-        style={{
-          position: 'relative',
-          flex: 1,
-          minHeight: 0,
-          // Cover wallpaper/transparency only while the terminal canvas is
-          // hidden; once revealed, restore the pane's normal transparency.
-          background: initialReplayRendered ? 'transparent' : (config?.theme?.background ?? STARTUP_THEME.background),
-        }}
-      >
+      <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
         <div
           ref={containerRef}
           className="absolute inset-3"

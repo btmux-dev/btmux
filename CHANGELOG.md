@@ -74,6 +74,9 @@ actions, saved state, and API types can change in any release.
 
 ### Fixed
 
+- A new pane no longer flashes an opaque background and "Connecting…" while
+  it connects. The label shows only when connecting takes over a second.
+  ([#182](https://github.com/btmux-dev/btmux/pull/182))
 - Dragging a pane divider no longer makes the shell prompt flicker: terminals
   resize once, when the divider is released, and the layout no longer jumps
   back while the server confirms it.

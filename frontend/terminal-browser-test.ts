@@ -444,6 +444,11 @@ try {
     control = ws;
     ws.connectToServer().onMessage((message) => (holdReplies ? held.push(message) : ws.send(message)));
   });
+  let slowPanes = false;
+  await dragPage.routeWebSocket(/\/ws\/pane\//, async (ws) => {
+    if (slowPanes) await new Promise((resolve) => setTimeout(resolve, 1500));
+    ws.connectToServer();
+  });
   await dragPage.goto(url);
   await dragPage.getByLabel('Access token').fill(token);
   await dragPage.getByRole('button', { name: 'Connect', exact: true }).click();
@@ -478,22 +483,22 @@ try {
   const splitFrames = left.evaluate(async (el, id) => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     let resizes = 0;
-    const off = useStore
-      .getState()
-      .terminals.get(id)
-      .onResize(() => resizes++);
+    const off = useStore.getState().terminals.get(id).onResize(() => resizes++);
     const widths: number[] = [];
+    // A new pane shows no connection label or cover while it connects.
+    let flashes = 0;
     const end = performance.now() + 800;
     await new Promise<void>((resolve) => {
       const tick = () => {
         widths.push(el.getBoundingClientRect().width);
+        if (document.querySelector('[data-pane-id] > [role="status"]')) flashes++;
         if (performance.now() < end) requestAnimationFrame(tick);
         else resolve();
       };
       requestAnimationFrame(tick);
     });
     off();
-    return { resizes, widths };
+    return { resizes, widths, flashes };
   }, leftId);
   await dragPage.keyboard.press('Control+a');
   await dragPage.keyboard.press('%');
@@ -512,6 +517,7 @@ try {
   const split = await splitFrames;
   await settled();
   const halfWidth = (await left.boundingBox())!.width;
+  assert.equal(split.flashes, 0, 'the new pane shows no connection label');
   assert.equal(split.resizes, 1, `the terminal resizes once: ${split.resizes} ${split.widths.map(Math.round)}`);
   assert(
     split.widths.some((width) => width < fullWidth - 50 && width > halfWidth + 50),
@@ -576,6 +582,16 @@ try {
   await dragPage.locator('[data-pane-ghost]').waitFor({ state: 'detached' });
   await settled();
   assert.equal(Math.round((await left.boundingBox())!.width), Math.round(fullWidth));
+
+  // A slow connection still says so.
+  slowPanes = true;
+  await dragPage.keyboard.press('Control+a');
+  await dragPage.keyboard.press('"');
+  const connecting = dragPage.locator('[data-pane-id] > [role="status"]', { hasText: 'Connecting…' });
+  await connecting.waitFor();
+  slowPanes = false;
+  await connecting.waitFor({ state: 'detached' });
+  await settled();
 
   // Reduced motion changes the layout at once.
   await dragPage.emulateMedia({ reducedMotion: 'reduce' });
