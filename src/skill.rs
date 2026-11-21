@@ -1,7 +1,9 @@
-//! `btmux skill`: installs a skill teaching agents the btmux CLI, and a
-//! SessionStart hook telling them which pane they run in. The skill is a stub
-//! that runs `btmux skill show`, and the hook runs `btmux skill context`, so
-//! both take their text from the installed btmux when they run.
+//! `btmux skill`: sets agents up to use btmux. Each agent gets the status
+//! hooks that report its state, and Claude Code and Codex also a skill
+//! teaching them the btmux CLI and a SessionStart hook telling them which
+//! pane they run in. The skill is a stub that runs `btmux skill show`, and
+//! the hook runs `btmux skill context`, so both take their text from the
+//! installed btmux when they run.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -22,16 +24,20 @@ const SKILL_SOURCE: &str = include_str!("../skills/btmux/SKILL.md");
 const MARKER: &str =
     "<!-- Installed by \"btmux skill setup\". Remove it with \"btmux skill remove\". -->";
 
+/// Ends the context hook's command, marking it as btmux's.
+const CONTEXT_MARKER: &str = " # btmux-context";
+
 /// Bump when the stub changes, so `context` can tell an old one.
 const STUB_VERSION: &str = "1";
 
 #[derive(clap::Subcommand, Clone)]
 pub enum SkillCommand {
-    /// Install the btmux skill and its SessionStart hook into the agents
-    /// found here (Claude Code, Codex), or those given with --agent. With
-    /// none found, the skill alone goes into ~/.agents/skills, which most
-    /// agents read. Safe to run again; it updates what an older btmux
-    /// installed.
+    /// Set up the agents found here (Claude Code, Codex, Gemini CLI), or
+    /// those given with --agent: hooks that report their state to btmux, and
+    /// for Claude Code and Codex the btmux skill and a hook telling them their
+    /// pane. With no agent found, the skill alone goes into ~/.agents/skills,
+    /// which most agents read. Safe to run again; it updates what an older
+    /// btmux installed.
     Setup {
         /// Only this agent. Repeatable.
         #[arg(long = "agent", value_enum, value_name = "AGENT")]
@@ -46,14 +52,14 @@ pub enum SkillCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Report whether the skill and hook are installed for each agent.
+    /// Report what is installed for each agent.
     Status {
         /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
-    /// Remove the skill and hook from agents, leaving a skill btmux didn't
-    /// install and every other hook alone.
+    /// Remove what setup installed, leaving a skill btmux didn't install and
+    /// every other hook alone.
     Remove {
         /// Only this agent. Repeatable.
         #[arg(long = "agent", value_enum, value_name = "AGENT")]
@@ -80,15 +86,17 @@ pub enum SkillCommand {
 pub enum Agent {
     Claude,
     Codex,
+    Gemini,
 }
 
-const AGENTS: [Agent; 2] = [Agent::Claude, Agent::Codex];
+const AGENTS: [Agent; 3] = [Agent::Claude, Agent::Codex, Agent::Gemini];
 
 impl Agent {
     fn label(self) -> &'static str {
         match self {
             Agent::Claude => "Claude Code",
             Agent::Codex => "Codex",
+            Agent::Gemini => "Gemini CLI",
         }
     }
 
@@ -96,13 +104,15 @@ impl Agent {
         match self {
             Agent::Claude => "claude",
             Agent::Codex => "codex",
+            Agent::Gemini => "gemini",
         }
     }
 
-    fn hooks(self) -> Target {
+    fn target(self) -> Target {
         match self {
             Agent::Claude => Target::ClaudeCode,
             Agent::Codex => Target::Codex,
+            Agent::Gemini => Target::GeminiCli,
         }
     }
 
@@ -110,38 +120,40 @@ impl Agent {
     fn invocation(self) -> &'static str {
         match self {
             Agent::Claude => "/btmux",
-            Agent::Codex => "$btmux",
+            _ => "$btmux",
         }
     }
 
-    fn skill_dir(self, home: &Path) -> PathBuf {
+    /// Where it reads the skill; `None` if btmux installs none for it.
+    fn skill_dir(self, home: &Path) -> Option<PathBuf> {
         match self {
-            Agent::Claude => home.join(".claude").join("skills").join("btmux"),
+            Agent::Claude => Some(agent_hooks::claude_dir(home).join("skills").join("btmux")),
             // Codex reads the shared directory.
-            Agent::Codex => shared_dir(home),
+            Agent::Codex => Some(shared_dir(home)),
+            Agent::Gemini => None,
         }
     }
 
     /// Its config directory exists, or it is on `PATH`.
     fn found(self, home: &Path) -> bool {
         let dir = match self {
-            Agent::Claude => home.join(".claude"),
-            Agent::Codex => std::env::var_os("CODEX_HOME")
-                .filter(|path| !path.is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(".codex")),
+            Agent::Claude => agent_hooks::claude_dir(home),
+            Agent::Codex => agent_hooks::codex_dir(home),
+            Agent::Gemini => home.join(".gemini"),
         };
         dir.is_dir() || crate::vscode::find_on_path(self.name()).is_some()
     }
 
-    fn hook(self) -> Value {
+    /// The SessionStart hook naming the pane; `None` without a skill.
+    fn context_hook(self) -> Option<Value> {
+        self.skill_dir(Path::new("")).as_ref()?;
         let command = format!(
-            "\"${{BTMUX_BIN:-btmux}}\" skill context --agent {} 2>/dev/null || true",
+            "\"${{BTMUX_BIN:-btmux}}\" skill context --agent {} 2>/dev/null || true{CONTEXT_MARKER}",
             self.name()
         );
-        json!({ "hooks": { "SessionStart": [{ "hooks": [
+        Some(json!({ "hooks": { "SessionStart": [{ "hooks": [
             { "type": "command", "command": command, "timeout": 5 }
-        ] }] } })
+        ] }] } }))
     }
 }
 
@@ -149,11 +161,11 @@ fn shared_dir(home: &Path) -> PathBuf {
     home.join(".agents").join("skills").join("btmux")
 }
 
-fn is_skill_hook(handler: &Value) -> bool {
+fn is_context_hook(handler: &Value) -> bool {
     handler
         .get("command")
         .and_then(Value::as_str)
-        .is_some_and(|command| command.contains(" skill context"))
+        .is_some_and(|command| command.ends_with(CONTEXT_MARKER))
 }
 
 /// `SKILL_SOURCE`'s frontmatter and body.
@@ -187,6 +199,27 @@ fn stub() -> String {
     )
 }
 
+/// What setup installs.
+#[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "snake_case")]
+enum Part {
+    Skill,
+    /// The SessionStart hook naming the pane.
+    ContextHook,
+    /// The hooks reporting the agent's state.
+    StatusHooks,
+}
+
+impl Part {
+    fn label(self) -> &'static str {
+        match self {
+            Part::Skill => "skill",
+            Part::ContextHook => "context hook",
+            Part::StatusHooks => "status hooks",
+        }
+    }
+}
+
 #[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "snake_case")]
 enum Change {
@@ -196,6 +229,8 @@ enum Change {
     Unchanged,
     /// A skill btmux didn't install is in the way.
     Conflict,
+    /// Not installed, since the agent's skill wasn't.
+    Skipped,
     Removed,
     /// Nothing to remove.
     Absent,
@@ -207,11 +242,25 @@ enum Change {
 #[derive(Serialize)]
 struct Step {
     agents: Vec<Agent>,
-    kind: &'static str,
+    part: Part,
     path: PathBuf,
     change: Change,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
+}
+
+fn step(agents: Vec<Agent>, part: Part, path: PathBuf, result: Result<Change, String>) -> Step {
+    let (change, error) = match result {
+        Ok(change) => (change, None),
+        Err(error) => (Change::Failed, Some(error)),
+    };
+    Step {
+        agents,
+        part,
+        path,
+        change,
+        error,
+    }
 }
 
 /// What is installed at a path.
@@ -238,20 +287,63 @@ fn skill_state(dir: &Path) -> Installed {
     }
 }
 
-fn hook_state(agent: Agent) -> Result<Installed, String> {
-    let path = agent.hooks().config_path()?;
-    let Some(config) = agent_hooks::read(&path)? else {
+fn hooks_state(
+    path: &Path,
+    generated: &Value,
+    is_ours: fn(&Value) -> bool,
+) -> Result<Installed, String> {
+    let Some(config) = agent_hooks::read(path)? else {
         return Ok(Installed::Missing);
     };
-    if !agent_hooks::contains(&config, is_skill_hook) {
+    if !agent_hooks::contains(&config, generated, is_ours) {
         return Ok(Installed::Missing);
     }
-    let merged = agent_hooks::merged(&path, Some(config.clone()), &agent.hook(), is_skill_hook)?;
+    let merged = agent_hooks::merged(path, Some(config.clone()), generated, is_ours)?;
     Ok(if merged == config {
         Installed::Current
     } else {
         Installed::Outdated
     })
+}
+
+fn install_hooks(
+    path: &Path,
+    generated: &Value,
+    is_ours: fn(&Value) -> bool,
+    dry_run: bool,
+) -> Result<Change, String> {
+    let config = agent_hooks::read(path)?;
+    let change = match &config {
+        Some(config) if agent_hooks::contains(config, generated, is_ours) => Change::Updated,
+        _ => Change::Created,
+    };
+    let merged = agent_hooks::merged(path, config.clone(), generated, is_ours)?;
+    if config.as_ref() == Some(&merged) {
+        return Ok(Change::Unchanged);
+    }
+    if !dry_run {
+        agent_hooks::write_json(path, &merged)?;
+    }
+    Ok(change)
+}
+
+fn remove_hooks(
+    path: &Path,
+    generated: &Value,
+    is_ours: fn(&Value) -> bool,
+    dry_run: bool,
+) -> Result<Change, String> {
+    let Some(config) = agent_hooks::read(path)? else {
+        return Ok(Change::Absent);
+    };
+    let Some(config) = agent_hooks::without(&config, generated, is_ours) else {
+        return Ok(Change::Absent);
+    };
+    // Through a symlink too, as setup wrote it.
+    if !dry_run {
+        agent_hooks::write_json(path, &config)?;
+    }
+    Ok(Change::Removed)
 }
 
 fn home() -> Result<PathBuf, String> {
@@ -262,7 +354,9 @@ fn home() -> Result<PathBuf, String> {
 fn skill_dirs(agents: &[Agent], home: &Path) -> Vec<(PathBuf, Vec<Agent>)> {
     let mut dirs: Vec<(PathBuf, Vec<Agent>)> = Vec::new();
     for &agent in agents {
-        let dir = agent.skill_dir(home);
+        let Some(dir) = agent.skill_dir(home) else {
+            continue;
+        };
         match dirs.iter_mut().find(|(path, _)| *path == dir) {
             Some((_, readers)) => readers.push(agent),
             None => dirs.push((dir, vec![agent])),
@@ -303,56 +397,51 @@ fn setup(agents: &[Agent], dry_run: bool, force: bool) -> Result<Vec<Step>, Stri
         skill_dirs(&agents, &home)
     };
     for (dir, readers) in dirs {
-        let (change, replace) = match skill_state(&dir) {
-            Installed::Missing => (Change::Created, false),
-            Installed::Current => (Change::Unchanged, false),
-            Installed::Outdated => (Change::Updated, false),
-            Installed::Foreign if force => (Change::Replaced, true),
-            Installed::Foreign => (Change::Conflict, false),
+        let result = match skill_state(&dir) {
+            Installed::Missing => Ok(Change::Created),
+            Installed::Current => Ok(Change::Unchanged),
+            Installed::Outdated => Ok(Change::Updated),
+            Installed::Foreign if force => Ok(Change::Replaced),
+            Installed::Foreign => Ok(Change::Conflict),
         };
-        let error = match change {
-            Change::Created | Change::Updated | Change::Replaced if !dry_run => {
-                write_skill(&dir, replace).err()
+        let result = match result {
+            Ok(change @ (Change::Created | Change::Updated | Change::Replaced)) if !dry_run => {
+                write_skill(&dir, change == Change::Replaced).map(|()| change)
             }
-            _ => None,
+            result => result,
         };
-        steps.push(step(readers, "skill", dir, change, error));
+        steps.push(step(readers, Part::Skill, dir, result));
     }
     for agent in agents {
-        let (path, change, error) = match setup_hook(agent, dry_run) {
-            Ok((path, change)) => (path, change, None),
-            Err((path, error)) => (path, Change::Failed, Some(error)),
-        };
-        steps.push(step(vec![agent], "hook", path, change, error));
+        let path = agent.target().config_path()?;
+        if let (Some(hook), Some(dir)) = (agent.context_hook(), agent.skill_dir(&home)) {
+            // The hook points at the skill, so it waits for one.
+            let skill_ok = steps.iter().any(|s| {
+                s.part == Part::Skill
+                    && s.path == dir
+                    && matches!(
+                        s.change,
+                        Change::Created | Change::Updated | Change::Replaced | Change::Unchanged
+                    )
+            });
+            let result = if skill_ok {
+                install_hooks(&path, &hook, is_context_hook, dry_run)
+            } else {
+                Ok(Change::Skipped)
+            };
+            steps.push(step(vec![agent], Part::ContextHook, path.clone(), result));
+        }
+        let generated = agent.target().generated();
+        let result = install_hooks(&path, &generated, agent_hooks::is_btmux_hook, dry_run);
+        steps.push(step(vec![agent], Part::StatusHooks, path, result));
     }
     Ok(steps)
 }
 
-fn setup_hook(agent: Agent, dry_run: bool) -> Result<(PathBuf, Change), (PathBuf, String)> {
-    let path = agent
-        .hooks()
-        .config_path()
-        .map_err(|e| (PathBuf::new(), e))?;
-    let fail = |error| (path.clone(), error);
-    let config = agent_hooks::read(&path).map_err(fail)?;
-    let change = match &config {
-        Some(config) if agent_hooks::contains(config, is_skill_hook) => Change::Updated,
-        _ => Change::Created,
-    };
-    let merged =
-        agent_hooks::merged(&path, config.clone(), &agent.hook(), is_skill_hook).map_err(fail)?;
-    if config.as_ref() == Some(&merged) {
-        return Ok((path, Change::Unchanged));
-    }
-    if !dry_run {
-        agent_hooks::write_json(&path, &merged).map_err(fail)?;
-    }
-    Ok((path, change))
-}
-
 fn remove(agents: &[Agent], dry_run: bool) -> Result<Vec<Step>, String> {
     let home = home()?;
-    let agents = if agents.is_empty() {
+    let all = agents.is_empty();
+    let agents = if all {
         AGENTS.to_vec()
     } else {
         agents.to_vec()
@@ -360,74 +449,31 @@ fn remove(agents: &[Agent], dry_run: bool) -> Result<Vec<Step>, String> {
     let mut steps = Vec::new();
     let mut dirs = skill_dirs(&agents, &home);
     let shared = shared_dir(&home);
-    if !dirs.iter().any(|(dir, _)| *dir == shared) && agents.len() == AGENTS.len() {
+    if all && !dirs.iter().any(|(dir, _)| *dir == shared) {
         dirs.push((shared, Vec::new()));
     }
     for (dir, readers) in dirs {
-        let change = match skill_state(&dir) {
-            Installed::Missing => Change::Absent,
-            Installed::Foreign => Change::Kept,
-            Installed::Current | Installed::Outdated => Change::Removed,
+        let result = match skill_state(&dir) {
+            Installed::Missing => Ok(Change::Absent),
+            Installed::Foreign => Ok(Change::Kept),
+            Installed::Current | Installed::Outdated if dry_run => Ok(Change::Removed),
+            Installed::Current | Installed::Outdated => {
+                remove_skill(&dir).map(|()| Change::Removed)
+            }
         };
-        let error = (change == Change::Removed && !dry_run)
-            .then(|| remove_skill(&dir).err())
-            .flatten();
-        steps.push(step(readers, "skill", dir, change, error));
+        steps.push(step(readers, Part::Skill, dir, result));
     }
     for agent in agents {
-        let result = agent.hooks().config_path().and_then(|path| {
-            let change = match agent_hooks::read(&path)? {
-                Some(config) => match agent_hooks::without(&config, is_skill_hook) {
-                    Some(config) => {
-                        // A file holding only this hook goes with it.
-                        let empty = config == json!({ "hooks": {} });
-                        if !dry_run && empty {
-                            fs::remove_file(&path)
-                                .map_err(|e| format!("cannot remove {}: {e}", path.display()))?;
-                        } else if !dry_run {
-                            agent_hooks::write_json(&path, &config)?;
-                        }
-                        Change::Removed
-                    }
-                    None => Change::Absent,
-                },
-                None => Change::Absent,
-            };
-            Ok((path, change))
-        });
-        steps.push(match result {
-            Ok((path, change)) => step(vec![agent], "hook", path, change, None),
-            Err(error) => step(
-                vec![agent],
-                "hook",
-                PathBuf::new(),
-                Change::Failed,
-                Some(error),
-            ),
-        });
+        let path = agent.target().config_path()?;
+        if let Some(hook) = agent.context_hook() {
+            let result = remove_hooks(&path, &hook, is_context_hook, dry_run);
+            steps.push(step(vec![agent], Part::ContextHook, path.clone(), result));
+        }
+        let generated = agent.target().generated();
+        let result = remove_hooks(&path, &generated, agent_hooks::is_btmux_hook, dry_run);
+        steps.push(step(vec![agent], Part::StatusHooks, path, result));
     }
     Ok(steps)
-}
-
-fn step(
-    agents: Vec<Agent>,
-    kind: &'static str,
-    path: PathBuf,
-    change: Change,
-    error: Option<String>,
-) -> Step {
-    let change = if error.is_some() {
-        Change::Failed
-    } else {
-        change
-    };
-    Step {
-        agents,
-        kind,
-        path,
-        change,
-        error,
-    }
 }
 
 /// `path` with the home directory as `~`.
@@ -466,13 +512,13 @@ fn print_steps(action: &str, steps: &[Step], dry_run: bool, json: bool) -> i32 {
                 .join(", ")
         };
         println!(
-            "{:<6} {:<10} {}  ({agents})",
-            step.kind,
+            "{:<13} {:<10} {}  ({agents})",
+            step.part.label(),
             snake(step.change),
             tilde(&step.path, &home)
         );
         if let Some(error) = &step.error {
-            println!("       {error}");
+            println!("              {error}");
         }
     }
     if dry_run {
@@ -480,19 +526,30 @@ fn print_steps(action: &str, steps: &[Step], dry_run: bool, json: bool) -> i32 {
     }
     if steps.iter().any(|s| s.change == Change::Conflict) {
         println!(
-            "\nA skill named btmux that btmux didn't install was left alone. \
-             Run again with --force to replace it."
+            "\nA skill named btmux that btmux didn't install was left alone, and the \
+             context hook that points at it wasn't added. Run again with --force to \
+             replace it."
         );
     }
-    let changed_hook = steps.iter().any(|s| {
-        s.kind == "hook"
-            && matches!(
-                s.change,
-                Change::Created | Change::Updated | Change::Removed
-            )
-    });
-    if changed_hook && !dry_run {
-        println!("\nRestart running agents to load the change.");
+    let hook_changed = |agent: Option<Agent>| {
+        steps.iter().any(|s| {
+            s.part != Part::Skill
+                && agent.is_none_or(|agent| s.agents.contains(&agent))
+                && matches!(
+                    s.change,
+                    Change::Created | Change::Updated | Change::Removed
+                )
+        })
+    };
+    if hook_changed(None) {
+        let verb = if dry_run { "would need" } else { "need" };
+        println!("\nRunning agents {verb} a restart to load the change.");
+    }
+    if action == "setup" && hook_changed(Some(Agent::Codex)) {
+        println!(
+            "Codex skips new and changed hooks until you trust them: run /hooks in \
+             Codex and trust btmux's."
+        );
     }
     failed as i32
 }
@@ -502,20 +559,31 @@ fn status(json: bool) -> i32 {
         Ok(home) => home,
         Err(error) => return fail(&error),
     };
+    let state = |result: Result<Installed, String>, path: PathBuf| match result {
+        Ok(state) => json!({ "path": path, "state": state }),
+        Err(error) => json!({ "path": path, "state": "error", "error": error }),
+    };
     let rows: Vec<Value> = AGENTS
         .into_iter()
         .map(|agent| {
-            let skill = agent.skill_dir(&home);
-            let hook = agent.hooks().config_path().unwrap_or_default();
-            let hook_state = hook_state(agent);
+            let path = agent.target().config_path().unwrap_or_default();
+            let skill = agent
+                .skill_dir(&home)
+                .map(|dir| state(Ok(skill_state(&dir)), dir));
+            let context = agent
+                .context_hook()
+                .map(|hook| state(hooks_state(&path, &hook, is_context_hook), path.clone()));
+            let generated = agent.target().generated();
+            let status_hooks = state(
+                hooks_state(&path, &generated, agent_hooks::is_btmux_hook),
+                path.clone(),
+            );
             json!({
                 "agent": agent,
                 "found": agent.found(&home),
-                "skill": { "path": skill, "state": skill_state(&skill) },
-                "hook": match &hook_state {
-                    Ok(state) => json!({ "path": hook, "state": state }),
-                    Err(error) => json!({ "path": hook, "state": "error", "error": error }),
-                },
+                "skill": skill,
+                "context_hook": context,
+                "status_hooks": status_hooks,
             })
         })
         .collect();
@@ -531,13 +599,17 @@ fn status(json: bool) -> i32 {
             "not found"
         };
         println!("{} ({found})", agent.label());
-        for kind in ["skill", "hook"] {
-            let state = row[kind]["state"].as_str().unwrap_or_default();
+        for part in [Part::Skill, Part::ContextHook, Part::StatusHooks] {
+            let entry = &row[snake(part)];
+            if entry.is_null() {
+                continue;
+            }
+            let state = entry["state"].as_str().unwrap_or_default();
             stale |= state != "current";
-            let path = PathBuf::from(row[kind]["path"].as_str().unwrap_or_default());
-            println!("  {kind:<6} {state:<9} {}", tilde(&path, &home));
-            if let Some(error) = row[kind]["error"].as_str() {
-                println!("         {error}");
+            let path = PathBuf::from(entry["path"].as_str().unwrap_or_default());
+            println!("  {:<13} {state:<9} {}", part.label(), tilde(&path, &home));
+            if let Some(error) = entry["error"].as_str() {
+                println!("                {error}");
             }
         }
     }
@@ -545,6 +617,29 @@ fn status(json: bool) -> i32 {
         println!("\nRun \"btmux skill setup\" to install or update them.");
     }
     0
+}
+
+/// Whether anything setup installs for `agent` is missing or from another
+/// btmux version.
+fn incomplete(agent: Agent) -> bool {
+    let Ok(home) = home() else {
+        return false;
+    };
+    let Ok(path) = agent.target().config_path() else {
+        return false;
+    };
+    let stale = |state: Installed| matches!(state, Installed::Missing | Installed::Outdated);
+    let skill = agent.skill_dir(&home).map(|dir| skill_state(&dir));
+    let context = agent
+        .context_hook()
+        .and_then(|hook| hooks_state(&path, &hook, is_context_hook).ok());
+    let status = hooks_state(
+        &path,
+        &agent.target().generated(),
+        agent_hooks::is_btmux_hook,
+    )
+    .ok();
+    [skill, context, status].into_iter().flatten().any(stale)
 }
 
 /// The hook's text: where the agent runs, as JSON both agents read.
@@ -555,6 +650,7 @@ async fn context(profile: Option<&str>, agent: Option<Agent>) -> i32 {
     else {
         return 0;
     };
+    // Guest credentials can't list panes; the ID alone still helps.
     let panes = crate::api_client::request(
         profile,
         Method::GET,
@@ -567,11 +663,7 @@ async fn context(profile: Option<&str>, agent: Option<Agent>) -> i32 {
     .and_then(|body| serde_json::from_str::<Vec<Value>>(&body).ok())
     .unwrap_or_default();
     let place = panes.iter().find(|p| p["pane_id"] == pane.to_string());
-    let skill_dir = agent.and_then(|agent| home().ok().map(|home| agent.skill_dir(&home)));
-    let outdated = agent.is_some_and(|agent| {
-        skill_dir.as_deref().map(skill_state) == Some(Installed::Outdated)
-            || hook_state(agent).ok() == Some(Installed::Outdated)
-    });
+    let outdated = agent.is_some_and(incomplete);
     let text = context_text(pane, place, agent.map(Agent::invocation), outdated);
     let output = json!({ "hookSpecificOutput": {
         "hookEventName": "SessionStart",
@@ -617,8 +709,8 @@ fn context_text(
     );
     if outdated {
         text.push_str(
-            "\nThe btmux setup for this agent is out of date. Suggest running \
-             `btmux skill setup` to update it.\n",
+            "\nThe btmux setup for this agent is out of date or incomplete. Suggest \
+             running `btmux skill setup` to update it.\n",
         );
     }
     text
@@ -662,6 +754,10 @@ pub async fn run(profile: Option<&str>, command: &SkillCommand) -> i32 {
 mod tests {
     use super::*;
 
+    fn temp() -> PathBuf {
+        std::env::temp_dir().join(format!("btmux-skill-{}", uuid::Uuid::new_v4()))
+    }
+
     #[test]
     fn stub_keeps_the_guide_description() {
         let stub = stub();
@@ -672,28 +768,38 @@ mod tests {
     }
 
     #[test]
-    fn context_hook_merges_once_and_removes_cleanly() {
+    fn hooks_merge_once_beside_others_and_remove_only_ours() {
         let path = Path::new("settings.json");
-        let notify: Value = serde_json::from_str(agent_hooks::claude_code()).unwrap();
-        let hook = Agent::Claude.hook();
-        let once = agent_hooks::merged(path, Some(notify.clone()), &hook, is_skill_hook).unwrap();
-        let twice = agent_hooks::merged(path, Some(once.clone()), &hook, is_skill_hook).unwrap();
+        let hook = Agent::Claude.context_hook().unwrap();
+        let status = Target::ClaudeCode.generated();
+        // The user's own hooks that mention the same words.
+        let own = json!({ "hooks": {
+            "SessionStart": [{ "hooks": [{ "type": "command", "command": "btmux skill context --agent claude" }] }],
+            "Stop": [{ "hooks": [{ "type": "command", "command": "echo skill context # btmux-context" }] }],
+        } });
+        let once = agent_hooks::merged(path, Some(own.clone()), &hook, is_context_hook).unwrap();
+        let once =
+            agent_hooks::merged(path, Some(once), &status, agent_hooks::is_btmux_hook).unwrap();
+        let twice = agent_hooks::merged(path, Some(once.clone()), &hook, is_context_hook).unwrap();
+        let twice =
+            agent_hooks::merged(path, Some(twice), &status, agent_hooks::is_btmux_hook).unwrap();
         assert_eq!(once, twice);
         let start = once["hooks"]["SessionStart"].as_array().unwrap();
-        assert_eq!(start.len(), 2, "beside the notify hook: {start:?}");
-        assert!(agent_hooks::contains(&once, is_skill_hook));
+        assert_eq!(
+            start.len(),
+            3,
+            "the user's, the context, and status: {start:?}"
+        );
 
-        let removed = agent_hooks::without(&once, is_skill_hook).unwrap();
-        assert_eq!(removed, notify);
-        assert!(agent_hooks::without(&removed, is_skill_hook).is_none());
-        let alone = agent_hooks::merged(path, None, &hook, is_skill_hook).unwrap();
-        let emptied = agent_hooks::without(&alone, is_skill_hook).unwrap();
-        assert_eq!(emptied, json!({ "hooks": {} }));
+        let removed = agent_hooks::without(&once, &hook, is_context_hook).unwrap();
+        let removed = agent_hooks::without(&removed, &status, agent_hooks::is_btmux_hook).unwrap();
+        assert_eq!(removed, own);
+        assert!(agent_hooks::without(&removed, &hook, is_context_hook).is_none());
     }
 
     #[test]
     fn skills_are_told_apart() {
-        let dir = std::env::temp_dir().join(format!("btmux-skill-{}", uuid::Uuid::new_v4()));
+        let dir = temp();
         assert_eq!(skill_state(&dir), Installed::Missing);
         write_skill(&dir, false).unwrap();
         assert_eq!(skill_state(&dir), Installed::Current);
@@ -704,6 +810,32 @@ mod tests {
         fs::write(dir.join("SKILL.md"), stub()).unwrap();
         remove_skill(&dir).unwrap();
         assert!(!dir.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn removing_the_last_hook_keeps_a_symlinked_config() {
+        let dir = temp();
+        fs::create_dir_all(&dir).unwrap();
+        let (target, link) = (dir.join("managed.json"), dir.join("settings.json"));
+        fs::write(&target, "{}").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let hook = Agent::Claude.context_hook().unwrap();
+        assert_eq!(
+            install_hooks(&link, &hook, is_context_hook, false),
+            Ok(Change::Created)
+        );
+        assert_eq!(
+            remove_hooks(&link, &hook, is_context_hook, false),
+            Ok(Change::Removed)
+        );
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        let left: Value = serde_json::from_str(&fs::read_to_string(&target).unwrap()).unwrap();
+        assert_eq!(left, json!({ "hooks": {} }));
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

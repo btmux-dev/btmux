@@ -25,14 +25,6 @@ pub enum Target {
 }
 
 impl Target {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::ClaudeCode => "Claude Code",
-            Self::Codex => "Codex",
-            Self::GeminiCli => "Gemini CLI",
-        }
-    }
-
     fn snippet(self) -> &'static str {
         match self {
             Self::ClaudeCode => claude_code(),
@@ -41,29 +33,72 @@ impl Target {
         }
     }
 
+    /// The status hooks, parsed.
+    pub fn generated(self) -> Value {
+        serde_json::from_str(self.snippet()).expect("embedded hooks are JSON")
+    }
+
     pub fn config_path(self) -> Result<PathBuf, String> {
-        let home = dirs::home_dir()
-            .ok_or_else(|| format!("cannot resolve home directory for {} hooks", self.label()))?;
+        let home = dirs::home_dir().ok_or("cannot resolve the home directory")?;
         Ok(match self {
-            Self::ClaudeCode => home.join(".claude").join("settings.json"),
-            Self::Codex => std::env::var_os("CODEX_HOME")
-                .filter(|path| !path.is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.join(".codex"))
-                .join("hooks.json"),
+            Self::ClaudeCode => claude_dir(&home).join("settings.json"),
+            Self::Codex => codex_dir(&home).join("hooks.json"),
             Self::GeminiCli => home.join(".gemini").join("settings.json"),
         })
     }
 }
 
-/// Merge btmux hooks into the user's config, preserving unrelated settings.
-pub fn install(target: Target) -> Result<PathBuf, String> {
-    let path = target.config_path()?;
-    let generated: Value = serde_json::from_str(target.snippet())
-        .map_err(|error| format!("invalid embedded {} hook JSON: {error}", target.label()))?;
-    let config = merged(&path, read(&path)?, &generated, is_btmux_hook)?;
-    write_json(&path, &config)?;
-    Ok(path)
+/// Claude Code's config directory: `CLAUDE_CONFIG_DIR`, else `~/.claude`.
+pub fn claude_dir(home: &Path) -> PathBuf {
+    std::env::var_os("CLAUDE_CONFIG_DIR")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".claude"))
+}
+
+/// Codex's config directory: `CODEX_HOME`, else `~/.codex`.
+pub fn codex_dir(home: &Path) -> PathBuf {
+    std::env::var_os("CODEX_HOME")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".codex"))
+}
+
+/// Ends every status hook's command, marking it as btmux's.
+const NOTIFY_MARKER: &str = " # btmux-notify";
+
+/// Status hook commands from before they were marked.
+static UNMARKED: std::sync::LazyLock<Vec<String>> = std::sync::LazyLock::new(|| {
+    [Target::ClaudeCode, Target::Codex, Target::GeminiCli]
+        .into_iter()
+        .flat_map(|target| commands(&target.generated()))
+        .filter_map(|command| command.strip_suffix(NOTIFY_MARKER).map(str::to_owned))
+        .collect()
+});
+
+fn commands(config: &Value) -> Vec<String> {
+    let Some(hooks) = config.get("hooks").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    hooks
+        .values()
+        .filter_map(Value::as_array)
+        .flatten()
+        .filter_map(|group| group.get("hooks").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|handler| handler.get("command").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A status hook btmux installed: marked, or exactly one it used to install.
+pub fn is_btmux_hook(handler: &Value) -> bool {
+    handler
+        .get("command")
+        .and_then(Value::as_str)
+        .is_some_and(|command| {
+            command.ends_with(NOTIFY_MARKER) || UNMARKED.iter().any(|old| old == command)
+        })
 }
 
 /// The JSON config at `path`; `None` if there is none.
@@ -131,14 +166,15 @@ pub fn merged(
     Ok(config)
 }
 
-/// `config` without the hooks `is_ours` picks out, dropping groups and
-/// events they leave empty; `None` if it had none.
-pub fn without(config: &Value, is_ours: fn(&Value) -> bool) -> Option<Value> {
+/// `config` without the hooks `is_ours` picks out in `generated`'s events,
+/// dropping groups and events they leave empty; `None` if it had none.
+pub fn without(config: &Value, generated: &Value, is_ours: fn(&Value) -> bool) -> Option<Value> {
+    let events = generated.get("hooks")?.as_object()?;
     let mut config = config.clone();
     let hooks = config.get_mut("hooks")?.as_object_mut()?;
     let mut found = false;
-    hooks.retain(|_, groups| {
-        let Some(groups) = groups.as_array_mut() else {
+    hooks.retain(|event, groups| {
+        let Some(groups) = groups.as_array_mut().filter(|_| events.contains_key(event)) else {
             return true;
         };
         groups.retain_mut(|group| {
@@ -155,9 +191,9 @@ pub fn without(config: &Value, is_ours: fn(&Value) -> bool) -> Option<Value> {
     found.then_some(config)
 }
 
-/// Whether `config` has a hook `is_ours` picks out.
-pub fn contains(config: &Value, is_ours: fn(&Value) -> bool) -> bool {
-    without(config, is_ours).is_some()
+/// Whether `config` has a hook `is_ours` picks out in `generated`'s events.
+pub fn contains(config: &Value, generated: &Value, is_ours: fn(&Value) -> bool) -> bool {
+    without(config, generated, is_ours).is_some()
 }
 
 /// Writes `config` as pretty JSON.
@@ -233,15 +269,6 @@ fn merge_event_hooks(
     Ok(())
 }
 
-fn is_btmux_hook(handler: &Value) -> bool {
-    handler
-        .get("command")
-        .and_then(Value::as_str)
-        .is_some_and(|command| {
-            command.contains("${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify")
-        })
-}
-
 fn write_config(path: &Path, contents: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -307,6 +334,9 @@ mod tests {
                         let command = handler["command"].as_str().unwrap();
                         assert!(command.contains("X-Btmux-Agent-Pid"));
                         assert!(command.contains("--max-time 2"));
+                        assert!(is_btmux_hook(handler));
+                        let unmarked = command.strip_suffix(NOTIFY_MARKER).unwrap();
+                        assert!(is_btmux_hook(&serde_json::json!({ "command": unmarked })));
                     }
                 }
             }
@@ -326,5 +356,7 @@ mod tests {
         for event in ["PostToolUse", "PostToolUseFailure", "PermissionDenied"] {
             assert!(claude["hooks"].get(event).is_some());
         }
+        let own = serde_json::json!({ "command": "curl \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\"" });
+        assert!(!is_btmux_hook(&own));
     }
 }

@@ -21,10 +21,11 @@ actions, saved state, and API types can change in any release.
   notifications, and widgets and popups, one line each or as JSON with
   `--json`. `GET /api/events` streams the same.
   ([#185](https://github.com/btmux-dev/btmux/pull/185))
-- `btmux skill setup` installs a skill that teaches Claude Code and Codex the
-  btmux CLI, and a hook that tells them which pane they run in. Both take
-  their text from the installed btmux, so upgrading it updates them.
-  `btmux skill show` prints the guide.
+- `btmux skill setup` sets up Claude Code, Codex, and Gemini CLI: the hooks
+  that report their state, and for Claude Code and Codex a skill that teaches
+  them the btmux CLI and a hook that tells them which pane they run in. The
+  skill and that hook take their text from the installed btmux, so upgrading
+  it updates them. `btmux skill show` prints the guide.
   ([#185](https://github.com/btmux-dev/btmux/pull/185))
 - Settings' **Show TOML** panel can show the settings as Home Manager's
   `programs.btmux.settings` in Nix, ready to paste.
@@ -44,6 +45,10 @@ actions, saved state, and API types can change in any release.
 - Agent view matches the rounded panes: its live panes have rounded corners,
   and the agent list has no divider and lines up with the title and tabs.
   ([#186](https://github.com/btmux-dev/btmux/pull/186))
+- `btmux install-claude-code-hooks`, `install-codex-hooks`, and
+  `install-gemini-cli-hooks` are replaced by `btmux skill setup`, which
+  installs the same hooks and can also show and remove them.
+  ([#185](https://github.com/btmux-dev/btmux/pull/185))
 - Python files in the native editor get ty and ruff instead of pyright, so
   formatting works: ruff formats and lints, ty checks types.
   ([#181](https://github.com/btmux-dev/btmux/pull/181))

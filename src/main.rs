@@ -335,21 +335,6 @@ async fn main() {
         return;
     }
 
-    if let Some(config::SubCommand::InstallClaudeCodeHooks) = args.command {
-        install_agent_hooks(agent_hooks::Target::ClaudeCode);
-        return;
-    }
-
-    if let Some(config::SubCommand::InstallCodexHooks) = args.command {
-        install_agent_hooks(agent_hooks::Target::Codex);
-        return;
-    }
-
-    if let Some(config::SubCommand::InstallGeminiCliHooks) = args.command {
-        install_agent_hooks(agent_hooks::Target::GeminiCli);
-        return;
-    }
-
     if let Some(config::SubCommand::GenerateFishTheme) = args.command {
         print!("{}", fish_integration::theme());
         return;
@@ -815,16 +800,6 @@ fn changes_config(kind: notify::EventKind) -> bool {
     match kind {
         notify::EventKind::Access(kind) => kind == AccessKind::Close(AccessMode::Write),
         _ => true,
-    }
-}
-
-fn install_agent_hooks(target: agent_hooks::Target) {
-    match agent_hooks::install(target) {
-        Ok(path) => println!("Installed btmux hooks in {}", path.display()),
-        Err(error) => {
-            eprintln!("btmux: {error}");
-            std::process::exit(1);
-        }
     }
 }
 

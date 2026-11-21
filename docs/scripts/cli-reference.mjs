@@ -26,9 +26,7 @@ const groups = {
     "capture-pane", "new-worktree", "remove-worktree", "forward",
   ],
   "Setup": [
-    "completions", "generate-config", "install-claude-code-hooks",
-    "install-codex-hooks", "install-gemini-cli-hooks",
-    "generate-claude-code-hooks", "generate-codex-hooks",
+    "completions", "generate-config", "generate-claude-code-hooks", "generate-codex-hooks",
     "generate-gemini-cli-hooks", "install-fish-integration",
     "generate-fish-theme",
   ],

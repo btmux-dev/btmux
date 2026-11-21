@@ -104,10 +104,13 @@ Events cover sessions, windows, and panes created, renamed, selected, moved,
 or closed, pane titles and directories, agent state changes, notifications,
 and widgets and popups opening and closing. With `--json`, each line has
 `type`, `time` (Unix milliseconds), and the `session_id`, `window_id`, and
-`pane_id` it is about, with names; the first is `ready`. It reconnects after
-the server restarts or upgrades, printing `ready` again; changes in between
-are missed, so list what you track again then. Run it in the background and
-stop it when you are done.
+`pane_id` it is about, with names. The first is `ready`, whose `sessions`
+is the state the events after it change. `resync` means the stream fell
+behind: the events after it bring sessions, windows, and panes up to date,
+but notifications and changes undone in between were lost. It reconnects
+after the server restarts or upgrades, printing `ready` again with fresh
+`sessions`. Run it in the background and stop it when you are done; it
+doesn't work in sandboxed panes.
 
 ## Asking the user
 

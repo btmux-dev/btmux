@@ -434,7 +434,8 @@ pub enum SubCommand {
     /// sessions, windows, and panes created, renamed, selected, or closed;
     /// agent state changes; notifications; widgets and popups. Inside a btmux
     /// pane this targets that pane's server; otherwise the `--profile`
-    /// server. Reconnects after the server restarts or upgrades.
+    /// server. Reconnects after the server restarts or upgrades. Sandboxed
+    /// panes can't use it.
     Events {
         /// Only this session's events (ID or name), exiting once it closes.
         #[arg(short, long)]
@@ -500,12 +501,6 @@ pub enum SubCommand {
     GenerateCodexHooks,
     /// Print a Gemini CLI settings.json hooks snippet for btmux pane notifications.
     GenerateGeminiCliHooks,
-    /// Merge btmux hooks into the user Claude Code settings.
-    InstallClaudeCodeHooks,
-    /// Merge btmux hooks into the user Codex hooks file.
-    InstallCodexHooks,
-    /// Merge btmux hooks into the user Gemini CLI settings.
-    InstallGeminiCliHooks,
     /// Print a fish theme that follows the btmux color scheme.
     GenerateFishTheme,
     /// Install the btmux fish theme and a conf.d snippet for btmux panes, which

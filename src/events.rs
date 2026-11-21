@@ -1,12 +1,17 @@
 //! `GET /api/events` and `btmux events`: server changes as newline-delimited
-//! JSON. The control socket's broadcast carries whole `State` snapshots, so
-//! each is diffed against the last into changes (sessions, windows, panes,
-//! agent states); notifications, widgets, popups, config reloads, and toasts
-//! pass through. UI directives and telemetry are left out.
+//! JSON. One [`Feed`] per server translates the control socket's broadcast
+//! into typed events once: `State` snapshots are diffed against the last
+//! (sessions, windows, panes, agent states), widget and popup lists too, and
+//! notifications, config reloads, and toasts pass through. UI directives and
+//! telemetry are left out. Each stream filters the feed and starts with
+//! `ready`, which carries the state its events start from; `resync` marks
+//! where events were lost.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::io::Write;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
@@ -26,6 +31,9 @@ use crate::AppState;
 /// An empty line this often keeps proxies from closing a quiet stream.
 const HEARTBEAT: Duration = Duration::from_secs(30);
 
+/// Batches a stream may fall behind before it resyncs.
+const BACKLOG: usize = 256;
+
 /// Set at shutdown, ending streams so they don't hold it up.
 static SHUTDOWN: std::sync::LazyLock<tokio::sync::watch::Sender<bool>> =
     std::sync::LazyLock::new(|| tokio::sync::watch::channel(false).0);
@@ -35,7 +43,7 @@ pub fn shutdown() {
 }
 
 /// One line of the stream.
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Clone)]
 #[cfg_attr(test, derive(utoipa::ToSchema))]
 pub struct Event {
     /// Unix milliseconds.
@@ -71,15 +79,22 @@ pub struct PaneRef {
     pub pane_id: Uuid,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[cfg_attr(test, derive(utoipa::ToSchema))]
 pub enum EventKind {
-    /// First on every stream; `session_id` is the session `session` named.
+    /// First on every stream: the state the events after it change, and the
+    /// session `session` named, if any.
     Ready {
         version: String,
         session_id: Option<Uuid>,
+        sessions: Vec<SessionSnapshot>,
     },
+    /// The stream fell behind and events were lost. The events after it
+    /// report the session, window, and pane changes since the last event
+    /// before it, but not transitions that reversed in between, nor lost
+    /// notifications, widgets, and popups.
+    Resync,
     SessionCreated {
         #[serde(flatten)]
         at: SessionRef,
@@ -167,18 +182,21 @@ pub enum EventKind {
         title: String,
         body: Option<String>,
     },
-    /// A `btmux pick`, `confirm`, or `input` opened over the pane.
+    /// A `btmux pick`, `confirm`, or `input` opened over the pane, or over
+    /// its popup `popup_id`.
     WidgetOpened {
         #[serde(flatten)]
         at: PaneRef,
         widget_id: Uuid,
         kind: WidgetKind,
+        popup_id: Option<Uuid>,
     },
     WidgetClosed {
         #[serde(flatten)]
         at: PaneRef,
         widget_id: Uuid,
         kind: WidgetKind,
+        popup_id: Option<Uuid>,
     },
     PopupOpened {
         #[serde(flatten)]
@@ -206,7 +224,9 @@ impl EventKind {
     fn session_id(&self) -> Option<Uuid> {
         use EventKind::*;
         match self {
-            Ready { .. } | Notification { .. } | ConfigChanged { .. } | Toast { .. } => None,
+            Ready { .. } | Resync | Notification { .. } | ConfigChanged { .. } | Toast { .. } => {
+                None
+            }
             SessionCreated { at } | SessionRenamed { at, .. } | SessionClosed { at } => {
                 Some(at.session_id)
             }
@@ -445,197 +465,202 @@ pub fn diff(old: &[SessionSnapshot], new: &[SessionSnapshot]) -> Vec<EventKind> 
     created
 }
 
+/// A widget or popup as the broadcast lists it.
 #[derive(Deserialize, Clone)]
-struct Widget {
+struct Listed {
     id: Uuid,
     pane_id: Uuid,
-    kind: WidgetKind,
+    kind: Option<WidgetKind>,
+    title: Option<String>,
 }
 
-#[derive(Deserialize, Clone)]
-struct Popup {
+/// An open widget or popup, with where it opened, kept for its close.
+#[derive(Clone)]
+struct Open {
     id: Uuid,
-    pane_id: Uuid,
+    at: PaneRef,
+    /// A widget's popup, if it opened in one.
+    popup_id: Option<Uuid>,
+    kind: Option<WidgetKind>,
     title: String,
 }
 
-/// Turns broadcast messages into events for one stream.
-struct Tracker {
-    sessions: Vec<SessionSnapshot>,
-    widgets: Vec<Widget>,
-    popups: Vec<Popup>,
-    /// Only this session's events.
-    session: Option<Uuid>,
-    /// The filtered session closed.
-    ended: bool,
+/// The server as the feed last saw it.
+struct View {
+    sessions: Arc<Vec<SessionSnapshot>>,
+    widgets: Vec<Open>,
+    popups: Vec<Open>,
 }
 
-impl Tracker {
-    fn new(mgr: &SessionManager, session: Option<Uuid>) -> Self {
-        let (widgets, popups) = Self::lists(mgr);
-        Self {
-            sessions: mgr.all_snapshots(),
-            widgets,
-            popups,
-            session,
-            ended: false,
-        }
+impl View {
+    fn new(mgr: &SessionManager) -> Self {
+        let mut view = Self {
+            sessions: Arc::new(mgr.all_snapshots()),
+            widgets: Vec::new(),
+            popups: Vec::new(),
+        };
+        let (widgets, popups) = lists(mgr);
+        view.popups(popups);
+        view.widgets(widgets);
+        view
     }
 
-    fn lists(mgr: &SessionManager) -> (Vec<Widget>, Vec<Popup>) {
-        (
-            parse(serde_json::to_value(mgr.widgets.summaries()).ok()).unwrap_or_default(),
-            parse(serde_json::to_value(mgr.popups.summaries()).ok()).unwrap_or_default(),
-        )
+    /// Where a pane, or a popup's pane, is; and the popup.
+    fn place(&self, id: Uuid) -> Option<(PaneRef, Option<Uuid>)> {
+        locate(&self.sessions, id).map(|at| (at, None)).or_else(|| {
+            self.popups
+                .iter()
+                .find(|popup| popup.id == id)
+                .map(|popup| (popup.at.clone(), Some(id)))
+        })
     }
 
-    /// The events since the last message, after a lag.
+    /// Everything since the last message, after a lag.
     fn resync(&mut self, mgr: &SessionManager) -> Vec<EventKind> {
-        let (widgets, popups) = Self::lists(mgr);
+        let (widgets, popups) = lists(mgr);
         let mut events = self.state(mgr.all_snapshots());
-        events.extend(self.widgets(widgets));
         events.extend(self.popups(popups));
-        self.filter(events)
+        events.extend(self.widgets(widgets));
+        events
     }
 
     fn handle(&mut self, json: &str) -> Vec<EventKind> {
         let Ok(mut message) = serde_json::from_str::<Value>(json) else {
+            tracing::warn!("events: unreadable control message");
             return Vec::new();
         };
-        let events = match message["type"].as_str().unwrap_or_default() {
-            "state" => match parse(take(&mut message, "all_sessions")) {
-                Some(sessions) => self.state(sessions),
-                None => Vec::new(),
-            },
-            "widgets" => match parse(take(&mut message, "widgets")) {
-                Some(widgets) => self.widgets(widgets),
-                None => Vec::new(),
-            },
-            "popups" => match parse(take(&mut message, "popups")) {
-                Some(popups) => self.popups(popups),
-                None => Vec::new(),
-            },
+        let kind = message["type"].as_str().unwrap_or_default().to_owned();
+        let parsed = match kind.as_str() {
+            "state" => parse(take(&mut message, "all_sessions")).map(|s| self.state(s)),
+            "widgets" => parse(take(&mut message, "widgets")).map(|w| self.widgets(w)),
+            "popups" => parse(take(&mut message, "popups")).map(|p| self.popups(p)),
             "pane_notification" => {
-                let pane = parse(take(&mut message, "pane_id"));
+                let pane: Option<Uuid> = parse(take(&mut message, "pane_id"));
                 let level = parse(take(&mut message, "level"));
-                match (pane.and_then(|p| locate(&self.sessions, p)), level) {
-                    (Some(at), Some(level)) => vec![EventKind::PaneNotification {
+                level.map(|level| match pane.and_then(|p| self.place(p)) {
+                    Some((at, _)) => vec![EventKind::PaneNotification {
                         at,
                         event: parse(take(&mut message, "event")).unwrap_or_default(),
                         level,
                         title: parse(take(&mut message, "title")),
                         body: parse(take(&mut message, "body")),
                     }],
-                    _ => Vec::new(),
-                }
+                    None => Vec::new(),
+                })
             }
-            "notification" => match (
-                parse(take(&mut message, "level")),
-                parse(take(&mut message, "title")),
-            ) {
-                (Some(level), Some(title)) => vec![EventKind::Notification {
-                    level,
-                    title,
-                    body: parse(take(&mut message, "body")),
-                }],
-                _ => Vec::new(),
-            },
-            "config" => vec![EventKind::ConfigChanged {
+            "notification" => {
+                let level = parse(take(&mut message, "level"));
+                let title = parse(take(&mut message, "title"));
+                level.zip(title).map(|(level, title)| {
+                    vec![EventKind::Notification {
+                        level,
+                        title,
+                        body: parse(take(&mut message, "body")),
+                    }]
+                })
+            }
+            "config" => Some(vec![EventKind::ConfigChanged {
                 error: parse(take(&mut message["config"], "config_error")),
-            }],
-            "toast" => match (
-                parse(take(&mut message, "level")),
-                parse(take(&mut message, "message")),
-            ) {
-                (Some(level), Some(text)) => vec![EventKind::Toast {
-                    level,
-                    message: text,
-                }],
-                _ => Vec::new(),
-            },
-            _ => Vec::new(),
+            }]),
+            "toast" => {
+                let level = parse(take(&mut message, "level"));
+                let text = parse(take(&mut message, "message"));
+                level
+                    .zip(text)
+                    .map(|(level, message)| vec![EventKind::Toast { level, message }])
+            }
+            _ => Some(Vec::new()),
         };
-        self.filter(events)
+        parsed.unwrap_or_else(|| {
+            tracing::warn!("events: unreadable {kind} message");
+            Vec::new()
+        })
     }
 
     fn state(&mut self, sessions: Vec<SessionSnapshot>) -> Vec<EventKind> {
         let events = diff(&self.sessions, &sessions);
-        self.sessions = sessions;
+        self.sessions = Arc::new(sessions);
         events
     }
 
-    fn widgets(&mut self, widgets: Vec<Widget>) -> Vec<EventKind> {
-        let old = std::mem::replace(&mut self.widgets, widgets);
+    fn popups(&mut self, listed: Vec<Listed>) -> Vec<EventKind> {
         let mut events = Vec::new();
-        for widget in &self.widgets {
-            if !old.iter().any(|w| w.id == widget.id) {
-                if let Some(at) = locate(&self.sessions, widget.pane_id) {
-                    events.push(EventKind::WidgetOpened {
-                        at,
-                        widget_id: widget.id,
-                        kind: widget.kind,
-                    });
-                }
+        let old = std::mem::take(&mut self.popups);
+        for popup in &old {
+            if !listed.iter().any(|l| l.id == popup.id) {
+                events.push(EventKind::PopupClosed {
+                    at: popup.at.clone(),
+                    popup_id: popup.id,
+                    title: popup.title.clone(),
+                });
             }
         }
-        for widget in old {
-            if !self.widgets.iter().any(|w| w.id == widget.id) {
-                if let Some(at) = locate(&self.sessions, widget.pane_id) {
+        for item in listed {
+            if let Some(open) = old.iter().find(|p| p.id == item.id) {
+                self.popups.push(open.clone());
+            } else if let Some(at) = locate(&self.sessions, item.pane_id) {
+                let title = item.title.unwrap_or_default();
+                events.push(EventKind::PopupOpened {
+                    at: at.clone(),
+                    popup_id: item.id,
+                    title: title.clone(),
+                });
+                self.popups.push(Open {
+                    id: item.id,
+                    at,
+                    popup_id: None,
+                    kind: None,
+                    title,
+                });
+            }
+        }
+        events
+    }
+
+    fn widgets(&mut self, listed: Vec<Listed>) -> Vec<EventKind> {
+        let mut events = Vec::new();
+        let old = std::mem::take(&mut self.widgets);
+        for widget in &old {
+            if !listed.iter().any(|l| l.id == widget.id) {
+                if let Some(kind) = widget.kind {
                     events.push(EventKind::WidgetClosed {
-                        at,
+                        at: widget.at.clone(),
                         widget_id: widget.id,
-                        kind: widget.kind,
+                        kind,
+                        popup_id: widget.popup_id,
                     });
                 }
             }
         }
+        for item in listed {
+            if let Some(open) = old.iter().find(|w| w.id == item.id) {
+                self.widgets.push(open.clone());
+            } else if let (Some((at, popup_id)), Some(kind)) = (self.place(item.pane_id), item.kind)
+            {
+                events.push(EventKind::WidgetOpened {
+                    at: at.clone(),
+                    widget_id: item.id,
+                    kind,
+                    popup_id,
+                });
+                self.widgets.push(Open {
+                    id: item.id,
+                    at,
+                    popup_id,
+                    kind: Some(kind),
+                    title: String::new(),
+                });
+            }
+        }
         events
     }
+}
 
-    fn popups(&mut self, popups: Vec<Popup>) -> Vec<EventKind> {
-        let old = std::mem::replace(&mut self.popups, popups);
-        let mut events = Vec::new();
-        for popup in &self.popups {
-            if !old.iter().any(|p| p.id == popup.id) {
-                if let Some(at) = locate(&self.sessions, popup.pane_id) {
-                    events.push(EventKind::PopupOpened {
-                        at,
-                        popup_id: popup.id,
-                        title: popup.title.clone(),
-                    });
-                }
-            }
-        }
-        for popup in old {
-            if !self.popups.iter().any(|p| p.id == popup.id) {
-                if let Some(at) = locate(&self.sessions, popup.pane_id) {
-                    events.push(EventKind::PopupClosed {
-                        at,
-                        popup_id: popup.id,
-                        title: popup.title,
-                    });
-                }
-            }
-        }
-        events
-    }
-
-    fn filter(&mut self, events: Vec<EventKind>) -> Vec<EventKind> {
-        let Some(session) = self.session else {
-            return events;
-        };
-        let events: Vec<EventKind> = events
-            .into_iter()
-            .filter(|event| event.session_id() == Some(session))
-            .collect();
-        if events
-            .iter()
-            .any(|event| matches!(event, EventKind::SessionClosed { .. }))
-        {
-            self.ended = true;
-        }
-        events
-    }
+fn lists(mgr: &SessionManager) -> (Vec<Listed>, Vec<Listed>) {
+    (
+        parse(serde_json::to_value(mgr.widgets.summaries()).ok()).unwrap_or_default(),
+        parse(serde_json::to_value(mgr.popups.summaries()).ok()).unwrap_or_default(),
+    )
 }
 
 fn take(message: &mut Value, key: &str) -> Option<Value> {
@@ -644,6 +669,80 @@ fn take(message: &mut Value, key: &str) -> Option<Value> {
 
 fn parse<T: serde::de::DeserializeOwned>(value: Option<Value>) -> Option<T> {
     value.and_then(|value| serde_json::from_value(value).ok())
+}
+
+/// The sessions at some point, shared by the feed and its streams.
+type Sessions = Arc<Vec<SessionSnapshot>>;
+
+/// One broadcast message, translated.
+struct Batch {
+    events: Vec<EventKind>,
+    /// The sessions after it.
+    sessions: Arc<Vec<SessionSnapshot>>,
+    /// The feed fell behind the broadcast first, so events were lost.
+    lost: bool,
+}
+
+/// The server's events, translated once for every stream.
+pub struct Feed {
+    /// The sessions as of the last batch, and the batches' sender, changed
+    /// together so a new stream's `ready` lines up with its first batch.
+    latest: Mutex<(Sessions, broadcast::Sender<Arc<Batch>>)>,
+}
+
+impl Feed {
+    /// The server's feed, started on first use from `mgr`, which `state` holds.
+    fn get(state: &AppState, mgr: &SessionManager) -> Arc<Feed> {
+        mgr.events_feed
+            .get_or_init(|| {
+                let view = View::new(mgr);
+                let feed = Arc::new(Feed {
+                    latest: Mutex::new((view.sessions.clone(), broadcast::channel(BACKLOG).0)),
+                });
+                tokio::spawn(translate(
+                    feed.clone(),
+                    state.clone(),
+                    mgr.events().subscribe(),
+                    view,
+                ));
+                feed
+            })
+            .clone()
+    }
+
+    fn subscribe(&self) -> (Sessions, broadcast::Receiver<Arc<Batch>>) {
+        let latest = self.latest.lock().unwrap();
+        (latest.0.clone(), latest.1.subscribe())
+    }
+}
+
+async fn translate(
+    feed: Arc<Feed>,
+    state: AppState,
+    mut messages: broadcast::Receiver<String>,
+    mut view: View,
+) {
+    loop {
+        let (events, lost) = match messages.recv().await {
+            Ok(json) => (view.handle(&json), false),
+            Err(broadcast::error::RecvError::Lagged(_)) => {
+                let mgr = state.read().await;
+                messages = mgr.events().subscribe();
+                (view.resync(&mgr), true)
+            }
+            Err(broadcast::error::RecvError::Closed) => return,
+        };
+        if events.is_empty() && !lost {
+            continue;
+        }
+        let mut latest = feed.latest.lock().unwrap();
+        latest.0 = view.sessions.clone();
+        let _ = latest.1.send(Arc::new(Batch {
+            events,
+            sessions: view.sessions.clone(),
+            lost,
+        }));
+    }
 }
 
 fn now_ms() -> u64 {
@@ -663,10 +762,16 @@ fn line(kind: EventKind) -> String {
     line
 }
 
+/// One client's events.
 struct Stream {
-    state: AppState,
-    events: broadcast::Receiver<String>,
-    tracker: Tracker,
+    feed: Arc<Feed>,
+    batches: broadcast::Receiver<Arc<Batch>>,
+    /// The sessions as of the last batch sent.
+    sessions: Arc<Vec<SessionSnapshot>>,
+    /// Only this session's events.
+    session: Option<Uuid>,
+    /// The filtered session closed.
+    ended: bool,
     pending: VecDeque<EventKind>,
     heartbeat: tokio::time::Interval,
     shutdown: tokio::sync::watch::Receiver<bool>,
@@ -678,22 +783,44 @@ impl Stream {
             if let Some(kind) = self.pending.pop_front() {
                 return Some(line(kind));
             }
-            if self.tracker.ended || *self.shutdown.borrow() {
+            if self.ended || *self.shutdown.borrow() {
                 return None;
             }
             tokio::select! {
-                event = self.events.recv() => match event {
-                    Ok(json) => self.pending.extend(self.tracker.handle(&json)),
+                batch = self.batches.recv() => match batch {
+                    Ok(batch) => {
+                        if batch.lost {
+                            self.pending.push_back(EventKind::Resync);
+                        }
+                        self.sessions = batch.sessions.clone();
+                        self.queue(batch.events.iter().cloned());
+                    }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
-                        let mgr = self.state.read().await;
-                        self.events = mgr.events().subscribe();
-                        self.pending.extend(self.tracker.resync(&mgr));
+                        let (sessions, batches) = self.feed.subscribe();
+                        let events = diff(&self.sessions, &sessions);
+                        self.pending.push_back(EventKind::Resync);
+                        self.queue(events);
+                        (self.sessions, self.batches) = (sessions, batches);
                     }
                     Err(broadcast::error::RecvError::Closed) => return None,
                 },
                 _ = self.heartbeat.tick() => return Some("\n".into()),
                 _ = self.shutdown.changed() => return None,
             }
+        }
+    }
+
+    fn queue(&mut self, events: impl IntoIterator<Item = EventKind>) {
+        for event in events {
+            let Some(session) = self.session else {
+                self.pending.push_back(event);
+                continue;
+            };
+            if event.session_id() != Some(session) {
+                continue;
+            }
+            self.ended |= matches!(event, EventKind::SessionClosed { .. });
+            self.pending.push_back(event);
         }
     }
 }
@@ -723,9 +850,11 @@ pub(crate) struct EventsQuery {
     tag = "Events",
     operation_id = "stream-events",
     summary = "Stream events",
-    description = "Newline-delimited JSON, one event per line, starting with `ready`, until the \
-                   client disconnects. Empty lines keep the connection alive. Each event is \
-                   `{time, type, ...}`, `time` in Unix milliseconds.",
+    description = "Newline-delimited JSON, one event per line, until the client disconnects. \
+                   The first is `ready`, with the sessions the events after it change; \
+                   `resync` marks where events were lost. Empty lines keep the connection \
+                   alive. Each event is `{time, type, ...}`, `time` in Unix milliseconds. \
+                   Guest (sandboxed) credentials can't use it.",
     params(EventsQuery),
     responses(
         (status = 200, description = "One event per line", body = Event, content_type = "application/x-ndjson"),
@@ -736,7 +865,7 @@ pub(crate) async fn api_events(
     State(state): State<AppState>,
     Query(query): Query<EventsQuery>,
 ) -> Response {
-    let (events, tracker) = {
+    let (feed, session) = {
         let mgr = state.read().await;
         let session = match query.session.as_deref() {
             Some(name) => match find_session(&mgr, name) {
@@ -747,17 +876,25 @@ pub(crate) async fn api_events(
             },
             None => None,
         };
-        (mgr.events().subscribe(), Tracker::new(&mgr, session))
+        (Feed::get(&state, &mgr), session)
     };
+    let (sessions, batches) = feed.subscribe();
     let ready = EventKind::Ready {
         version: crate::config::VERSION.into(),
-        session_id: tracker.session,
+        session_id: session,
+        sessions: sessions
+            .iter()
+            .filter(|s| session.is_none_or(|id| s.id == id))
+            .cloned()
+            .collect(),
     };
     let start = tokio::time::Instant::now() + HEARTBEAT;
     let stream = Stream {
-        state,
-        events,
-        tracker,
+        feed,
+        batches,
+        sessions,
+        session,
+        ended: false,
         pending: VecDeque::from([ready]),
         heartbeat: tokio::time::interval_at(start, HEARTBEAT),
         shutdown: SHUTDOWN.subscribe(),
@@ -809,7 +946,10 @@ pub async fn run(profile: Option<&str>, session: Option<String>, json: bool) -> 
                     eprintln!("btmux: lost the server ({error}); reconnecting");
                 }
                 reconnecting = true;
-                tokio::time::sleep(Duration::from_secs(1)).await;
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                    _ = stdout_closed() => return 0,
+                }
             }
         }
     }
@@ -850,6 +990,11 @@ async fn stream_once(
         Err(error) => return lost(chain(&error)),
     };
     let status = response.status();
+    if status == reqwest::StatusCode::FORBIDDEN {
+        return Stop::Fatal(
+            "the server refused to stream events; a sandboxed pane's credential can't".into(),
+        );
+    }
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
         let error = if body.is_empty() {
@@ -866,7 +1011,11 @@ async fn stream_once(
     let mut connected = false;
     let mut buffer = Vec::new();
     loop {
-        let chunk = match response.chunk().await {
+        let chunk = tokio::select! {
+            chunk = response.chunk() => chunk,
+            _ = stdout_closed() => return Stop::Done,
+        };
+        let chunk = match chunk {
             Ok(Some(chunk)) => chunk,
             Ok(None) if connected && session.is_some() && format.session_closed => {
                 return Stop::Done
@@ -907,6 +1056,28 @@ async fn stream_once(
             }
         }
     }
+}
+
+/// Resolves once nothing reads stdout anymore (a pipe's reader exited), so a
+/// quiet stream doesn't outlive `| head -n 1`.
+async fn stdout_closed() {
+    #[cfg(unix)]
+    loop {
+        let mut fd = libc::pollfd {
+            fd: libc::STDOUT_FILENO,
+            // macOS reports a closed pipe only to POLLOUT.
+            events: libc::POLLOUT,
+            revents: 0,
+        };
+        // SAFETY: polls one valid pollfd without blocking.
+        let ready = unsafe { libc::poll(&mut fd, 1, 0) };
+        if ready > 0 && fd.revents & (libc::POLLERR | libc::POLLHUP) != 0 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    #[cfg(not(unix))]
+    std::future::pending::<()>().await
 }
 
 /// An error with its causes, which reqwest keeps out of its message.
@@ -962,44 +1133,71 @@ fn local_offset() -> time::UtcOffset {
     time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC)
 }
 
+/// `text` for one terminal line: control characters, and bidi controls that
+/// would reorder it, escaped.
+fn printable(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        let bidi = matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}');
+        if c.is_control() || bidi {
+            out.extend(c.escape_default());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// One line for people: time, type, where, and what changed.
 fn human(event: &Value, offset: time::UtcOffset) -> String {
-    let text = |key: &str| event[key].as_str().unwrap_or_default();
+    let text = |key: &str| printable(event[key].as_str().unwrap_or_default());
     let time = event["time"]
         .as_u64()
         .and_then(|ms| time::OffsetDateTime::from_unix_timestamp((ms / 1000) as i64).ok())
         .map(|t| t.to_offset(offset))
         .map(|t| format!("{:02}:{:02}:{:02}", t.hour(), t.minute(), t.second()))
         .unwrap_or_default();
-    let mut place = text("session").to_owned();
+    let mut place = text("session");
     if let Some(index) = event["window_index"].as_u64() {
         place.push_str(&format!(":{index} ({})", text("window")));
     }
-    if let Some(pane) = event["pane_id"].as_str() {
-        place.push_str(&format!(" pane {pane}"));
+    if event["pane_id"].is_string() {
+        place.push_str(&format!(" pane {}", text("pane_id")));
     }
-    let message = |title: &str, body: &str| match (title, body) {
-        ("", body) => body.to_owned(),
-        (title, "") => title.to_owned(),
-        (title, body) => format!("{title}: {body}"),
+    let message = |title: String, body: String| match (title.is_empty(), body.is_empty()) {
+        (true, _) => body,
+        (_, true) => title,
+        _ => format!("{title}: {body}"),
     };
-    let detail = match text("type") {
-        "ready" => format!("btmux {}", text("version")),
+    let detail = match text("type").as_str() {
+        "ready" => {
+            let sessions = event["sessions"].as_array().map_or(0, Vec::len);
+            let plural = if sessions == 1 { "" } else { "s" };
+            format!("btmux {}, {sessions} session{plural}", text("version"))
+        }
+        "resync" => "fell behind; events were lost".into(),
         "session_renamed" | "window_renamed" => format!("was {}", text("old_name")),
         "pane_moved" => format!("from window {}", text("from_window_id")),
         "pane_zoomed" => (if event["zoomed"] == true { "on" } else { "off" }).into(),
-        "pane_title_changed" => text("title").into(),
-        "pane_cwd_changed" => text("cwd").into(),
+        "pane_title_changed" => text("title"),
+        "pane_cwd_changed" => text("cwd"),
         "agent_status_changed" => {
             let status = &event["status"];
+            let field = |key: &str| printable(status[key].as_str().unwrap_or_default());
+            let agent = field("agent");
             let mut detail = format!(
                 "{} {} -> {}",
-                status["agent"].as_str().unwrap_or("agent"),
+                if agent.is_empty() {
+                    "agent".into()
+                } else {
+                    agent
+                },
                 text("previous"),
-                status["state"].as_str().unwrap_or_default()
+                field("state")
             );
-            if let Some(message) = status["message"].as_str() {
-                detail.push_str(&format!(": {message}"));
+            let note = field("message");
+            if !note.is_empty() {
+                detail.push_str(&format!(": {note}"));
             }
             detail
         }
@@ -1014,19 +1212,21 @@ fn human(event: &Value, offset: time::UtcOffset) -> String {
             text("level"),
             message(text("title"), text("body"))
         ),
-        "widget_opened" | "widget_closed" => text("kind").into(),
-        "popup_opened" | "popup_closed" => text("title").into(),
+        "widget_opened" | "widget_closed" => match event["popup_id"].as_str() {
+            Some(popup) => format!("{} in popup {}", text("kind"), printable(popup)),
+            None => text("kind"),
+        },
+        "popup_opened" | "popup_closed" => text("title"),
         "config_changed" => match event["error"].as_str() {
-            Some(error) => format!("error: {error}"),
+            Some(error) => format!("error: {}", printable(error)),
             None => "loaded".into(),
         },
         "toast" => format!("[{}] {}", text("level"), text("message")),
         _ => String::new(),
     };
-    [time.as_str(), text("type"), place.as_str(), detail.as_str()]
-        .iter()
+    [time, text("type"), place, detail]
+        .into_iter()
         .filter(|part| !part.is_empty())
-        .copied()
         .collect::<Vec<_>>()
         .join("  ")
 }
@@ -1073,16 +1273,21 @@ mod tests {
             .collect()
     }
 
+    fn view(sessions: Vec<SessionSnapshot>) -> View {
+        View {
+            sessions: Arc::new(sessions),
+            widgets: Vec::new(),
+            popups: Vec::new(),
+        }
+    }
+
+    fn ids<const N: usize>() -> [Uuid; N] {
+        std::array::from_fn(|_| Uuid::new_v4())
+    }
+
     #[test]
     fn diffs_structure_in_order() {
-        let (s, w1, w2, p1, p2, p3) = (
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-        );
+        let [s, w1, w2, p1, p2, p3] = ids();
         let before = vec![session(s, "work", vec![window(w1, "one", &[p1, p2])])];
         assert_eq!(
             types(&diff(&[], &before)),
@@ -1101,7 +1306,7 @@ mod tests {
         );
         after.active_window = 1;
         after.windows[0].panes[0].agent_status.state = AgentState::Working;
-        let events = diff(&before, &[after.clone()]);
+        let events = diff(&before, std::slice::from_ref(&after));
         assert_eq!(
             types(&events),
             [
@@ -1133,78 +1338,118 @@ mod tests {
     }
 
     #[test]
-    fn filters_by_session_and_ends_when_it_closes() {
-        let (a, b) = (Uuid::new_v4(), Uuid::new_v4());
-        let (wa, wb, pa, pb) = (
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+    fn passes_notifications_through() {
+        let [s, w, p] = ids();
+        let mut view = view(vec![session(s, "a", vec![window(w, "w", &[p])])]);
+        let notify = serde_json::json!({
+            "type": "pane_notification", "pane_id": p, "event": "Stop",
+            "level": "success", "title": "Done", "body": null, "os_client": null,
+        });
+        assert_eq!(
+            types(&view.handle(&notify.to_string())),
+            ["pane_notification"]
         );
+        let global = serde_json::json!({ "type": "notification", "level": "info", "title": "x" });
+        assert_eq!(types(&view.handle(&global.to_string())), ["notification"]);
+        let directive = serde_json::json!({ "type": "focus_pane", "pane_id": p });
+        assert!(view.handle(&directive.to_string()).is_empty());
+    }
+
+    #[test]
+    fn widgets_over_popups_name_the_popup_and_close_where_they_opened() {
+        let [s, w, p, popup, widget] = ids();
+        let mut view = view(vec![session(s, "s", vec![window(w, "w", &[p])])]);
+        let list =
+            |kind: &str, items: Value| serde_json::json!({ "type": kind, kind: items }).to_string();
+        let popups = serde_json::json!([{ "id": popup, "pane_id": p, "title": "fzf" }]);
+        assert_eq!(
+            types(&view.handle(&list("popups", popups))),
+            ["popup_opened"]
+        );
+        let widgets = serde_json::json!([{ "id": widget, "pane_id": popup, "kind": "confirm" }]);
+        let opened = view.handle(&list("widgets", widgets));
+        assert_eq!(types(&opened), ["widget_opened"]);
+        let opened = serde_json::to_value(&opened[0]).unwrap();
+        assert_eq!(opened["pane_id"], p.to_string());
+        assert_eq!(opened["popup_id"], popup.to_string());
+
+        // The pane closes before the lists empty.
+        view.state(Vec::new());
+        let closed = view.handle(&list("widgets", serde_json::json!([])));
+        assert_eq!(types(&closed), ["widget_closed"]);
+        assert_eq!(serde_json::to_value(&closed[0]).unwrap()["session"], "s");
+        assert_eq!(
+            types(&view.handle(&list("popups", serde_json::json!([])))),
+            ["popup_closed"]
+        );
+    }
+
+    #[tokio::test]
+    async fn streams_filter_by_session_and_resync_after_falling_behind() {
+        let [a, b, wa, wb, pa, pb] = ids();
         let both = vec![
             session(a, "a", vec![window(wa, "w", &[pa])]),
             session(b, "b", vec![window(wb, "w", &[pb])]),
         ];
-        let mut tracker = Tracker {
-            sessions: both.clone(),
-            widgets: Vec::new(),
-            popups: Vec::new(),
+        let feed = Arc::new(Feed {
+            latest: Mutex::new((Arc::new(both.clone()), broadcast::channel(2).0)),
+        });
+        let (sessions, batches) = feed.subscribe();
+        let mut stream = Stream {
+            feed: feed.clone(),
+            batches,
+            sessions,
             session: Some(a),
             ended: false,
+            pending: VecDeque::new(),
+            heartbeat: tokio::time::interval_at(tokio::time::Instant::now() + HEARTBEAT, HEARTBEAT),
+            shutdown: SHUTDOWN.subscribe(),
         };
-        let state = |sessions: &[SessionSnapshot]| {
-            serde_json::json!({ "type": "state", "sessions": [], "all_sessions": sessions, "agent_panes": [] })
-                .to_string()
+        let mut v = view(both.clone());
+        let send = |events: Vec<EventKind>, sessions: Arc<Vec<SessionSnapshot>>| {
+            let mut latest = feed.latest.lock().unwrap();
+            latest.0 = sessions.clone();
+            let _ = latest.1.send(Arc::new(Batch {
+                events,
+                sessions,
+                lost: false,
+            }));
         };
-        let notify = serde_json::json!({
-            "type": "pane_notification", "pane_id": pa, "event": "Stop",
-            "level": "success", "title": "Done", "body": null, "os_client": null,
-        });
-        assert_eq!(
-            types(&tracker.handle(&notify.to_string())),
-            ["pane_notification"]
-        );
-        let global = serde_json::json!({ "type": "notification", "level": "info", "title": "x" });
-        assert!(tracker.handle(&global.to_string()).is_empty());
+        // Session b goes away, unseen by a's stream.
+        let events = v.state(both[..1].to_vec());
+        send(events, v.sessions.clone());
+        // Then a falls three batches behind a backlog of two.
+        for name in ["x", "y", "z"] {
+            let mut renamed = (*v.sessions).clone();
+            renamed[0].name = name.into();
+            let events = v.state(renamed);
+            send(events, v.sessions.clone());
+        }
+        let mut lines = Vec::new();
+        while let Some(line) = tokio::time::timeout(Duration::from_millis(50), stream.next())
+            .await
+            .ok()
+            .flatten()
+        {
+            let event: Value = serde_json::from_str(&line).unwrap();
+            lines.push(event["type"].as_str().unwrap().to_owned());
+        }
+        assert_eq!(lines, ["resync", "session_renamed"]);
+        assert!(!stream.ended);
 
-        assert!(tracker.handle(&state(&both[..1])).is_empty());
-        assert!(!tracker.ended);
-        assert_eq!(
-            types(&tracker.handle(&state(&[]))),
-            ["pane_closed", "window_closed", "session_closed"]
-        );
-        assert!(tracker.ended);
+        let events = v.state(Vec::new());
+        send(events, v.sessions.clone());
+        let mut closed = Vec::new();
+        while let Some(line) = stream.next().await {
+            let event: Value = serde_json::from_str(&line).unwrap();
+            closed.push(event["type"].as_str().unwrap().to_owned());
+        }
+        assert_eq!(closed, ["pane_closed", "window_closed", "session_closed"]);
+        assert!(stream.ended);
     }
 
     #[test]
-    fn widgets_open_and_close_over_their_pane() {
-        let (s, w, p, id) = (
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
-        );
-        let mut tracker = Tracker {
-            sessions: vec![session(s, "s", vec![window(w, "w", &[p])])],
-            widgets: Vec::new(),
-            popups: Vec::new(),
-            session: None,
-            ended: false,
-        };
-        let widgets =
-            |list: Value| serde_json::json!({ "type": "widgets", "widgets": list }).to_string();
-        let opened = tracker.handle(&widgets(
-            serde_json::json!([{ "id": id, "pane_id": p, "kind": "confirm" }]),
-        ));
-        assert_eq!(types(&opened), ["widget_opened"]);
-        assert_eq!(
-            types(&tracker.handle(&widgets(serde_json::json!([])))),
-            ["widget_closed"]
-        );
-    }
-
-    #[test]
-    fn human_lines_name_the_place() {
+    fn human_lines_name_the_place_and_escape_control_characters() {
         let event = serde_json::json!({
             "time": 0, "type": "agent_status_changed", "session": "work", "window_index": 1,
             "window": "edit", "pane_id": "p", "previous": "working",
@@ -1213,6 +1458,14 @@ mod tests {
         assert_eq!(
             human(&event, time::UtcOffset::UTC),
             "00:00:00  agent_status_changed  work:1 (edit) pane p  claude working -> done"
+        );
+        let event = serde_json::json!({
+            "time": 0, "type": "notification", "level": "info",
+            "title": "two\nlines", "body": "\u{1b}]0;title\u{7}\u{202e}",
+        });
+        assert_eq!(
+            human(&event, time::UtcOffset::UTC),
+            "00:00:00  notification  [info] two\\nlines: \\u{1b}]0;title\\u{7}\\u{202e}"
         );
     }
 }

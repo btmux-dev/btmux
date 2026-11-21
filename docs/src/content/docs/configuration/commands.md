@@ -575,22 +575,22 @@ Set up coding agents (Claude Code, Codex) to use btmux: a skill that teaches the
 Usage: btmux skill <COMMAND>
 
 Commands:
-  setup   Install the btmux skill and its SessionStart hook into the agents found here (Claude Code, Codex), or those given with --agent. With none found, the skill alone goes into ~/.agents/skills, which most agents read. Safe to run again; it updates what an older btmux installed
-  status  Report whether the skill and hook are installed for each agent
-  remove  Remove the skill and hook from agents, leaving a skill btmux didn't install and every other hook alone
+  setup   Set up the agents found here (Claude Code, Codex, Gemini CLI), or those given with --agent: hooks that report their state to btmux, and for Claude Code and Codex the btmux skill and a hook telling them their pane. With no agent found, the skill alone goes into ~/.agents/skills, which most agents read. Safe to run again; it updates what an older btmux installed
+  status  Report what is installed for each agent
+  remove  Remove what setup installed, leaving a skill btmux didn't install and every other hook alone
   show    Print the guide the skill gives agents
   help    Print this message or the help of the given subcommand(s)
 ```
 
 #### `btmux skill setup`
 
-Install the btmux skill and its SessionStart hook into the agents found here (Claude Code, Codex), or those given with --agent. With none found, the skill alone goes into ~/.agents/skills, which most agents read. Safe to run again; it updates what an older btmux installed
+Set up the agents found here (Claude Code, Codex, Gemini CLI), or those given with --agent: hooks that report their state to btmux, and for Claude Code and Codex the btmux skill and a hook telling them their pane. With no agent found, the skill alone goes into ~/.agents/skills, which most agents read. Safe to run again; it updates what an older btmux installed
 
 ```text
 Usage: btmux skill setup [OPTIONS]
 
 Options:
-      --agent <AGENT>  Only this agent. Repeatable [possible values: claude, codex]
+      --agent <AGENT>  Only this agent. Repeatable [possible values: claude, codex, gemini]
       --dry-run        Report what would change without changing anything
       --force          Replace a skill named btmux that btmux didn't install (moved to the trash)
       --json           Print the result as JSON
@@ -598,7 +598,7 @@ Options:
 
 #### `btmux skill status`
 
-Report whether the skill and hook are installed for each agent
+Report what is installed for each agent
 
 ```text
 Usage: btmux skill status [OPTIONS]
@@ -609,13 +609,13 @@ Options:
 
 #### `btmux skill remove`
 
-Remove the skill and hook from agents, leaving a skill btmux didn't install and every other hook alone
+Remove what setup installed, leaving a skill btmux didn't install and every other hook alone
 
 ```text
 Usage: btmux skill remove [OPTIONS]
 
 Options:
-      --agent <AGENT>  Only this agent. Repeatable [possible values: claude, codex]
+      --agent <AGENT>  Only this agent. Repeatable [possible values: claude, codex, gemini]
       --dry-run        Report what would change without changing anything
       --json           Print the result as JSON
 ```
@@ -669,7 +669,7 @@ Options:
 
 ### `btmux events`
 
-Print server events as they happen, one line each, until interrupted: sessions, windows, and panes created, renamed, selected, or closed; agent state changes; notifications; widgets and popups. Inside a btmux pane this targets that pane's server; otherwise the `--profile` server. Reconnects after the server restarts or upgrades
+Print server events as they happen, one line each, until interrupted: sessions, windows, and panes created, renamed, selected, or closed; agent state changes; notifications; widgets and popups. Inside a btmux pane this targets that pane's server; otherwise the `--profile` server. Reconnects after the server restarts or upgrades. Sandboxed panes can't use it
 
 ```text
 Usage: btmux events [OPTIONS]
@@ -1268,30 +1268,6 @@ Print a default config.toml with all settings documented and commented out
 
 ```text
 Usage: btmux generate-config
-```
-
-### `btmux install-claude-code-hooks`
-
-Merge btmux hooks into the user Claude Code settings
-
-```text
-Usage: btmux install-claude-code-hooks
-```
-
-### `btmux install-codex-hooks`
-
-Merge btmux hooks into the user Codex hooks file
-
-```text
-Usage: btmux install-codex-hooks
-```
-
-### `btmux install-gemini-cli-hooks`
-
-Merge btmux hooks into the user Gemini CLI settings
-
-```text
-Usage: btmux install-gemini-cli-hooks
 ```
 
 ### `btmux generate-claude-code-hooks`

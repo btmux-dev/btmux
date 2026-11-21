@@ -38,7 +38,7 @@ btmux kill-pane -t "$pane"
 | `display-popup` (`popup`)    | `-t -d -e -T -E`; see [Popups](popups.md) |
 
 Coding agents learn these commands from the btmux skill; see
-[Agent skill](../agents/index.md#agent-skill).
+[agent setup](../agents/index.md#setup).
 
 ## Differences from tmux
 

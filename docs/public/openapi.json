@@ -3557,7 +3557,7 @@
           "Events"
         ],
         "summary": "Stream events",
-        "description": "Newline-delimited JSON, one event per line, starting with `ready`, until the client disconnects. Empty lines keep the connection alive. Each event is `{time, type, ...}`, `time` in Unix milliseconds.",
+        "description": "Newline-delimited JSON, one event per line, until the client disconnects. The first is `ready`, with the sessions the events after it change; `resync` marks where events were lost. Empty lines keep the connection alive. Each event is `{time, type, ...}`, `time` in Unix milliseconds. Guest (sandboxed) credentials can't use it.",
         "operationId": "stream-events",
         "parameters": [
           {
@@ -4607,9 +4607,10 @@
         "oneOf": [
           {
             "type": "object",
-            "description": "First on every stream; `session_id` is the session `session` named.",
+            "description": "First on every stream: the state the events after it change, and the\nsession `session` named, if any.",
             "required": [
               "version",
+              "sessions",
               "type"
             ],
             "properties": {
@@ -4623,10 +4624,31 @@
                 ],
                 "format": "uuid"
               },
+              "sessions": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SessionSnapshot"
+                }
+              },
               "type": {
                 "type": "string",
                 "enum": [
                   "ready"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The stream fell behind and events were lost. The events after it\nreport the session, window, and pane changes since the last event\nbefore it, but not transitions that reversed in between, nor lost\nnotifications, widgets, and popups.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "resync"
                 ]
               }
             }
@@ -5133,12 +5155,19 @@
                   },
                   "kind": {
                     "$ref": "#/components/schemas/WidgetKind"
+                  },
+                  "popup_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uuid"
                   }
                 }
               },
               {
                 "type": "object",
-                "description": "A `btmux pick`, `confirm`, or `input` opened over the pane.",
+                "description": "A `btmux pick`, `confirm`, or `input` opened over the pane, or over\nits popup `popup_id`.",
                 "required": [
                   "type"
                 ],
@@ -5152,7 +5181,7 @@
                 }
               }
             ],
-            "description": "A `btmux pick`, `confirm`, or `input` opened over the pane."
+            "description": "A `btmux pick`, `confirm`, or `input` opened over the pane, or over\nits popup `popup_id`."
           },
           {
             "allOf": [
@@ -5172,6 +5201,13 @@
                   },
                   "kind": {
                     "$ref": "#/components/schemas/WidgetKind"
+                  },
+                  "popup_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uuid"
                   }
                 }
               },

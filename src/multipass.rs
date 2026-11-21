@@ -1129,8 +1129,11 @@ fn install_btmux(instance: &str) -> Result<(), String> {
         version = crate::config::VERSION
     );
     run(&["exec", instance, "-n", "--", "sh", "-c", &script])?;
+    // An older release, installed when this version has none, has only the
+    // install-*-hooks commands.
     let hooks = format!(
-        "{GUEST_BIN} install-claude-code-hooks >/dev/null; {GUEST_BIN} install-codex-hooks >/dev/null; \
+        "{GUEST_BIN} skill setup --agent claude --agent codex >/dev/null 2>&1 \
+         || {{ {GUEST_BIN} install-claude-code-hooks; {GUEST_BIN} install-codex-hooks; }} >/dev/null 2>&1; \
          command -v fish >/dev/null && {GUEST_BIN} install-fish-integration >/dev/null; true"
     );
     run(&["exec", instance, "-n", "--", "sh", "-c", &hooks])?;
