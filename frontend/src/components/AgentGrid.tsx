@@ -134,7 +134,6 @@ function useNow(active: boolean) {
   return now;
 }
 
-const GAP = 12;
 const SIDEBAR_WIDTH = 320;
 // Per-tile card chrome around the terminal (padding, border, header and detail rows).
 const CHROME_W = 24;
@@ -157,7 +156,7 @@ interface Packed {
 }
 
 /** Flows tiles left to right, wrapping at `width`; returns rows and total height. */
-function flow(naturals: (Size | null)[], scale: number, width: number): Packed & { height: number } {
+function flow(naturals: (Size | null)[], scale: number, width: number, gap: number): Packed & { height: number } {
   const sizes = naturals.map((n) => n && { w: n.w * scale, h: n.h * scale });
   const lines: number[][] = [];
   let line: number[] = [];
@@ -167,14 +166,14 @@ function flow(naturals: (Size | null)[], scale: number, width: number): Packed &
   sizes.forEach((size, i) => {
     if (!size) return;
     const tileW = size.w + CHROME_W;
-    if (line.length && used + GAP + tileW > width) {
+    if (line.length && used + gap + tileW > width) {
       lines.push(line);
-      height += lineH + GAP;
+      height += lineH + gap;
       line = [];
       used = 0;
       lineH = 0;
     }
-    used += (line.length ? GAP : 0) + tileW;
+    used += (line.length ? gap : 0) + tileW;
     lineH = Math.max(lineH, size.h + CHROME_H);
     line.push(i);
   });
@@ -186,17 +185,17 @@ function flow(naturals: (Size | null)[], scale: number, width: number): Packed &
 }
 
 /** Largest shared scale (at most 1:1) at which all tiles fit without scrolling. */
-function pack(naturals: (Size | null)[], width: number, height: number): Packed {
+function pack(naturals: (Size | null)[], width: number, height: number, gap: number): Packed {
   const widest = Math.max(1, ...naturals.map((n) => n?.w ?? 0));
   let lo = MIN_SCALE;
   let hi = Math.max(MIN_SCALE, Math.min(1, (width - CHROME_W) / widest));
-  if (flow(naturals, hi, width).height <= height) return flow(naturals, hi, width);
+  if (flow(naturals, hi, width, gap).height <= height) return flow(naturals, hi, width, gap);
   for (let i = 0; i < 20; i++) {
     const mid = (lo + hi) / 2;
-    if (flow(naturals, mid, width).height <= height) lo = mid;
+    if (flow(naturals, mid, width, gap).height <= height) lo = mid;
     else hi = mid;
   }
-  return flow(naturals, lo, width);
+  return flow(naturals, lo, width, gap);
 }
 
 /** Each tile's own wait for its mirror's size; a stuck mirror can't affect later tiles. */
@@ -293,14 +292,16 @@ export function AgentGrid({ send }: Props) {
       setTimedOutPanes(new Set());
     }
   }, [open, allSized]);
-  const [area, setArea] = useState<{ w: number; h: number } | null>(null);
+  const [area, setArea] = useState<{ w: number; h: number; gap: number } | null>(null);
   const observerRef = useRef<ResizeObserver | null>(null);
-  const areaRef = useCallback((el: HTMLDivElement | null) => {
+  const areaRef = useCallback((el: HTMLElement | null) => {
     observerRef.current?.disconnect();
     observerRef.current = null;
     if (!el) return;
     const measure = () => {
-      if (el.clientWidth > 0 && el.clientHeight > 0) setArea({ w: el.clientWidth, h: el.clientHeight });
+      // The stack's token gap, resolved to px.
+      const gap = parseFloat(getComputedStyle(el).columnGap) || 0;
+      if (el.clientWidth > 0 && el.clientHeight > 0) setArea({ w: el.clientWidth, h: el.clientHeight, gap });
     };
     measure();
     observerRef.current = new ResizeObserver(measure);
@@ -318,6 +319,7 @@ export function AgentGrid({ send }: Props) {
             ),
             area.w,
             area.h,
+            area.gap,
           )
         : null,
     [area, shown, placed, naturals, timedOutPanes],
@@ -616,11 +618,15 @@ export function AgentGrid({ send }: Props) {
   );
 
   const tiles = (
-    <div
+    <HStack
       ref={areaRef}
       data-agent-tiles
-      className="flex h-full min-h-0 min-w-0 flex-1 flex-wrap content-center items-center justify-center overflow-auto"
-      style={{ gap: GAP, opacity: tilesShown || allSized ? 1 : 0 }}
+      gap={3}
+      wrap="wrap"
+      hAlign="center"
+      vAlign="center"
+      isScrollable
+      className={`h-full min-h-0 min-w-0 flex-1 content-center ${tilesShown || allSized ? '' : 'opacity-0'}`}
     >
       {shown.length === 0 && (
         <EmptyState
@@ -746,7 +752,8 @@ export function AgentGrid({ send }: Props) {
                   </HStack>
                   <VStack
                     data-agent-mirror
-                    className="relative min-h-0 flex-1 overflow-hidden"
+                    // Concentric with the card's corners at padding 2.
+                    className="relative min-h-0 flex-1 overflow-hidden rounded-sm"
                     style={{ background: terminalBg }}
                   >
                     {/* Only while shown: a hidden mirror can't report its size, and closing clears expiries. */}
@@ -766,7 +773,7 @@ export function AgentGrid({ send }: Props) {
             </div>
           );
         })}
-    </div>
+    </HStack>
   );
 
   const hasSidebar = view === 'panes' && entries.length > 0;
@@ -833,7 +840,7 @@ export function AgentGrid({ send }: Props) {
         }
         start={
           hasSidebar && !isNarrow ? (
-            <LayoutPanel width={SIDEBAR_WIDTH} hasDivider padding={2} label="Agent list">
+            <LayoutPanel width={SIDEBAR_WIDTH} label="Agent list">
               {sidebar}
             </LayoutPanel>
           ) : undefined
