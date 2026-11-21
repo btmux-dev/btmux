@@ -30,6 +30,7 @@ actions, saved state, and API types can change in any release.
   ([#182](https://github.com/btmux-dev/btmux/pull/182))
 - Agent view matches the rounded panes: its live panes have rounded corners,
   and the agent list has no divider and lines up with the title and tabs.
+  ([#186](https://github.com/btmux-dev/btmux/pull/186))
 - Python files in the native editor get ty and ruff instead of pyright, so
   formatting works: ruff formats and lints, ty checks types.
   ([#181](https://github.com/btmux-dev/btmux/pull/181))
