@@ -20,10 +20,12 @@ actions, saved state, and API types can change in any release.
   panes created, renamed, selected, or closed, agent state changes,
   notifications, and widgets and popups, one line each or as JSON with
   `--json`. `GET /api/events` streams the same.
+  ([#185](https://github.com/btmux-dev/btmux/pull/185))
 - `btmux skill setup` installs a skill that teaches Claude Code and Codex the
   btmux CLI, and a hook that tells them which pane they run in. Both take
   their text from the installed btmux, so upgrading it updates them.
   `btmux skill show` prints the guide.
+  ([#185](https://github.com/btmux-dev/btmux/pull/185))
 - Settings' **Show TOML** panel can show the settings as Home Manager's
   `programs.btmux.settings` in Nix, ready to paste.
   ([#180](https://github.com/btmux-dev/btmux/pull/180))
