@@ -17,11 +17,17 @@ pub fn gemini_cli() -> &'static str {
     include_str!("../extras/gemini-cli/hooks.json")
 }
 
+/// Unlike the others, hooks named at the top level of `hooks.json`.
+pub fn antigravity() -> &'static str {
+    include_str!("../extras/antigravity/hooks.json")
+}
+
 #[derive(Clone, Copy)]
 pub enum Target {
     ClaudeCode,
     Codex,
     GeminiCli,
+    Antigravity,
 }
 
 impl Target {
@@ -30,6 +36,7 @@ impl Target {
             Self::ClaudeCode => claude_code(),
             Self::Codex => codex(),
             Self::GeminiCli => gemini_cli(),
+            Self::Antigravity => antigravity(),
         }
     }
 
@@ -44,6 +51,7 @@ impl Target {
             Self::ClaudeCode => claude_dir(&home).join("settings.json"),
             Self::Codex => codex_dir(&home).join("hooks.json"),
             Self::GeminiCli => home.join(".gemini").join("settings.json"),
+            Self::Antigravity => antigravity_dir(&home).join("hooks.json"),
         })
     }
 }
@@ -62,6 +70,11 @@ pub fn codex_dir(home: &Path) -> PathBuf {
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".codex"))
+}
+
+/// Antigravity's global customizations: hooks, skills, and rules.
+pub fn antigravity_dir(home: &Path) -> PathBuf {
+    home.join(".gemini").join("config")
 }
 
 /// Ends every status hook's command, marking it as btmux's.
@@ -205,6 +218,36 @@ pub fn without(config: &Value, generated: &Value, is_ours: fn(&Value) -> bool) -
 /// Whether `config` has a hook `is_ours` picks out in `generated`'s events.
 pub fn contains(config: &Value, generated: &Value, is_ours: fn(&Value) -> bool) -> bool {
     without(config, generated, is_ours).is_some()
+}
+
+/// `config` (read from `path`) with `generated`'s named hooks in place of
+/// those of the same names, as Antigravity's `hooks.json` names them.
+pub fn with_named(path: &Path, config: Option<Value>, generated: &Value) -> Result<Value, String> {
+    let mut config = config.unwrap_or_else(|| Value::Object(Map::new()));
+    let object = config.as_object_mut().ok_or_else(|| {
+        format!(
+            "{} must contain a JSON object; file was left unchanged",
+            path.display()
+        )
+    })?;
+    let generated = generated
+        .as_object()
+        .ok_or("embedded named hooks are not an object")?;
+    for (name, hook) in generated {
+        object.insert(name.clone(), hook.clone());
+    }
+    Ok(config)
+}
+
+/// `config` without `generated`'s named hooks; `None` if it had none.
+pub fn without_named(config: &Value, generated: &Value) -> Option<Value> {
+    let mut config = config.clone();
+    let object = config.as_object_mut()?;
+    let mut found = false;
+    for name in generated.as_object()?.keys() {
+        found |= object.remove(name).is_some();
+    }
+    found.then_some(config)
 }
 
 /// Writes `config` as pretty JSON.
@@ -369,6 +412,39 @@ mod tests {
         }
         let own = serde_json::json!({ "command": "curl \"${BTMUX_API_URL}/api/panes/${BTMUX_PANE_ID}/notify\"" });
         assert!(!is_btmux_hook(&own));
+    }
+
+    #[test]
+    fn antigravity_hooks_are_named_and_report_to_the_pane() {
+        let parsed: Value = serde_json::from_str(antigravity()).unwrap();
+        let hook = parsed["btmux"].as_object().unwrap();
+        let events: Vec<&str> = hook.keys().map(String::as_str).collect();
+        for event in ["SessionStart", "PreInvocation", "PostToolUse", "Stop"] {
+            assert!(events.contains(&event), "{events:?}");
+        }
+        for (event, handlers) in hook {
+            for handler in handlers.as_array().unwrap() {
+                // Tool events group handlers under a matcher; the others list them.
+                let handler = match event.as_str() {
+                    "PostToolUse" => &handler["hooks"][0],
+                    _ => handler,
+                };
+                assert!(is_btmux_hook(handler), "{event}");
+                assert!(handler["command"]
+                    .as_str()
+                    .unwrap()
+                    .contains("X-Btmux-Agent-Pid"));
+            }
+        }
+        let path = Path::new("hooks.json");
+        let own = serde_json::json!({ "mine": { "Stop": [] } });
+        let merged = with_named(path, Some(own.clone()), &parsed).unwrap();
+        assert_eq!(
+            with_named(path, Some(merged.clone()), &parsed).unwrap(),
+            merged
+        );
+        assert_eq!(without_named(&merged, &parsed), Some(own.clone()));
+        assert_eq!(without_named(&own, &parsed), None);
     }
 
     /// An earlier release's hook is replaced, not joined by a second one.

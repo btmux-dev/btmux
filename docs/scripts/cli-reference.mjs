@@ -27,7 +27,7 @@ const groups = {
   ],
   "Setup": [
     "completions", "generate-config", "generate-claude-code-hooks", "generate-codex-hooks",
-    "generate-gemini-cli-hooks", "install-fish-integration",
+    "generate-gemini-cli-hooks", "generate-antigravity-hooks", "install-fish-integration",
     "generate-fish-theme",
   ],
 };

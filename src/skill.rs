@@ -1,7 +1,7 @@
 //! `btmux skill`: sets agents up to use btmux. Each agent gets the status
-//! hooks that report its state, and Claude Code and Codex also a skill
-//! teaching them the btmux CLI and a SessionStart hook telling them which
-//! pane they run in. The skill is a stub that runs `btmux skill show`, and
+//! hooks that report its state, and Claude Code, Codex, and Antigravity also
+//! a skill teaching them the btmux CLI and a SessionStart hook telling them
+//! which pane they run in. The skill is a stub that runs `btmux skill show`, and
 //! the hook runs `btmux skill context`, so both take their text from the
 //! installed btmux when they run.
 
@@ -30,10 +30,10 @@ const STUB_VERSION: &str = "1";
 
 #[derive(clap::Subcommand, Clone)]
 pub enum SkillCommand {
-    /// Set up the agents found here (Claude Code, Codex, Gemini CLI), or
-    /// those given with --agent: hooks that report their state to btmux, and
-    /// for Claude Code and Codex the btmux skill and a hook telling them their
-    /// pane. With no agent found, the skill alone goes into ~/.agents/skills,
+    /// Set up the agents found here (Claude Code, Codex, Gemini CLI,
+    /// Antigravity CLI), or those given with --agent: hooks that report their
+    /// state to btmux, and for all but Gemini CLI the btmux skill and a hook
+    /// telling them their pane. With no agent found, the skill alone goes into ~/.agents/skills,
     /// which most agents read. Safe to run again; it updates what an older
     /// btmux installed.
     Setup {
@@ -85,9 +85,10 @@ pub enum Agent {
     Claude,
     Codex,
     Gemini,
+    Agy,
 }
 
-const AGENTS: [Agent; 3] = [Agent::Claude, Agent::Codex, Agent::Gemini];
+const AGENTS: [Agent; 4] = [Agent::Claude, Agent::Codex, Agent::Gemini, Agent::Agy];
 
 impl Agent {
     fn label(self) -> &'static str {
@@ -95,6 +96,7 @@ impl Agent {
             Agent::Claude => "Claude Code",
             Agent::Codex => "Codex",
             Agent::Gemini => "Gemini CLI",
+            Agent::Agy => "Antigravity CLI",
         }
     }
 
@@ -103,6 +105,7 @@ impl Agent {
             Agent::Claude => "claude",
             Agent::Codex => "codex",
             Agent::Gemini => "gemini",
+            Agent::Agy => "agy",
         }
     }
 
@@ -111,13 +114,14 @@ impl Agent {
             Agent::Claude => Target::ClaudeCode,
             Agent::Codex => Target::Codex,
             Agent::Gemini => Target::GeminiCli,
+            Agent::Agy => Target::Antigravity,
         }
     }
 
     /// How the user invokes the skill by name.
     fn invocation(self) -> &'static str {
         match self {
-            Agent::Claude => "/btmux",
+            Agent::Claude | Agent::Agy => "/btmux",
             _ => "$btmux",
         }
     }
@@ -129,31 +133,115 @@ impl Agent {
             // Codex reads the shared directory.
             Agent::Codex => Some(shared_dir(home)),
             Agent::Gemini => None,
+            Agent::Agy => Some(
+                agent_hooks::antigravity_dir(home)
+                    .join("skills")
+                    .join("btmux"),
+            ),
         }
     }
 
-    /// Its config directory exists, or it is on `PATH`.
+    /// It left its config behind, or it is on `PATH`.
     fn found(self, home: &Path) -> bool {
-        let dir = match self {
-            Agent::Claude => agent_hooks::claude_dir(home),
-            Agent::Codex => agent_hooks::codex_dir(home),
-            Agent::Gemini => home.join(".gemini"),
-        };
-        dir.is_dir() || crate::vscode::find_on_path(self.name()).is_some()
+        self.configured(home) || crate::vscode::find_on_path(self.name()).is_some()
+    }
+
+    fn configured(self, home: &Path) -> bool {
+        let gemini = home.join(".gemini");
+        match self {
+            Agent::Claude => agent_hooks::claude_dir(home).is_dir(),
+            Agent::Codex => agent_hooks::codex_dir(home).is_dir(),
+            // Antigravity uses `~/.gemini` too, and setup writes its
+            // `settings.json`, so only files Gemini CLI writes itself count.
+            Agent::Gemini => GEMINI_FILES.iter().any(|file| gemini.join(file).is_file()),
+            Agent::Agy => gemini.join("antigravity-cli").is_dir(),
+        }
     }
 
     /// The SessionStart hook naming the pane; `None` without a skill.
-    fn context_hook(self) -> Option<Value> {
+    fn context_hook(self) -> Option<Hooks> {
         self.skill_dir(Path::new("")).as_ref()?;
+        // Antigravity wants a JSON object even when there is nothing to say.
+        let fallback = match self {
+            Agent::Agy => "printf '{}'",
+            _ => "true",
+        };
         let command = format!(
-            "\"${{BTMUX_BIN:-btmux}}\" skill context --agent {} 2>/dev/null || true{CONTEXT_MARKER}",
+            "\"${{BTMUX_BIN:-btmux}}\" skill context --agent {} 2>/dev/null || {fallback}{CONTEXT_MARKER}",
             self.name()
         );
-        Some(json!({ "hooks": { "SessionStart": [{ "hooks": [
-            { "type": "command", "command": command, "timeout": 5 }
-        ] }] } }))
+        let handler = json!({ "type": "command", "command": command, "timeout": 5 });
+        Some(match self {
+            Agent::Agy => Hooks::Named(json!({ "btmux-context": { "SessionStart": [handler] } })),
+            _ => Hooks::Merged {
+                generated: json!({ "hooks": { "SessionStart": [{ "hooks": [handler] }] } }),
+                is_ours: is_context_hook,
+            },
+        })
+    }
+
+    /// The hooks reporting its state.
+    fn status_hooks(self) -> Hooks {
+        let generated = self.target().generated();
+        match self {
+            Agent::Agy => Hooks::Named(generated),
+            _ => Hooks::Merged {
+                generated,
+                is_ours: agent_hooks::is_btmux_hook,
+            },
+        }
     }
 }
+
+/// Hooks setup puts in an agent's config file.
+enum Hooks {
+    /// Handlers in `hooks.<event>` groups, among the user's: `is_ours` picks
+    /// out the ones btmux installed.
+    Merged {
+        generated: Value,
+        is_ours: fn(&Value) -> bool,
+    },
+    /// Antigravity's: whole hooks named at the top level, btmux's under its
+    /// own names.
+    Named(Value),
+}
+
+impl Hooks {
+    /// `config` with these hooks; whether it had them before.
+    fn merged(&self, path: &Path, config: Option<Value>) -> Result<(Value, bool), String> {
+        Ok(match self {
+            Hooks::Merged { generated, is_ours } => {
+                let had = config
+                    .as_ref()
+                    .is_some_and(|c| agent_hooks::contains(c, generated, *is_ours));
+                (agent_hooks::merged(path, config, generated, *is_ours)?, had)
+            }
+            Hooks::Named(generated) => {
+                let had = config
+                    .as_ref()
+                    .is_some_and(|c| agent_hooks::without_named(c, generated).is_some());
+                (agent_hooks::with_named(path, config, generated)?, had)
+            }
+        })
+    }
+
+    /// `config` without these hooks; `None` if it had none.
+    fn without(&self, config: &Value) -> Option<Value> {
+        match self {
+            Hooks::Merged { generated, is_ours } => {
+                agent_hooks::without(config, generated, *is_ours)
+            }
+            Hooks::Named(generated) => agent_hooks::without_named(config, generated),
+        }
+    }
+}
+
+/// Files in `~/.gemini` that Gemini CLI writes and Antigravity doesn't.
+const GEMINI_FILES: &[&str] = &[
+    "installation_id",
+    "oauth_creds.json",
+    "google_accounts.json",
+];
 
 fn shared_dir(home: &Path) -> PathBuf {
     home.join(".agents").join("skills").join("btmux")
@@ -306,56 +394,41 @@ fn create_skill_dir(dir: &Path) -> Result<(), String> {
     fs::create_dir_all(&target).map_err(|e| format!("cannot create {}: {e}", target.display()))
 }
 
-fn hooks_state(
-    path: &Path,
-    generated: &Value,
-    is_ours: fn(&Value) -> bool,
-) -> Result<Installed, String> {
+fn hooks_state(path: &Path, hooks: &Hooks) -> Result<Installed, String> {
     let Some(config) = agent_hooks::read(path)? else {
         return Ok(Installed::Missing);
     };
-    if !agent_hooks::contains(&config, generated, is_ours) {
-        return Ok(Installed::Missing);
-    }
-    let merged = agent_hooks::merged(path, Some(config.clone()), generated, is_ours)?;
-    Ok(if merged == config {
+    let (merged, had) = hooks.merged(path, Some(config.clone()))?;
+    Ok(if !had {
+        Installed::Missing
+    } else if merged == config {
         Installed::Current
     } else {
         Installed::Outdated
     })
 }
 
-fn install_hooks(
-    path: &Path,
-    generated: &Value,
-    is_ours: fn(&Value) -> bool,
-    dry_run: bool,
-) -> Result<Change, String> {
+fn install_hooks(path: &Path, hooks: &Hooks, dry_run: bool) -> Result<Change, String> {
     let config = agent_hooks::read(path)?;
-    let change = match &config {
-        Some(config) if agent_hooks::contains(config, generated, is_ours) => Change::Updated,
-        _ => Change::Created,
-    };
-    let merged = agent_hooks::merged(path, config.clone(), generated, is_ours)?;
+    let (merged, had) = hooks.merged(path, config.clone())?;
     if config.as_ref() == Some(&merged) {
         return Ok(Change::Unchanged);
     }
     if !dry_run {
         agent_hooks::write_json(path, &merged)?;
     }
-    Ok(change)
+    Ok(if had {
+        Change::Updated
+    } else {
+        Change::Created
+    })
 }
 
-fn remove_hooks(
-    path: &Path,
-    generated: &Value,
-    is_ours: fn(&Value) -> bool,
-    dry_run: bool,
-) -> Result<Change, String> {
+fn remove_hooks(path: &Path, hooks: &Hooks, dry_run: bool) -> Result<Change, String> {
     let Some(config) = agent_hooks::read(path)? else {
         return Ok(Change::Absent);
     };
-    let Some(config) = agent_hooks::without(&config, generated, is_ours) else {
+    let Some(config) = hooks.without(&config) else {
         return Ok(Change::Absent);
     };
     // Through a symlink too, as setup wrote it.
@@ -444,14 +517,13 @@ fn setup(agents: &[Agent], dry_run: bool, force: bool) -> Result<Vec<Step>, Stri
                     )
             });
             let result = if skill_ok {
-                install_hooks(&path, &hook, is_context_hook, dry_run)
+                install_hooks(&path, &hook, dry_run)
             } else {
                 Ok(Change::Skipped)
             };
             steps.push(step(vec![agent], Part::ContextHook, path.clone(), result));
         }
-        let generated = agent.target().generated();
-        let result = install_hooks(&path, &generated, agent_hooks::is_btmux_hook, dry_run);
+        let result = install_hooks(&path, &agent.status_hooks(), dry_run);
         steps.push(step(vec![agent], Part::StatusHooks, path, result));
     }
     Ok(steps)
@@ -485,11 +557,10 @@ fn remove(agents: &[Agent], dry_run: bool) -> Result<Vec<Step>, String> {
     for agent in agents {
         let path = agent.target().config_path()?;
         if let Some(hook) = agent.context_hook() {
-            let result = remove_hooks(&path, &hook, is_context_hook, dry_run);
+            let result = remove_hooks(&path, &hook, dry_run);
             steps.push(step(vec![agent], Part::ContextHook, path.clone(), result));
         }
-        let generated = agent.target().generated();
-        let result = remove_hooks(&path, &generated, agent_hooks::is_btmux_hook, dry_run);
+        let result = remove_hooks(&path, &agent.status_hooks(), dry_run);
         steps.push(step(vec![agent], Part::StatusHooks, path, result));
     }
     Ok(steps)
@@ -591,12 +662,8 @@ fn status(json: bool) -> i32 {
                 .map(|dir| state(Ok(skill_state(&dir)), dir));
             let context = agent
                 .context_hook()
-                .map(|hook| state(hooks_state(&path, &hook, is_context_hook), path.clone()));
-            let generated = agent.target().generated();
-            let status_hooks = state(
-                hooks_state(&path, &generated, agent_hooks::is_btmux_hook),
-                path.clone(),
-            );
+                .map(|hook| state(hooks_state(&path, &hook), path.clone()));
+            let status_hooks = state(hooks_state(&path, &agent.status_hooks()), path.clone());
             json!({
                 "agent": agent,
                 "found": agent.found(&home),
@@ -651,22 +718,20 @@ fn incomplete(agent: Agent) -> bool {
     let skill = agent.skill_dir(&home).map(|dir| skill_state(&dir));
     let context = agent
         .context_hook()
-        .and_then(|hook| hooks_state(&path, &hook, is_context_hook).ok());
-    let status = hooks_state(
-        &path,
-        &agent.target().generated(),
-        agent_hooks::is_btmux_hook,
-    )
-    .ok();
+        .and_then(|hook| hooks_state(&path, &hook).ok());
+    let status = hooks_state(&path, &agent.status_hooks()).ok();
     [skill, context, status].into_iter().flatten().any(stale)
 }
 
-/// The hook's text: where the agent runs, as JSON both agents read.
+/// The hook's text: where the agent runs, as JSON the agent reads.
 async fn context(profile: Option<&str>, agent: Option<Agent>) -> i32 {
     let Some(pane) = std::env::var("BTMUX_PANE_ID")
         .ok()
         .and_then(|id| uuid::Uuid::parse_str(&id).ok())
     else {
+        if agent == Some(Agent::Agy) {
+            println!("{{}}");
+        }
         return 0;
     };
     // Guest credentials can't list panes; the ID alone still helps.
@@ -684,12 +749,21 @@ async fn context(profile: Option<&str>, agent: Option<Agent>) -> i32 {
     let place = panes.iter().find(|p| p["pane_id"] == pane.to_string());
     let outdated = agent.is_some_and(incomplete);
     let text = context_text(pane, place, agent.map(Agent::invocation), outdated);
-    let output = json!({ "hookSpecificOutput": {
-        "hookEventName": "SessionStart",
-        "additionalContext": text,
-    } });
-    println!("{output}");
+    println!("{}", context_output(agent, text));
     0
+}
+
+/// Claude Code and Codex read `additionalContext`; Antigravity injects steps.
+fn context_output(agent: Option<Agent>, text: String) -> Value {
+    match agent {
+        Some(Agent::Agy) => json!({ "injectSteps": [
+            { "systemMessage": { "systemMessage": text } }
+        ] }),
+        _ => json!({ "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": text,
+        } }),
+    }
 }
 
 fn context_text(
@@ -790,18 +864,16 @@ mod tests {
     fn hooks_merge_once_beside_others_and_remove_only_ours() {
         let path = Path::new("settings.json");
         let hook = Agent::Claude.context_hook().unwrap();
-        let status = Target::ClaudeCode.generated();
+        let status = Agent::Claude.status_hooks();
         // The user's own hooks that mention the same words.
         let own = json!({ "hooks": {
             "SessionStart": [{ "hooks": [{ "type": "command", "command": "btmux skill context --agent claude" }] }],
             "Stop": [{ "hooks": [{ "type": "command", "command": "echo skill context # btmux-context" }] }],
         } });
-        let once = agent_hooks::merged(path, Some(own.clone()), &hook, is_context_hook).unwrap();
-        let once =
-            agent_hooks::merged(path, Some(once), &status, agent_hooks::is_btmux_hook).unwrap();
-        let twice = agent_hooks::merged(path, Some(once.clone()), &hook, is_context_hook).unwrap();
-        let twice =
-            agent_hooks::merged(path, Some(twice), &status, agent_hooks::is_btmux_hook).unwrap();
+        let once = hook.merged(path, Some(own.clone())).unwrap().0;
+        let once = status.merged(path, Some(once)).unwrap().0;
+        let twice = hook.merged(path, Some(once.clone())).unwrap().0;
+        let twice = status.merged(path, Some(twice)).unwrap().0;
         assert_eq!(once, twice);
         let start = once["hooks"]["SessionStart"].as_array().unwrap();
         assert_eq!(
@@ -810,10 +882,75 @@ mod tests {
             "the user's, the context, and status: {start:?}"
         );
 
-        let removed = agent_hooks::without(&once, &hook, is_context_hook).unwrap();
-        let removed = agent_hooks::without(&removed, &status, agent_hooks::is_btmux_hook).unwrap();
+        let removed = hook.without(&once).unwrap();
+        let removed = status.without(&removed).unwrap();
         assert_eq!(removed, own);
-        assert!(agent_hooks::without(&removed, &hook, is_context_hook).is_none());
+        assert!(hook.without(&removed).is_none());
+    }
+
+    #[test]
+    fn antigravity_hooks_are_named_beside_the_users() {
+        let dir = temp();
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("hooks.json");
+        let own = json!({ "mine": { "Stop": [{ "command": "echo done" }] } });
+        fs::write(&path, own.to_string()).unwrap();
+        let (context, status) = (
+            Agent::Agy.context_hook().unwrap(),
+            Agent::Agy.status_hooks(),
+        );
+        assert_eq!(hooks_state(&path, &status), Ok(Installed::Missing));
+        assert_eq!(install_hooks(&path, &context, false), Ok(Change::Created));
+        assert_eq!(install_hooks(&path, &status, false), Ok(Change::Created));
+        assert_eq!(install_hooks(&path, &status, false), Ok(Change::Unchanged));
+        assert_eq!(hooks_state(&path, &status), Ok(Installed::Current));
+        let installed: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(installed["mine"], own["mine"]);
+        let command = installed["btmux-context"]["SessionStart"][0]["command"]
+            .as_str()
+            .unwrap();
+        assert!(command.contains("--agent agy") && command.ends_with(CONTEXT_MARKER));
+        assert!(installed["btmux"]["Stop"].is_array());
+
+        // A changed hook is outdated, and updated in place.
+        let mut changed = installed.clone();
+        changed["btmux"]["Stop"] = json!([]);
+        fs::write(&path, changed.to_string()).unwrap();
+        assert_eq!(hooks_state(&path, &status), Ok(Installed::Outdated));
+        assert_eq!(install_hooks(&path, &status, false), Ok(Change::Updated));
+
+        assert_eq!(remove_hooks(&path, &context, false), Ok(Change::Removed));
+        assert_eq!(remove_hooks(&path, &status, false), Ok(Change::Removed));
+        assert_eq!(remove_hooks(&path, &status, false), Ok(Change::Absent));
+        let left: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(left, own);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn antigravity_alone_is_not_gemini_cli() {
+        let home = temp();
+        let gemini = home.join(".gemini");
+        fs::create_dir_all(gemini.join("antigravity-cli")).unwrap();
+        fs::create_dir_all(gemini.join("config")).unwrap();
+        // What setup writes for Gemini CLI doesn't count either.
+        fs::write(gemini.join("settings.json"), "{}").unwrap();
+        assert!(Agent::Agy.configured(&home));
+        assert!(!Agent::Gemini.configured(&home));
+        fs::write(gemini.join("installation_id"), "id").unwrap();
+        assert!(Agent::Gemini.configured(&home));
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn antigravity_context_is_an_injected_step() {
+        let output = context_output(Some(Agent::Agy), "here".into());
+        assert_eq!(
+            output["injectSteps"][0]["systemMessage"]["systemMessage"],
+            "here"
+        );
+        let output = context_output(Some(Agent::Claude), "here".into());
+        assert_eq!(output["hookSpecificOutput"]["additionalContext"], "here");
     }
 
     #[test]
@@ -866,14 +1003,8 @@ mod tests {
         fs::write(&target, "{}").unwrap();
         std::os::unix::fs::symlink(&target, &link).unwrap();
         let hook = Agent::Claude.context_hook().unwrap();
-        assert_eq!(
-            install_hooks(&link, &hook, is_context_hook, false),
-            Ok(Change::Created)
-        );
-        assert_eq!(
-            remove_hooks(&link, &hook, is_context_hook, false),
-            Ok(Change::Removed)
-        );
+        assert_eq!(install_hooks(&link, &hook, false), Ok(Change::Created));
+        assert_eq!(remove_hooks(&link, &hook, false), Ok(Change::Removed));
         assert!(fs::symlink_metadata(&link)
             .unwrap()
             .file_type()

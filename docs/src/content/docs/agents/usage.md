@@ -37,15 +37,17 @@ memory: `btmux upgrade` keeps it, and restarting the server clears it.
 
 ## Plan limits
 
-For Claude Code and Codex accounts logged in on the server, Usage shows the
-percentage used and reset time for each subscription limit, including use outside
-btmux. Agents using an API key, or not logged in, aren't listed.
+For Claude Code, Codex, and Antigravity accounts logged in on the server, Usage
+shows the percentage used and reset time for each subscription limit, including
+use outside btmux. Antigravity's limits are shared by groups of models, so each
+is named by its window and group. Agents using an API key, or not logged in,
+aren't listed.
 
 btmux reads limits through the CLI without sending a prompt or reading
 credentials. `GET /api/agent-limits` returns the same data.
 
 :::caution
-Both CLI interfaces are undocumented or experimental, so a CLI update can make
+These CLI interfaces are undocumented or experimental, so a CLI update can make
 an agent disappear from this list.
 :::
 

@@ -33,8 +33,8 @@ const SHELL_PATH_RETRY: Duration = Duration::from_secs(600);
 /// Shell startup can print anything, even on the line of an unterminated escape.
 #[cfg(unix)]
 const SHELL_PATH_MARKER: &str = "__btmux_path__";
-/// Codex doesn't grade its windows; Claude's come graded.
-const CODEX_WARNING_PERCENT: f64 = 80.0;
+/// Codex and Antigravity don't grade their windows; Claude's come graded.
+const WARNING_PERCENT: f64 = 80.0;
 const CODEX_DEFAULT_LIMIT: &str = "codex";
 /// JSON-RPC invalid request: Codex's answer without a ChatGPT login.
 const CODEX_NOT_SUBSCRIBED: i64 = -32600;
@@ -52,6 +52,11 @@ const CLAUDE_ARGS: &[&str] = &[
     "--verbose",
 ];
 const CODEX_ARGS: &[&str] = &["app-server"];
+/// Answered locally, without a model turn.
+const AGY_ARGS: &[&str] = &["-p", "/usage", "--output-format", "json"];
+const AGY_PROGRAM: &str = "agy";
+/// agy's exit status when there is no account quota, as with an API key.
+const AGY_NO_QUOTA: i32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -126,6 +131,7 @@ struct Cache {
     fetched_at: Option<Instant>,
     claude: Slot,
     codex: Slot,
+    agy: Slot,
 }
 
 /// Held across a read, so concurrent tabs share it.
@@ -143,7 +149,7 @@ pub fn routes() -> Router<AppState> {
     tag = "Agents",
     operation_id = "agent-limits",
     summary = "Subscription limits",
-    description = "How much of each subscription limit Claude Code and Codex accounts on the server have used, and when each resets. Agents using an API key, or not logged in, aren't listed.",
+    description = "How much of each subscription limit Claude Code, Codex, and Antigravity accounts on the server have used, and when each resets. Agents using an API key, or not logged in, aren't listed.",
     responses(
         (status = 200, description = "Each logged-in agent's limits", body = Vec<AgentLimits>),
     ),
@@ -152,15 +158,17 @@ pub(crate) async fn limits(State(state): State<AppState>) -> Json<Vec<AgentLimit
     let mut cache = CACHE.lock().await;
     if cache.fetched_at.is_none_or(|at| at.elapsed() >= CACHE_FOR) {
         let shell = state.read().await.shell().to_owned();
-        let [claude, codex] = agent_paths(&shell).await;
-        let (claude, codex) = tokio::join!(read_claude(claude), read_codex(codex));
+        let [claude, codex, agy] = agent_paths(&shell).await;
+        let (claude, codex, agy) =
+            tokio::join!(read_claude(claude), read_codex(codex), read_agy(agy));
         let now = Instant::now();
         cache.claude.update(claude, now);
         cache.codex.update(codex, now);
+        cache.agy.update(agy, now);
         cache.fetched_at = Some(now);
     }
     Json(
-        [&cache.claude, &cache.codex]
+        [&cache.claude, &cache.codex, &cache.agy]
             .into_iter()
             .filter_map(|slot| slot.limits.clone())
             .collect(),
@@ -174,11 +182,15 @@ fn now_seconds() -> f64 {
         .as_secs_f64()
 }
 
-/// The `PATH` the Claude and Codex CLIs run with, `None` for the server's own.
-pub(crate) async fn agent_paths(shell: &str) -> [Option<OsString>; 2] {
+/// The `PATH` the Claude, Codex, and Antigravity CLIs run with, `None` for the server's own.
+async fn agent_paths(shell: &str) -> [Option<OsString>; 3] {
     programs_paths(
         shell,
-        [Agent::Claude, Agent::Codex].map(agent_program),
+        [
+            agent_program(Agent::Claude),
+            agent_program(Agent::Codex),
+            AGY_PROGRAM.into(),
+        ],
         AskShell::Retry,
     )
     .await
@@ -395,6 +407,40 @@ async fn read_codex(path: Option<OsString>) -> Read {
     parse_codex(&reply, now_seconds())
 }
 
+async fn read_agy(path: Option<OsString>) -> Read {
+    let mut command = Command::new(AGY_PROGRAM);
+    command
+        .args(AGY_ARGS)
+        .current_dir(std::env::temp_dir())
+        // Hooks run even here; this is no pane's agent.
+        .env_remove("BTMUX_PANE_ID")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    let output = tokio::time::timeout(READ_TIMEOUT, command.output())
+        .await
+        .map_err(|_| format!("{AGY_PROGRAM}: timed out"))?
+        .map_err(|error| format!("{AGY_PROGRAM}: {error}"))?;
+    if output.status.code() == Some(AGY_NO_QUOTA) {
+        return Ok(None);
+    }
+    if !output.status.success() {
+        return Err(format!("{AGY_PROGRAM} /usage failed: {}", output.status));
+    }
+    let reply = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .rev()
+        .find_map(|line| serde_json::from_str::<Value>(line).ok())
+        .ok_or_else(|| format!("{AGY_PROGRAM} /usage printed no JSON"))?;
+    parse_agy(&reply, now_seconds())
+}
+
 /// Writes one JSON line per request, then returns the first output line `reply` accepts.
 async fn exchange(
     program: OsString,
@@ -579,14 +625,83 @@ fn codex_limit(snapshot: &Value, window: &Value) -> Option<AgentLimit> {
         },
         percent,
         resets_at: window["resetsAt"].as_f64(),
-        severity: if percent >= 100.0 {
-            LimitSeverity::Critical
-        } else if percent >= CODEX_WARNING_PERCENT {
-            LimitSeverity::Warning
-        } else {
-            LimitSeverity::Normal
-        },
+        severity: graded(percent),
     })
+}
+
+fn graded(percent: f64) -> LimitSeverity {
+    if percent >= 100.0 {
+        LimitSeverity::Critical
+    } else if percent >= WARNING_PERCENT {
+        LimitSeverity::Warning
+    } else {
+        LimitSeverity::Normal
+    }
+}
+
+/// Groups of models share each bucket, so buckets are named by window and group.
+fn parse_agy(reply: &Value, now: f64) -> Read {
+    let groups = reply["command"]["data"]["groups"]
+        .as_array()
+        .ok_or("Antigravity reported no usage groups")?;
+    let limits: Vec<_> = groups
+        .iter()
+        .flat_map(|group| {
+            let name = group["name"].as_str();
+            group["buckets"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(move |bucket| agy_limit(name, bucket))
+        })
+        .collect();
+    Ok((!limits.is_empty()).then(|| AgentLimits {
+        agent: "Antigravity".into(),
+        plan: None,
+        updated_at: now,
+        limits,
+    }))
+}
+
+fn agy_limit(group: Option<&str>, bucket: &Value) -> Option<AgentLimit> {
+    let percent = ((1.0 - bucket["remaining_fraction"].as_f64()?) * 100.0).clamp(0.0, 100.0);
+    let window = bucket["window"].as_str();
+    let base = match window.and_then(agy_window_minutes) {
+        Some(minutes) => window_label(minutes),
+        None => bucket["name"].as_str().or(window)?.to_string(),
+    };
+    Some(AgentLimit {
+        label: match group {
+            Some(group) => format!("{base} ({group})"),
+            None => base,
+        },
+        percent,
+        resets_at: bucket["reset_time"]
+            .as_str()
+            .and_then(|at| OffsetDateTime::parse(at, &Rfc3339).ok())
+            .map(|at| at.unix_timestamp() as f64),
+        severity: graded(percent),
+    })
+}
+
+/// `weekly`, `daily`, or a count with `m`, `h`, `d`, or `w`, like `5h`.
+fn agy_window_minutes(window: &str) -> Option<u64> {
+    match window {
+        "weekly" => return Some(7 * 24 * 60),
+        "daily" => return Some(24 * 60),
+        "hourly" => return Some(60),
+        _ => {}
+    }
+    let unit = window.chars().last()?;
+    let count: u64 = window[..window.len() - unit.len_utf8()].parse().ok()?;
+    let minutes = match unit {
+        'm' => 1,
+        'h' => 60,
+        'd' => 24 * 60,
+        'w' => 7 * 24 * 60,
+        _ => return None,
+    };
+    Some(count * minutes).filter(|m| *m > 0)
 }
 
 fn window_label(minutes: u64) -> String {
@@ -750,6 +865,41 @@ mod tests {
     fn codex_failures_are_not_an_absent_login() {
         assert!(parse_codex(&json!({ "error": { "code": -32603 } }), NOW).is_err());
         assert!(parse_codex(&json!({ "id": 2 }), NOW).is_err());
+    }
+
+    #[test]
+    fn agy_names_buckets_by_window_and_group() {
+        let reply = json!({ "status": "SUCCESS", "command": { "name": "usage", "data": { "groups": [
+            { "name": "Gemini Models", "buckets": [
+                { "id": "gemini-weekly", "name": "Weekly Limit Remaining", "window": "weekly",
+                  "remaining_fraction": 0.75, "reset_time": "2026-11-09T14:00:00Z" },
+                { "id": "gemini-5h", "name": "Five Hour Limit Remaining", "window": "5h",
+                  "remaining_fraction": 0.125 },
+            ] },
+            { "name": "Gemini 4 Argon", "buckets": [
+                { "name": "Argon Monthly Limit", "window": "monthly", "remaining_fraction": 0 },
+                { "name": "No fraction", "window": "weekly" },
+            ] },
+        ] } } });
+        let parsed = parse_agy(&reply, NOW).unwrap().unwrap();
+        assert_eq!(parsed.agent, "Antigravity");
+        assert_eq!(
+            parsed.limits,
+            [
+                limit("Weekly (Gemini Models)", 25.0, Some(1_794_232_800.0)),
+                AgentLimit {
+                    severity: LimitSeverity::Warning,
+                    ..limit("5-hour (Gemini Models)", 87.5, None)
+                },
+                AgentLimit {
+                    severity: LimitSeverity::Critical,
+                    ..limit("Argon Monthly Limit (Gemini 4 Argon)", 100.0, None)
+                },
+            ]
+        );
+        assert!(parse_agy(&json!({ "status": "SUCCESS" }), NOW).is_err());
+        let empty = json!({ "command": { "data": { "groups": [] } } });
+        assert_eq!(parse_agy(&empty, NOW), Ok(None));
     }
 
     #[test]

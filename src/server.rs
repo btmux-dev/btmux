@@ -193,6 +193,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/update", get(crate::update_check::status))
         .route("/api/system", get(crate::system_info::handle))
         .route("/api/health", get(crate::health::handle))
+        .route("/api/health/stream", get(crate::health::stream))
         .route("/api/wallpaper/check", get(api_wallpaper_check))
         .route(
             "/api/config/preview",
@@ -493,8 +494,10 @@ pub(crate) async fn api_create_window(
 #[cfg_attr(test, derive(utoipa::ToSchema))]
 pub(crate) struct PaneNotifyRequest {
     /// Agent harness hook event name (e.g. "Stop", "AfterAgent").
+    #[serde(alias = "hookEventName")]
     hook_event_name: Option<String>,
     /// Harness identity; shared by every event in one agent session.
+    #[serde(alias = "conversationId")]
     session_id: Option<String>,
     /// Turn identity, when the harness provides one.
     turn_id: Option<String>,
@@ -525,6 +528,12 @@ pub(crate) struct PaneNotifyRequest {
     tool_name: Option<String>,
     /// CC PermissionRequest: tool input object.
     tool_input: Option<serde_json::Value>,
+    /// Antigravity PreToolUse and PostToolUse: the tool call.
+    #[serde(rename = "toolCall")]
+    tool_call: Option<AgyToolCall>,
+    /// Antigravity Stop: why the loop ended, e.g. `NO_TOOL_CALL` or `USER_CANCELED`.
+    #[serde(rename = "terminationReason")]
+    termination_reason: Option<String>,
     /// CC StopFailure: error category.
     error: Option<String>,
     /// CC SubagentStop: agent type.
@@ -536,12 +545,27 @@ pub(crate) struct PaneNotifyRequest {
     source: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(utoipa::ToSchema))]
+pub(crate) struct AgyToolCall {
+    id: Option<String>,
+    name: Option<String>,
+    args: Option<serde_json::Value>,
+}
+
 impl PaneNotifyRequest {
     fn resolve_event(&self) -> String {
-        self.hook_event_name
+        let event = self
+            .hook_event_name
             .clone()
             .or_else(|| self.event.clone())
-            .unwrap_or_else(|| "unknown".to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        // Antigravity has one Stop event, with a reason.
+        match (event.as_str(), self.termination_reason.as_deref()) {
+            ("Stop", Some("USER_CANCELED")) => "Interrupt".into(),
+            ("Stop", Some("ERROR")) => "StopFailure".into(),
+            _ => event,
+        }
     }
 
     /// Explicit `title`/`body` override the event's defaults field by field.
@@ -575,7 +599,11 @@ impl PaneNotifyRequest {
                 )
             }
             "StopFailure" => {
-                let err = self.error.as_deref().unwrap_or("error");
+                let err = self
+                    .error
+                    .as_deref()
+                    .filter(|err| !err.is_empty())
+                    .unwrap_or("error");
                 (
                     Some(format!("Failed: {err}")),
                     self.last_assistant_message
@@ -648,12 +676,19 @@ impl PaneNotifyRequest {
 impl PaneNotifyRequest {
     /// Identifies a tool call across its permission and completion hooks.
     fn tool(&self) -> Option<ToolCall> {
+        let call = self.tool_call.as_ref();
         let input = self
             .tool_name
             .as_ref()
             .zip(self.tool_input.as_ref())
+            .or_else(|| call.and_then(|call| call.name.as_ref().zip(call.args.as_ref())))
             .map(|(name, input)| ToolInput::new(truncate_msg(name, 64), input));
-        let id = clean_status_field(self.tool_use_id.clone(), 128);
+        let id = clean_status_field(
+            self.tool_use_id
+                .clone()
+                .or_else(|| call.and_then(|call| call.id.clone())),
+            128,
+        );
         (id.is_some() || input.is_some()).then_some(ToolCall { id, input })
     }
 
@@ -725,7 +760,7 @@ fn truncate_msg(s: &str, max: usize) -> String {
     tag = "Notifications",
     operation_id = "notify-pane",
     summary = "Report an agent event",
-    description = "Takes an agent hook's JSON payload as is (Claude Code, Codex, Gemini CLI), or `event`, `title`, and `body` from other callers. Updates the pane's agent status and, for events worth attention, marks the pane and notifies every client.",
+    description = "Takes an agent hook's JSON payload as is (Claude Code, Codex, Gemini CLI, Antigravity CLI), or `event`, `title`, and `body` from other callers. Updates the pane's agent status and, for events worth attention, marks the pane and notifies every client.",
     params(
         ("pane_id", description = "Pane ID"),
     ),
@@ -782,6 +817,7 @@ pub(crate) async fn api_pane_notify(
             | "UserPromptSubmit"
             | "BeforeAgent"
             | "BeforeModel"
+            | "PreInvocation"
             | "PostToolUse"
             | "PostToolUseFailure"
             | "PermissionDenied"
@@ -1271,7 +1307,9 @@ fn infer_agent_event(event: &str, notification_type: Option<&str>) -> Option<Age
     match event {
         "SessionStart" => Some(AgentEvent::SessionStart),
         "SessionEnd" => Some(AgentEvent::SessionEnd),
-        "UserPromptSubmit" | "BeforeAgent" | "BeforeModel" => Some(AgentEvent::TurnStart),
+        "UserPromptSubmit" | "BeforeAgent" | "BeforeModel" | "PreInvocation" => {
+            Some(AgentEvent::TurnStart)
+        }
         "PermissionRequest" => Some(AgentEvent::PermissionRequest),
         "PostToolUse" | "PostToolUseFailure" | "PermissionDenied" | "AfterTool" => {
             Some(AgentEvent::ToolFinished)
@@ -2297,6 +2335,48 @@ mod pane_notification_tests {
             infer_level("AfterAgent"),
             ws::control::NotificationLevel::Attention
         ));
+    }
+
+    #[test]
+    fn resolves_antigravity_payloads() {
+        let request = |payload: serde_json::Value| -> PaneNotifyRequest {
+            serde_json::from_value(payload).unwrap()
+        };
+        let stop = |reason: &str| {
+            request(serde_json::json!({
+                "hookEventName": "Stop",
+                "conversationId": "c1",
+                "terminationReason": reason,
+                "error": "",
+                "fullyIdle": true,
+                "cwd": "/tmp",
+            }))
+        };
+        let done = stop("NO_TOOL_CALL");
+        assert_eq!(done.resolve_event(), "Stop");
+        assert_eq!(done.session_id.as_deref(), Some("c1"));
+        assert_eq!(stop("USER_CANCELED").resolve_event(), "Interrupt");
+        let failed = stop("ERROR");
+        assert_eq!(failed.resolve_event(), "StopFailure");
+        assert_eq!(
+            failed.resolve_title_body("StopFailure").0.as_deref(),
+            Some("Failed: error")
+        );
+
+        let start =
+            request(serde_json::json!({ "hookEventName": "PreInvocation", "invocationNum": 0 }));
+        assert_eq!(
+            infer_agent_event(&start.resolve_event(), None),
+            Some(AgentEvent::TurnStart)
+        );
+
+        let tool = request(serde_json::json!({
+            "hookEventName": "PostToolUse",
+            "toolCall": { "id": "t1", "name": "run_command", "args": { "CommandLine": "ls" } },
+        }));
+        let call = tool.tool().unwrap();
+        assert_eq!(call.id.as_deref(), Some("t1"));
+        assert!(call.input.is_some());
     }
 
     #[test]

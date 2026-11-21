@@ -11,8 +11,8 @@ screen rules btmux uses to detect it.
 
 btmux combines four kinds of evidence:
 
-- **Processes.** It detects interactive Codex, Claude Code, and Gemini CLI
-  processes under each pane's shell, including known Node/Bun entry points,
+- **Processes.** It detects interactive Codex, Claude Code, Gemini CLI,
+  Antigravity CLI, and OpenCode processes under each pane's shell, including known Node/Bun entry points,
   about once a second. The foreground job selects the agent whose screen it
   reads. A confirmed process exit clears the status even when Ctrl+C skips the
   end hook. Suspended or background agents stay listed with unknown activity,

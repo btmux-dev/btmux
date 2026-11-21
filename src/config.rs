@@ -444,7 +444,7 @@ pub enum SubCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Set up coding agents (Claude Code, Codex) to use btmux: a skill that
+    /// Set up coding agents (Claude Code, Codex, Antigravity CLI) to use btmux: a skill that
     /// teaches them its CLI, and a hook that tells them which pane they run
     /// in. Both take their text from the installed btmux when they run.
     Skill {
@@ -501,6 +501,8 @@ pub enum SubCommand {
     GenerateCodexHooks,
     /// Print a Gemini CLI settings.json hooks snippet for btmux pane notifications.
     GenerateGeminiCliHooks,
+    /// Print an Antigravity CLI hooks.json for btmux pane notifications.
+    GenerateAntigravityHooks,
     /// Print a fish theme that follows the btmux color scheme.
     GenerateFishTheme,
     /// Install the btmux fish theme and a conf.d snippet for btmux panes, which

@@ -957,7 +957,11 @@ try {
   await health.getByText('Default shell', { exact: true }).waitFor();
   await health.getByText('Neovim', { exact: true }).waitFor();
   await health.getByText('Claude Code', { exact: true }).waitFor();
+  await health.getByText('Antigravity CLI', { exact: true }).waitFor();
   await health.getByText('ripgrep', { exact: true }).waitFor();
+  // Results stream in after the list of checks.
+  await page.waitForFunction(() => !document.querySelector('[data-health-checking]'));
+  await health.getByText('No problems found').or(health.getByText(/^Needs attention/)).waitFor();
   await health.getByText('This browser', { exact: true }).waitFor();
   await health.getByText('WebGPU', { exact: true }).waitFor();
   await health.getByText("Allow clipboard access in the browser's site settings.").waitFor();
