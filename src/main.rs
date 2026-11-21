@@ -18,6 +18,7 @@ mod file_git;
 mod file_git_ops;
 mod file_search;
 mod fish_integration;
+mod forward;
 mod fs_ops;
 mod fzf;
 mod git;
@@ -32,6 +33,7 @@ mod mcp;
 mod multipass;
 mod native_editor;
 mod pane_git;
+mod pane_ports;
 mod paste_image;
 mod persistence;
 mod popup;
@@ -221,6 +223,9 @@ async fn main() {
             )
             .await,
         ),
+        Some(config::SubCommand::Forward(forward)) => {
+            std::process::exit(forward::run(args.profile.as_deref(), forward).await)
+        }
         Some(config::SubCommand::Tmux(command)) => {
             std::process::exit(tmux_cli::run(args.profile.as_deref(), command.clone()).await)
         }

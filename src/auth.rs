@@ -787,6 +787,7 @@ mod middleware_tests {
             "/ws/control",
             "/ws/files",
             "/ws/pane/id",
+            "/ws/forward/id?port=80",
             "/mcp",
         ] {
             let request = Request::builder()

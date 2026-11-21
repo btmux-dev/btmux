@@ -16,6 +16,8 @@ actions, saved state, and API types can change in any release.
 - `[native-editor] virtual-text`, also in Settings as **Inline diagnostics**,
   shows each line's diagnostic at the end of the line.
   ([#181](https://github.com/btmux-dev/btmux/pull/181))
+- `btmux forward` forwards a TCP port that a pane's program listens on, such
+  as a dev server, to a local port on your computer.
 
 ### Changed
 

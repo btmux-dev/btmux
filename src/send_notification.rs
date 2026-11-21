@@ -20,10 +20,19 @@ pub async fn run(
     }
 }
 
-/// The server's URL and token: this pane's server, unless `--profile` names
-/// one, else the profile's registration.
+/// A server named on the command line (`btmux forward --server`), whose
+/// token comes from `BTMUX_AUTH_TOKEN`.
+pub static SERVER_URL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// The server's URL and token: `SERVER_URL`, else this pane's server, unless
+/// `--profile` names one, else the profile's registration.
 pub fn server(profile: Option<&str>) -> Result<(String, String), String> {
     let env = |name| std::env::var(name).ok().filter(|v| !v.is_empty());
+    if let Some(url) = SERVER_URL.get() {
+        let token =
+            env("BTMUX_AUTH_TOKEN").ok_or("--server needs the token in BTMUX_AUTH_TOKEN")?;
+        return Ok((url.trim_end_matches('/').to_string(), token));
+    }
     if profile.is_none() {
         if let (Some(url), Some(token)) = (env("BTMUX_API_URL"), env("BTMUX_AUTH_TOKEN")) {
             return Ok((url, token));

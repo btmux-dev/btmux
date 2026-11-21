@@ -124,6 +124,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/ws/editor", get(ws::editor::handle))
         .route("/ws/browser", get(crate::browser::handle))
         .route("/ws/files", get(ws::files::handle).with_state(files_state))
+        .route("/ws/forward/{pane_id}", get(ws::forward::handle))
         .route(
             "/api/sessions",
             axum::routing::get(api_list_sessions)

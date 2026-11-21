@@ -1208,6 +1208,79 @@
         }
       }
     },
+    "/api/panes/{pane_id}/ports": {
+      "get": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "List a pane's listening ports",
+        "description": "The TCP ports that the pane's programs listen on, including its popups', as `btmux forward` can forward them.",
+        "operationId": "list-pane-ports",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The listeners, by port",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Listener"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed ID",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane"
+          },
+          "409": {
+            "description": "The pane is in a sandboxed session",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/panes/{pane_id}/focus": {
       "post": {
         "tags": [
@@ -4669,6 +4742,39 @@
           "warning",
           "critical"
         ]
+      },
+      "Listener": {
+        "type": "object",
+        "required": [
+          "port",
+          "address"
+        ],
+        "properties": {
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "address": {
+            "type": "string",
+            "description": "The address it listens on, such as `127.0.0.1` or `0.0.0.0`."
+          },
+          "pid": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "process": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The listening process's name."
+          }
+        }
       },
       "ModelTelemetry": {
         "type": "object",

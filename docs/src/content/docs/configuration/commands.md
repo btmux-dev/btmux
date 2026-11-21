@@ -1158,6 +1158,24 @@ Options:
   -t <TARGET>  A pane, window, or session ID, or SESSION[:WINDOW[.PANE]] by name or index; an empty part is the current one (:1, :.2). Default: this pane
 ```
 
+### `btmux forward`
+
+Listen on a local port and forward each connection to a TCP port that a program in the pane listens on, such as a dev server, until Ctrl-C. Prints the local URL. Exits 3 when the pane closes
+
+```text
+Usage: btmux forward [OPTIONS] [PORT]
+
+Arguments:
+  [PORT]  The pane's port. Default: its only listening port
+
+Options:
+  -t <TARGET>                    The pane: an ID or SESSION[:WINDOW[.PANE]]. Default: this pane
+      --bind <BIND>              Local address to listen on [default: 127.0.0.1]
+      --local-port <LOCAL_PORT>  Local port. Default: the pane's port when it's free here, else any
+      --open                     Open the forwarded URL in the default browser
+      --server <URL>             Server URL, such as https://machine.tailnet.ts.net:8004. The token is read from BTMUX_AUTH_TOKEN
+```
+
 ## Setup
 
 ### `btmux completions`
