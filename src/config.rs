@@ -38,6 +38,7 @@ pub const DEFAULT_PTY_ROWS: u16 = 24;
 pub const DEFAULT_PREFIX: &str = "C-a";
 pub const DEFAULT_REPEAT_TIME: u32 = 0;
 pub const DEFAULT_ANIMATIONS: bool = true;
+pub const DEFAULT_VSCODE_KEYS: bool = true;
 pub const DEFAULT_SHOW_PANE_TITLES: bool = false;
 pub const DEFAULT_CHECK_FOR_UPDATES: bool = true;
 pub const DEFAULT_WALLPAPER_OPACITY: f32 = 0.10;
@@ -950,6 +951,10 @@ pub struct FileConfig {
     /// which another repeatable key runs without the prefix. 0 disables.
     #[serde(rename = "repeat-time")]
     pub repeat_time: u32,
+    /// VS Code's keys without the prefix, such as Cmd+Shift+P for the
+    /// command palette.
+    #[serde(rename = "vscode-keys")]
+    pub vscode_keys: bool,
     /// Enable animations in the browser (e.g. border highlight when switching
     /// panes, panes growing and shrinking as they split and close). Set to
     /// false to disable all animated effects.
@@ -1117,6 +1122,7 @@ impl Default for FileConfig {
             shell: None,
             worktree_path: None,
             repeat_time: DEFAULT_REPEAT_TIME,
+            vscode_keys: DEFAULT_VSCODE_KEYS,
             animations: DEFAULT_ANIMATIONS,
             show_pane_titles: DEFAULT_SHOW_PANE_TITLES,
             check_for_updates: DEFAULT_CHECK_FOR_UPDATES,
@@ -1552,6 +1558,8 @@ pub struct ClientConfig {
     pub light_theme: Theme,
     /// Repeat window in ms for repeatable keys; 0 disables.
     pub repeat_time: u32,
+    /// Whether VS Code's keys work without the prefix.
+    pub vscode_keys: bool,
     /// Whether CSS animations/transitions are enabled in the browser.
     pub animations: bool,
     /// Whether panes render a per-pane title bar.
@@ -2060,6 +2068,10 @@ pub fn generate_config_toml() -> String {
 # runs without pressing the prefix again (tmux repeat-time). 0 (default) disables.
 # repeat-time = {DEFAULT_REPEAT_TIME}
 
+# VS Code's keys without the prefix: Cmd+Shift+P (Ctrl+Shift+P on Windows and
+# Linux) opens the command palette, Cmd+Shift+E the file browser, and so on.
+# vscode-keys = {DEFAULT_VSCODE_KEYS}
+
 # Enable animations in the browser (e.g. border highlight when switching panes,
 # panes growing and shrinking as they split and close). Set to false to disable
 # all animated effects.
@@ -2556,6 +2568,7 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         dark_theme: dark_palette.to_theme(),
         light_theme: light_palette.to_theme(),
         repeat_time: file.repeat_time,
+        vscode_keys: file.vscode_keys,
         animations: file.animations,
         show_pane_titles: file.show_pane_titles,
         wallpaper: file.wallpaper.clone(),
@@ -2676,6 +2689,7 @@ pub struct ConfigUpdate {
     pub cursor_animation_duration: Option<f32>,
     pub cell_background_opacity: Option<f32>,
     pub animations: Option<bool>,
+    pub vscode_keys: Option<bool>,
     pub console_level: Option<String>,
     pub file_level: Option<String>,
     pub os_notifications: Option<bool>,
@@ -2785,6 +2799,9 @@ impl ConfigUpdate {
         }
         if other.animations.is_some() {
             self.animations = other.animations;
+        }
+        if other.vscode_keys.is_some() {
+            self.vscode_keys = other.vscode_keys;
         }
         if other.console_level.is_some() {
             self.console_level = other.console_level.clone();
@@ -2953,6 +2970,9 @@ pub fn resolve_with_overrides(
     }
     if let Some(animations) = overrides.animations {
         file.animations = animations;
+    }
+    if let Some(vscode_keys) = overrides.vscode_keys {
+        file.vscode_keys = vscode_keys;
     }
     if let Some(console_level) = &overrides.console_level {
         file.log.console_level = console_level.clone();

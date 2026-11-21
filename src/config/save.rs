@@ -174,6 +174,9 @@ fn apply(doc: &mut DocumentMut, u: &ConfigUpdate) {
     if let Some(v) = u.animations {
         push(&mut root, "animations", Some(v.into()));
     }
+    if let Some(v) = u.vscode_keys {
+        push(&mut root, "vscode-keys", Some(v.into()));
+    }
     if let Some(v) = &u.wallpaper {
         push(&mut root, "wallpaper", text(v));
     }

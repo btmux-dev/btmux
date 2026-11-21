@@ -1122,7 +1122,10 @@ the browser. Actions are kebab-case strings (`split-vertical`, `new-session`, â€
 each mapping 1:1 to a case in `runAction` (`useKeybindings.ts`). **To add a binding
 you must touch both:** add the default in `config.rs` and the handler case in
 `useKeybindings.ts`. `0-9` window-select is special-cased in the frontend, not in
-the bind table.
+the bind table, as are VS Code's keys (`lib/workbenchKeys.ts`, `vscode-keys`),
+which run actions without the prefix on the focused pane or popup (terminal
+ones only from its terminal), after the prefix and its bindings, and are left
+to VS Code while it has focus.
 
 `useKeybindings.ts` parses the configured prefix (the frontend matches `C-`/`M-`
 modifiers + key),

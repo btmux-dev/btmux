@@ -21,12 +21,13 @@ import { ConfigErrorDialog } from './ConfigErrorBanner';
 import { useStore } from '../state/store';
 import type { ClientMessage } from '../protocol/messages';
 import type { Bind, ClientConfig, Command, NewSessionSandbox, Runtime } from '../state/types';
-import { getPrefix, getSmoothScrollDuration } from '../state/configDefaults';
+import { getPrefix, getSmoothScrollDuration, getVscodeKeys } from '../state/configDefaults';
 import { KeyCap, KeyHint } from './KeyHint';
 import { actionLabel } from '../lib/actionLabel';
 import { runAction } from '../hooks/useKeybindings';
 import { EDITOR_COMMANDS } from '../lib/nativeEditor/registry';
-import { editorKeyRows, editorKeys, type EditorKey } from '../lib/nativeEditor/keyHelp';
+import { cmKeyCap, editorKeyRows, editorKeys, type EditorKey } from '../lib/nativeEditor/keyHelp';
+import { OPEN_SETTINGS, workbenchKeys, workbenchKeysFor } from '../lib/workbenchKeys';
 import { EditorKeys } from './EditorKeys';
 import { usePressHint } from '../hooks/usePressHint';
 import { smoothScrollBy } from '../lib/smoothScroll';
@@ -162,8 +163,14 @@ const UNAVAILABLE_EDITOR: Record<string, (config: ClientConfig | null) => boolea
   browser: (config) => !config?.browser,
 };
 
-/** A palette entry, with the native editor's keys for its action. */
+/** A palette entry, with the keys that run it without the prefix. */
 type PaletteItem = Command & { editorKeys?: EditorKey[] };
+
+/** VS Code's keys for an action, as palette keys, if they're on. */
+function chordKeys(action: string, config: ClientConfig | null): EditorKey[] {
+  if (!getVscodeKeys(config)) return [];
+  return workbenchKeysFor(action).map((key) => ({ caps: [cmKeyCap(key)] }));
+}
 
 /** Keybinding actions as palette entries, after the server's own commands. */
 function actionCommands(commands: Command[], config: ClientConfig | null): PaletteItem[] {
@@ -182,7 +189,7 @@ function actionCommands(commands: Command[], config: ClientConfig | null): Palet
         label: actionLabel(action, config?.popups),
         description: bound ? `${prefix}, then ${bound.join(' or ')}` : '',
         confirm: null,
-        editorKeys: EDITOR_COMMANDS.includes(action) ? editorKeys(action, vim) : undefined,
+        editorKeys: EDITOR_COMMANDS.includes(action) ? editorKeys(action, vim) : chordKeys(action, config),
       };
     });
 }
@@ -237,7 +244,9 @@ export function Overlay({ sessionId, send, config }: Props) {
     () =>
       overlay?.mode === 'command'
         ? [
-            ...overlay.commands,
+            ...overlay.commands.map((command) =>
+              command.id === 'open-config' ? { ...command, editorKeys: chordKeys(OPEN_SETTINGS, config) } : command,
+            ),
             ...(isDesktopApp() ? [SWITCH_SERVER, NEW_WINDOW] : []),
             ...actionCommands(overlay.commands, config),
           ]
@@ -649,6 +658,27 @@ export function Overlay({ sessionId, send, config }: Props) {
                   </Section>
                 ) : null;
               })}
+              {getVscodeKeys(config) && (
+                <Section variant="transparent" data-workbench-key-help>
+                  <Heading level={3}>VS Code keys</Heading>
+                  <Text color="secondary">Without the prefix. VS Code keeps them while it has focus.</Text>
+                  <List density="compact" hasDividers>
+                    {workbenchKeys()
+                      // Quick open is the native editor's.
+                      .filter(({ action }) => action !== 'editor-quick-open' || config?.editor === 'native')
+                      .map(({ action, key, terminal }) => (
+                        <ListItem
+                          key={action}
+                          label={
+                            (action === OPEN_SETTINGS ? 'Settings' : actionLabel(action, config?.popups)) +
+                            (terminal ? ' (in a terminal)' : '')
+                          }
+                          endContent={<KeyCap keys={cmKeyCap(key)} />}
+                        />
+                      ))}
+                  </List>
+                </Section>
+              )}
               {config && (
                 <Section variant="transparent" data-editor-key-help>
                   <Heading level={3}>Native editor</Heading>
