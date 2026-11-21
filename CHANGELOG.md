@@ -14,8 +14,10 @@ actions, saved state, and API types can change in any release.
   setup` installs its status hooks, the btmux skill, and the hook that tells
   it its pane, and agent view's Usage tab shows its plan limits. The About
   dialog's Health tab lists it.
+  ([#188](https://github.com/btmux-dev/btmux/pull/188))
 - The About dialog's Health tab shows each check as it finishes, instead of
   waiting for the slowest.
+  ([#188](https://github.com/btmux-dev/btmux/pull/188))
 
 - `Cmd+Shift+P` (`Ctrl+Shift+P` on Windows and Linux) opens the command
   palette, as in VS Code.
@@ -82,6 +84,7 @@ actions, saved state, and API types can change in any release.
 
 - `btmux skill setup` no longer sets up Gemini CLI when only Antigravity CLI,
   which shares its `~/.gemini` directory, is installed.
+  ([#188](https://github.com/btmux-dev/btmux/pull/188))
 
 ## [0.0.215] - 2026-11-20
 
