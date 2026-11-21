@@ -17,7 +17,7 @@ use utoipa::openapi::{RefOr, Response};
 use utoipa::{Modify, OpenApi};
 
 use super::{pane_io, panes, sessions, windows, worktrees};
-use crate::{agent_limits, events, health, popup, server, system_info, telemetry};
+use crate::{agent_limits, events, health, pane_exit, popup, server, system_info, telemetry};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -64,6 +64,7 @@ use crate::{agent_limits, events, health, popup, server, system_info, telemetry}
         panes::api_kill_pane_by_id,
         panes::api_select_pane_by_id,
         panes::api_pane_ports,
+        pane_exit::api_wait_exit,
         server::api_focus_pane,
         server::api_open_file_browser,
         server::api_open_editor,
@@ -789,6 +790,37 @@ mod tests {
                 M::GET,
                 ports,
                 &format!("/api/panes/{NIL}/ports"),
+                None,
+            )
+            .await;
+        for body in [
+            json!({"direction": "right", "command": {"shell": " "}}),
+            json!({"direction": "right", "env": [["NAME", "value"]]}),
+            json!({"direction": "right", "command": {"exec": ["true"]}, "cwd": "/nonexistent"}),
+        ] {
+            check
+                .expect(S::BAD_REQUEST, M::POST, template, &split, Some(body))
+                .await;
+        }
+
+        // An unspawned shell doesn't exit.
+        let exit = "/api/panes/{pane_id}/exit";
+        let waited = check
+            .expect(
+                S::OK,
+                M::GET,
+                exit,
+                &format!("/api/panes/{pane}/exit?timeout_ms=0"),
+                None,
+            )
+            .await;
+        assert_eq!(waited, json!({"status": null, "timed_out": true}));
+        check
+            .expect(
+                S::NOT_FOUND,
+                M::GET,
+                exit,
+                &format!("/api/panes/{NIL}/exit"),
                 None,
             )
             .await;

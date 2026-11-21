@@ -73,6 +73,8 @@ pub struct Handoff {
     pub prompt: u32,
     /// OSC 7501 records.
     pub programs: Vec<program_status::Record>,
+    /// The pane stays once its program exits.
+    pub keep_open: bool,
 }
 
 /// What a reader stopped for a handoff leaves behind.
@@ -328,6 +330,7 @@ impl PtyHandle {
         set_cloexec(master.as_raw_fd(), true).map_err(|e| e.to_string())?;
         *self.title.lock().unwrap() = handoff.title;
         *self.cwd.lock().unwrap() = handoff.cwd;
+        self.keep_open = handoff.keep_open;
         self.cwd_remote.store(handoff.cwd_remote, Ordering::Relaxed);
         self.spawn_cwd = handoff.spawn_cwd;
         self.bin = handoff.bin;
@@ -418,6 +421,7 @@ impl PtyHandle {
                 shell_name: self.shell_name.clone(),
                 prompt: self.prompt.load(Ordering::Relaxed),
                 programs: self.program_status.lock().unwrap().records().to_vec(),
+                keep_open: self.keep_open,
             },
         )))
     }
@@ -572,6 +576,7 @@ impl PtyHandle {
         let mut output = self.output_pipeline(interceptor, input_tx.clone());
         let exit_tx = self.exit_tx.clone();
         let pane_id = self.pane_id;
+        let reader_done = self.reader_done.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             let mut stopped = false;
@@ -616,6 +621,7 @@ impl PtyHandle {
                     unsent: unsent.unwrap_or_default(),
                 }));
             } else {
+                reader_done.store(true, Ordering::Release);
                 let _ = exit_tx.send(pane_id);
             }
         });

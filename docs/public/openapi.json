@@ -429,7 +429,7 @@
             }
           },
           "400": {
-            "description": "A malformed ID or JSON body",
+            "description": "An empty command, `env` without one, or a `cwd` that isn't a directory; or a malformed ID or JSON body",
             "content": {
               "text/plain": {
                 "schema": {
@@ -475,7 +475,7 @@
             }
           },
           "422": {
-            "description": "A body that doesn't match its schema",
+            "description": "The command can't start; or a body that doesn't match its schema",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1034,7 +1034,7 @@
             }
           },
           "400": {
-            "description": "Invalid direction; or a malformed ID or JSON body",
+            "description": "An invalid direction, an empty command, `env` without one, or a `cwd` that isn't a directory; or a malformed ID or JSON body",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1080,7 +1080,7 @@
             }
           },
           "422": {
-            "description": "A body that doesn't match its schema",
+            "description": "The command can't start; or a body that doesn't match its schema",
             "content": {
               "text/plain": {
                 "schema": {
@@ -4472,6 +4472,59 @@
             ],
             "description": "Make it the active window.",
             "default": true
+          },
+          "command": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PopupCommand",
+                "description": "Run this instead of the shell, starting now rather than once a client\nshows the pane. The pane closes when it exits, unless `keep_open`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "env": {
+            "allOf": [
+              {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "array",
+                  "items": false,
+                  "prefixItems": [
+                    {
+                      "type": "string",
+                      "description": "Name"
+                    },
+                    {
+                      "type": "string",
+                      "description": "Value"
+                    }
+                  ],
+                  "minItems": 2
+                },
+                "description": "Replaces the server's environment.",
+                "examples": [
+                  [
+                    [
+                      "NAME",
+                      "value"
+                    ]
+                  ]
+                ]
+              },
+              {
+                "type": "object",
+                "description": "With `command`: replaces the server's environment."
+              }
+            ]
+          },
+          "keep_open": {
+            "type": "boolean",
+            "description": "Keep the pane, with its output, after its program exits."
           }
         }
       },
@@ -5835,6 +5888,26 @@
           }
         }
       },
+      "PaneExit": {
+        "type": "object",
+        "required": [
+          "timed_out"
+        ],
+        "properties": {
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The program's exit status, 128 + N if signal N ended it; null if it\nhasn't exited, or its pane closed before it reported one."
+          },
+          "timed_out": {
+            "type": "boolean",
+            "description": "The wait ended before the program exited."
+          }
+        }
+      },
       "PaneGit": {
         "type": "object",
         "description": "A pane's place in a git repo.",
@@ -5881,7 +5954,8 @@
           "window_zoomed_flag",
           "pane_id",
           "pane_index",
-          "pane_active"
+          "pane_active",
+          "pane_dead"
         ],
         "properties": {
           "session_id": {
@@ -5931,6 +6005,18 @@
               "string",
               "null"
             ]
+          },
+          "pane_dead": {
+            "type": "boolean",
+            "description": "Its program exited; only a pane created with `keep_open` stays."
+          },
+          "pane_dead_status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The program's exit status, 128 + N if signal N ended it."
           }
         }
       },
@@ -6716,6 +6802,59 @@
             ],
             "description": "Make the new pane active.",
             "default": true
+          },
+          "command": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PopupCommand",
+                "description": "Run this instead of the shell, starting now rather than once a client\nshows the pane. The pane closes when it exits, unless `keep_open`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "env": {
+            "allOf": [
+              {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "array",
+                  "items": false,
+                  "prefixItems": [
+                    {
+                      "type": "string",
+                      "description": "Name"
+                    },
+                    {
+                      "type": "string",
+                      "description": "Value"
+                    }
+                  ],
+                  "minItems": 2
+                },
+                "description": "Replaces the server's environment.",
+                "examples": [
+                  [
+                    [
+                      "NAME",
+                      "value"
+                    ]
+                  ]
+                ]
+              },
+              {
+                "type": "object",
+                "description": "With `command`: replaces the server's environment."
+              }
+            ]
+          },
+          "keep_open": {
+            "type": "boolean",
+            "description": "Keep the pane, with its output, after its program exits."
           }
         }
       },

@@ -213,12 +213,28 @@ pub struct PtyHandle {
     color_reports: Arc<AtomicBool>,
     /// The Multipass guest the shell runs in, through `btmux guest-shell`.
     guest: Option<Arc<crate::multipass::Guest>>,
-    /// A popup's program, run instead of the shell.
-    popup: Option<crate::popup::Spawn>,
+    /// A popup's or a pane's program, run instead of the shell.
+    command: Option<crate::popup::Spawn>,
     /// `BTMUX_PANE_ID`: a popup's names the pane it opened over.
     env_pane: Uuid,
     /// The shell's exit status once reaped; 128 + the signal if killed.
     exit_status: Arc<Mutex<Option<i32>>>,
+    /// The pane stays, with its output, once its program exits.
+    keep_open: bool,
+    /// The reader reached the end of the output.
+    reader_done: Arc<AtomicBool>,
+    /// A kept pane's exit was written to its output.
+    exit_noted: AtomicBool,
+}
+
+/// A kept-open pane whose program exited, for an upgraded server.
+pub struct Exited {
+    pub status: Option<i32>,
+    pub cols: u16,
+    pub rows: u16,
+    pub journal: Vec<Output>,
+    pub title: Option<String>,
+    pub cwd: Option<String>,
 }
 
 impl PtyHandle {
@@ -274,27 +290,115 @@ impl PtyHandle {
             palette: env.palette.clone(),
             color_reports: Arc::default(),
             guest: None,
-            popup: None,
+            command: None,
             env_pane: pane_id,
             exit_status: Arc::default(),
+            keep_open: false,
+            reader_done: Arc::default(),
+            exit_noted: AtomicBool::new(false),
         }
     }
 
     /// Run a popup's program over `pane` instead of the shell.
     pub fn with_popup(mut self, pane: Uuid, spawn: crate::popup::Spawn) -> Self {
         self.env_pane = pane;
-        self.popup = Some(spawn);
+        self.command = Some(spawn);
         self
+    }
+
+    fn is_popup(&self) -> bool {
+        self.env_pane != self.pane_id
+    }
+
+    /// Run a program instead of the shell, once spawned.
+    pub fn set_command(&mut self, spawn: crate::popup::Spawn) {
+        self.command = Some(spawn);
+    }
+
+    pub fn keep_open(&self) -> bool {
+        self.keep_open
+    }
+
+    pub fn set_keep_open(&mut self, keep_open: bool) {
+        self.keep_open = keep_open;
     }
 
     /// A popup's program and directory, until it is spawned.
     pub fn popup_spawn(&self) -> Option<(&crate::popup::Spawn, Option<&Path>)> {
-        Some((self.popup.as_ref()?, self.spawn_cwd.as_deref()))
+        Some((self.command.as_ref()?, self.spawn_cwd.as_deref()))
     }
 
     /// The exit status, once the shell was reaped.
     pub fn exit_status(&self) -> Option<i32> {
         *self.exit_status.lock().unwrap()
+    }
+
+    /// Its program ran and is gone.
+    pub fn exited(&self) -> bool {
+        self.is_spawned() && !self.child_alive()
+    }
+
+    /// Whether the pane's program is still running, for viewers' input.
+    pub fn alive_probe(&self) -> impl Fn() -> bool + Send + Sync + 'static {
+        let child = self.child.clone();
+        move || child.lock().unwrap().is_some()
+    }
+
+    /// Writes a kept pane's exit after its last output, once both the reader
+    /// and the waiter are done. `true` if it did.
+    pub fn note_exit(&self) -> bool {
+        if !self.keep_open
+            || !self.exited()
+            || !self.reader_done.load(Ordering::Acquire)
+            || self.exit_noted.swap(true, Ordering::AcqRel)
+        {
+            return false;
+        }
+        let text = match self.exit_status() {
+            Some(status) => format!("\x1b[0m\r\n[exited with status {status}]\r\n"),
+            None => "\x1b[0m\r\n[exited]\r\n".into(),
+        };
+        let bytes = Bytes::from(text.into_bytes());
+        let mut replay = self.scrollback.lock().unwrap();
+        replay.push(Output::Data(bytes.clone()));
+        let _ = self.output_tx.send(Output::Data(bytes));
+        true
+    }
+
+    /// A kept pane whose program exited, for an upgraded server.
+    pub fn export_exited(&self) -> Option<Exited> {
+        if !self.keep_open || !self.exited() {
+            return None;
+        }
+        let (cols, rows) = self.size();
+        Some(Exited {
+            status: self.exit_status(),
+            cols,
+            rows,
+            journal: self.journal(),
+            title: self.title.lock().unwrap().clone(),
+            cwd: self.cwd.lock().unwrap().clone(),
+        })
+    }
+
+    /// Show what an old server's kept pane showed, without a program.
+    pub fn restore_exited(&mut self, exited: Exited) {
+        *self.scrollback.lock().unwrap() = Replay::restore(
+            exited.cols,
+            exited.rows,
+            self.scrollback_bytes,
+            exited.journal,
+        );
+        *self.size.lock().unwrap() = (exited.cols, exited.rows);
+        *self.exit_status.lock().unwrap() = exited.status;
+        *self.title.lock().unwrap() = exited.title;
+        if exited.cwd.is_some() {
+            *self.cwd.lock().unwrap() = exited.cwd;
+        }
+        self.keep_open = true;
+        self.reader_done.store(true, Ordering::Release);
+        self.exit_noted.store(true, Ordering::Release);
+        *self.spawned.lock().unwrap() = true;
     }
 
     /// Whether the terminal hides what's typed, as at a password prompt.
@@ -426,6 +530,10 @@ impl PtyHandle {
     }
 
     pub fn foreground_pgrp(&self) -> Option<Pid> {
+        // A master whose program exited may still name its last group.
+        if !self.child_alive() {
+            return None;
+        }
         self.probe.lock().unwrap().as_ref().and_then(foreground)
     }
 
@@ -440,7 +548,8 @@ impl PtyHandle {
 
         // Not kept: a popup's environment can be large. A popup that fails to
         // start is closed.
-        let popup = self.popup.take();
+        let popup = self.command.take();
+        let is_popup = self.is_popup();
         // Prepare all fallible resources before starting worker threads. The PTY
         // kernel buffer retains initial shell output until the reader starts.
         let argv: Vec<String> = match (&self.guest, &popup) {
@@ -449,7 +558,7 @@ impl PtyHandle {
                 let cwd = self.spawn_cwd.as_deref().and_then(Path::to_str);
                 std::iter::once(exe.to_string_lossy().into_owned())
                     // A popup's directory comes from its guest caller.
-                    .chain(guest.wrapper_args(cwd, popup.is_some()))
+                    .chain(guest.wrapper_args(cwd, is_popup))
                     .chain(popup.iter().flat_map(|popup| popup.command.guest_args()))
                     .collect()
             }
@@ -476,9 +585,10 @@ impl PtyHandle {
         cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.env("BTMUX_PANE_ID", self.env_pane.to_string());
         // Widgets its programs open show in the popup.
-        match popup {
-            Some(_) => cmd.env("BTMUX_POPUP_ID", self.pane_id.to_string()),
-            None => cmd.env_remove("BTMUX_POPUP_ID"),
+        if is_popup {
+            cmd.env("BTMUX_POPUP_ID", self.pane_id.to_string());
+        } else {
+            cmd.env_remove("BTMUX_POPUP_ID");
         }
         self.bin = server_exe().map(Path::to_path_buf);
         if let Some(exe) = &self.bin {

@@ -416,6 +416,17 @@ pub(crate) struct CreateWindowRequest {
     /// Make it the active window.
     #[cfg_attr(test, schema(default = true))]
     select: Option<bool>,
+    /// Run this instead of the shell, starting now rather than once a client
+    /// shows the pane. The pane closes when it exits, unless `keep_open`.
+    #[serde(default)]
+    command: Option<crate::popup::PopupCommand>,
+    /// With `command`: replaces the server's environment.
+    #[serde(default)]
+    #[cfg_attr(test, schema(value_type = crate::popup::Environment, inline))]
+    env: Option<Vec<(String, String)>>,
+    /// Keep the pane, with its output, after its program exits.
+    #[serde(default)]
+    keep_open: bool,
 }
 
 #[derive(Serialize)]
@@ -436,7 +447,9 @@ pub(crate) struct CreateWindowResponse {
     ),
     responses(
         (status = 200, description = "The new window's first pane", body = CreateWindowResponse),
+        (status = 400, description = "An empty command, `env` without one, or a `cwd` that isn't a directory", body = String, content_type = "text/plain"),
         (status = 404, description = "No such session"),
+        (status = 422, description = "The command can't start", body = String, content_type = "text/plain"),
     ),
 ))]
 pub(crate) async fn api_create_window(
@@ -444,6 +457,10 @@ pub(crate) async fn api_create_window(
     Path(session_id): Path<Uuid>,
     Json(body): Json<CreateWindowRequest>,
 ) -> Response {
+    let spawn = match crate::pane_exit::spawn_of(body.command, body.env, body.cwd.as_deref()) {
+        Ok(spawn) => spawn,
+        Err(error) => return (StatusCode::BAD_REQUEST, error).into_response(),
+    };
     let cwd = body.cwd.map(std::path::PathBuf::from);
     let mut mgr = state.write().await;
     if !mgr.sessions.iter().any(|s| s.id == session_id) {
@@ -455,8 +472,11 @@ pub(crate) async fn api_create_window(
     else {
         return StatusCode::NOT_FOUND.into_response();
     };
-
+    let launched = mgr.launch(pane_id, spawn, body.keep_open).await;
     ws::control::broadcast_state(&mgr);
+    if let Err(error) = launched {
+        return (StatusCode::UNPROCESSABLE_ENTITY, error).into_response();
+    }
 
     Json(CreateWindowResponse {
         session_id,

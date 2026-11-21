@@ -59,7 +59,7 @@ pub enum PopupCommand {
 }
 
 impl PopupCommand {
-    fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), String> {
         let empty = match self {
             Self::Exec(argv) => argv.first().is_none_or(String::is_empty),
             Self::Shell(command) => command.trim().is_empty(),
@@ -558,7 +558,7 @@ pub struct PopupRequest {
 
 /// `PopupRequest::env`: utoipa's tuple schema leaves out `minItems`.
 #[cfg(test)]
-struct Environment;
+pub(crate) struct Environment;
 
 #[cfg(test)]
 impl utoipa::PartialSchema for Environment {
@@ -777,22 +777,43 @@ pub struct PopupArgs {
 
 impl PopupArgs {
     fn command(&self) -> PopupCommand {
-        match self.command.as_slice() {
-            [command] => PopupCommand::Shell(command.clone()),
-            argv => PopupCommand::Exec(argv.to_vec()),
-        }
+        command_of(&self.command)
     }
 
     fn extra_env(&self) -> Result<Vec<(String, String)>, String> {
-        self.env
-            .iter()
-            .map(|pair| {
-                pair.split_once('=')
-                    .filter(|(name, _)| !name.is_empty())
-                    .map(|(name, value)| (name.to_string(), value.to_string()))
-                    .ok_or_else(|| format!("{pair}: expected NAME=VALUE"))
-            })
-            .collect()
+        parse_env(&self.env)
+    }
+}
+
+/// `NAME=VALUE` arguments.
+pub(crate) fn parse_env(pairs: &[String]) -> Result<Vec<(String, String)>, String> {
+    pairs
+        .iter()
+        .map(|pair| {
+            pair.split_once('=')
+                .filter(|(name, _)| !name.is_empty())
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .ok_or_else(|| format!("{pair}: expected NAME=VALUE"))
+        })
+        .collect()
+}
+
+/// This process's environment with `extra` set, for a program the server
+/// runs as if from here.
+pub(crate) fn caller_env(extra: &[(String, String)]) -> Vec<(String, String)> {
+    let mut env: Vec<(String, String)> = std::env::vars_os()
+        .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
+        .collect();
+    env.retain(|(key, _)| !extra.iter().any(|(name, _)| name == key));
+    env.extend(extra.iter().cloned());
+    env
+}
+
+/// Command arguments: one is a command line for the shell.
+pub(crate) fn command_of(args: &[String]) -> PopupCommand {
+    match args {
+        [command] => PopupCommand::Shell(command.clone()),
+        argv => PopupCommand::Exec(argv.to_vec()),
     }
 }
 
@@ -823,11 +844,7 @@ async fn run_popup(profile: Option<&str>, args: &PopupArgs) -> Result<i32, Strin
         }
         Err(error) => return Err(error),
     };
-    let mut env: Vec<(String, String)> = std::env::vars_os()
-        .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
-        .collect();
-    env.retain(|(key, _)| !extra.iter().any(|(name, _)| name == key));
-    env.extend(extra.iter().cloned());
+    let env = caller_env(&extra);
     let request = PopupRequest {
         id: Some(Uuid::new_v4()),
         command: command.clone(),
@@ -894,7 +911,7 @@ async fn wait(profile: Option<&str>, pane: Uuid, id: Uuid) -> Result<i32, String
 
 /// A request repeated while the server is unreachable or failing, as while
 /// it restarts in place, for up to a minute.
-async fn request_retrying(
+pub(crate) async fn request_retrying(
     profile: Option<&str>,
     method: reqwest::Method,
     path: &str,
@@ -1200,12 +1217,17 @@ mod tests {
                 None,
             )
             .unwrap();
-            let (sessions, popups, panes) = mgr.export_handoff(Duration::from_secs(2)).unwrap();
+            let (sessions, popups, panes, _) = mgr.export_handoff(Duration::from_secs(2)).unwrap();
             assert!(panes.is_empty());
             (sessions, serde_json::to_string(&popups).unwrap())
         };
         let (mut manager, exit_rx) = manager();
-        manager.restore_handoff(sessions, serde_json::from_str(&popups).unwrap(), Vec::new());
+        manager.restore_handoff(
+            sessions,
+            serde_json::from_str(&popups).unwrap(),
+            Vec::new(),
+            Default::default(),
+        );
         let (state, app) = serve(manager, exit_rx);
         let id = open_id(&state).await;
         show(&state, id).await.unwrap();

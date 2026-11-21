@@ -23,7 +23,7 @@ const groups = {
     "list-sessions", "list-windows", "list-panes", "new-session", "new-window",
     "split-window", "kill-pane", "kill-window", "kill-session", "select-pane",
     "select-window", "rename-window", "rename-session", "send-keys",
-    "capture-pane", "new-worktree", "remove-worktree", "forward",
+    "capture-pane", "wait-exit", "new-worktree", "remove-worktree", "forward",
   ],
   "Setup": [
     "completions", "generate-config", "generate-claude-code-hooks", "generate-codex-hooks",

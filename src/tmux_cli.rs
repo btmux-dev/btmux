@@ -67,14 +67,16 @@ pub enum TmuxCommand {
         #[arg(short = 'P', hide = true)]
         _print: bool,
     },
-    /// Create a window in the target session and print its pane's ID.
+    /// Create a window in the target session and print its pane's ID. With
+    /// COMMAND, its pane runs that instead of the shell and closes when it
+    /// exits (unless --keep-open).
     #[command(visible_alias = "neww")]
     NewWindow {
         #[arg(short = 't', help = TARGET)]
         target: Option<String>,
         #[arg(short = 'n')]
         name: Option<String>,
-        /// Working directory.
+        /// Working directory; with COMMAND, the current one by default.
         #[arg(short = 'c')]
         cwd: Option<String>,
         /// Don't make it the active window.
@@ -85,8 +87,12 @@ pub enum TmuxCommand {
         format: Option<String>,
         #[arg(short = 'P', hide = true)]
         _print: bool,
+        #[command(flatten)]
+        launch: Launch,
     },
-    /// Split the target pane and print the new pane's ID.
+    /// Split the target pane and print the new pane's ID. With COMMAND, the
+    /// new pane runs that instead of the shell and closes when it exits
+    /// (unless --keep-open).
     #[command(visible_alias = "splitw", disable_help_flag = true)]
     SplitWindow {
         #[arg(short = 't', help = TARGET)]
@@ -103,7 +109,7 @@ pub enum TmuxCommand {
         /// Don't make the new pane active.
         #[arg(short = 'd')]
         detached: bool,
-        /// Working directory; default the target pane's.
+        /// Working directory; default the target pane's, or with COMMAND the current one.
         #[arg(short = 'c')]
         cwd: Option<String>,
         /// Print with this format instead of the pane ID.
@@ -113,6 +119,20 @@ pub enum TmuxCommand {
         _print: bool,
         #[arg(long, action = ArgAction::Help)]
         help: Option<bool>,
+        #[command(flatten)]
+        launch: Launch,
+    },
+    /// Wait for the target pane's program (its command, or its shell) to
+    /// exit, and exit with its status: 128+N if signal N ended it, 1 if the
+    /// pane closed before it reported one, 124 on timeout. A pane that is kept
+    /// open, or closed in the last 5 minutes, reports the status it exited with.
+    WaitExit {
+        /// A pane ID (also of a closed pane) or tmux target. Default: this pane
+        #[arg(short = 't')]
+        target: Option<String>,
+        /// Seconds to wait; without it, wait until the program exits.
+        #[arg(long, value_name = "SECONDS")]
+        timeout: Option<u64>,
     },
     /// Kill the target pane. Its window closes with its last pane, and the
     /// session with its last window.
@@ -210,6 +230,65 @@ pub enum TmuxCommand {
     },
 }
 
+/// A program for a new pane, as `new-window` and `split-window` take it.
+#[derive(clap::Args, Clone)]
+pub struct Launch {
+    /// Set an environment variable for COMMAND, as NAME=VALUE. Repeatable.
+    #[arg(short = 'e', value_name = "NAME=VALUE", requires = "command")]
+    env: Vec<String>,
+    /// Keep the pane, with its output, after its program exits.
+    #[arg(long)]
+    keep_open: bool,
+    /// After printing, wait for the program to exit and exit with its status,
+    /// as `wait-exit` does.
+    #[arg(long)]
+    wait: bool,
+    /// The program and its arguments, run now; a single argument is a command
+    /// line for the shell. Default: the shell.
+    #[arg(
+        trailing_var_arg = true,
+        allow_hyphen_values = true,
+        value_name = "COMMAND"
+    )]
+    command: Vec<String>,
+}
+
+impl Launch {
+    /// Request fields for the pane's program, run with this process's
+    /// environment, as `btmux popup` runs one.
+    fn fields(&self, cwd: Option<String>) -> Result<Value, String> {
+        if self.command.is_empty() {
+            return Ok(json!({ "cwd": absolute(cwd)?, "keep_open": self.keep_open }));
+        }
+        let extra = crate::popup::parse_env(&self.env)?;
+        let cwd = match absolute(cwd)? {
+            Some(cwd) => cwd,
+            None => std::env::current_dir()
+                .map_err(|e| e.to_string())?
+                .to_string_lossy()
+                .into_owned(),
+        };
+        Ok(json!({
+            "cwd": cwd,
+            "command": crate::popup::command_of(&self.command),
+            "env": crate::popup::caller_env(&extra),
+            "keep_open": self.keep_open,
+        }))
+    }
+}
+
+/// What a command printed, and the pane to wait for after printing it.
+struct Reply {
+    text: String,
+    wait: Option<(Uuid, Option<Duration>)>,
+}
+
+impl From<String> for Reply {
+    fn from(text: String) -> Self {
+        Self { text, wait: None }
+    }
+}
+
 /// Runs the command. Returns the exit code.
 pub async fn run(profile: Option<&str>, command: TmuxCommand) -> i32 {
     // Outside its own server, this pane's ID means nothing.
@@ -220,9 +299,13 @@ pub async fn run(profile: Option<&str>, command: TmuxCommand) -> i32 {
         .and_then(|id| Uuid::parse_str(&id).ok());
     let client = Client { profile, current };
     match client.execute(command).await {
-        Ok(output) => {
-            print!("{output}");
-            0
+        Ok(Reply { text, wait }) => {
+            print!("{text}");
+            let Some((pane, timeout)) = wait else {
+                return 0;
+            };
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            crate::pane_exit::wait_cli(profile, pane, timeout).await
         }
         Err(error) => {
             eprintln!("btmux: {error}");
@@ -255,9 +338,71 @@ struct Client<'a> {
 }
 
 impl Client<'_> {
-    async fn execute(&self, command: TmuxCommand) -> Result<String, String> {
+    async fn execute(&self, command: TmuxCommand) -> Result<Reply, String> {
         use TmuxCommand::*;
         match command {
+            NewWindow {
+                target,
+                name,
+                cwd,
+                detached,
+                format,
+                launch,
+                ..
+            } => {
+                let session = self.target(target.as_deref()).await?.session_id;
+                let mut body = launch.fields(cwd)?;
+                body["name"] = json!(name);
+                body["select"] = json!(!detached);
+                let path = format!("/api/sessions/{session}/windows");
+                let created = self.call(Method::POST, &path, Some(body)).await?;
+                self.print_created(&created, format.as_deref(), launch.wait)
+                    .await
+            }
+            SplitWindow {
+                target,
+                horizontal,
+                before,
+                detached,
+                cwd,
+                format,
+                launch,
+                ..
+            } => {
+                let pane = self.target(target.as_deref()).await?.pane_id;
+                let direction = match (horizontal, before) {
+                    (true, false) => "right",
+                    (true, true) => "left",
+                    (false, false) => "down",
+                    (false, true) => "up",
+                };
+                let mut body = launch.fields(cwd)?;
+                body["direction"] = json!(direction);
+                body["select"] = json!(!detached);
+                let path = format!("/api/panes/{pane}/split");
+                let created = self.call(Method::POST, &path, Some(body)).await?;
+                self.print_created(&created, format.as_deref(), launch.wait)
+                    .await
+            }
+            WaitExit { target, timeout } => {
+                // A closed pane is no longer listed, but its status is kept.
+                let pane = match target.as_deref().map(Uuid::parse_str) {
+                    Some(Ok(pane)) => pane,
+                    _ => self.target(target.as_deref()).await?.pane_id,
+                };
+                Ok(Reply {
+                    text: String::new(),
+                    wait: Some((pane, timeout.map(Duration::from_secs))),
+                })
+            }
+            command => self.execute_text(command).await.map(Reply::from),
+        }
+    }
+
+    async fn execute_text(&self, command: TmuxCommand) -> Result<String, String> {
+        use TmuxCommand::*;
+        match command {
+            NewWindow { .. } | SplitWindow { .. } | WaitExit { .. } => unreachable!(),
             ListSessions { format } => {
                 let panes = self.panes().await?;
                 Ok(print_rows(
@@ -313,43 +458,10 @@ impl Client<'_> {
                 let body =
                     json!({ "name": name, "window_name": window_name, "cwd": absolute(cwd)? });
                 let created = self.call(Method::POST, "/api/sessions", Some(body)).await?;
-                self.print_created(&created, format.as_deref()).await
-            }
-            NewWindow {
-                target,
-                name,
-                cwd,
-                detached,
-                format,
-                ..
-            } => {
-                let session = self.target(target.as_deref()).await?.session_id;
-                let body = json!({ "name": name, "cwd": absolute(cwd)?, "select": !detached });
-                let path = format!("/api/sessions/{session}/windows");
-                let created = self.call(Method::POST, &path, Some(body)).await?;
-                self.print_created(&created, format.as_deref()).await
-            }
-            SplitWindow {
-                target,
-                horizontal,
-                before,
-                detached,
-                cwd,
-                format,
-                ..
-            } => {
-                let pane = self.target(target.as_deref()).await?.pane_id;
-                let direction = match (horizontal, before) {
-                    (true, false) => "right",
-                    (true, true) => "left",
-                    (false, false) => "down",
-                    (false, true) => "up",
-                };
-                let body =
-                    json!({ "direction": direction, "cwd": absolute(cwd)?, "select": !detached });
-                let path = format!("/api/panes/{pane}/split");
-                let created = self.call(Method::POST, &path, Some(body)).await?;
-                self.print_created(&created, format.as_deref()).await
+                Ok(self
+                    .print_created(&created, format.as_deref(), false)
+                    .await?
+                    .text)
             }
             KillPane { target } => {
                 let pane = self.target(target.as_deref()).await?.pane_id;
@@ -379,7 +491,10 @@ impl Client<'_> {
                 let body = json!({ "branch": branch, "select": !detached });
                 let path = format!("/api/panes/{pane}/worktree");
                 let created = self.call(Method::POST, &path, Some(body)).await?;
-                self.print_created(&created, format.as_deref()).await
+                Ok(self
+                    .print_created(&created, format.as_deref(), false)
+                    .await?
+                    .text)
             }
             RemoveWorktree { target } => {
                 let pane = self.target(target.as_deref()).await?.pane_id;
@@ -489,18 +604,32 @@ impl Client<'_> {
         resolve(panes, self.current, target).map(Some)
     }
 
-    async fn print_created(&self, created: &str, format: Option<&str>) -> Result<String, String> {
+    /// The new pane's ID or `format` line, and with `wait` the pane to wait for.
+    async fn print_created(
+        &self,
+        created: &str,
+        format: Option<&str>,
+        wait: bool,
+    ) -> Result<Reply, String> {
         let created: Value = serde_json::from_str(created).map_err(|e| e.to_string())?;
-        let pane = created["pane_id"].as_str().ok_or("no pane in the reply")?;
+        let pane = created["pane_id"]
+            .as_str()
+            .and_then(|pane| Uuid::parse_str(pane).ok())
+            .ok_or("no pane in the reply")?;
+        let wait = wait.then_some((pane, None));
         let Some(format) = format else {
-            return Ok(format!("{pane}\n"));
+            return Ok(Reply {
+                text: format!("{pane}\n"),
+                wait,
+            });
         };
         let panes = self.panes().await?;
-        let info = panes
-            .iter()
-            .find(|p| p.pane_id.to_string() == pane)
-            .ok_or("the new pane is gone")?;
-        Ok(format_line(format, &serde_json::to_value(info).unwrap()) + "\n")
+        // Its command may have exited and closed it already.
+        let text = match panes.iter().find(|p| p.pane_id == pane) {
+            Some(info) => format_line(format, &serde_json::to_value(info).unwrap()) + "\n",
+            None => format!("{pane}\n"),
+        };
+        Ok(Reply { text, wait })
     }
 }
 
@@ -735,6 +864,8 @@ mod tests {
             pane_active: active,
             pane_current_path: None,
             pane_title: None,
+            pane_dead: false,
+            pane_dead_status: None,
         }
     }
 

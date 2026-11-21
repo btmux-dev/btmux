@@ -1,9 +1,9 @@
-// handoff version 22
-type Header = { version: number, listener: number, lock: number | null, sessions: Array<SessionSnapshot>, popups: PopupsHandoff, panes: Array<PaneHeader>, telemetry: TelemetryStore, editor: EditorHandoff, captures: Captures, };
+// handoff version 23
+type Header = { version: number, listener: number, lock: number | null, sessions: Array<SessionSnapshot>, popups: PopupsHandoff, panes: Array<PaneHeader>, telemetry: TelemetryStore, editor: EditorHandoff, captures: Captures, exits: ExitsHeader, };
 type PaneHeader = { id: string, fd: number, pid: number, cols: number, rows: number,
 journal: Array<Event>, title: string | null, cwd: string | null, cwd_remote: boolean, spawn_cwd: string | null, color_reports: boolean, colors: Array<[number, number, number] | null>, kitty: KittyKeyboard,
 pending: number,
-input: number, bin: string | null, shell_name: string | null, prompt: number, programs: Array<ProgramRecord>, };
+input: number, bin: string | null, shell_name: string | null, prompt: number, programs: Array<ProgramRecord>, keep_open: boolean, };
 type PopupsHandoff = {
 open: Array<PopupSummary>,
 starting: Array<StartingHandoff>,

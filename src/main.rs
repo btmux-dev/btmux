@@ -33,6 +33,7 @@ mod health;
 mod mcp;
 mod multipass;
 mod native_editor;
+mod pane_exit;
 mod pane_git;
 mod pane_ports;
 mod paste_image;

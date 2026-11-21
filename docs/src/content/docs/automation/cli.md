@@ -22,8 +22,8 @@ btmux kill-pane -t "$pane"
 | `list-windows` (`lsw`)       | `-a -t -F`                       |
 | `list-panes` (`lsp`)         | `-a -s -t -F`                    |
 | `new-session` (`new`)        | `-s -n -c -F`                    |
-| `new-window` (`neww`)        | `-t -n -c -d -F`                 |
-| `split-window` (`splitw`)    | `-t -h -v -b -d -c -F`           |
+| `new-window` (`neww`)        | `-t -n -c -d -F -e --keep-open --wait [COMMAND]` |
+| `split-window` (`splitw`)    | `-t -h -v -b -d -c -F -e --keep-open --wait [COMMAND]` |
 | `kill-pane` (`killp`)        | `-t`                             |
 | `kill-window` (`killw`)      | `-t`                             |
 | `kill-session`               | `-t`                             |
@@ -35,6 +35,7 @@ btmux kill-pane -t "$pane"
 | `capture-pane` (`capturep`)  | `-t -S` (`-p`, `-J` are implied) |
 | `new-worktree`               | `-t -d -F BRANCH`                |
 | `remove-worktree`            | `-t`                             |
+| `wait-exit`                  | `-t --timeout`                   |
 | `display-popup` (`popup`)    | `-t -d -e -T -E`; see [Popups](popups.md) |
 
 Coding agents learn these commands from the btmux skill; see
@@ -58,6 +59,40 @@ Coding agents learn these commands from the btmux skill; see
   `-S -` includes all retained history and `-S -N` the last N rows of it.
 - `kill-pane` closes the window with its last pane, and the session with its
   last window, but never the last session.
+
+## Running a command and waiting for it
+
+Scripts and agents can run a command in its own pane and get its exit
+status, unlike typing it with `send-keys`, which can't tell when it finished.
+
+```sh
+btmux new-window -d -n tests --wait -- cargo test   # exits with the tests' status
+pane=$(btmux split-window -h -d --keep-open 'npm run build')
+btmux wait-exit -t "$pane" --timeout 600            # its status; 124 on timeout
+btmux capture-pane -p -t "$pane" -S -               # its output, after it exits
+btmux kill-pane -t "$pane"
+```
+
+- `new-window` and `split-window` run COMMAND, the arguments after the flags,
+  instead of the shell. A single argument is a command line for the shell;
+  several run directly. It starts at once, whether or not a client shows the
+  pane, in the current directory unless `-c` says otherwise, with this
+  shell's environment plus any `-e NAME=VALUE`, as [popups](popups.md) run.
+- The pane closes when its program exits. With `--keep-open` it stays, with
+  the output and an `[exited with status N]` line, until you close it.
+  `list-panes` shows `pane_dead` and `pane_dead_status` for it.
+- `--wait` prints the pane's ID, then waits for the program to exit and exits
+  with its status, as `wait-exit` does.
+- `wait-exit` waits for the target pane's program (its command, or its shell)
+  to exit, and exits with its status. A signal N gives 128 + N, and statuses
+  above 255 are reduced modulo 256. It exits 1 if the pane closed before its
+  program reported a status (`kill-pane`), and 124 if `--timeout` seconds pass
+  first. A pane closed in the last 5 minutes still reports its status, so `-t`
+  takes a closed pane's ID. Waits continue across `btmux upgrade`, and a kept
+  pane keeps its output and status through one.
+
+`btmux wait` is a different command: it waits for an
+[agent's state](../agents/orchestrating.md).
 
 ## Worktrees
 

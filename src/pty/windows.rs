@@ -214,6 +214,7 @@ impl PtyHandle {
         let mut output = self.output_pipeline(interceptor, input_tx.clone());
         let exit_tx = self.exit_tx.clone();
         let pane_id = self.pane_id;
+        let reader_done = self.reader_done.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             let mut first = true;
@@ -233,6 +234,7 @@ impl PtyHandle {
                     Err(_) => break,
                 }
             }
+            reader_done.store(true, std::sync::atomic::Ordering::Release);
             let _ = exit_tx.send(pane_id);
         });
 

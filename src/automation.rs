@@ -940,6 +940,24 @@ mod tests {
             async move { wait_for_agent(&state, pane_id, &SETTLED, DEFAULT_WAIT).await }
         });
         tokio::time::sleep(Duration::from_millis(50)).await;
+        state
+            .read()
+            .await
+            .find_pane(pane_id)
+            .unwrap()
+            .pty
+            .terminate();
+        // Its exit is handled once the shell is reaped.
+        while state
+            .read()
+            .await
+            .find_pane(pane_id)
+            .unwrap()
+            .pty
+            .child_alive()
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         {
             let mut mgr = state.write().await;
             mgr.handle_pane_exit(pane_id).await;

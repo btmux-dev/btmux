@@ -33,6 +33,7 @@ pub type HandoffExport = (
     Vec<SessionSnapshot>,
     crate::popup::PopupsHandoff,
     Vec<HandoffPane>,
+    crate::pane_exit::ExitsHandoff,
 );
 
 /// How long a held completion alert waits for its agent to show waiting.
@@ -75,6 +76,7 @@ pub struct SessionManager {
     pub popups: crate::popup::Popups,
     /// `GET /api/events`'s translation of `events`, started on first use.
     pub events_feed: std::sync::OnceLock<std::sync::Arc<crate::events::Feed>>,
+    pub exits: crate::pane_exit::PaneExits,
     shell: String,
     cli_shell: Option<String>,
     /// The config as last read from disk. Kept so a session-only override can be
@@ -187,6 +189,7 @@ impl SessionManager {
             held_alerts: HashMap::new(),
             widgets: Default::default(),
             popups: Default::default(),
+            exits: Default::default(),
             git: GitTracker::new(pty_env.meta_tx.clone()),
             pty_env,
         }
@@ -1224,6 +1227,38 @@ impl SessionManager {
         Some(new_pane_id)
     }
 
+    /// Set up a new pane: `keep_open`, and a program started now rather than
+    /// once a tab shows the pane, so it runs without one. A program that
+    /// can't start closes its pane.
+    pub async fn launch(
+        &mut self,
+        pane_id: Uuid,
+        spawn: Option<crate::popup::Spawn>,
+        keep_open: bool,
+    ) -> Result<(), String> {
+        let pane = self.find_pane_mut(pane_id).ok_or("pane not found")?;
+        if let Some(mut spawn) = spawn {
+            // A guest's environment comes from the guest.
+            if pane.pty.is_guest() {
+                spawn.env = None;
+            }
+            pane.pty.set_command(spawn);
+            let spawned = pane.pty.ensure_spawned(
+                crate::config::DEFAULT_PTY_COLS,
+                crate::config::DEFAULT_PTY_ROWS,
+            );
+            if let Err(error) = spawned {
+                self.close_pane(pane_id).await;
+                return Err(error);
+            }
+        }
+        // Before its exit is handled, which waits for this lock.
+        if let Some(pane) = self.find_pane_mut(pane_id) {
+            pane.pty.set_keep_open(keep_open);
+        }
+        Ok(())
+    }
+
     pub fn kill_pane(&mut self, session_id: Uuid, pane_id: Uuid) {
         let removed = {
             let Some(session) = self.session_mut(session_id) else {
@@ -1242,6 +1277,7 @@ impl SessionManager {
 
     /// Runtime state of a pane that just left the tree.
     fn forget_pane(&mut self, pane: &Pane) {
+        self.exits.closed(pane.id, pane.pty.exit_status());
         self.agents.remove(&pane.id);
         self.telemetry.pane_closed(pane.id, pane.pty.is_guest());
         if self.popups.close_pane(pane.id) {
@@ -1256,6 +1292,24 @@ impl SessionManager {
             }
             return;
         }
+        let Some(pane) = self.find_pane(pane_id) else {
+            return;
+        };
+        // At the reader's end, the waiter reports once it reaped the program.
+        if pane.pty.child_alive() {
+            return;
+        }
+        if pane.pty.keep_open() {
+            pane.pty.note_exit();
+            self.exits.touch();
+            return;
+        }
+        self.close_pane(pane_id).await;
+    }
+
+    /// Remove a pane, its window with its last pane, and its session with its
+    /// last window; the last session is replaced.
+    pub async fn close_pane(&mut self, pane_id: Uuid) {
         let Some((si, wi)) = self.sessions.iter().enumerate().find_map(|(si, s)| {
             s.windows
                 .iter()
@@ -1668,6 +1722,7 @@ impl SessionManager {
     pub async fn clear_sessions(&mut self) {
         for session in std::mem::take(&mut self.sessions) {
             for pane in session.windows.into_iter().flat_map(|window| window.panes) {
+                self.exits.closed(pane.id, pane.pty.exit_status());
                 self.telemetry.pane_closed(pane.id, pane.pty.is_guest());
             }
         }
@@ -1823,6 +1878,8 @@ impl SessionManager {
                         pane_active: active_pane == Some(pane_id),
                         pane_current_path: pane.pty.effective_cwd(),
                         pane_title: pane.pty.title.lock().unwrap().clone(),
+                        pane_dead: pane.pty.exited(),
+                        pane_dead_status: pane.pty.exit_status(),
                     });
                 }
             }
@@ -1993,7 +2050,17 @@ impl SessionManager {
             starting: self.popups.export_starting(),
             ended: self.popups.export_ended(),
         };
-        Ok((self.all_snapshots(), popups, exported))
+        let exits = crate::pane_exit::ExitsHandoff {
+            ended: self.exits.export(),
+            dead: self
+                .sessions
+                .iter()
+                .flat_map(|s| &s.windows)
+                .flat_map(|w| &w.panes)
+                .filter_map(|pane| Some((pane.id, pane.pty.export_exited()?)))
+                .collect(),
+        };
+        Ok((self.all_snapshots(), popups, exported, exits))
     }
 
     #[cfg(unix)]
@@ -2045,6 +2112,7 @@ impl SessionManager {
         sessions: Vec<SessionSnapshot>,
         popups: crate::popup::PopupsHandoff,
         panes: Vec<(Uuid, std::os::fd::OwnedFd, crate::pty::Handoff)>,
+        exits: crate::pane_exit::ExitsHandoff,
     ) -> usize {
         let unread: Vec<_> = sessions
             .iter()
@@ -2061,6 +2129,12 @@ impl SessionManager {
         self.handed_until = Some(Instant::now() + HANDED_SINCE_WAIT);
         let restored = self.restore_from_snapshots(sessions);
         self.popups.restore_ended(popups.ended);
+        self.exits.restore(exits.ended);
+        for (id, exited) in exits.dead {
+            if let Some(pane) = self.find_pane_mut(id) {
+                pane.pty.restore_exited(exited);
+            }
+        }
         let handed_off: Vec<_> = popups.open.iter().map(|popup| popup.id).collect();
         let starting = popups
             .starting
