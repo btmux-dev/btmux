@@ -31,6 +31,9 @@ actions, saved state, and API types can change in any release.
 - Panes, and the editors and browser shown over them, have rounded corners
   and a small gap between them and around the pane area.
   ([#182](https://github.com/btmux-dev/btmux/pull/182))
+- Agent view matches the rounded panes: its live panes have rounded corners,
+  and the agent list has no divider and lines up with the title and tabs.
+  ([#186](https://github.com/btmux-dev/btmux/pull/186))
 - Python files in the native editor get ty and ruff instead of pyright, so
   formatting works: ruff formats and lints, ty checks types.
   ([#181](https://github.com/btmux-dev/btmux/pull/181))
@@ -77,6 +80,9 @@ actions, saved state, and API types can change in any release.
 
 ### Fixed
 
+- Agent view shows live panes of mixed heights as large as they fit, and when
+  they can't fit, scrolls back to the first row instead of cutting off its top.
+  ([#186](https://github.com/btmux-dev/btmux/pull/186))
 - A new pane no longer flashes an opaque background and "Connecting…" while
   it connects. The label shows only when connecting takes over a second.
   ([#182](https://github.com/btmux-dev/btmux/pull/182))
