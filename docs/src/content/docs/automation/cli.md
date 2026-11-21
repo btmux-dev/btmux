@@ -84,15 +84,18 @@ btmux kill-pane -t "$pane"
   this shell's.
 - The pane closes when its program exits. With `--keep-open` it stays, with
   the output and an `[exited with status N]` line, until you close it; typing
-  into it does nothing. `list-panes` shows `pane_dead` and `pane_dead_status`
+  into it does nothing. A program that died full-screen is left for the main
+  screen, so its output from before is what shows. `list-panes` shows `pane_dead` and `pane_dead_status`
   for it.
 - `--wait` prints the pane's ID, then waits for the program to exit and exits
-  with its status, as `wait-exit` does.
+  with its status, as `wait-exit` does. It needs COMMAND: a shell only starts
+  once a client shows its pane.
 - `wait-exit` waits for the target pane's program (its command, or its shell)
   to exit, and exits with its status. A signal N gives 128 + N, and statuses
   above 255 are reduced modulo 256. It exits 1 if the pane closed before its
   program reported a status (`kill-pane`), and 124 if `--timeout` seconds pass
-  first.
+  first. A pane whose shell hasn't started, as no client showed it, is refused
+  with exit 1.
 - For a kept pane, `wait-exit` returns once the output has ended and the
   `[exited ...]` line is written, so `capture-pane` right after it sees all
   of it. If something else, such as a background job, holds the terminal
@@ -101,7 +104,8 @@ btmux kill-pane -t "$pane"
   takes a closed pane's ID; the server keeps the last 256 of them. A wait
   already running when its pane closes always gets the status. Waits
   continue across `btmux upgrade`, and a kept pane keeps its output and
-  status through one.
+  status through one. A restart ends the command: its pane comes back as a
+  shell under a new ID, so a wait across it exits 1.
 
 `btmux wait` is a different command: it waits for an
 [agent's state](../agents/orchestrating.md).

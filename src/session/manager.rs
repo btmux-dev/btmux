@@ -509,7 +509,8 @@ impl SessionManager {
             let Some(agent) = self.agents.get_mut(&pane.id) else {
                 continue;
             };
-            if !agent.is_unobserved_for(now, grace) {
+            // A command pane has no prompt to end at.
+            if !agent.is_unobserved_for(now, grace) || pane.pty.runs_command() {
                 continue;
             }
             let Some(shell) = pane.pty.shell_pid() else {
@@ -1349,6 +1350,8 @@ impl SessionManager {
             return;
         }
         if pane.pty.keep_open() {
+            #[cfg(windows)]
+            pane.pty.close_console();
             let force = pane.pty.output_grace_over();
             if pane.pty.finish(force) {
                 self.exits.touch();
@@ -1965,6 +1968,17 @@ impl SessionManager {
             }
         }
         infos
+    }
+
+    /// Panes that run a command rather than a shell.
+    pub fn command_panes(&self) -> std::collections::HashSet<Uuid> {
+        self.sessions
+            .iter()
+            .flat_map(|s| &s.windows)
+            .flat_map(|w| &w.panes)
+            .filter(|pane| pane.pty.runs_command() || pane.pty.keep_open())
+            .map(|pane| pane.id)
+            .collect()
     }
 
     pub fn all_snapshots(&self) -> Vec<SessionSnapshot> {

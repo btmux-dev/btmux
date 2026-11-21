@@ -240,6 +240,9 @@ impl PaneExits {
 #[derive(Debug, PartialEq)]
 enum Progress {
     Running,
+    /// A shell starts once a client shows its pane; until then nothing runs
+    /// that could exit.
+    NotStarted,
     /// The status, if the program reported one before its pane closed.
     Exited(Option<i32>),
     Unknown,
@@ -248,6 +251,7 @@ enum Progress {
 fn progress(mgr: &SessionManager, pane_id: Uuid) -> Progress {
     match mgr.find_pane(pane_id) {
         Some(pane) if pane.pty.finished() => Progress::Exited(pane.pty.exit_status()),
+        Some(pane) if !pane.pty.is_spawned() => Progress::NotStarted,
         Some(_) => Progress::Running,
         None => mgr
             .exits
@@ -283,6 +287,13 @@ pub async fn wait(state: &AppState, pane_id: Uuid, timeout: Duration) -> Result<
                     })
                 }
                 Progress::Unknown => return Err(Error::PaneNotFound(pane_id)),
+                Progress::NotStarted => {
+                    return Err(Error::Conflict(
+                        "the pane's shell hasn't started: it starts once a client shows the \
+                         pane, so nothing in it can exit yet"
+                            .into(),
+                    ))
+                }
                 Progress::Running => mgr.exits.changed.subscribe(),
             }
         };
@@ -320,6 +331,7 @@ pub(crate) struct ExitQuery {
     responses(
         (status = 200, description = "The exit status once the program exits, or the wait times out", body = PaneExit),
         (status = 404, description = "No such pane, or it closed too long ago", body = String, content_type = "text/plain"),
+        (status = 409, description = "The pane's shell hasn't started, as no client showed the pane", body = String, content_type = "text/plain"),
         (status = 500, description = "The server is shutting down", body = String, content_type = "text/plain"),
     ),
 ))]
@@ -336,6 +348,7 @@ pub(crate) async fn api_wait_exit(
             "no such pane, or it closed too long ago",
         )
             .into_response(),
+        Err(Error::Conflict(message)) => (StatusCode::CONFLICT, message).into_response(),
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     }
 }
@@ -637,6 +650,30 @@ mod runs {
         let body = json!({"command": {"exec": ["/bin/sh", "-c", "kill -9 $$"]}});
         let new = run(&app, pane, body).await;
         assert_eq!(wait_for(&app, new).await.1["status"], 128 + 9);
+    }
+
+    /// A program that dies on the alternate screen leaves the main screen,
+    /// with what it showed before, and the exit under it.
+    #[tokio::test]
+    async fn kept_panes_end_on_the_main_screen() {
+        let (state, app, pane) = app().await;
+        let line = "echo before; printf '\\033[?1049h\\033[?1000hfull-screen'; kill -9 $$";
+        let body = json!({"command": {"shell": line}, "keep_open": true});
+        let new = run(&app, pane, body).await;
+        assert_eq!(wait_for(&app, new).await.1["status"], 128 + 9);
+        let shown = screen(&state, new).await;
+        assert!(shown.contains("before"), "{shown}");
+        assert!(!shown.contains("full-screen"), "{shown}");
+        assert!(shown.contains("[exited with status 137]"), "{shown}");
+    }
+
+    #[tokio::test]
+    async fn waiting_on_a_shell_that_never_started_is_refused() {
+        let (_state, app, pane) = app().await;
+        let (status, _) = split(&app, pane, json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _) = wait_for(&app, pane).await;
+        assert_eq!(status, StatusCode::CONFLICT);
     }
 
     #[tokio::test]

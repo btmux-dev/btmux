@@ -267,6 +267,8 @@ pub struct PtyHandle {
     exit_status: Arc<Mutex<Option<i32>>>,
     /// The pane stays, with its output, once its program exits.
     keep_open: bool,
+    /// It runs a command, not a shell: its program is never at a prompt.
+    runs_command: bool,
     /// The reader reached the end of the output.
     reader_done: Arc<AtomicBool>,
     /// A kept pane finished: its exit was written to its output.
@@ -355,6 +357,7 @@ impl PtyHandle {
             env_pane: pane_id,
             exit_status: Arc::default(),
             keep_open: false,
+            runs_command: false,
             reader_done: Arc::default(),
             exit_noted: AtomicBool::new(false),
             exited_at: Mutex::new(None),
@@ -376,6 +379,12 @@ impl PtyHandle {
     /// Run a program instead of the shell, once spawned.
     pub fn set_command(&mut self, spawn: crate::popup::Spawn) {
         self.command = Some(spawn);
+        self.runs_command = true;
+    }
+
+    /// It runs a command rather than a shell.
+    pub fn runs_command(&self) -> bool {
+        self.runs_command
     }
 
     pub fn keep_open(&self) -> bool {
@@ -425,6 +434,16 @@ impl PtyHandle {
         self.master.is_some()
     }
 
+    /// ConPTY's output ends only once its console closes, after the program
+    /// exited: closing it lets the reader take what it still holds and end,
+    /// so a kept pane finishes with all its output rather than at the grace.
+    #[cfg(windows)]
+    pub fn close_console(&mut self) {
+        if self.exited() && !self.output_done() {
+            self.master = None;
+        }
+    }
+
     /// The reader reached the end of the output.
     pub fn output_done(&self) -> bool {
         self.reader_done.load(Ordering::Acquire)
@@ -463,19 +482,31 @@ impl PtyHandle {
         if !force && !self.output_done() {
             return false;
         }
+        // A program that died full-screen leaves the alternate screen and its
+        // input modes on: back to the main screen and its history, with the
+        // cursor shown and mouse, focus, and paste reports off, as tmux does.
+        // Leaving restores the cursor, so only from the alternate screen.
+        const RESET: &str =
+            "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1006l\x1b[?2004l\x1b[?25h\x1b[0m";
+        let mut replay = self.scrollback.lock().unwrap();
+        let leave = if replay.alternate_screen() {
+            "\x1b[?1049l"
+        } else {
+            ""
+        };
         let text = match self.exit_status() {
-            Some(status) => format!("\x1b[0m\r\n[exited with status {status}]\r\n"),
-            None => "\x1b[0m\r\n[exited]\r\n".into(),
+            Some(status) => format!("{leave}{RESET}\r\n[exited with status {status}]\r\n"),
+            None => format!("{leave}{RESET}\r\n[exited]\r\n"),
         };
         let bytes = Bytes::from(text.into_bytes());
         {
-            let mut replay = self.scrollback.lock().unwrap();
             // Under the replay's lock: what a reader still running reads
             // now is dropped, so nothing follows the exit.
             self.output_muted.store(true, Ordering::Release);
             replay.push(Output::Data(bytes.clone()));
             let _ = self.output_tx.send(Output::Data(bytes));
         }
+        drop(replay);
         // Its reader and writer stop on their own, off the manager's lock.
         self.release();
         // Its pid may be reused; nothing descends from it now.
@@ -584,10 +615,12 @@ impl PtyHandle {
         let foreground = self.foreground_pgrp()?;
         // Guest programs are no host processes; OSC 133 marks tell them apart.
         if self.guest.is_some() {
-            return (Some(foreground) != self.shell_pid).then(|| "a program".into());
+            return (self.runs_command || Some(foreground) != self.shell_pid)
+                .then(|| "a program".into());
         }
         let name = crate::process::name(foreground);
-        let shell = Some(foreground) == self.shell_pid;
+        // A command, even one a shell runs (`sh -c`), is never at a prompt.
+        let shell = !self.runs_command && Some(foreground) == self.shell_pid;
         // The shell can exec another program in its group (`exec nvim`).
         #[cfg(unix)]
         let shell = shell
@@ -779,6 +812,9 @@ impl PtyHandle {
     }
 
     pub async fn send_shell_command(&self, data: Vec<u8>) -> Result<(), String> {
+        if self.runs_command {
+            return Err("The pane runs a command, not a shell".into());
+        }
         let shell_pid = self
             .shell_pid
             .ok_or_else(|| "The pane's shell is unavailable".to_string())?;
@@ -1712,6 +1748,46 @@ mod lifecycle_tests {
         let mut new = pane("/bin/sh");
         new.adopt(master, handoff).unwrap();
         assert!(new.foreground_program().is_some());
+    }
+
+    /// A command that closed its terminal but still runs is handed off,
+    /// not dropped, and stays a command. Only Linux ends a PTY's output once
+    /// the last descriptor closes; macOS waits for the session to let go.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn handoff_keeps_commands_whose_output_ended() {
+        let mut old = pane("/bin/sh");
+        old.set_command(crate::popup::Spawn {
+            command: crate::popup::PopupCommand::Exec(vec![
+                "sh".into(),
+                "-c".into(),
+                "exec </dev/null >/dev/null 2>&1; sleep 30".into(),
+            ]),
+            env: None,
+        });
+        old.ensure_spawned(80, 24).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !old.output_done() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(old.child_alive());
+        old.stop_io();
+        let (fd, handoff) = old.export_handoff(deadline()).unwrap().unwrap();
+        assert!(handoff.runs_command);
+        let master = unsafe { BorrowedFd::borrow_raw(fd) }
+            .try_clone_to_owned()
+            .unwrap();
+        let pid = old.shell_pid.unwrap();
+        std::mem::forget(old);
+
+        let mut new = pane("/bin/sh");
+        new.adopt(master, handoff).unwrap();
+        assert!(new.runs_command());
+        assert!(new.foreground_program().is_some() || !new.child_alive());
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
     }
 
     #[tokio::test]

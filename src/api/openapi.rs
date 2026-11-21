@@ -803,18 +803,17 @@ mod tests {
                 .await;
         }
 
-        // An unspawned shell doesn't exit.
+        // An unspawned shell can't exit: waiting for it is refused.
         let exit = "/api/panes/{pane_id}/exit";
-        let waited = check
+        check
             .expect(
-                S::OK,
+                S::CONFLICT,
                 M::GET,
                 exit,
                 &format!("/api/panes/{pane}/exit?timeout_ms=0"),
                 None,
             )
             .await;
-        assert_eq!(waited, json!({"status": null, "timed_out": true}));
         check
             .expect(
                 S::NOT_FOUND,

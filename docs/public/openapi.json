@@ -1356,6 +1356,16 @@
               }
             }
           },
+          "409": {
+            "description": "The pane's shell hasn't started, as no client showed the pane",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "500": {
             "description": "The server is shutting down",
             "content": {

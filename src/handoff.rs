@@ -33,7 +33,7 @@ use crate::ws::control::ServerMessage;
 use crate::AppState;
 
 /// Bump on any change to the handoff file.
-pub const VERSION: u32 = 23;
+pub const VERSION: u32 = 24;
 const ENV: &str = "BTMUX_HANDOFF";
 
 struct Context {
@@ -122,6 +122,7 @@ struct PaneHeader {
     prompt: u32,
     programs: Vec<Record>,
     keep_open: bool,
+    runs_command: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -238,6 +239,7 @@ pub fn take() -> Result<Option<Inherited>, String> {
                 prompt: pane.prompt,
                 programs: pane.programs,
                 keep_open: pane.keep_open,
+                runs_command: pane.runs_command,
             },
         ));
     }
@@ -450,7 +452,7 @@ async fn execute_frozen(
         }
     };
     if let Some(path) = &context.state_file {
-        if let Err(error) = crate::persistence::save(path, &sessions) {
+        if let Err(error) = crate::persistence::save(path, &sessions, &manager.command_panes()) {
             tracing::warn!("failed to persist state to {}: {}", path.display(), error);
         }
     }
@@ -566,6 +568,7 @@ fn write(
                 prompt: pane.prompt,
                 programs: pane.programs.clone(),
                 keep_open: pane.keep_open,
+                runs_command: pane.runs_command,
             })
             .collect(),
         telemetry,

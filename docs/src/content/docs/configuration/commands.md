@@ -1079,7 +1079,7 @@ Options:
   -F <FORMAT>      Print with this format instead of the pane ID
   -e <NAME=VALUE>  Set an environment variable for COMMAND, as NAME=VALUE. Repeatable
       --keep-open  Keep the pane, with its output, after its program exits
-      --wait       After printing, wait for the program to exit and exit with its status, as `wait-exit` does
+      --wait       After printing, wait for the program to exit and exit with its status, as `wait-exit` does. Needs COMMAND: a shell starts only once a client shows its pane
 ```
 
 ### `btmux split-window`
@@ -1103,7 +1103,7 @@ Options:
       --help       
   -e <NAME=VALUE>  Set an environment variable for COMMAND, as NAME=VALUE. Repeatable
       --keep-open  Keep the pane, with its output, after its program exits
-      --wait       After printing, wait for the program to exit and exit with its status, as `wait-exit` does
+      --wait       After printing, wait for the program to exit and exit with its status, as `wait-exit` does. Needs COMMAND: a shell starts only once a client shows its pane
 ```
 
 ### `btmux kill-pane`

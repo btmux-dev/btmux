@@ -244,8 +244,9 @@ pub struct Launch {
     #[arg(long)]
     keep_open: bool,
     /// After printing, wait for the program to exit and exit with its status,
-    /// as `wait-exit` does.
-    #[arg(long)]
+    /// as `wait-exit` does. Needs COMMAND: a shell starts only once a client
+    /// shows its pane.
+    #[arg(long, requires = "command")]
     wait: bool,
     /// The program and its arguments, run now; a single argument is a command
     /// line for the shell. Default: the shell.

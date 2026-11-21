@@ -75,6 +75,8 @@ pub struct Handoff {
     pub programs: Vec<program_status::Record>,
     /// The pane stays once its program exits.
     pub keep_open: bool,
+    /// It runs a command, not a shell.
+    pub runs_command: bool,
 }
 
 /// What a reader stopped for a handoff leaves behind.
@@ -331,6 +333,7 @@ impl PtyHandle {
         *self.title.lock().unwrap() = handoff.title;
         *self.cwd.lock().unwrap() = handoff.cwd;
         self.keep_open = handoff.keep_open;
+        self.runs_command = handoff.runs_command;
         self.cwd_remote.store(handoff.cwd_remote, Ordering::Relaxed);
         self.spawn_cwd = handoff.spawn_cwd;
         self.bin = handoff.bin;
@@ -394,19 +397,26 @@ impl PtyHandle {
         let input = stopping.input();
         let reader = stopping.reader.take();
         *slot = None;
-        // Ended at EOF: the program exited.
-        let Some(reader) = reader else {
-            return Ok(None);
-        };
         if self.master.is_none() {
             return Ok(None);
         }
         let Some(pid) = *self.child.lock().unwrap() else {
             // Reaped before reaping was held: read the rest of its output,
-            // so it ends as an exited pane.
-            self.restart(&reader.colors, reader.kitty, reader.pending, input)?;
+            // so it ends as an exited pane. Without a reader, it ended at EOF.
+            if let Some(reader) = reader {
+                self.restart(&reader.colors, reader.kitty, reader.pending, input)?;
+            }
             return Ok(None);
         };
+        // Its output ended while its program runs on (it closed or passed on
+        // its terminal): hand it off all the same, so the next server reaches
+        // the end again and reaps the program, closing or finishing the pane.
+        let reader = reader.unwrap_or_else(|| ReaderState {
+            colors: Vec::new(),
+            kitty: KittyKeyboard::default(),
+            pending: Vec::new(),
+            unsent: Vec::new(),
+        });
         let master = self.master.as_ref().unwrap();
         let (cols, rows) = *self.size.lock().unwrap();
         let journal = self.scrollback.lock().unwrap().snapshot();
@@ -431,6 +441,7 @@ impl PtyHandle {
                 prompt: self.prompt.load(Ordering::Relaxed),
                 programs: self.program_status.lock().unwrap().records().to_vec(),
                 keep_open: self.keep_open,
+                runs_command: self.runs_command,
             },
         )))
     }
