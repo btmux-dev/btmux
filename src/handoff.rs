@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 use crate::native_editor::buffer::HandedBuffer;
 use crate::native_editor::EditorHandoff;
-use crate::pane_exit::{EndedHandoff, ExitsHandoff};
+use crate::pane_exit::{ClosedHandoff, ExitsHandoff};
 use crate::popup::PopupsHandoff;
 use crate::pty::kitty_keyboard::KittyKeyboard;
 use crate::pty::program_status::Record;
@@ -73,7 +73,9 @@ struct Header {
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 struct ExitsHeader {
-    ended: Vec<EndedHandoff>,
+    ended: Vec<ClosedHandoff>,
+    /// Panes whose programs exited, to close.
+    closing: Vec<Uuid>,
     /// Their journal bytes follow the live panes'.
     dead: Vec<DeadHeader>,
 }
@@ -89,6 +91,7 @@ struct DeadHeader {
     journal: Vec<Event>,
     title: Option<String>,
     cwd: Option<String>,
+    cwd_remote: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -148,7 +151,9 @@ impl Inherited {
     /// restored once sandboxes are known, are returned.
     pub async fn restore(self, state: &AppState) -> (std::net::TcpListener, Editor) {
         let mut mgr = state.write().await;
-        let restored = mgr.restore_handoff(self.sessions, self.popups, self.panes, self.exits);
+        let restored = mgr
+            .restore_handoff(self.sessions, self.popups, self.panes, self.exits)
+            .await;
         mgr.telemetry = self.telemetry;
         crate::capture::restore(self.captures);
         tracing::info!("upgraded in place with {} session(s)", restored);
@@ -245,6 +250,7 @@ pub fn take() -> Result<Option<Inherited>, String> {
                 journal: read_journal(&mut file, pane.journal).map_err(error)?,
                 title: pane.title,
                 cwd: pane.cwd,
+                cwd_remote: pane.cwd_remote,
             },
         ));
     }
@@ -260,6 +266,7 @@ pub fn take() -> Result<Option<Inherited>, String> {
         exits: ExitsHandoff {
             ended: header.exits.ended,
             dead,
+            closing: header.exits.closing,
         },
     }))
 }
@@ -563,6 +570,7 @@ fn write(
         captures: crate::capture::export(),
         exits: ExitsHeader {
             ended: exits.ended,
+            closing: exits.closing,
             dead: exits
                 .dead
                 .iter()
@@ -574,6 +582,7 @@ fn write(
                     journal: journal_events(&pane.journal),
                     title: pane.title.clone(),
                     cwd: pane.cwd.clone(),
+                    cwd_remote: pane.cwd_remote,
                 })
                 .collect(),
         },
@@ -718,6 +727,9 @@ mod tests {
             crate::popup::EndedHandoff::decl(&config),
             crate::popup::Outcome::decl(&config),
             Event::decl(&config),
+            ExitsHeader::decl(&config),
+            DeadHeader::decl(&config),
+            crate::pane_exit::ClosedHandoff::decl(&config),
             KittyKeyboard::decl(&config),
             Record::decl(&config),
             crate::pty::program_status::State::decl(&config),

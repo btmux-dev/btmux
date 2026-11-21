@@ -434,6 +434,8 @@ pub(crate) struct CreateWindowRequest {
 pub(crate) struct CreateWindowResponse {
     session_id: Uuid,
     pane_id: Uuid,
+    /// The new pane as `GET /api/panes` lists it, as it was created.
+    pane: Option<crate::session::PaneInfo>,
 }
 
 #[cfg_attr(test, utoipa::path(
@@ -447,7 +449,7 @@ pub(crate) struct CreateWindowResponse {
     ),
     responses(
         (status = 200, description = "The new window's first pane", body = CreateWindowResponse),
-        (status = 400, description = "An empty command, `env` without one, or a `cwd` that isn't a directory", body = String, content_type = "text/plain"),
+        (status = 400, description = "An empty command, `env` without one, or with a command a `cwd` that isn't a directory", body = String, content_type = "text/plain"),
         (status = 404, description = "No such session"),
         (status = 422, description = "The command can't start", body = String, content_type = "text/plain"),
     ),
@@ -457,30 +459,32 @@ pub(crate) async fn api_create_window(
     Path(session_id): Path<Uuid>,
     Json(body): Json<CreateWindowRequest>,
 ) -> Response {
-    let spawn = match crate::pane_exit::spawn_of(body.command, body.env, body.cwd.as_deref()) {
-        Ok(spawn) => spawn,
+    let launch = match crate::pane_exit::launch_of(body.command, body.env, body.keep_open) {
+        Ok(launch) => launch,
         Err(error) => return (StatusCode::BAD_REQUEST, error).into_response(),
     };
     let cwd = body.cwd.map(std::path::PathBuf::from);
     let mut mgr = state.write().await;
-    if !mgr.sessions.iter().any(|s| s.id == session_id) {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    let Some(pane_id) = mgr
-        .create_window_named(session_id, body.name, cwd, body.select.unwrap_or(true))
-        .await
-    else {
-        return StatusCode::NOT_FOUND.into_response();
+    let created = mgr
+        .create_window_with(
+            session_id,
+            body.name,
+            cwd,
+            body.select.unwrap_or(true),
+            launch,
+        )
+        .await;
+    let pane_id = match created {
+        Ok(Some(pane_id)) => pane_id,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(error) => return crate::pane_exit::launch_error(error),
     };
-    let launched = mgr.launch(pane_id, spawn, body.keep_open).await;
     ws::control::broadcast_state(&mgr);
-    if let Err(error) = launched {
-        return (StatusCode::UNPROCESSABLE_ENTITY, error).into_response();
-    }
 
     Json(CreateWindowResponse {
         session_id,
         pane_id,
+        pane: mgr.pane_info(pane_id),
     })
     .into_response()
 }

@@ -1225,7 +1225,7 @@ Usage: btmux wait-exit [OPTIONS]
 
 Options:
   -t <TARGET>              A pane ID (also of a closed pane) or tmux target. Default: this pane
-      --timeout <SECONDS>  Seconds to wait; without it, wait until the program exits
+      --timeout <SECONDS>  Seconds to wait, at most a year; without it, wait until the program exits
 ```
 
 ### `btmux new-worktree`

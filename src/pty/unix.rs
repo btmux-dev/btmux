@@ -394,11 +394,20 @@ impl PtyHandle {
         let input = stopping.input();
         let reader = stopping.reader.take();
         *slot = None;
-        let (Some(reader), Some(pid), Some(master)) =
-            (reader, *self.child.lock().unwrap(), &self.master)
-        else {
+        // Ended at EOF: the program exited.
+        let Some(reader) = reader else {
             return Ok(None);
         };
+        if self.master.is_none() {
+            return Ok(None);
+        }
+        let Some(pid) = *self.child.lock().unwrap() else {
+            // Reaped before reaping was held: read the rest of its output,
+            // so it ends as an exited pane.
+            self.restart(&reader.colors, reader.kitty, reader.pending, input)?;
+            return Ok(None);
+        };
+        let master = self.master.as_ref().unwrap();
         let (cols, rows) = *self.size.lock().unwrap();
         let journal = self.scrollback.lock().unwrap().snapshot();
         Ok(Some((
@@ -468,6 +477,20 @@ impl PtyHandle {
             })
     }
 
+    /// Stop the reader and writer of a finished pane and close its terminal,
+    /// keeping what it showed.
+    pub(super) fn release(&mut self) {
+        self.stop_io();
+        if let Some(mut stopping) = self.stopping.get_mut().unwrap().take() {
+            stopping.wait(Instant::now() + std::time::Duration::from_secs(1));
+        }
+        // Before `master` closes the descriptor it borrows.
+        self.probe.lock().unwrap().take();
+        self.stop_reader = None;
+        self.master = None;
+        self.input_tx = InputSender::exited();
+    }
+
     fn restart(
         &mut self,
         colors: &[Option<colors::Rgb>],
@@ -508,17 +531,30 @@ impl PtyHandle {
         *self.child.lock().unwrap() = Some(pid);
         let child = self.child.clone();
         let exit_status = self.exit_status.clone();
+        let reap_gate = self.reap_gate.clone();
         let child_exit_tx = self.exit_tx.clone();
         let child_pane_id = self.pane_id;
         std::thread::spawn(move || {
-            let mut status = 0;
-            let reaped = loop {
-                match unsafe { libc::waitpid(pid, &mut status, 0) } {
-                    -1 if std::io::Error::last_os_error().kind()
-                        == std::io::ErrorKind::Interrupted => {}
-                    result => break result == pid,
+            let interrupted =
+                || std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted;
+            // Without reaping, so a handoff can leave the exit to the next server.
+            let exited = loop {
+                let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+                let options = libc::WEXITED | libc::WNOWAIT;
+                match unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, options) } {
+                    -1 if interrupted() => {}
+                    result => break result == 0,
                 }
             };
+            let _reaping = reap_gate.reaping();
+            let mut status = 0;
+            let reaped = exited
+                && loop {
+                    match unsafe { libc::waitpid(pid, &mut status, 0) } {
+                        -1 if interrupted() => {}
+                        result => break result == pid,
+                    }
+                };
             if reaped {
                 *exit_status.lock().unwrap() = Some(if libc::WIFSIGNALED(status) {
                     128 + libc::WTERMSIG(status)
@@ -527,6 +563,7 @@ impl PtyHandle {
                 });
             }
             child.lock().unwrap().take();
+            drop(_reaping);
             // Not our child: the reader reports the exit at EOF instead.
             if reaped {
                 let _ = child_exit_tx.send(child_pane_id);
@@ -691,7 +728,7 @@ impl PtyHandle {
             let _ = writer_stopped_tx.send(Stopped::Writer(unwritten));
         });
 
-        self.input_tx = InputSender(input_tx);
+        self.input_tx = InputSender(input_tx, false);
     }
 
     fn configure_termios(fd: RawFd) {

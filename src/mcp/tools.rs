@@ -107,9 +107,13 @@ struct WaitForExitParams {
 }
 
 /// A command line for the pane's shell.
-fn shell_spawn(command: Option<String>) -> Result<Option<crate::popup::Spawn>, ErrorData> {
+fn shell_launch(
+    command: Option<String>,
+    keep_open: Option<bool>,
+) -> Result<crate::pane_exit::Launch, ErrorData> {
     let command = command.map(crate::popup::PopupCommand::Shell);
-    crate::pane_exit::spawn_of(command, None, None).map_err(|e| ErrorData::invalid_params(e, None))
+    crate::pane_exit::launch_of(command, None, keep_open.unwrap_or(false))
+        .map_err(|e| ErrorData::invalid_params(e, None))
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -305,29 +309,18 @@ impl BtmuxMcpServer {
         }): Parameters<CreateWindowParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let session_id = parse_uuid(&session_id, "session_id")?;
-        let spawn = shell_spawn(command)?;
-        if let Some(cwd) = cwd
-            .as_deref()
-            .filter(|cwd| spawn.is_some() && !std::path::Path::new(cwd).is_dir())
-        {
-            return Err(ErrorData::invalid_params(
-                format!("{cwd}: no such directory"),
-                None,
-            ));
-        }
+        let launch = shell_launch(command, keep_open)?;
         let cwd = cwd.map(std::path::PathBuf::from);
         let mut mgr = self.state.write().await;
-        if !api::session_exists(&mgr, session_id) {
-            return tool_error(format!("session {session_id} not found"));
-        }
-        let Some(pane_id) = mgr.create_window_named(session_id, name, cwd, true).await else {
-            return tool_error(format!("session {session_id} not found"));
+        let pane_id = match mgr
+            .create_window_with(session_id, name, cwd, true, launch)
+            .await
+        {
+            Ok(Some(pane_id)) => pane_id,
+            Ok(None) => return tool_error(format!("session {session_id} not found")),
+            Err(error) => return automation_error(error),
         };
-        let launched = mgr.launch(pane_id, spawn, keep_open.unwrap_or(false)).await;
         broadcast_state(&mgr);
-        if let Err(error) = launched {
-            return tool_error(error);
-        }
         ok_json(serde_json::json!({"session_id": session_id, "pane_id": pane_id}))
     }
 
@@ -376,7 +369,7 @@ impl BtmuxMcpServer {
             keep_open,
         }): Parameters<SplitPaneParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let spawn = shell_spawn(command)?;
+        let launch = shell_launch(command, keep_open)?;
         if !["left", "right", "up", "down"].contains(&direction.as_str()) {
             return Err(ErrorData::invalid_params(
                 format!("direction must be one of left/right/up/down, got '{direction}'"),
@@ -395,19 +388,20 @@ impl BtmuxMcpServer {
             }
             Some(true) => {}
         }
-        let Some(pane_id) = mgr.split_pane(pane_id, &direction, None, true).await else {
-            return tool_error(format!("pane {pane_id} not found"));
+        let pane_id = match mgr
+            .split_pane_with(pane_id, &direction, None, true, launch)
+            .await
+        {
+            Ok(Some(pane_id)) => pane_id,
+            Ok(None) => return tool_error(format!("pane {pane_id} not found")),
+            Err(error) => return automation_error(error),
         };
-        let launched = mgr.launch(pane_id, spawn, keep_open.unwrap_or(false)).await;
         broadcast_state(&mgr);
-        if let Err(error) = launched {
-            return tool_error(error);
-        }
         ok_json(serde_json::json!({"pane_id": pane_id}))
     }
 
     #[tool(
-        description = "Wait until a pane's program (its command, or its shell) exits, and return its exit status: 128 + N if signal N ended it, null if the pane closed before it reported one. timed_out=true means it was still running. Works for a pane that closed in the last 5 minutes, or one kept open."
+        description = "Wait until a pane's program (its command, or its shell) exits, and return its exit status: 128 + N if signal N ended it, null if the pane closed before it reported one. timed_out=true means it was still running. A kept pane reports once its output ended, so read_pane_output after it sees all of it. Works for a kept pane, and for one that closed in the last 5 minutes (at most the last 256 closed)."
     )]
     async fn wait_for_exit(
         &self,

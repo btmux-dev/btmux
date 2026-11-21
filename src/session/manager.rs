@@ -12,6 +12,7 @@ use super::{
 };
 use crate::config::{ClientConfig, ColorMode, ConfigUpdate, FileConfig};
 use crate::git::RepoLayout;
+use crate::pane_exit::Launch;
 use crate::pane_git::GitTracker;
 use crate::pty::colors::{Palette, SharedPalette};
 use crate::pty::{PtyEnv, PtyHandle};
@@ -159,6 +160,7 @@ impl SessionManager {
             meta_tx,
             port,
             palette: SharedPalette::default(),
+            reap_gate: Default::default(),
         };
         pty_env.palette.set(Palette::from_theme(&config.theme));
         crate::vscode::configure(&config);
@@ -1194,8 +1196,28 @@ impl SessionManager {
         cwd: Option<std::path::PathBuf>,
         select: bool,
     ) -> Option<Uuid> {
-        self.find_pane(pane_id)?;
+        self.split_pane_with(pane_id, direction, cwd, select, Launch::default())
+            .await
+            .ok()
+            .flatten()
+    }
+
+    /// `split_pane`, with the new pane's program started first: one that
+    /// can't start leaves everything as it was.
+    pub async fn split_pane_with(
+        &mut self,
+        pane_id: Uuid,
+        direction: &str,
+        cwd: Option<std::path::PathBuf>,
+        select: bool,
+        launch: Launch,
+    ) -> Result<Option<Uuid>, crate::automation::Error> {
+        if self.find_pane(pane_id).is_none() {
+            return Ok(None);
+        }
         let new_pane_id = Uuid::new_v4();
+        let runtime = self.pane_runtime(pane_id);
+        self.check_launch_cwd(&launch, cwd.as_deref(), &runtime)?;
         // Inherit the source pane's working directory (its spawn cwd until the
         // shell reports one), but only if that directory still exists.
         let cwd = cwd.or_else(|| {
@@ -1204,14 +1226,17 @@ impl SessionManager {
                 .map(std::path::PathBuf::from)
                 .filter(|path| path.is_dir())
         });
-        let pty = self.new_pty(new_pane_id, cwd, &self.pane_runtime(pane_id));
+        let pty = self.launch_pty(new_pane_id, cwd, &runtime, launch)?;
         let new_pane = Pane::new(new_pane_id, pty);
 
         let window = self
             .sessions
             .iter_mut()
             .flat_map(|s| s.windows.iter_mut())
-            .find(|w| w.panes.iter().any(|p| p.id == pane_id))?;
+            .find(|w| w.panes.iter().any(|p| p.id == pane_id));
+        let Some(window) = window else {
+            return Ok(None);
+        };
         window
             .layout
             .find_and_split(pane_id, new_pane_id, direction);
@@ -1224,39 +1249,50 @@ impl SessionManager {
         window.zoomed_pane = None;
         // A manual split breaks the preset arrangement; next-layout cycles fresh.
         window.last_preset = None;
-        Some(new_pane_id)
+        Ok(Some(new_pane_id))
     }
 
-    /// Set up a new pane: `keep_open`, and a program started now rather than
-    /// once a tab shows the pane, so it runs without one. A program that
-    /// can't start closes its pane.
-    pub async fn launch(
-        &mut self,
+    /// A command's explicit directory must exist, except in a guest, which
+    /// checks it itself.
+    fn check_launch_cwd(
+        &self,
+        launch: &Launch,
+        cwd: Option<&std::path::Path>,
+        runtime: &Runtime,
+    ) -> Result<(), crate::automation::Error> {
+        let local = self.guest(runtime).is_none();
+        match cwd {
+            Some(cwd) if launch.spawn.is_some() && local && !cwd.is_dir() => Err(
+                crate::automation::Error::Invalid(format!("{}: no such directory", cwd.display())),
+            ),
+            _ => Ok(()),
+        }
+    }
+
+    /// A new pane's PTY, with its program started now rather than once a tab
+    /// shows the pane, so it runs without one.
+    fn launch_pty(
+        &self,
         pane_id: Uuid,
-        spawn: Option<crate::popup::Spawn>,
-        keep_open: bool,
-    ) -> Result<(), String> {
-        let pane = self.find_pane_mut(pane_id).ok_or("pane not found")?;
-        if let Some(mut spawn) = spawn {
+        cwd: Option<std::path::PathBuf>,
+        runtime: &Runtime,
+        launch: Launch,
+    ) -> Result<PtyHandle, crate::automation::Error> {
+        let mut pty = self.new_pty(pane_id, cwd, runtime);
+        pty.set_keep_open(launch.keep_open);
+        if let Some(mut spawn) = launch.spawn {
             // A guest's environment comes from the guest.
-            if pane.pty.is_guest() {
+            if pty.is_guest() {
                 spawn.env = None;
             }
-            pane.pty.set_command(spawn);
-            let spawned = pane.pty.ensure_spawned(
+            pty.set_command(spawn);
+            pty.ensure_spawned(
                 crate::config::DEFAULT_PTY_COLS,
                 crate::config::DEFAULT_PTY_ROWS,
-            );
-            if let Err(error) = spawned {
-                self.close_pane(pane_id).await;
-                return Err(error);
-            }
+            )
+            .map_err(crate::automation::Error::Failed)?;
         }
-        // Before its exit is handled, which waits for this lock.
-        if let Some(pane) = self.find_pane_mut(pane_id) {
-            pane.pty.set_keep_open(keep_open);
-        }
-        Ok(())
+        Ok(pty)
     }
 
     pub fn kill_pane(&mut self, session_id: Uuid, pane_id: Uuid) {
@@ -1292,7 +1328,8 @@ impl SessionManager {
             }
             return;
         }
-        let Some(pane) = self.find_pane(pane_id) else {
+        let exit_tx = self.pty_env.exit_tx.clone();
+        let Some(pane) = self.find_pane_mut(pane_id) else {
             return;
         };
         // At the reader's end, the waiter reports once it reaped the program.
@@ -1300,8 +1337,16 @@ impl SessionManager {
             return;
         }
         if pane.pty.keep_open() {
-            pane.pty.note_exit();
-            self.exits.touch();
+            let force = pane.pty.output_grace_over();
+            if pane.pty.finish(force) {
+                self.exits.touch();
+            } else if pane.pty.begin_output_grace() {
+                // Then finished even if the output never ends.
+                tokio::spawn(async move {
+                    tokio::time::sleep(crate::pty::OUTPUT_GRACE).await;
+                    let _ = exit_tx.send(pane_id);
+                });
+            }
             return;
         }
         self.close_pane(pane_id).await;
@@ -1483,18 +1528,35 @@ impl SessionManager {
         cwd: Option<std::path::PathBuf>,
         select: bool,
     ) -> Option<Uuid> {
+        self.create_window_with(session_id, name, cwd, select, Launch::default())
+            .await
+            .ok()
+            .flatten()
+    }
+
+    /// `create_window_named`, with the pane's program started first: one
+    /// that can't start leaves everything as it was.
+    pub async fn create_window_with(
+        &mut self,
+        session_id: Uuid,
+        name: Option<String>,
+        cwd: Option<std::path::PathBuf>,
+        select: bool,
+        launch: Launch,
+    ) -> Result<Option<Uuid>, crate::automation::Error> {
         let pane_id = Uuid::new_v4();
-        let runtime = self
-            .sessions
-            .iter()
-            .find(|s| s.id == session_id)?
-            .runtime
-            .clone();
-        let pty = self.new_pty(pane_id, cwd, &runtime);
+        let Some(session) = self.sessions.iter().find(|s| s.id == session_id) else {
+            return Ok(None);
+        };
+        let runtime = session.runtime.clone();
+        self.check_launch_cwd(&launch, cwd.as_deref(), &runtime)?;
+        let pty = self.launch_pty(pane_id, cwd, &runtime, launch)?;
         let pane = Pane::new(pane_id, pty);
         let base = name.unwrap_or_else(|| self.runtime_shell_name(&runtime));
 
-        let session = self.session_mut(session_id)?;
+        let Some(session) = self.session_mut(session_id) else {
+            return Ok(None);
+        };
         let existing: Vec<_> = session.windows.iter().map(|w| w.name.as_str()).collect();
         let wname = unique_name_in(&existing, &base);
         let window = Window {
@@ -1511,7 +1573,7 @@ impl SessionManager {
         if select {
             session.active_window = session.windows.len() - 1;
         }
-        Some(pane_id)
+        Ok(Some(pane_id))
     }
 
     pub fn switch_window(&mut self, session_id: Uuid, index: i32) {
@@ -1856,6 +1918,12 @@ impl SessionManager {
             .collect()
     }
 
+    pub fn pane_info(&self, pane_id: Uuid) -> Option<PaneInfo> {
+        self.pane_infos()
+            .into_iter()
+            .find(|info| info.pane_id == pane_id)
+    }
+
     pub fn pane_infos(&self) -> Vec<PaneInfo> {
         let mut infos = Vec::new();
         for session in &self.sessions {
@@ -2001,6 +2069,8 @@ impl SessionManager {
     /// Stop every PTY reader and writer and export the session tree and live shells for
     /// an in-place upgrade. If a pane doesn't stop in time, every shell resumes.
     pub fn export_handoff(&mut self, timeout: Duration) -> Result<HandoffExport, String> {
+        // Until the exec, or `resume_handoff`.
+        self.pty_env.reap_gate.hold(true);
         for pty in self.ptys_mut() {
             pty.stop_io();
         }
@@ -2050,6 +2120,7 @@ impl SessionManager {
             starting: self.popups.export_starting(),
             ended: self.popups.export_ended(),
         };
+        let closing = self.settle_exits(deadline);
         let exits = crate::pane_exit::ExitsHandoff {
             ended: self.exits.export(),
             dead: self
@@ -2059,8 +2130,43 @@ impl SessionManager {
                 .flat_map(|w| &w.panes)
                 .filter_map(|pane| Some((pane.id, pane.pty.export_exited()?)))
                 .collect(),
+            closing,
         };
         Ok((self.all_snapshots(), popups, exported, exits))
+    }
+
+    /// Programs reaped before reaping was held, whose exits weren't handled:
+    /// each kept pane finishes once its output ends (or at `deadline`), and
+    /// the others' statuses are kept. Returns those, for the next server to
+    /// close, so none comes back as a shell under the command's ID.
+    #[cfg(unix)]
+    fn settle_exits(&mut self, deadline: Instant) -> Vec<Uuid> {
+        let exited: Vec<Uuid> = self
+            .sessions
+            .iter()
+            .flat_map(|s| &s.windows)
+            .flat_map(|w| &w.panes)
+            .filter(|pane| pane.pty.exited() && !(pane.pty.keep_open() && pane.pty.finished()))
+            .map(|pane| pane.id)
+            .collect();
+        let deadline = deadline.max(Instant::now() + Duration::from_millis(200));
+        let mut closing = Vec::new();
+        for id in exited {
+            let Some(pane) = self.find_pane_mut(id) else {
+                continue;
+            };
+            if !pane.pty.keep_open() {
+                let status = pane.pty.exit_status();
+                self.exits.closed(id, status);
+                closing.push(id);
+                continue;
+            }
+            while !pane.pty.output_done() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            pane.pty.finish(true);
+        }
+        closing
     }
 
     #[cfg(unix)]
@@ -2085,6 +2191,7 @@ impl SessionManager {
     #[cfg(unix)]
     /// Restart the shells `export_handoff` stopped, after a failed upgrade.
     pub fn resume_handoff(&mut self, panes: Vec<HandoffPane>) {
+        self.pty_env.reap_gate.hold(false);
         let deadline = Instant::now() + Duration::from_secs(5);
         for (id, pty) in self.ptys_with_ids_mut() {
             if let Err(error) = pty.recover(deadline) {
@@ -2107,7 +2214,7 @@ impl SessionManager {
 
     #[cfg(unix)]
     /// Rebuild the session tree from a handoff and adopt its running shells.
-    pub fn restore_handoff(
+    pub async fn restore_handoff(
         &mut self,
         sessions: Vec<SessionSnapshot>,
         popups: crate::popup::PopupsHandoff,
@@ -2134,6 +2241,9 @@ impl SessionManager {
             if let Some(pane) = self.find_pane_mut(id) {
                 pane.pty.restore_exited(exited);
             }
+        }
+        for id in exits.closing {
+            self.close_pane(id).await;
         }
         let handed_off: Vec<_> = popups.open.iter().map(|popup| popup.id).collect();
         let starting = popups

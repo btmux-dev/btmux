@@ -17,6 +17,12 @@ type EndedHandoff = { id: string, pane_id: string, outcome: Outcome,
 age_ms: bigint, };
 type Outcome = { "Exited": number | null } | { "Failed": string } | "NotShown";
 type Event = { "Data": number } | { "Size": [number, number] };
+type ExitsHeader = { ended: Array<ClosedHandoff>,
+closing: Array<string>,
+dead: Array<DeadHeader>, };
+type DeadHeader = { id: string, status: number | null, cols: number, rows: number, journal: Array<Event>, title: string | null, cwd: string | null, cwd_remote: boolean, };
+type ClosedHandoff = { pane_id: string, status: number | null,
+age_ms: bigint, };
 type KittyKeyboard = {
 stacks: [[number, number, number, number, number, number, number, number], [number, number, number, number, number, number, number, number]], alternate: boolean,
 modes: [boolean, boolean, boolean], saved: [boolean, boolean, boolean], };

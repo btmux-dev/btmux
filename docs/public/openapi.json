@@ -429,7 +429,7 @@
             }
           },
           "400": {
-            "description": "An empty command, `env` without one, or a `cwd` that isn't a directory; or a malformed ID or JSON body",
+            "description": "An empty command, `env` without one, or with a command a `cwd` that isn't a directory; or a malformed ID or JSON body",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1034,7 +1034,7 @@
             }
           },
           "400": {
-            "description": "An invalid direction, an empty command, `env` without one, or a `cwd` that isn't a directory; or a malformed ID or JSON body",
+            "description": "An invalid direction, an empty command, `env` without one, or with a command a `cwd` that isn't a directory; or a malformed ID or JSON body",
             "content": {
               "text/plain": {
                 "schema": {
@@ -4542,6 +4542,17 @@
           "pane_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "pane": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PaneInfo",
+                "description": "The new pane as `GET /api/panes` lists it, as it was created."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -6878,6 +6889,17 @@
           "pane_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "pane": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PaneInfo",
+                "description": "The new pane as `GET /api/panes` lists it, as it was created."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },

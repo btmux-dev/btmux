@@ -136,6 +136,9 @@ pub async fn send_keys<S: AsRef<str>>(
         let pane = mgr
             .find_pane_mut(pane_id)
             .ok_or(Error::PaneNotFound(pane_id))?;
+        if pane.pty.exited() {
+            return Err(Error::Conflict("the pane's program has exited".into()));
+        }
         let newly_spawned = !pane.pty.is_spawned();
         pane.pty.ensure_spawned(cols, rows)?;
         let journal = keys

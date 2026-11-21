@@ -130,8 +130,12 @@ pub enum TmuxCommand {
         /// A pane ID (also of a closed pane) or tmux target. Default: this pane
         #[arg(short = 't')]
         target: Option<String>,
-        /// Seconds to wait; without it, wait until the program exits.
-        #[arg(long, value_name = "SECONDS")]
+        /// Seconds to wait, at most a year; without it, wait until the program exits.
+        #[arg(
+            long,
+            value_name = "SECONDS",
+            value_parser = clap::value_parser!(u64).range(..=crate::pane_exit::MAX_TIMEOUT_SECS)
+        )]
         timeout: Option<u64>,
     },
     /// Kill the target pane. Its window closes with its last pane, and the
@@ -623,13 +627,22 @@ impl Client<'_> {
                 wait,
             });
         };
-        let panes = self.panes().await?;
-        // Its command may have exited and closed it already.
-        let text = match panes.iter().find(|p| p.pane_id == pane) {
-            Some(info) => format_line(format, &serde_json::to_value(info).unwrap()) + "\n",
-            None => format!("{pane}\n"),
+        // As it was created: its command may have closed it already.
+        let info = match created.get("pane").filter(|pane| pane.is_object()) {
+            Some(info) => info.clone(),
+            None => {
+                let panes = self.panes().await?;
+                let info = panes
+                    .iter()
+                    .find(|p| p.pane_id == pane)
+                    .ok_or("the new pane is gone")?;
+                serde_json::to_value(info).unwrap()
+            }
         };
-        Ok(Reply { text, wait })
+        Ok(Reply {
+            text: format_line(format, &info) + "\n",
+            wait,
+        })
     }
 }
 
@@ -943,6 +956,23 @@ mod tests {
             "p 1 2"
         );
         assert_eq!(format_line("x #{open", &row), "x #{open");
+    }
+
+    #[test]
+    fn wait_timeouts_are_bounded() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Cli {
+            #[command(subcommand)]
+            command: TmuxCommand,
+        }
+        let parse = |timeout: &str| {
+            Cli::try_parse_from(["btmux", "wait-exit", "-t", "p", "--timeout", timeout])
+        };
+        assert!(parse("600").is_ok());
+        assert!(parse(&crate::pane_exit::MAX_TIMEOUT_SECS.to_string()).is_ok());
+        assert!(parse("18446744073709551615").is_err());
+        assert!(parse("-1").is_err());
     }
 
     #[test]

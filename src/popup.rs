@@ -855,8 +855,14 @@ async fn run_popup(profile: Option<&str>, args: &PopupArgs) -> Result<i32, Strin
     let body = serde_json::to_value(&request).map_err(|e| e.to_string())?;
     let path = format!("/api/panes/{pane}/popup");
     // Retried with its id across an upgrade, it never runs twice.
-    let (status, reply) =
-        request_retrying(profile, reqwest::Method::POST, &path, Some(body)).await?;
+    let (status, reply) = request_retrying(
+        profile,
+        reqwest::Method::POST,
+        &path,
+        Some(body),
+        NO_TIMEOUT,
+    )
+    .await?;
     match status {
         reqwest::StatusCode::OK => {}
         // No tab shows the pane, as over ssh: it runs here.
@@ -885,7 +891,7 @@ async fn run_popup(profile: Option<&str>, args: &PopupArgs) -> Result<i32, Strin
 /// restarts in place (`btmux upgrade`).
 async fn wait(profile: Option<&str>, pane: Uuid, id: Uuid) -> Result<i32, String> {
     let path = format!("/api/panes/{pane}/popup/{id}");
-    match request_retrying(profile, reqwest::Method::GET, &path, None).await? {
+    match request_retrying(profile, reqwest::Method::GET, &path, None, NO_TIMEOUT).await? {
         (reqwest::StatusCode::OK, reply) => {
             #[derive(Deserialize)]
             struct Exited {
@@ -916,6 +922,7 @@ pub(crate) async fn request_retrying(
     method: reqwest::Method,
     path: &str,
     body: Option<serde_json::Value>,
+    timeout: Duration,
 ) -> Result<(reqwest::StatusCode, String), String> {
     let mut unreachable_since = None;
     loop {
@@ -924,7 +931,7 @@ pub(crate) async fn request_retrying(
             method.clone(),
             path,
             body.clone(),
-            NO_TIMEOUT,
+            timeout,
         )
         .await
         {
@@ -1222,12 +1229,14 @@ mod tests {
             (sessions, serde_json::to_string(&popups).unwrap())
         };
         let (mut manager, exit_rx) = manager();
-        manager.restore_handoff(
-            sessions,
-            serde_json::from_str(&popups).unwrap(),
-            Vec::new(),
-            Default::default(),
-        );
+        manager
+            .restore_handoff(
+                sessions,
+                serde_json::from_str(&popups).unwrap(),
+                Vec::new(),
+                Default::default(),
+            )
+            .await;
         let (state, app) = serve(manager, exit_rx);
         let id = open_id(&state).await;
         show(&state, id).await.unwrap();

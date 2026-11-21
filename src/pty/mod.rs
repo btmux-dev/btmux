@@ -94,10 +94,42 @@ pub struct PtyEnv {
     pub port: u16,
     /// Theme colors reported to programs in the PTY.
     pub palette: colors::SharedPalette,
+    /// Held by a handoff, so programs aren't reaped while it runs.
+    pub reap_gate: Arc<ReapGate>,
 }
 
+/// While held, exited programs stay unreaped zombies for the next server, so
+/// a handoff sees each pane as running or as exited, never reaped in between.
+#[derive(Default)]
+#[cfg_attr(not(unix), allow(dead_code))]
+pub struct ReapGate {
+    held: Mutex<bool>,
+    released: std::sync::Condvar,
+}
+
+#[cfg_attr(not(unix), allow(dead_code))]
+impl ReapGate {
+    /// Hold or release reaping. Holding waits for reaps in progress.
+    pub fn hold(&self, held: bool) {
+        *self.held.lock().unwrap() = held;
+        if !held {
+            self.released.notify_all();
+        }
+    }
+
+    /// Blocks while held; a reap happens under the guard.
+    fn reaping(&self) -> std::sync::MutexGuard<'_, bool> {
+        let mut held = self.held.lock().unwrap();
+        while *held {
+            held = self.released.wait(held).unwrap();
+        }
+        held
+    }
+}
+
+/// The PTY's input queue; `true` once its program exited and the queue closed.
 #[derive(Clone)]
-pub struct InputSender(mpsc::Sender<PtyInput>);
+pub struct InputSender(mpsc::Sender<PtyInput>, bool);
 
 enum PtyInput {
     Raw(Vec<u8>),
@@ -112,6 +144,18 @@ enum PtyInput {
 }
 
 impl InputSender {
+    /// A closed queue, for a pane whose program exited.
+    fn exited() -> Self {
+        Self(mpsc::channel(1).0, true)
+    }
+
+    fn unavailable(&self, error: impl std::fmt::Display) -> String {
+        if self.1 {
+            return "the pane's program has exited".into();
+        }
+        format!("PTY input unavailable: {error}")
+    }
+
     pub async fn send_wait(&self, data: Vec<u8>) -> Result<(), String> {
         if data.len() > MAX_INPUT {
             return Err("PTY input exceeds 64 KiB".into());
@@ -119,7 +163,7 @@ impl InputSender {
         self.0
             .send(PtyInput::Raw(data))
             .await
-            .map_err(|e| format!("PTY input unavailable: {e}"))
+            .map_err(|e| self.unavailable(e))
     }
     pub fn send(&self, data: Vec<u8>) -> Result<(), String> {
         if data.len() > MAX_INPUT {
@@ -127,7 +171,7 @@ impl InputSender {
         }
         self.0
             .try_send(PtyInput::Raw(data))
-            .map_err(|e| format!("PTY input unavailable: {e}"))
+            .map_err(|e| self.unavailable(e))
     }
 
     async fn send_shell_command(&self, data: Vec<u8>, shell_pid: Pid) -> Result<(), String> {
@@ -142,7 +186,7 @@ impl InputSender {
                 reply,
             })
             .await
-            .map_err(|e| format!("PTY input unavailable: {e}"))?;
+            .map_err(|e| self.unavailable(e))?;
         result
             .await
             .map_err(|_| "PTY input unavailable".to_string())?
@@ -188,6 +232,8 @@ pub struct PtyHandle {
     exit_tx: mpsc::UnboundedSender<Uuid>,
     /// Notifies the session manager that OSC title/cwd changed so it can re-broadcast state.
     meta_tx: mpsc::UnboundedSender<()>,
+    #[cfg_attr(not(unix), allow(dead_code))]
+    reap_gate: Arc<ReapGate>,
     /// Foreground pgroup at the time each DSR 6 query was forwarded. When a
     /// CPR response arrives, pop the front: if tcgetpgrp(master) differs, the
     /// requester died and the response is stale.
@@ -223,11 +269,22 @@ pub struct PtyHandle {
     keep_open: bool,
     /// The reader reached the end of the output.
     reader_done: Arc<AtomicBool>,
-    /// A kept pane's exit was written to its output.
+    /// A kept pane finished: its exit was written to its output.
     exit_noted: AtomicBool,
+    /// When a kept pane's exit was handled with its output still open.
+    exited_at: Mutex<Option<std::time::Instant>>,
 }
 
-/// A kept-open pane whose program exited, for an upgraded server.
+/// How long a kept pane waits for the rest of its output after its program
+/// exited, while something else, such as a background process, holds the
+/// terminal open.
+#[cfg(not(test))]
+pub const OUTPUT_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+#[cfg(test)]
+pub const OUTPUT_GRACE: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// A finished kept pane, for an upgraded server.
+#[cfg(unix)]
 pub struct Exited {
     pub status: Option<i32>,
     pub cols: u16,
@@ -235,6 +292,7 @@ pub struct Exited {
     pub journal: Vec<Output>,
     pub title: Option<String>,
     pub cwd: Option<String>,
+    pub cwd_remote: bool,
 }
 
 impl PtyHandle {
@@ -250,7 +308,7 @@ impl PtyHandle {
         let probe = Arc::new(Mutex::new(None));
 
         Self {
-            input_tx: InputSender(input_tx),
+            input_tx: InputSender(input_tx, false),
             output_tx,
             scrollback: Arc::new(Mutex::new(Replay::new(
                 80,
@@ -279,6 +337,7 @@ impl PtyHandle {
             pane_id,
             exit_tx: env.exit_tx.clone(),
             meta_tx: env.meta_tx.clone(),
+            reap_gate: env.reap_gate.clone(),
             pending_cpr_pgrps: Arc::new(Mutex::new(VecDeque::new())),
             hidden_input: HiddenInput::new(&probe),
             probe,
@@ -296,6 +355,7 @@ impl PtyHandle {
             keep_open: false,
             reader_done: Arc::default(),
             exit_noted: AtomicBool::new(false),
+            exited_at: Mutex::new(None),
         }
     }
 
@@ -344,30 +404,76 @@ impl PtyHandle {
         move || child.lock().unwrap().is_some()
     }
 
-    /// Writes a kept pane's exit after its last output, once both the reader
-    /// and the waiter are done. `true` if it did.
-    pub fn note_exit(&self) -> bool {
-        if !self.keep_open
-            || !self.exited()
-            || !self.reader_done.load(Ordering::Acquire)
-            || self.exit_noted.swap(true, Ordering::AcqRel)
-        {
+    /// Its program exited and, for a kept pane, the pane finished: what
+    /// waiters report, so a capture after the wait has all the output.
+    pub fn finished(&self) -> bool {
+        self.exited() && (!self.keep_open || self.exit_noted.load(Ordering::Acquire))
+    }
+
+    /// Whether it still holds its terminal.
+    #[cfg(test)]
+    pub fn has_terminal(&self) -> bool {
+        self.master.is_some()
+    }
+
+    /// The reader reached the end of the output.
+    pub fn output_done(&self) -> bool {
+        self.reader_done.load(Ordering::Acquire)
+    }
+
+    /// Start the wait for a kept pane's last output after its program
+    /// exited; `false` if it already started.
+    pub fn begin_output_grace(&self) -> bool {
+        let mut since = self.exited_at.lock().unwrap();
+        if since.is_some() {
             return false;
         }
+        *since = Some(std::time::Instant::now());
+        true
+    }
+
+    /// The wait for the last output is over: something else, such as a
+    /// background process, holds the terminal open.
+    pub fn output_grace_over(&self) -> bool {
+        self.exited_at
+            .lock()
+            .unwrap()
+            .is_some_and(|since| since.elapsed() >= OUTPUT_GRACE)
+    }
+
+    /// Finish a kept pane whose program exited once its output is complete,
+    /// or now if `force`d: write its exit after the last output and release
+    /// the terminal, keeping what it shows. `true` once finished.
+    pub fn finish(&mut self, force: bool) -> bool {
+        if !self.keep_open || !self.exited() {
+            return false;
+        }
+        if self.exit_noted.load(Ordering::Acquire) {
+            return true;
+        }
+        if !force && !self.output_done() {
+            return false;
+        }
+        // Stops a reader still running, so nothing follows the exit.
+        self.release();
         let text = match self.exit_status() {
             Some(status) => format!("\x1b[0m\r\n[exited with status {status}]\r\n"),
             None => "\x1b[0m\r\n[exited]\r\n".into(),
         };
         let bytes = Bytes::from(text.into_bytes());
-        let mut replay = self.scrollback.lock().unwrap();
-        replay.push(Output::Data(bytes.clone()));
+        self.scrollback
+            .lock()
+            .unwrap()
+            .push(Output::Data(bytes.clone()));
         let _ = self.output_tx.send(Output::Data(bytes));
+        self.exit_noted.store(true, Ordering::Release);
         true
     }
 
-    /// A kept pane whose program exited, for an upgraded server.
+    /// A finished kept pane, for an upgraded server.
+    #[cfg(unix)]
     pub fn export_exited(&self) -> Option<Exited> {
-        if !self.keep_open || !self.exited() {
+        if !self.keep_open || !self.finished() {
             return None;
         }
         let (cols, rows) = self.size();
@@ -378,10 +484,12 @@ impl PtyHandle {
             journal: self.journal(),
             title: self.title.lock().unwrap().clone(),
             cwd: self.cwd.lock().unwrap().clone(),
+            cwd_remote: self.cwd_remote.load(Ordering::Relaxed),
         })
     }
 
-    /// Show what an old server's kept pane showed, without a program.
+    /// Show what an old server's finished kept pane showed.
+    #[cfg(unix)]
     pub fn restore_exited(&mut self, exited: Exited) {
         *self.scrollback.lock().unwrap() = Replay::restore(
             exited.cols,
@@ -395,9 +503,11 @@ impl PtyHandle {
         if exited.cwd.is_some() {
             *self.cwd.lock().unwrap() = exited.cwd;
         }
+        self.cwd_remote.store(exited.cwd_remote, Ordering::Relaxed);
         self.keep_open = true;
         self.reader_done.store(true, Ordering::Release);
         self.exit_noted.store(true, Ordering::Release);
+        self.input_tx = InputSender::exited();
         *self.spawned.lock().unwrap() = true;
     }
 
@@ -558,7 +668,8 @@ impl PtyHandle {
                 let cwd = self.spawn_cwd.as_deref().and_then(Path::to_str);
                 std::iter::once(exe.to_string_lossy().into_owned())
                     // A popup's directory comes from its guest caller.
-                    .chain(guest.wrapper_args(cwd, is_popup))
+                    // A popup's or command's directory is the caller's.
+                    .chain(guest.wrapper_args(cwd, popup.is_some()))
                     .chain(popup.iter().flat_map(|popup| popup.command.guest_args()))
                     .collect()
             }
@@ -1273,6 +1384,7 @@ mod lifecycle_tests {
             meta_tx: mpsc::unbounded_channel().0,
             port: 8044,
             palette: colors::SharedPalette::default(),
+            reap_gate: Default::default(),
         };
         PtyHandle::new_with_cwd(shell, Uuid::new_v4(), &env, None, 100)
     }
@@ -1286,7 +1398,7 @@ mod lifecycle_tests {
     #[tokio::test]
     async fn input_is_bounded() {
         let (tx, _rx) = mpsc::channel(1);
-        let input = InputSender(tx);
+        let input = InputSender(tx, false);
         assert!(input.send(vec![0; 65537]).is_err());
         assert!(input.send(vec![0; 65536]).is_ok());
         assert!(input.send(vec![0]).is_err());
@@ -1412,6 +1524,7 @@ mod lifecycle_tests {
             meta_tx: mpsc::unbounded_channel().0,
             port: 8044,
             palette: colors::SharedPalette::default(),
+            reap_gate: Default::default(),
         };
         env.palette
             .set(colors::Palette::from_theme(&crate::config::default_theme()));
@@ -1592,6 +1705,7 @@ mod lifecycle_tests {
             meta_tx: mpsc::unbounded_channel().0,
             port: 8044,
             palette: palette.clone(),
+            reap_gate: Default::default(),
         };
         let mut pane = PtyHandle::new_with_cwd("/bin/sh", Uuid::new_v4(), &env, None, 100);
         pane.ensure_spawned(80, 24).unwrap();
@@ -1649,6 +1763,7 @@ mod lifecycle_tests {
             meta_tx: mpsc::unbounded_channel().0,
             port: 8044,
             palette: palette.clone(),
+            reap_gate: Default::default(),
         };
         let mut pane = PtyHandle::new_with_cwd("/bin/sh", Uuid::new_v4(), &env, None, 100);
         pane.ensure_spawned(80, 24).unwrap();
