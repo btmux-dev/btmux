@@ -51,9 +51,32 @@ modifiers. Setting a key replaces the action's default binding.
 [native editor](../features/native-editor.md#actions)'s `editor-*` actions.
 Every action is also in the command palette.
 
-`Cmd+Shift+P` (`Ctrl+Shift+P` on Windows and Linux) also opens the command
-palette, without the prefix, as in VS Code. It isn't rebindable. While VS Code
-has focus, the key goes to VS Code's own palette.
+## VS Code keys
+
+These work without the prefix, as in VS Code, in the pane or popup that has
+focus. While VS Code has focus, they go to VS Code. The prefix comes first: a
+`prefix = "C-,"` or `"C-g"` keeps its key, and a key bound after the prefix
+runs its binding. They aren't rebindable; `vscode-keys = false` turns them
+off, also in Settings.
+
+```toml
+vscode-keys = false
+```
+
+| macOS             | Windows and Linux | Action                                         |
+| ----------------- | ----------------- | ---------------------------------------------- |
+| `Cmd+Shift+P`     | `Ctrl+Shift+P`    | `command-palette`                              |
+| `Cmd+P`           |                   | `editor-quick-open` (with `editor = "native"`) |
+| `Cmd+Shift+E`     | `Ctrl+Shift+E`    | `file-browser`                                 |
+| `Ctrl+Shift+G`    | `Ctrl+Shift+G`    | `git-view`                                     |
+| ``Ctrl+Shift+` `` | ``Ctrl+Shift+` `` | `new-window`                                   |
+| `Cmd+,`           | `Ctrl+,`          | Settings                                       |
+| `Cmd+F`           |                   | `search-pane`, in a terminal                   |
+| `Cmd+\`           | `Ctrl+Shift+5`    | `split-vertical`, in a terminal                |
+
+Off macOS, VS Code's plain `Ctrl` keys are left to the shell: `Ctrl+P` and
+`Ctrl+F` are readline keys. On a layout without Latin letters, letter keys
+count by their position.
 
 ## Popup keys
 

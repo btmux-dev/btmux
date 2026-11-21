@@ -9,6 +9,7 @@ import type { ClientConfig, FontEntry } from './types';
 export const CONFIG_DEFAULTS = {
   prefix: 'C-a',
   repeatTime: 0,
+  vscodeKeys: true,
   animations: true,
   showPaneTitles: false,
   wallpaperShaders: [] as ShaderLayer[],
@@ -64,6 +65,10 @@ export function getPrefix(config: ConfigLike): string {
 
 export function getRepeatTime(config: ConfigLike): number {
   return config?.repeat_time ?? CONFIG_DEFAULTS.repeatTime;
+}
+
+export function getVscodeKeys(config: ConfigLike): boolean {
+  return config?.vscode_keys ?? CONFIG_DEFAULTS.vscodeKeys;
 }
 
 export function getAnimations(config: ConfigLike): boolean {

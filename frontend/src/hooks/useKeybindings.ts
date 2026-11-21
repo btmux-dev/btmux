@@ -23,6 +23,7 @@ import {
   getRepeatTime,
   getTerminalFontFamily,
   getTerminalFontWeight,
+  getVscodeKeys,
   getWindowSort,
   FONT_WEIGHT_STEP,
 } from '../state/configDefaults';
@@ -41,7 +42,7 @@ import { APPEARANCES } from '../lib/appearance';
 import { worktreeLabel } from '../lib/gitIdentity';
 import { actionLabel, popupIndex } from '../lib/actionLabel';
 import { keyCaster } from '../lib/keyCast';
-import { IS_MAC } from '../lib/nvimKeys';
+import { OPEN_SETTINGS, workbenchKey, type WorkbenchKey } from '../lib/workbenchKeys';
 
 /** How long the display-panes (prefix + q) number overlay stays up, in ms. */
 const DISPLAY_PANES_MS = 1500;
@@ -73,19 +74,37 @@ function sendPrefix(sessionId: string, p: ParsedKey, send: (msg: ClientMessage) 
   if (paneId && text) send({ type: 'write_pane_input', session_id: sessionId, pane_id: paneId, text });
 }
 
-/** Cmd+Shift+P (Ctrl+Shift+P off macOS) opens the command palette, as in VS Code. */
-function isPaletteChord(e: KeyboardEvent): boolean {
-  return (
-    e.key.toLowerCase() === 'p' &&
-    e.shiftKey &&
-    !e.altKey &&
-    (IS_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)
-  );
+/** VS Code's key `e` presses where it applies; VS Code keeps its own while focused. */
+function workbenchChord(e: KeyboardEvent): WorkbenchKey | undefined {
+  if (!getVscodeKeys(useStore.getState().config)) return undefined;
+  if (document.activeElement?.matches('iframe[title="VS Code"]')) return undefined;
+  const key = workbenchKey(e);
+  if (!key || (key.terminal && !inPaneTerminal(e.target))) return undefined;
+  // Quick open is the native editor's, which runs its own for its pane while focused.
+  if (
+    key.action === 'editor-quick-open' &&
+    ((useStore.getState().config?.editor ?? 'native') !== 'native' ||
+      (e.target instanceof Element && e.target.closest('[data-native-editor]')))
+  )
+    return undefined;
+  return key;
 }
 
-/** Whether VS Code's iframe has focus; it keeps the chord for its own palette. */
-function vscodeFocused(): boolean {
-  return document.activeElement?.matches('iframe[title="VS Code"]') === true;
+/** Where an action runs instead of the active pane: a terminal's own pane, or a popup's. */
+export interface ActionTarget {
+  paneId: string;
+  /** The popup's id over its pane. */
+  termId: string;
+}
+
+/** The pane or popup holding `target`, which the server may not have selected yet. */
+function focusedTarget(target: EventTarget | null): ActionTarget | undefined {
+  if (!(target instanceof Element)) return undefined;
+  const popup = useStore.getState().popupShown;
+  if (popup && target.closest('[data-popup]')?.getAttribute('data-popup') === popup.id)
+    return { paneId: popup.pane_id, termId: popup.id };
+  const paneId = target.closest('[data-pane-id]')?.getAttribute('data-pane-id');
+  return paneId ? { paneId, termId: paneId } : undefined;
 }
 
 /** Actions that stay armed for `repeat-time` after the prefix (tmux `bind -r`). */
@@ -180,7 +199,12 @@ export function useKeybindings(
       const dataset = (e.target as HTMLElement | null)?.dataset;
       const fromSurface =
         dataset?.nvimInput !== undefined || dataset?.browserInput !== undefined || dataset?.nativeEditor !== undefined;
-      if (isPaletteChord(e) && !vscodeFocused()) {
+      // The prefix, and a binding after it, outrank these keys; prefixes never take Cmd.
+      const prefixKey =
+        matchesPrefix(e, prefixRef.current) ||
+        (prefixActiveRef.current && !e.metaKey && bindFor(e, bindsRef.current) !== undefined);
+      const chord = prefixKey ? undefined : workbenchChord(e);
+      if (chord) {
         e.preventDefault();
         e.stopPropagation();
         // Like a handled binding, it ends an armed prefix and repeat window.
@@ -190,7 +214,7 @@ export function useKeybindings(
           setPrefixActive(false);
           prefixActiveRef.current = false;
         }
-        // Opens wherever a prefix binding would run.
+        // Runs wherever a prefix binding would.
         const modal =
           overlayRef.current ||
           settingsOpenRef.current ||
@@ -200,8 +224,19 @@ export function useKeybindings(
           switcherOpenRef.current;
         if (!modal) {
           hidePaneNumbers();
-          keyCaster.note(e, { kind: 'binding', label: castLabel('command-palette') });
-          runAction('command-palette', sessionIdRef.current, sendRef.current, onSwitchToSessionRef.current);
+          if (chord.action === OPEN_SETTINGS) {
+            keyCaster.note(e, { kind: 'binding', label: 'Settings' });
+            useStore.getState().setSettingsOpen(true);
+          } else {
+            keyCaster.note(e, { kind: 'binding', label: castLabel(chord.action) });
+            runAction(
+              chord.action,
+              sessionIdRef.current,
+              sendRef.current,
+              onSwitchToSessionRef.current,
+              focusedTarget(e.target),
+            );
+          }
         }
         return;
       }
@@ -351,11 +386,12 @@ export function runAction(
   sessionId: string,
   send: (msg: ClientMessage) => void,
   onSwitchToSession: (sessionName: string) => void,
+  target?: ActionTarget,
 ) {
   const store = useStore.getState();
-  const paneId = store.getActivePaneId(sessionId);
+  const paneId = target?.paneId ?? store.getActivePaneId(sessionId);
   // A shown popup's terminal gets what goes to a terminal; its pane, structural actions.
-  const termId = store.popupShown?.id ?? paneId;
+  const termId = target?.termId ?? store.popupShown?.id ?? paneId;
   const openOverlay = (o: Overlay) => store.setOverlay(o);
   const session = store.getSession(sessionId);
 
@@ -643,14 +679,14 @@ export function runAction(
     }
     case 'file-browser': {
       const win = session?.windows[session.active_window];
-      const pane = win?.panes[win.active_pane];
+      const pane = (target && win?.panes.find((p) => p.id === target.paneId)) ?? win?.panes[win.active_pane];
       const cwd = pane?.cwd ?? null;
       void openFileBrowserFiles(pane?.id ?? null, cwd);
       break;
     }
     case 'git-view': {
       const win = session?.windows[session.active_window];
-      const pane = win?.panes[win.active_pane];
+      const pane = (target && win?.panes.find((p) => p.id === target.paneId)) ?? win?.panes[win.active_pane];
       const cwd = pane?.cwd ?? null;
       store.setFileBrowserOpen(true, cwd, pane?.id ?? null, 'git');
       break;
@@ -684,7 +720,7 @@ export function runAction(
     }
     case 'editor-quick-open': {
       const win = session?.windows[session.active_window];
-      const paneId = win?.zoomed_pane ?? win?.panes[win.active_pane]?.id ?? null;
+      const paneId = target?.paneId ?? win?.zoomed_pane ?? win?.panes[win.active_pane]?.id ?? null;
       if (!paneId) break;
       // Without a folder, don't show the editor for every tab only to say so.
       if (!workspaceFolder(findPaneState(store, paneId))) {
