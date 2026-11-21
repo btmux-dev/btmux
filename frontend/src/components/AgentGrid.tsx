@@ -155,33 +155,42 @@ interface Packed {
   sizes: (Size | null)[];
 }
 
-/** Flows tiles left to right, wrapping at `width`; returns rows and total height. */
+/**
+ * Splits the sized tiles, in order, into the rows of least total height that fit
+ * `width`; ties go to fewer, then fuller first, rows. Unlike greedy wrapping, that
+ * height never shrinks as the scale grows, so `pack` can bisect it.
+ */
 function flow(naturals: (Size | null)[], scale: number, width: number, gap: number): Packed & { height: number } {
   const sizes = naturals.map((n) => n && { w: n.w * scale, h: n.h * scale });
-  const lines: number[][] = [];
-  let line: number[] = [];
-  let used = 0;
-  let height = 0;
-  let lineH = 0;
-  sizes.forEach((size, i) => {
-    if (!size) return;
-    const tileW = size.w + CHROME_W;
-    if (line.length && used + gap + tileW > width) {
-      lines.push(line);
-      height += lineH + gap;
-      line = [];
-      used = 0;
-      lineH = 0;
+  const order = sizes.flatMap((size, i) => (size ? [i] : []));
+  const n = order.length;
+  // best[k] lays out order[k..]: its height, row count, and where its second row starts.
+  const best: { height: number; rows: number; next: number }[] = [];
+  best[n] = { height: 0, rows: 0, next: n };
+  for (let k = n - 1; k >= 0; k--) {
+    const rows: { end: number; h: number }[] = [];
+    let used = -gap;
+    let rowH = 0;
+    for (let j = k; j < n; j++) {
+      const size = sizes[order[j]]!;
+      used += gap + size.w + CHROME_W;
+      // A tile wider than any row still gets one of its own.
+      if (j > k && used > width) break;
+      rowH = Math.max(rowH, size.h + CHROME_H);
+      rows.push({ end: j + 1, h: rowH });
     }
-    used += (line.length ? gap : 0) + tileW;
-    lineH = Math.max(lineH, size.h + CHROME_H);
-    line.push(i);
-  });
-  if (line.length) {
-    lines.push(line);
-    height += lineH;
+    let pick: (typeof best)[number] | undefined;
+    for (const { end, h } of rows.reverse()) {
+      const height = h + (end < n ? gap + best[end].height : 0);
+      const count = 1 + best[end].rows;
+      if (!pick || height < pick.height - 0.01 || (height <= pick.height + 0.01 && count < pick.rows))
+        pick = { height, rows: count, next: end };
+    }
+    best[k] = pick!;
   }
-  return { lines, sizes, height };
+  const lines: number[][] = [];
+  for (let k = 0; k < n; k = best[k].next) lines.push(order.slice(k, best[k].next));
+  return { lines, sizes, height: best[0].height };
 }
 
 /** Largest shared scale (at most 1:1) at which all tiles fit without scrolling. */
@@ -618,15 +627,15 @@ export function AgentGrid({ send }: Props) {
   );
 
   const tiles = (
+    // Rows are `packed.lines`, ended by breaks rather than wrapped by width; safe
+    // alignment keeps an overflowing first row or column reachable by scrolling.
     <HStack
       ref={areaRef}
       data-agent-tiles
-      gap={3}
       wrap="wrap"
-      hAlign="center"
       vAlign="center"
       isScrollable
-      className={`h-full min-h-0 min-w-0 flex-1 content-center ${tilesShown || allSized ? '' : 'opacity-0'}`}
+      className={`h-full min-h-0 min-w-0 flex-1 content-center-safe justify-center-safe gap-x-3 ${tilesShown || allSized ? '' : 'opacity-0'}`}
     >
       {shown.length === 0 && (
         <EmptyState
@@ -636,14 +645,19 @@ export function AgentGrid({ send }: Props) {
         />
       )}
       {packed &&
-        shown.map((entry, i) => {
+        shown.flatMap((entry, i) => {
           const n = number(entry);
           const size = packed.sizes[i];
           const detail = paneDetail(entry);
           const status = githubStatus(entry);
           const spent = usage(entry);
           const time = since(entry);
-          return (
+          // The row gap, as a line of its own (gap-x-3's height).
+          const rowBreak = packed.lines.some((line, row) => row > 0 && line[0] === i) && (
+            <div key={`break-${entry.paneId}`} aria-hidden className="h-3 basis-full" />
+          );
+          return [
+            rowBreak,
             <div
               key={entry.paneId}
               data-agent-tile={entry.paneId}
@@ -752,8 +766,8 @@ export function AgentGrid({ send }: Props) {
                   </HStack>
                   <VStack
                     data-agent-mirror
-                    // Concentric with the card's corners at padding 2.
-                    className="relative min-h-0 flex-1 overflow-hidden rounded-sm"
+                    // Concentric with the card's corners, 8px (padding 2) inside them.
+                    className="relative min-h-0 flex-1 overflow-hidden rounded-[max(0px,calc(var(--radius-container)-var(--spacing-2)))]"
                     style={{ background: terminalBg }}
                   >
                     {/* Only while shown: a hidden mirror can't report its size, and closing clears expiries. */}
@@ -770,8 +784,8 @@ export function AgentGrid({ send }: Props) {
                   </VStack>
                 </VStack>
               </SelectableCard>
-            </div>
-          );
+            </div>,
+          ];
         })}
     </HStack>
   );

@@ -77,6 +77,9 @@ actions, saved state, and API types can change in any release.
 
 ### Fixed
 
+- Agent view shows live panes of mixed heights as large as they fit, and when
+  they can't fit, scrolls back to the first row instead of cutting off its top.
+  ([#186](https://github.com/btmux-dev/btmux/pull/186))
 - A new pane no longer flashes an opaque background and "Connecting…" while
   it connects. The label shows only when connecting takes over a second.
   ([#182](https://github.com/btmux-dev/btmux/pull/182))

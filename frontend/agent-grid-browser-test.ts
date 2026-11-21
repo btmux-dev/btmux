@@ -647,6 +647,85 @@ try {
   assert.equal(await page.evaluate(() => document.querySelectorAll(':modal').length), 0, 'no modal is left');
   await page.locator(`[data-pane-id="${closedAgent.id}"]`).click({ timeout: 5000 });
 
+  // Tiles of mixed heights take the largest scale any ordered rows allow, where greedy
+  // wrapping can settle smaller, and an overflowing layout scrolls back to its first row.
+  await setOpen(page, true);
+  await page.getByRole('button', { name: 'Hide all', exact: true }).click();
+  await tilesAre(0);
+  const mixed = [];
+  for (const [i, rows] of [12, 24, 48, 48].entries()) mixed.push(await startAgent(`agent-mixed-${i}`, 100, rows));
+  agents.push(...mixed);
+  for (const agent of mixed) {
+    await eye(agent.id).waitFor({ timeout: 5000 });
+    await eye(agent.id).click();
+  }
+  await replaysShown(page, 4);
+  const tileLayout = () =>
+    page.evaluate(() => {
+      const area = document.querySelector<HTMLElement>('[data-agent-tiles]')!;
+      area.scrollTo(0, 0);
+      const box = area.getBoundingClientRect();
+      const tiles = [...area.querySelectorAll<HTMLElement>(':scope > [data-agent-tile]')].map((tile) => {
+        const rect = tile.getBoundingClientRect();
+        return { w: rect.width, h: rect.height, top: rect.top - box.top, left: rect.left - box.left };
+      });
+      return {
+        w: area.clientWidth,
+        h: area.clientHeight,
+        scrollH: area.scrollHeight,
+        gap: parseFloat(getComputedStyle(area).columnGap),
+        tiles,
+      };
+    });
+  // The largest factor by which the terminals could grow and still fit, over every ordered split into rows.
+  const headroom = ({ w, h, gap, tiles }: Awaited<ReturnType<typeof tileLayout>>) => {
+    const fits = (f: number, breaks: boolean[]) => {
+      let height = -gap;
+      for (let i = 0; i < tiles.length; ) {
+        let j = i + 1;
+        while (j < tiles.length && !breaks[j]) j++;
+        const row = tiles.slice(i, j);
+        const width = row.reduce((sum, t) => sum + (t.w - 24) * f + 24, 0) + gap * (row.length - 1);
+        if (width > w + 0.5) return false;
+        height += gap + Math.max(...row.map((t) => (t.h - 84) * f + 84));
+        i = j;
+      }
+      return height <= h + 0.5;
+    };
+    let best = 0;
+    for (let mask = 0; mask < 1 << (tiles.length - 1); mask++) {
+      const breaks = tiles.map((_, i) => i > 0 && (mask & (1 << (i - 1))) !== 0);
+      let lo = 0;
+      let hi = 10;
+      for (let k = 0; k < 40; k++) {
+        const mid = (lo + hi) / 2;
+        if (fits(mid, breaks)) lo = mid;
+        else hi = mid;
+      }
+      best = Math.max(best, lo);
+    }
+    return best;
+  };
+  for (const viewport of [
+    { width: 1024, height: 778 },
+    { width: 768, height: 587 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.waitForTimeout(500);
+    const layout = await tileLayout();
+    assert(layout.scrollH <= layout.h, `tiles overflow at ${viewport.width}: ${JSON.stringify(layout)}`);
+    const factor = headroom(layout);
+    assert(factor > 0.98 && factor < 1.02, `tiles could be ${factor}x at ${viewport.width}: ${JSON.stringify(layout)}`);
+  }
+  await page.setViewportSize({ width: 390, height: 700 });
+  await page.waitForTimeout(500);
+  const overflowing = await tileLayout();
+  assert(overflowing.scrollH > overflowing.h, `expected overflow: ${JSON.stringify(overflowing)}`);
+  for (const tile of overflowing.tiles) {
+    assert(tile.top >= -0.5 && tile.left >= -0.5, `a tile starts out of reach: ${JSON.stringify(overflowing)}`);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+
   assert.deepEqual(errors, []);
 } finally {
   await browser.close();
