@@ -22,7 +22,8 @@ means the sequence you used in step 1.
 ![A btmux window split into three panes, with the sidebar on the left and the status bar below](../../../assets/screenshots/panes-light.png)
 
 - `<prefix> + ?` lists every key binding.
-- `<prefix> + :` opens the command palette. Type to filter, Enter to run.
+- `<prefix> + :` or `Cmd+Shift+P` (`Ctrl+Shift+P` on Windows and Linux)
+  opens the command palette. Type to filter, Enter to run.
 
 ![The command palette listing layout commands](../../../assets/screenshots/command-palette-dark.png)
 ![The command palette listing layout commands](../../../assets/screenshots/command-palette-light.png)

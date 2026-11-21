@@ -51,6 +51,10 @@ modifiers. Setting a key replaces the action's default binding.
 [native editor](../features/native-editor.md#actions)'s `editor-*` actions.
 Every action is also in the command palette.
 
+`Cmd+Shift+P` (`Ctrl+Shift+P` on Windows and Linux) also opens the command
+palette, without the prefix, as in VS Code. It isn't rebindable. While VS Code
+has focus, the key goes to VS Code's own palette.
+
 ## Popup keys
 
 Use one [`[[popup]]` table](../automation/popups.md#on-a-key) per command.

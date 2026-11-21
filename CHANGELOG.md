@@ -10,6 +10,8 @@ actions, saved state, and API types can change in any release.
 
 ### Added
 
+- `Cmd+Shift+P` (`Ctrl+Shift+P` on Windows and Linux) opens the command
+  palette, as in VS Code.
 - Settings' **Show TOML** panel can show the settings as Home Manager's
   `programs.btmux.settings` in Nix, ready to paste.
   ([#180](https://github.com/btmux-dev/btmux/pull/180))
