@@ -46,10 +46,10 @@ modifiers. Setting a key replaces the action's default binding.
 | `m`                     | `toggle-latex`                         |
 | `?` `:`                 | `list-keys`, `command-palette`         |
 
-`editor-native`, `editor-neovim`, `editor-vscode`, and
-`toggle-key-overlay` (the [key overlay](../features/key-overlay.md)) are
-unbound, as are the [native editor](../features/native-editor.md#actions)'s
-`editor-*` actions. Every action is also in the command palette.
+`editor-native`, `editor-neovim`, `editor-vscode`, and `toggle-key-overlay`
+(the [key overlay](../features/key-overlay.md)) are unbound, as are the
+[native editor](../features/native-editor.md#actions)'s `editor-*` actions.
+Every action is also in the command palette.
 
 ## VS Code keys
 
@@ -74,8 +74,9 @@ vscode-keys = false
 | `Cmd+F`           |                   | `search-pane`, in a terminal                   |
 | `Cmd+\`           | `Ctrl+Shift+5`    | `split-vertical`, in a terminal                |
 
-Off macOS, VS Code's plain `Ctrl` keys are left to the shell: `Ctrl+P`,
-`Ctrl+F`, and `Ctrl+K` are readline keys.
+Off macOS, VS Code's plain `Ctrl` keys are left to the shell: `Ctrl+P` and
+`Ctrl+F` are readline keys. On a layout without Latin letters, letter keys
+count by their position.
 
 ## Popup keys
 

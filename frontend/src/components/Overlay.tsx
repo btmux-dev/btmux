@@ -663,16 +663,19 @@ export function Overlay({ sessionId, send, config }: Props) {
                   <Heading level={3}>VS Code keys</Heading>
                   <Text color="secondary">Without the prefix. VS Code keeps them while it has focus.</Text>
                   <List density="compact" hasDividers>
-                    {workbenchKeys().map(({ action, key, terminal }) => (
-                      <ListItem
-                        key={action}
-                        label={
-                          (action === OPEN_SETTINGS ? 'Settings' : actionLabel(action, config?.popups)) +
-                          (terminal ? ' (in a terminal)' : '')
-                        }
-                        endContent={<KeyCap keys={cmKeyCap(key)} />}
-                      />
-                    ))}
+                    {workbenchKeys()
+                      // Quick open is the native editor's.
+                      .filter(({ action }) => action !== 'editor-quick-open' || config?.editor === 'native')
+                      .map(({ action, key, terminal }) => (
+                        <ListItem
+                          key={action}
+                          label={
+                            (action === OPEN_SETTINGS ? 'Settings' : actionLabel(action, config?.popups)) +
+                            (terminal ? ' (in a terminal)' : '')
+                          }
+                          endContent={<KeyCap keys={cmKeyCap(key)} />}
+                        />
+                      ))}
                   </List>
                 </Section>
               )}

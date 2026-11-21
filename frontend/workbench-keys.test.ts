@@ -2,7 +2,11 @@
 import { expect, test } from 'bun:test';
 import { workbenchKey } from './src/lib/workbenchKeys';
 
-const press = (key: string, code: string, mods: { meta?: boolean; ctrl?: boolean; shift?: boolean; alt?: boolean }) => ({
+const press = (
+  key: string,
+  code: string,
+  mods: { meta?: boolean; ctrl?: boolean; shift?: boolean; alt?: boolean },
+) => ({
   key,
   code,
   metaKey: !!mods.meta,
@@ -41,6 +45,14 @@ test('plain Ctrl chords stay the shell’s', () => {
     ['\\', 'Backslash'],
   ])
     expect(action(press(key, code, { ctrl: true }), false)).toBeUndefined();
+});
+
+test('layouts without Latin letters match by position', () => {
+  expect(action(press('З', 'KeyP', { meta: true, shift: true }), true)).toBe('command-palette');
+  expect(action(press('у', 'KeyE', { ctrl: true, shift: true }), false)).toBe('file-browser');
+  // A Latin layout's letters win over their position (Dvorak's P is on KeyR).
+  expect(action(press('P', 'KeyR', { meta: true, shift: true }), true)).toBe('command-palette');
+  expect(action(press('R', 'KeyP', { meta: true, shift: true }), true)).toBeUndefined();
 });
 
 test('modifiers must match exactly', () => {

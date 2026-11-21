@@ -50,7 +50,9 @@ function matches(spec: string, e: KeyInit): boolean {
   if (e.metaKey !== mods.has('Cmd') || e.ctrlKey !== mods.has('Ctrl') || e.shiftKey !== mods.has('Shift') || e.altKey)
     return false;
   const code = CODES[key];
-  return code ? e.code === code : e.key.toLowerCase() === key;
+  if (code) return e.code === code;
+  // Layouts without Latin letters type others; their position decides, as in VS Code.
+  return e.key.toLowerCase() === key || (!/^[ -~]$/.test(e.key) && e.code === `Key${key.toUpperCase()}`);
 }
 
 /** The key `e` presses, if any. */
