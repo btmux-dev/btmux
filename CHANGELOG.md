@@ -15,12 +15,9 @@ actions, saved state, and API types can change in any release.
   ([#182](https://github.com/btmux-dev/btmux/pull/182))
 - More VS Code keys work without the prefix: `Cmd+P` quick open,
   `Cmd+Shift+E` the file browser, `Ctrl+Shift+G` Git mode, ``Ctrl+Shift+` ``
-  a new window, and `Cmd+,` settings; in a terminal, `Cmd+F` searches,
-  `Cmd+\` splits, and `Cmd+K` clears it. On Windows and Linux, the
-  `Ctrl+Shift` keys and `Ctrl+,` work, and `Ctrl+Shift+5` splits.
-  ([#187](https://github.com/btmux-dev/btmux/pull/187))
-- `clear-pane` clears a pane's scrollback in every client and moves the
-  cursor's line to the top.
+  a new window, and `Cmd+,` settings; in a terminal, `Cmd+F` searches and
+  `Cmd+\` splits. On Windows and Linux, the `Ctrl+Shift` keys and `Ctrl+,`
+  work, and `Ctrl+Shift+5` splits. `vscode-keys = false` turns them off.
   ([#187](https://github.com/btmux-dev/btmux/pull/187))
 - Panes grow and shrink into place when they split, close, or change layout.
   The programs in them resize once, at the start, so prompts don't flicker.

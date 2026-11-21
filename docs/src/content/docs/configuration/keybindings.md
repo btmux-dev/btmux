@@ -46,15 +46,22 @@ modifiers. Setting a key replaces the action's default binding.
 | `m`                     | `toggle-latex`                         |
 | `?` `:`                 | `list-keys`, `command-palette`         |
 
-`editor-native`, `editor-neovim`, `editor-vscode`, `clear-pane`, and
+`editor-native`, `editor-neovim`, `editor-vscode`, and
 `toggle-key-overlay` (the [key overlay](../features/key-overlay.md)) are
 unbound, as are the [native editor](../features/native-editor.md#actions)'s
 `editor-*` actions. Every action is also in the command palette.
 
 ## VS Code keys
 
-These work without the prefix, as in VS Code. They aren't rebindable. While
-VS Code has focus, they go to VS Code.
+These work without the prefix, as in VS Code, in the pane or popup that has
+focus. While VS Code has focus, they go to VS Code. The prefix comes first: a
+`prefix = "C-,"` or `"C-g"` keeps its key, and a key bound after the prefix
+runs its binding. They aren't rebindable; `vscode-keys = false` turns them
+off, also in Settings.
+
+```toml
+vscode-keys = false
+```
 
 | macOS             | Windows and Linux | Action                                         |
 | ----------------- | ----------------- | ---------------------------------------------- |
@@ -66,14 +73,9 @@ VS Code has focus, they go to VS Code.
 | `Cmd+,`           | `Ctrl+,`          | Settings                                       |
 | `Cmd+F`           |                   | `search-pane`, in a terminal                   |
 | `Cmd+\`           | `Ctrl+Shift+5`    | `split-vertical`, in a terminal                |
-| `Cmd+K`           |                   | `clear-pane`, in a terminal                    |
 
 Off macOS, VS Code's plain `Ctrl` keys are left to the shell: `Ctrl+P`,
 `Ctrl+F`, and `Ctrl+K` are readline keys.
-
-`clear-pane` clears the pane's scrollback, in every client, and on the normal
-screen moves the cursor's line to the top, as VS Code's terminal clear does.
-A full-screen program keeps its screen.
 
 ## Popup keys
 

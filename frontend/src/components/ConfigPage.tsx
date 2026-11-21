@@ -33,6 +33,7 @@ import {
   getToolbarSaturate,
   getPaneSwitchBorderSpeed,
   getShowPaneTitles,
+  getVscodeKeys,
   getTerminalFontFamily,
   getTerminalFontSize,
   getTerminalFontWeight,
@@ -78,6 +79,7 @@ import { KeyCap } from './KeyHint';
 import { NARROW_DIALOG, NARROW_QUERY, TOUCH_QUERY, plainTextInput } from '../lib/touch';
 import { actionLabel, popupIndex } from '../lib/actionLabel';
 import { prefixError } from '../lib/prefixKey';
+import { IS_MAC } from '../lib/nvimKeys';
 
 interface Props {
   config: ClientConfig;
@@ -96,6 +98,7 @@ type Draft = {
   fontWeight: number;
   fontSize: number;
   animations: boolean;
+  vscodeKeys: boolean;
   showPaneTitles: boolean;
   sessionSort: ClientConfig['session_sort'];
   windowSort: ClientConfig['window_sort'];
@@ -160,6 +163,7 @@ function initialDraft(config: ClientConfig): Draft {
     fontWeight: getTerminalFontWeight(config),
     fontSize: getTerminalFontSize(config),
     animations: config.animations,
+    vscodeKeys: getVscodeKeys(config),
     showPaneTitles: getShowPaneTitles(config),
     sessionSort: config.session_sort,
     windowSort: config.window_sort,
@@ -239,6 +243,7 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   if (dirty.has('cursorAnimationDuration')) update.cursor_animation_duration = draft.cursorAnimationDuration;
   if (dirty.has('cellBackgroundOpacity')) update.cell_background_opacity = draft.cellBackgroundOpacity;
   if (dirty.has('animations')) update.animations = draft.animations;
+  if (dirty.has('vscodeKeys')) update.vscode_keys = draft.vscodeKeys;
   if (dirty.has('consoleLevel')) update.console_level = draft.consoleLevel;
   if (dirty.has('fileLevel')) update.file_level = draft.fileLevel;
   if (dirty.has('osNotifications')) update.os_notifications = draft.osNotifications;
@@ -330,6 +335,7 @@ const OPTION_NAMES: Record<DraftKey, string> = {
   fontWeight: 'font-weight',
   fontSize: 'font-size',
   animations: 'animations',
+  vscodeKeys: 'vscode-keys',
   showPaneTitles: 'show-pane-titles',
   sessionSort: 'session-sort',
   windowSort: 'window-sort',
@@ -555,6 +561,7 @@ export function ConfigPage({ config, send, request }: Props) {
       ...config,
       theme: previewTheme(config, draft, dirty),
       animations: draft.animations,
+      vscode_keys: draft.vscodeKeys,
       show_pane_titles: draft.showPaneTitles,
       vim_mode: draft.vimMode,
       virtual_text: draft.virtualText,
@@ -824,6 +831,11 @@ export function ConfigPage({ config, send, request }: Props) {
       ),
       fontChoice === FONT_CUSTOM && text('fontFamily', 'Font family', 'A font installed on this device.', fontInvalid),
       text('prefix', 'Prefix key', 'Use tmux notation such as C-a, C-b, M-x, or C-Space.', prefixInvalid),
+      toggle(
+        'vscodeKeys',
+        'VS Code keys',
+        `${IS_MAC ? 'Cmd' : 'Ctrl'}+Shift+P for the command palette and other VS Code keys, without the prefix.`,
+      ),
       formEntry(
         'shellChoice',
         'Shell for new panes shell',

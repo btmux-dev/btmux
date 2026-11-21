@@ -905,14 +905,6 @@ impl PtyHandle {
         *self.size.lock().unwrap()
     }
 
-    /// Clears the scrollback of the replay and every viewer and, on the normal
-    /// screen, the lines above the cursor, as VS Code's terminal clear does.
-    pub fn clear(&self) {
-        let mut replay = self.scrollback.lock().unwrap();
-        let bytes = replay.clear();
-        let _ = self.output_tx.send(Output::Data(bytes));
-    }
-
     pub fn is_spawned(&self) -> bool {
         *self.spawned.lock().unwrap()
     }

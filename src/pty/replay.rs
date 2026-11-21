@@ -110,34 +110,12 @@ impl Replay {
         } else {
             // Other panes can exhaust the shared history budget. Keep a valid
             // screen even when this pane cannot retain additional history.
-            self.clear_history();
+            while let Some(old) = self.events.pop_front() {
+                self.bytes -= old.cost();
+                JOURNAL_BYTES.fetch_sub(old.cost(), Ordering::Relaxed);
+                self.advance(&old);
+            }
             self.advance(&event);
-        }
-    }
-
-    /// Drops the history and the normal screen's lines above the cursor,
-    /// returning, and journaling, what has emulators do the same.
-    pub fn clear(&mut self) -> Bytes {
-        self.clear_history();
-        let screen = self.head.screen();
-        let row = screen.cursor_position().0;
-        let bytes = if screen.alternate_screen() || row == 0 {
-            "\x1b[3J".to_string()
-        } else {
-            // Scrollback last: emulators can keep the lines scrolled off.
-            format!("\x1b[{row}S\x1b[3J\x1b[{row}A")
-        };
-        let bytes = Bytes::from(bytes);
-        self.push(Output::Data(bytes.clone()));
-        bytes
-    }
-
-    /// Folds the journal into the checkpoint, which keeps no scrollback.
-    fn clear_history(&mut self) {
-        while let Some(old) = self.events.pop_front() {
-            self.bytes -= old.cost();
-            JOURNAL_BYTES.fetch_sub(old.cost(), Ordering::Relaxed);
-            self.advance(&old);
         }
     }
 
@@ -320,29 +298,6 @@ mod tests {
         replay.track_screen(false);
         assert!(replay.screen_snapshot().is_none());
         assert_eq!(replay.screen_revision(), 3);
-    }
-    #[test]
-    fn clearing_keeps_the_cursor_line() {
-        let mut replay = Replay::new(20, 3, 1000);
-        for line in ["one\r\n", "two\r\n", "three\r\n", "$ ls"] {
-            replay.push(Output::Data(Bytes::from(line)));
-        }
-        let bytes = replay.clear();
-        assert_eq!(&bytes[..], b"\x1b[2S\x1b[3J\x1b[2A");
-        // The checkpoint and the clear: no history to replay.
-        assert_eq!(replay.snapshot().len(), 3);
-        let parser = restore(&replay);
-        assert_eq!(parser.screen().contents(), "$ ls");
-        assert_eq!(parser.screen().cursor_position(), (0, 4));
-    }
-    #[test]
-    fn clearing_leaves_the_alternate_screen() {
-        let mut replay = Replay::new(20, 3, 1000);
-        replay.push(Output::Data(Bytes::from_static(
-            b"shell\r\n\x1b[?1049hone\r\ntwo",
-        )));
-        assert_eq!(&replay.clear()[..], b"\x1b[3J");
-        assert_eq!(restore(&replay).screen().contents(), "one\ntwo");
     }
     #[test]
     fn eviction_preserves_screen_and_input_modes() {

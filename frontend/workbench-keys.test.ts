@@ -22,7 +22,6 @@ test('macOS chords', () => {
   expect(action(press(',', 'Comma', { meta: true }), true)).toBe('open-settings');
   expect(action(press('f', 'KeyF', { meta: true }), true)).toBe('search-pane');
   expect(action(press('\\', 'Backslash', { meta: true }), true)).toBe('split-vertical');
-  expect(action(press('k', 'KeyK', { meta: true }), true)).toBe('clear-pane');
 });
 
 test('Windows and Linux chords', () => {

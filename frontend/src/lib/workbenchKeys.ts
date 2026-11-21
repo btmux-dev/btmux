@@ -23,7 +23,6 @@ const MAC_KEYS: WorkbenchKey[] = [
   { action: OPEN_SETTINGS, key: 'Cmd-,' },
   { action: 'search-pane', key: 'Cmd-f', terminal: true },
   { action: 'split-vertical', key: 'Cmd-\\', terminal: true },
-  { action: 'clear-pane', key: 'Cmd-k', terminal: true },
 ];
 
 const OTHER_KEYS: WorkbenchKey[] = [
