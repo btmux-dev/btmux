@@ -32,7 +32,7 @@ actions, saved state, and API types can change in any release.
   after the command exits. `btmux wait-exit` waits for any pane's program to
   exit and exits with its status. REST and MCP get the same, through
   `command` and `keep_open` and `GET /api/panes/{id}/exit` or
-  `wait_for_exit`.
+  `wait_for_exit`. ([#183](https://github.com/btmux-dev/btmux/pull/183))
 - Settings' **Show TOML** panel can show the settings as Home Manager's
   `programs.btmux.settings` in Nix, ready to paste.
   ([#180](https://github.com/btmux-dev/btmux/pull/180))
