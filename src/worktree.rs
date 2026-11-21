@@ -456,7 +456,7 @@ pub async fn remove_at(state: &AppState, dir: &Path, force: bool) -> Result<Remo
             }
         }
         for &id in &panes {
-            mgr.handle_pane_exit(id).await;
+            mgr.close_pane(id).await;
         }
         broadcast_state(&mgr);
         panes

@@ -66,6 +66,10 @@ pub fn router() -> Router<AppState> {
             "/api/panes/{pane_id}/ports",
             axum::routing::get(api_pane_ports),
         )
+        .route(
+            "/api/panes/{pane_id}/exit",
+            axum::routing::get(crate::pane_exit::api_wait_exit),
+        )
 }
 
 /// The TCP ports that the pane's programs listen on, as `btmux forward` can
@@ -119,6 +123,17 @@ pub(crate) struct SplitPaneByIdRequest {
     /// Make the new pane active.
     #[cfg_attr(test, schema(default = true))]
     select: Option<bool>,
+    /// Run this instead of the shell, starting now rather than once a client
+    /// shows the pane. The pane closes when it exits, unless `keep_open`.
+    #[serde(default)]
+    command: Option<crate::popup::PopupCommand>,
+    /// With `command`: replaces the server's environment.
+    #[serde(default)]
+    #[cfg_attr(test, schema(value_type = crate::popup::Environment, inline))]
+    env: Option<Vec<(String, String)>>,
+    /// Keep the pane, with its output, after its program exits.
+    #[serde(default)]
+    keep_open: bool,
 }
 
 /// 400 unless `direction` is one the split routes accept.
@@ -136,6 +151,8 @@ fn check_split_direction(direction: &str) -> Result<(), (StatusCode, &'static st
 #[cfg_attr(test, derive(utoipa::ToSchema))]
 pub(crate) struct SplitPaneResponse {
     pane_id: Uuid,
+    /// The new pane as `GET /api/panes` lists it, as it was created.
+    pane: Option<crate::session::PaneInfo>,
 }
 
 /// Splits a pane in any window, returning the new pane's ID.
@@ -150,8 +167,9 @@ pub(crate) struct SplitPaneResponse {
     ),
     responses(
         (status = 200, description = "The new pane", body = SplitPaneResponse),
-        (status = 400, description = "Invalid direction", body = String, content_type = "text/plain"),
+        (status = 400, description = "An invalid direction, an empty command, `env` without one, or with a command a `cwd` that isn't a directory", body = String, content_type = "text/plain"),
         (status = 404, description = "No such pane"),
+        (status = 422, description = "The command can't start", body = String, content_type = "text/plain"),
     ),
 ))]
 pub(crate) async fn api_split_pane_by_id(
@@ -162,19 +180,31 @@ pub(crate) async fn api_split_pane_by_id(
     if let Err(rejection) = check_split_direction(&body.direction) {
         return rejection.into_response();
     }
+    let launch = match crate::pane_exit::launch_of(body.command, body.env, body.keep_open) {
+        Ok(launch) => launch,
+        Err(error) => return (StatusCode::BAD_REQUEST, error).into_response(),
+    };
     let mut mgr = state.write().await;
     let cwd = body.cwd.map(std::path::PathBuf::from);
-    let Some(new_pane_id) = mgr
-        .split_pane(pane_id, &body.direction, cwd, body.select.unwrap_or(true))
-        .await
-    else {
-        return StatusCode::NOT_FOUND.into_response();
+    let split = mgr
+        .split_pane_with(
+            pane_id,
+            &body.direction,
+            cwd,
+            body.select.unwrap_or(true),
+            launch,
+        )
+        .await;
+    let new_pane_id = match split {
+        Ok(Some(new_pane_id)) => new_pane_id,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(error) => return crate::pane_exit::launch_error(error),
     };
-
     ws::control::broadcast_state(&mgr);
 
     Json(SplitPaneResponse {
         pane_id: new_pane_id,
+        pane: mgr.pane_info(new_pane_id),
     })
     .into_response()
 }

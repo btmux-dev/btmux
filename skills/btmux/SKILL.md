@@ -92,6 +92,20 @@ with wrapped lines joined. Output arrives asynchronously: after sending a
 command, poll `capture-pane` until its result or the next prompt appears rather
 than assuming it finished.
 
+## Running a command and waiting for it
+
+```sh
+btmux new-window -d -n tests --wait -- cargo test     # exits with the tests' status
+pane=$(btmux split-window -h -d --keep-open 'npm run build')
+btmux wait-exit -t "$pane" --timeout 600              # its status; 124 on timeout
+btmux capture-pane -p -t "$pane" -S -                 # read the output after it exits
+```
+
+A single argument is a shell command line; several run directly. Without
+`--keep-open` the pane closes when the program exits. With it, the pane stays
+so you can read the output; close it with kill-pane. Omit `--wait` for servers
+and editors.
+
 ## Watching for changes
 
 ```sh

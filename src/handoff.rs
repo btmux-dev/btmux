@@ -19,11 +19,12 @@ use uuid::Uuid;
 
 use crate::native_editor::buffer::HandedBuffer;
 use crate::native_editor::EditorHandoff;
+use crate::pane_exit::{ClosedHandoff, ExitsHandoff};
 use crate::popup::PopupsHandoff;
 use crate::pty::kitty_keyboard::KittyKeyboard;
 use crate::pty::program_status::Record;
 use crate::pty::replay::Output;
-use crate::pty::{set_cloexec, Handoff};
+use crate::pty::{set_cloexec, Exited, Handoff};
 use crate::session::manager::SessionSnapshot;
 use crate::session::NotificationLevel;
 use crate::telemetry::TelemetryStore;
@@ -32,7 +33,7 @@ use crate::ws::control::ServerMessage;
 use crate::AppState;
 
 /// Bump on any change to the handoff file.
-pub const VERSION: u32 = 22;
+pub const VERSION: u32 = 24;
 const ENV: &str = "BTMUX_HANDOFF";
 
 struct Context {
@@ -66,6 +67,33 @@ struct Header {
     telemetry: TelemetryStore,
     editor: EditorHandoff,
     captures: crate::capture::Captures,
+    exits: ExitsHeader,
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+struct ExitsHeader {
+    ended: Vec<ClosedHandoff>,
+    /// Panes whose programs exited, to close.
+    closing: Vec<Uuid>,
+    /// Kept panes not started yet.
+    keep_open: Vec<Uuid>,
+    /// Their journal bytes follow the live panes'.
+    dead: Vec<DeadHeader>,
+}
+
+/// A kept-open pane whose program exited.
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+struct DeadHeader {
+    id: Uuid,
+    status: Option<i32>,
+    cols: u16,
+    rows: u16,
+    journal: Vec<Event>,
+    title: Option<String>,
+    cwd: Option<String>,
+    cwd_remote: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -93,6 +121,8 @@ struct PaneHeader {
     shell_name: Option<String>,
     prompt: u32,
     programs: Vec<Record>,
+    keep_open: bool,
+    runs_command: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -112,6 +142,7 @@ pub struct Inherited {
     pub telemetry: TelemetryStore,
     pub editor: EditorHandoff,
     pub captures: crate::capture::Captures,
+    pub exits: ExitsHandoff,
 }
 
 impl Inherited {
@@ -123,7 +154,9 @@ impl Inherited {
     /// restored once sandboxes are known, are returned.
     pub async fn restore(self, state: &AppState) -> (std::net::TcpListener, Editor) {
         let mut mgr = state.write().await;
-        let restored = mgr.restore_handoff(self.sessions, self.popups, self.panes);
+        let restored = mgr
+            .restore_handoff(self.sessions, self.popups, self.panes, self.exits)
+            .await;
         mgr.telemetry = self.telemetry;
         crate::capture::restore(self.captures);
         tracing::info!("upgraded in place with {} session(s)", restored);
@@ -179,17 +212,7 @@ pub fn take() -> Result<Option<Inherited>, String> {
     }
     let mut panes = Vec::new();
     for (pane, master) in header.panes.into_iter().zip(masters) {
-        let mut journal = Vec::with_capacity(pane.journal.len());
-        for event in pane.journal {
-            journal.push(match event {
-                Event::Size(cols, rows) => Output::Size(cols, rows),
-                Event::Data(len) => {
-                    let mut bytes = vec![0; len];
-                    file.read_exact(&mut bytes).map_err(error)?;
-                    Output::Data(Bytes::from(bytes))
-                }
-            });
-        }
+        let journal = read_journal(&mut file, pane.journal).map_err(error)?;
         let mut pending = vec![0; pane.pending];
         file.read_exact(&mut pending).map_err(error)?;
         let mut input = vec![0; pane.input];
@@ -215,6 +238,23 @@ pub fn take() -> Result<Option<Inherited>, String> {
                 shell_name: pane.shell_name,
                 prompt: pane.prompt,
                 programs: pane.programs,
+                keep_open: pane.keep_open,
+                runs_command: pane.runs_command,
+            },
+        ));
+    }
+    let mut dead = Vec::new();
+    for pane in header.exits.dead {
+        dead.push((
+            pane.id,
+            Exited {
+                status: pane.status,
+                cols: pane.cols,
+                rows: pane.rows,
+                journal: read_journal(&mut file, pane.journal).map_err(error)?,
+                title: pane.title,
+                cwd: pane.cwd,
+                cwd_remote: pane.cwd_remote,
             },
         ));
     }
@@ -227,7 +267,40 @@ pub fn take() -> Result<Option<Inherited>, String> {
         telemetry: header.telemetry.restored(),
         editor: header.editor,
         captures: header.captures,
+        exits: ExitsHandoff {
+            ended: header.exits.ended,
+            dead,
+            closing: header.exits.closing,
+            keep_open: header.exits.keep_open,
+        },
     }))
+}
+
+/// A journal whose data bytes follow in `file`, in order.
+fn read_journal(file: &mut impl Read, events: Vec<Event>) -> std::io::Result<Vec<Output>> {
+    let mut journal = Vec::with_capacity(events.len());
+    for event in events {
+        journal.push(match event {
+            Event::Size(cols, rows) => Output::Size(cols, rows),
+            Event::Data(len) => {
+                let mut bytes = vec![0; len];
+                file.read_exact(&mut bytes)?;
+                Output::Data(Bytes::from(bytes))
+            }
+        });
+    }
+    Ok(journal)
+}
+
+/// A journal's events, with data events holding their length.
+fn journal_events(journal: &[Output]) -> Vec<Event> {
+    journal
+        .iter()
+        .map(|event| match event {
+            Output::Data(bytes) => Event::Data(bytes.len()),
+            Output::Size(cols, rows) => Event::Size(*cols, *rows),
+        })
+        .collect()
 }
 
 /// Why an upgrade didn't start.
@@ -371,7 +444,7 @@ async fn execute_frozen(
     for (pane_id, held) in manager.take_held_alerts() {
         crate::server::deliver_pane_alert(manager, pane_id, held.event, held.alert);
     }
-    let (sessions, popups, panes) = match manager.export_handoff(Duration::from_secs(2)) {
+    let (sessions, popups, panes, exits) = match manager.export_handoff(Duration::from_secs(2)) {
         Ok(exported) => exported,
         Err(error) => {
             crate::vscode::resume();
@@ -379,7 +452,7 @@ async fn execute_frozen(
         }
     };
     if let Some(path) = &context.state_file {
-        if let Err(error) = crate::persistence::save(path, &sessions) {
+        if let Err(error) = crate::persistence::save(path, &sessions, &manager.command_panes()) {
             tracing::warn!("failed to persist state to {}: {}", path.display(), error);
         }
     }
@@ -389,6 +462,7 @@ async fn execute_frozen(
         sessions,
         popups,
         &panes,
+        exits,
         manager.telemetry.clone(),
         crate::native_editor::seal(editor),
     );
@@ -405,12 +479,14 @@ async fn execute_frozen(
 }
 
 /// Only returns on failure.
+#[allow(clippy::too_many_arguments)]
 fn exec(
     context: &Context,
     exe: &Path,
     sessions: Vec<SessionSnapshot>,
     popups: PopupsHandoff,
     panes: &[(Uuid, RawFd, Handoff)],
+    exits: ExitsHandoff,
     telemetry: TelemetryStore,
     editor: EditorHandoff,
 ) -> String {
@@ -420,7 +496,9 @@ fn exec(
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .unwrap_or_else(std::env::temp_dir);
-    let file = match write(&dir, context, sessions, popups, panes, telemetry, editor) {
+    let file = match write(
+        &dir, context, sessions, popups, panes, exits, telemetry, editor,
+    ) {
         Ok(file) => file,
         Err(error) => return format!("cannot write handoff: {error}"),
     };
@@ -441,12 +519,14 @@ fn exec(
 }
 
 /// An unlinked, owner-only file holding the header and journal bytes.
+#[allow(clippy::too_many_arguments)]
 fn write(
     dir: &Path,
     context: &Context,
     sessions: Vec<SessionSnapshot>,
     popups: PopupsHandoff,
     panes: &[(Uuid, RawFd, Handoff)],
+    exits: ExitsHandoff,
     telemetry: TelemetryStore,
     editor: EditorHandoff,
 ) -> std::io::Result<File> {
@@ -473,14 +553,7 @@ fn write(
                 pid: pane.pid,
                 cols: pane.cols,
                 rows: pane.rows,
-                journal: pane
-                    .journal
-                    .iter()
-                    .map(|event| match event {
-                        Output::Data(bytes) => Event::Data(bytes.len()),
-                        Output::Size(cols, rows) => Event::Size(*cols, *rows),
-                    })
-                    .collect(),
+                journal: journal_events(&pane.journal),
                 title: pane.title.clone(),
                 cwd: pane.cwd.clone(),
                 cwd_remote: pane.cwd_remote,
@@ -494,11 +567,32 @@ fn write(
                 shell_name: pane.shell_name.clone(),
                 prompt: pane.prompt,
                 programs: pane.programs.clone(),
+                keep_open: pane.keep_open,
+                runs_command: pane.runs_command,
             })
             .collect(),
         telemetry,
         editor,
         captures: crate::capture::export(),
+        exits: ExitsHeader {
+            ended: exits.ended,
+            closing: exits.closing,
+            keep_open: exits.keep_open,
+            dead: exits
+                .dead
+                .iter()
+                .map(|(id, pane)| DeadHeader {
+                    id: *id,
+                    status: pane.status,
+                    cols: pane.cols,
+                    rows: pane.rows,
+                    journal: journal_events(&pane.journal),
+                    title: pane.title.clone(),
+                    cwd: pane.cwd.clone(),
+                    cwd_remote: pane.cwd_remote,
+                })
+                .collect(),
+        },
     };
     let header = serde_json::to_vec(&header)?;
     let mut out = std::io::BufWriter::new(&mut file);
@@ -512,6 +606,13 @@ fn write(
         }
         out.write_all(&pane.pending)?;
         out.write_all(&pane.input)?;
+    }
+    for (_, pane) in &exits.dead {
+        for event in &pane.journal {
+            if let Output::Data(bytes) = event {
+                out.write_all(bytes)?;
+            }
+        }
     }
     out.flush()?;
     drop(out);
@@ -633,6 +734,9 @@ mod tests {
             crate::popup::EndedHandoff::decl(&config),
             crate::popup::Outcome::decl(&config),
             Event::decl(&config),
+            ExitsHeader::decl(&config),
+            DeadHeader::decl(&config),
+            crate::pane_exit::ClosedHandoff::decl(&config),
             KittyKeyboard::decl(&config),
             Record::decl(&config),
             crate::pty::program_status::State::decl(&config),

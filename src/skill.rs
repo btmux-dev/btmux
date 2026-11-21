@@ -16,8 +16,6 @@ use serde_json::{json, Value};
 use crate::agent_hooks::{self, Target};
 
 /// The guide, also the skill `npx skills add btmux-dev/btmux` installs.
-// TODO: document `new-window`/`split-window` `--wait`/`--keep-open` and
-// `wait-exit` in it once they land.
 const SKILL_SOURCE: &str = include_str!("../skills/btmux/SKILL.md");
 
 /// Marks a skill `btmux skill setup` installed.

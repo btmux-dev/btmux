@@ -429,7 +429,7 @@
             }
           },
           "400": {
-            "description": "A malformed ID or JSON body",
+            "description": "An empty command, `env` without one, or with a command a `cwd` that isn't a directory; or a malformed ID or JSON body",
             "content": {
               "text/plain": {
                 "schema": {
@@ -475,7 +475,7 @@
             }
           },
           "422": {
-            "description": "A body that doesn't match its schema",
+            "description": "The command can't start; or a body that doesn't match its schema",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1034,7 +1034,7 @@
             }
           },
           "400": {
-            "description": "Invalid direction; or a malformed ID or JSON body",
+            "description": "An invalid direction, an empty command, `env` without one, or with a command a `cwd` that isn't a directory; or a malformed ID or JSON body",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1080,7 +1080,7 @@
             }
           },
           "422": {
-            "description": "A body that doesn't match its schema",
+            "description": "The command can't start; or a body that doesn't match its schema",
             "content": {
               "text/plain": {
                 "schema": {
@@ -1270,6 +1270,104 @@
           },
           "409": {
             "description": "The pane is in a sandboxed session",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/panes/{pane_id}/exit": {
+      "get": {
+        "tags": [
+          "Panes"
+        ],
+        "summary": "Wait for a pane's program to exit",
+        "description": "Waits until the pane's program (its command, or its shell) exits and returns its status; for a pane kept open, once its output ended and its exit line was written. A pane that closed in the last 5 minutes (at most the last 256 closed) reports the status it closed with; a waiter already waiting always gets it.",
+        "operationId": "wait-for-a-pane-to-exit",
+        "parameters": [
+          {
+            "name": "pane_id",
+            "in": "path",
+            "description": "Pane ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "timeout_ms",
+            "in": "query",
+            "description": "Milliseconds: 10 minutes by default, at most an hour.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The exit status once the program exits, or the wait times out",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaneExit"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed ID or query parameter",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong access token",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request's `Host` or `Origin` isn't allowed, or the caller can't use this route (a guest token, or btmux connect)"
+          },
+          "404": {
+            "description": "No such pane, or it closed too long ago",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The pane's shell hasn't started, as no client showed the pane",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The server is shutting down",
             "content": {
               "text/plain": {
                 "schema": {
@@ -4472,6 +4570,59 @@
             ],
             "description": "Make it the active window.",
             "default": true
+          },
+          "command": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PopupCommand",
+                "description": "Run this instead of the shell, starting now rather than once a client\nshows the pane. The pane closes when it exits, unless `keep_open`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "env": {
+            "allOf": [
+              {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "array",
+                  "items": false,
+                  "prefixItems": [
+                    {
+                      "type": "string",
+                      "description": "Name"
+                    },
+                    {
+                      "type": "string",
+                      "description": "Value"
+                    }
+                  ],
+                  "minItems": 2
+                },
+                "description": "Replaces the server's environment.",
+                "examples": [
+                  [
+                    [
+                      "NAME",
+                      "value"
+                    ]
+                  ]
+                ]
+              },
+              {
+                "type": "object",
+                "description": "With `command`: replaces the server's environment."
+              }
+            ]
+          },
+          "keep_open": {
+            "type": "boolean",
+            "description": "Keep the pane, with its output, after its program exits."
           }
         }
       },
@@ -4489,6 +4640,17 @@
           "pane_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "pane": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PaneInfo",
+                "description": "The new pane as `GET /api/panes` lists it, as it was created."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -5835,6 +5997,26 @@
           }
         }
       },
+      "PaneExit": {
+        "type": "object",
+        "required": [
+          "timed_out"
+        ],
+        "properties": {
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The program's exit status, 128 + N if signal N ended it; null if it\nhasn't exited, or its pane closed before it reported one."
+          },
+          "timed_out": {
+            "type": "boolean",
+            "description": "The wait ended before the program exited."
+          }
+        }
+      },
       "PaneGit": {
         "type": "object",
         "description": "A pane's place in a git repo.",
@@ -5881,7 +6063,8 @@
           "window_zoomed_flag",
           "pane_id",
           "pane_index",
-          "pane_active"
+          "pane_active",
+          "pane_dead"
         ],
         "properties": {
           "session_id": {
@@ -5931,6 +6114,18 @@
               "string",
               "null"
             ]
+          },
+          "pane_dead": {
+            "type": "boolean",
+            "description": "Its program exited; only a pane created with `keep_open` stays."
+          },
+          "pane_dead_status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The program's exit status, 128 + N if signal N ended it."
           }
         }
       },
@@ -6716,6 +6911,59 @@
             ],
             "description": "Make the new pane active.",
             "default": true
+          },
+          "command": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PopupCommand",
+                "description": "Run this instead of the shell, starting now rather than once a client\nshows the pane. The pane closes when it exits, unless `keep_open`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "env": {
+            "allOf": [
+              {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "type": "array",
+                  "items": false,
+                  "prefixItems": [
+                    {
+                      "type": "string",
+                      "description": "Name"
+                    },
+                    {
+                      "type": "string",
+                      "description": "Value"
+                    }
+                  ],
+                  "minItems": 2
+                },
+                "description": "Replaces the server's environment.",
+                "examples": [
+                  [
+                    [
+                      "NAME",
+                      "value"
+                    ]
+                  ]
+                ]
+              },
+              {
+                "type": "object",
+                "description": "With `command`: replaces the server's environment."
+              }
+            ]
+          },
+          "keep_open": {
+            "type": "boolean",
+            "description": "Keep the pane, with its output, after its program exits."
           }
         }
       },
@@ -6739,6 +6987,17 @@
           "pane_id": {
             "type": "string",
             "format": "uuid"
+          },
+          "pane": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PaneInfo",
+                "description": "The new pane as `GET /api/panes` lists it, as it was created."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },

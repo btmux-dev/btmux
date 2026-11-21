@@ -432,6 +432,10 @@ pub struct PaneInfo {
     pub pane_active: bool,
     pub pane_current_path: Option<String>,
     pub pane_title: Option<String>,
+    /// Its program exited; only a pane created with `keep_open` stays.
+    pub pane_dead: bool,
+    /// The program's exit status, 128 + N if signal N ended it.
+    pub pane_dead_status: Option<i32>,
 }
 
 #[cfg(test)]

@@ -191,6 +191,19 @@ impl Replay {
         result
     }
 
+    /// Whether the output ends on the alternate screen: the head's screen,
+    /// then the DEC private modes 47, 1047, and 1049 the events after it set
+    /// and reset, read without an emulator.
+    pub fn alternate_screen(&self) -> bool {
+        let mut scan = AltScan::new(self.head.screen().alternate_screen());
+        for event in &self.events {
+            if let Output::Data(bytes) = event {
+                scan.feed(bytes);
+            }
+        }
+        scan.alternate
+    }
+
     /// `snapshot()`, then the current keyboard flags, for an emulator.
     pub fn viewer_snapshot(&self) -> Vec<Output> {
         let mut result = self.snapshot();
@@ -400,5 +413,69 @@ mod tests {
         assert!(parser.screen().contents().contains("TUI"));
         parser.process(b"\x1b[?1049l");
         assert_eq!(parser.screen().contents(), "shell");
+    }
+}
+
+/// Follows `CSI ? Pm h` and `CSI ? Pm l` for the alternate-screen modes,
+/// across chunks.
+struct AltScan {
+    alternate: bool,
+    /// 0 outside a sequence, 1 after ESC, 2 after `[`, 3 in `?` parameters.
+    state: u8,
+    params: Vec<u8>,
+}
+
+impl AltScan {
+    fn new(alternate: bool) -> Self {
+        Self {
+            alternate,
+            state: 0,
+            params: Vec::new(),
+        }
+    }
+
+    fn feed(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.state = match (self.state, byte) {
+                (_, 0x1b) => 1,
+                (1, b'[') => 2,
+                (2, b'?') => {
+                    self.params.clear();
+                    3
+                }
+                (3, b'0'..=b'9' | b';') if self.params.len() < 64 => {
+                    self.params.push(byte);
+                    3
+                }
+                (3, b'h' | b'l') => {
+                    let alternate = std::str::from_utf8(&self.params)
+                        .unwrap_or_default()
+                        .split(';')
+                        .any(|mode| matches!(mode, "47" | "1047" | "1049"));
+                    if alternate {
+                        self.alternate = byte == b'h';
+                    }
+                    0
+                }
+                _ => 0,
+            };
+        }
+    }
+}
+
+#[cfg(test)]
+mod alt_scan_tests {
+    use super::*;
+
+    #[test]
+    fn follows_alternate_screen_modes_across_chunks() {
+        let mut scan = AltScan::new(false);
+        scan.feed(b"text\x1b[?10");
+        scan.feed(b"49h\x1b[?1000h");
+        assert!(scan.alternate);
+        scan.feed(b"\x1b[?25;1049l");
+        assert!(!scan.alternate);
+        scan.feed(b"\x1b[?47h\x1b[1049l");
+        assert!(scan.alternate, "a CSI without ? isn't a DEC private mode");
     }
 }

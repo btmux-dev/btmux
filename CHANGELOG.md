@@ -27,6 +27,12 @@ actions, saved state, and API types can change in any release.
   skill and that hook take their text from the installed btmux, so upgrading
   it updates them. `btmux skill show` prints the guide.
   ([#185](https://github.com/btmux-dev/btmux/pull/185))
+- `new-window` and `split-window` run a command in the new pane, and with
+  `--wait` exit with its status; `--keep-open` keeps the pane and its output
+  after the command exits. `btmux wait-exit` waits for any pane's program to
+  exit and exits with its status. REST and MCP get the same, through
+  `command` and `keep_open` and `GET /api/panes/{id}/exit` or
+  `wait_for_exit`. ([#183](https://github.com/btmux-dev/btmux/pull/183))
 - Settings' **Show TOML** panel can show the settings as Home Manager's
   `programs.btmux.settings` in Nix, ready to paste.
   ([#180](https://github.com/btmux-dev/btmux/pull/180))

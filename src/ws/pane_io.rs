@@ -110,6 +110,7 @@ async fn handle_socket(
                 pty.subscribe_owner(),
                 size,
                 pty.hidden_input(),
+                pty.alive_probe(),
             ))
         });
         // A popup whose program can't start ends; one that started wakes its request.
@@ -125,23 +126,24 @@ async fn handle_socket(
         }
         attachment
     };
-    let (input_tx, mut output_rx, replay, mut owner_rx, size, hidden_input) = match attachment {
-        Some(Ok(attachment)) => attachment,
-        failure => {
-            let error = failure
-                .and_then(Result::err)
-                .unwrap_or_else(|| "Pane no longer exists".into());
-            tracing::warn!(%pane_id, %error, "pane attach failed");
-            let frame = Message::Text(
-                serde_json::json!({"type": "error", "message": error})
-                    .to_string()
-                    .into(),
-            );
-            let _ =
-                tokio::time::timeout(std::time::Duration::from_secs(2), ws_tx.send(frame)).await;
-            return;
-        }
-    };
+    let (input_tx, mut output_rx, replay, mut owner_rx, size, hidden_input, alive) =
+        match attachment {
+            Some(Ok(attachment)) => attachment,
+            failure => {
+                let error = failure
+                    .and_then(Result::err)
+                    .unwrap_or_else(|| "Pane no longer exists".into());
+                tracing::warn!(%pane_id, %error, "pane attach failed");
+                let frame = Message::Text(
+                    serde_json::json!({"type": "error", "message": error})
+                        .to_string()
+                        .into(),
+                );
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(2), ws_tx.send(frame))
+                    .await;
+                return;
+            }
+        };
     let is_owner = |owner: &Option<Uuid>| !mirror && *owner == Some(viewer_id);
     // The key overlay asks whether the terminal hides input, as of each input
     // frame and before the output of a prompt that hides it.
@@ -275,7 +277,9 @@ async fn handle_socket(
                     if watched {
                         check();
                     }
-                    if input_tx.send_wait(data.to_vec()).await.is_err() {
+                    // A kept pane's program exited: nothing reads input, but
+                    // it is still counted for the key overlay.
+                    if input_tx.send_wait(data.to_vec()).await.is_err() && alive() {
                         break;
                     }
                     if watched {

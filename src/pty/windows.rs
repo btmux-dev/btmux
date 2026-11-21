@@ -203,6 +203,13 @@ impl PtyHandle {
         Ok(())
     }
 
+    /// Close a finished pane's terminal, keeping what it showed.
+    pub(super) fn release(&mut self) {
+        self.probe.lock().unwrap().take();
+        self.master = None;
+        self.input_tx = InputSender::exited();
+    }
+
     /// Start the reader and writer threads.
     fn run_io(
         &mut self,
@@ -214,6 +221,7 @@ impl PtyHandle {
         let mut output = self.output_pipeline(interceptor, input_tx.clone());
         let exit_tx = self.exit_tx.clone();
         let pane_id = self.pane_id;
+        let reader_done = self.reader_done.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             let mut first = true;
@@ -233,6 +241,7 @@ impl PtyHandle {
                     Err(_) => break,
                 }
             }
+            reader_done.store(true, std::sync::atomic::Ordering::Release);
             let _ = exit_tx.send(pane_id);
         });
 
@@ -281,7 +290,7 @@ impl PtyHandle {
             }
         });
 
-        self.input_tx = InputSender(input_tx);
+        self.input_tx = InputSender(input_tx, false);
     }
 }
 
@@ -348,6 +357,7 @@ mod tests {
             meta_tx: mpsc::unbounded_channel().0,
             port: 8044,
             palette: colors::SharedPalette::default(),
+            reap_gate: Default::default(),
         };
         let mut pane = PtyHandle::new_with_cwd(bash, Uuid::new_v4(), &env, None, 100);
         assert_eq!(pane.dialect(), Dialect::Posix);

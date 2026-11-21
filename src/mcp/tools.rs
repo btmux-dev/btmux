@@ -65,6 +65,10 @@ struct CreateWindowParams {
     session_id: String,
     name: Option<String>,
     cwd: Option<String>,
+    /// A command line to run instead of the shell, started now. The pane closes when it exits, unless keep_open.
+    command: Option<String>,
+    /// Keep the pane, with its output, after its program exits. Default false.
+    keep_open: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -89,6 +93,27 @@ struct SplitPaneParams {
     pane_id: String,
     /// One of: left, right, up, down.
     direction: String,
+    /// A command line to run instead of the shell, started now. The pane closes when it exits, unless keep_open.
+    command: Option<String>,
+    /// Keep the pane, with its output, after its program exits. Default false.
+    keep_open: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct WaitForExitParams {
+    pane_id: String,
+    /// Default 600000 (10 minutes), at most 3600000.
+    timeout_ms: Option<u64>,
+}
+
+/// A command line for the pane's shell.
+fn shell_launch(
+    command: Option<String>,
+    keep_open: Option<bool>,
+) -> Result<crate::pane_exit::Launch, ErrorData> {
+    let command = command.map(crate::popup::PopupCommand::Shell);
+    crate::pane_exit::launch_of(command, None, keep_open.unwrap_or(false))
+        .map_err(|e| ErrorData::invalid_params(e, None))
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -271,7 +296,7 @@ impl BtmuxMcpServer {
     }
 
     #[tool(
-        description = "Create a new window in a session, optionally with a name and starting cwd."
+        description = "Create a new window in a session, optionally with a name and starting cwd. With command, the pane runs it instead of the shell, starting at once; use wait_for_exit for its exit status."
     )]
     async fn create_window(
         &self,
@@ -279,15 +304,22 @@ impl BtmuxMcpServer {
             session_id,
             name,
             cwd,
+            command,
+            keep_open,
         }): Parameters<CreateWindowParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let session_id = parse_uuid(&session_id, "session_id")?;
+        let launch = shell_launch(command, keep_open)?;
         let cwd = cwd.map(std::path::PathBuf::from);
         let mut mgr = self.state.write().await;
-        if !api::session_exists(&mgr, session_id) {
-            return tool_error(format!("session {session_id} not found"));
-        }
-        let pane_id = mgr.create_window_named(session_id, name, cwd, true).await;
+        let pane_id = match mgr
+            .create_window_with(session_id, name, cwd, true, launch)
+            .await
+        {
+            Ok(Some(pane_id)) => pane_id,
+            Ok(None) => return tool_error(format!("session {session_id} not found")),
+            Err(error) => return automation_error(error),
+        };
         broadcast_state(&mgr);
         ok_json(serde_json::json!({"session_id": session_id, "pane_id": pane_id}))
     }
@@ -325,7 +357,7 @@ impl BtmuxMcpServer {
     }
 
     #[tool(
-        description = "Split a pane, returning the new pane's ID. direction is where the new pane goes: left, right, up, or down."
+        description = "Split a pane, returning the new pane's ID. direction is where the new pane goes: left, right, up, or down. With command, the new pane runs it instead of the shell, starting at once; use wait_for_exit for its exit status."
     )]
     async fn split_pane(
         &self,
@@ -333,8 +365,11 @@ impl BtmuxMcpServer {
             session_id,
             pane_id,
             direction,
+            command,
+            keep_open,
         }): Parameters<SplitPaneParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        let launch = shell_launch(command, keep_open)?;
         if !["left", "right", "up", "down"].contains(&direction.as_str()) {
             return Err(ErrorData::invalid_params(
                 format!("direction must be one of left/right/up/down, got '{direction}'"),
@@ -353,9 +388,38 @@ impl BtmuxMcpServer {
             }
             Some(true) => {}
         }
-        let pane_id = mgr.split_pane(pane_id, &direction, None, true).await;
+        let pane_id = match mgr
+            .split_pane_with(pane_id, &direction, None, true, launch)
+            .await
+        {
+            Ok(Some(pane_id)) => pane_id,
+            Ok(None) => return tool_error(format!("pane {pane_id} not found")),
+            Err(error) => return automation_error(error),
+        };
         broadcast_state(&mgr);
         ok_json(serde_json::json!({"pane_id": pane_id}))
+    }
+
+    #[tool(
+        description = "Wait until a pane's program (its command, or its shell) exits, and return its exit status: 128 + N if signal N ended it, null if the pane closed before it reported one. timed_out=true means it was still running. A kept pane reports once its output ended, so read_pane_output after it sees all of it. Works for a kept pane, and for one that closed in the last 5 minutes (at most the last 256 closed)."
+    )]
+    async fn wait_for_exit(
+        &self,
+        Parameters(WaitForExitParams {
+            pane_id,
+            timeout_ms,
+        }): Parameters<WaitForExitParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let pane_id = parse_uuid(&pane_id, "pane_id")?;
+        match crate::pane_exit::wait(&self.state, pane_id, automation::wait_duration(timeout_ms))
+            .await
+        {
+            Ok(exit) => ok_json(exit),
+            Err(automation::Error::PaneNotFound(_)) => {
+                tool_error(format!("no pane {pane_id}, or it closed too long ago"))
+            }
+            Err(error) => automation_error(error),
+        }
     }
 
     #[tool(description = "Kill a pane.")]

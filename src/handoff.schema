@@ -1,9 +1,9 @@
-// handoff version 22
-type Header = { version: number, listener: number, lock: number | null, sessions: Array<SessionSnapshot>, popups: PopupsHandoff, panes: Array<PaneHeader>, telemetry: TelemetryStore, editor: EditorHandoff, captures: Captures, };
+// handoff version 24
+type Header = { version: number, listener: number, lock: number | null, sessions: Array<SessionSnapshot>, popups: PopupsHandoff, panes: Array<PaneHeader>, telemetry: TelemetryStore, editor: EditorHandoff, captures: Captures, exits: ExitsHeader, };
 type PaneHeader = { id: string, fd: number, pid: number, cols: number, rows: number,
 journal: Array<Event>, title: string | null, cwd: string | null, cwd_remote: boolean, spawn_cwd: string | null, color_reports: boolean, colors: Array<[number, number, number] | null>, kitty: KittyKeyboard,
 pending: number,
-input: number, bin: string | null, shell_name: string | null, prompt: number, programs: Array<ProgramRecord>, };
+input: number, bin: string | null, shell_name: string | null, prompt: number, programs: Array<ProgramRecord>, keep_open: boolean, runs_command: boolean, };
 type PopupsHandoff = {
 open: Array<PopupSummary>,
 starting: Array<StartingHandoff>,
@@ -17,6 +17,13 @@ type EndedHandoff = { id: string, pane_id: string, outcome: Outcome,
 age_ms: bigint, };
 type Outcome = { "Exited": number | null } | { "Failed": string } | "NotShown";
 type Event = { "Data": number } | { "Size": [number, number] };
+type ExitsHeader = { ended: Array<ClosedHandoff>,
+closing: Array<string>,
+keep_open: Array<string>,
+dead: Array<DeadHeader>, };
+type DeadHeader = { id: string, status: number | null, cols: number, rows: number, journal: Array<Event>, title: string | null, cwd: string | null, cwd_remote: boolean, };
+type ClosedHandoff = { pane_id: string, status: number | null,
+age_ms: bigint, };
 type KittyKeyboard = {
 stacks: [[number, number, number, number, number, number, number, number], [number, number, number, number, number, number, number, number]], alternate: boolean,
 modes: [boolean, boolean, boolean], saved: [boolean, boolean, boolean], };

@@ -94,10 +94,42 @@ pub struct PtyEnv {
     pub port: u16,
     /// Theme colors reported to programs in the PTY.
     pub palette: colors::SharedPalette,
+    /// Held by a handoff, so programs aren't reaped while it runs.
+    pub reap_gate: Arc<ReapGate>,
 }
 
+/// While held, exited programs stay unreaped zombies for the next server, so
+/// a handoff sees each pane as running or as exited, never reaped in between.
+#[derive(Default)]
+#[cfg_attr(not(unix), allow(dead_code))]
+pub struct ReapGate {
+    held: Mutex<bool>,
+    released: std::sync::Condvar,
+}
+
+#[cfg_attr(not(unix), allow(dead_code))]
+impl ReapGate {
+    /// Hold or release reaping. Holding waits for reaps in progress.
+    pub fn hold(&self, held: bool) {
+        *self.held.lock().unwrap() = held;
+        if !held {
+            self.released.notify_all();
+        }
+    }
+
+    /// Blocks while held; a reap happens under the guard.
+    fn reaping(&self) -> std::sync::MutexGuard<'_, bool> {
+        let mut held = self.held.lock().unwrap();
+        while *held {
+            held = self.released.wait(held).unwrap();
+        }
+        held
+    }
+}
+
+/// The PTY's input queue; `true` once its program exited and the queue closed.
 #[derive(Clone)]
-pub struct InputSender(mpsc::Sender<PtyInput>);
+pub struct InputSender(mpsc::Sender<PtyInput>, bool);
 
 enum PtyInput {
     Raw(Vec<u8>),
@@ -112,6 +144,18 @@ enum PtyInput {
 }
 
 impl InputSender {
+    /// A closed queue, for a pane whose program exited.
+    fn exited() -> Self {
+        Self(mpsc::channel(1).0, true)
+    }
+
+    fn unavailable(&self, error: impl std::fmt::Display) -> String {
+        if self.1 {
+            return "the pane's program has exited".into();
+        }
+        format!("PTY input unavailable: {error}")
+    }
+
     pub async fn send_wait(&self, data: Vec<u8>) -> Result<(), String> {
         if data.len() > MAX_INPUT {
             return Err("PTY input exceeds 64 KiB".into());
@@ -119,7 +163,7 @@ impl InputSender {
         self.0
             .send(PtyInput::Raw(data))
             .await
-            .map_err(|e| format!("PTY input unavailable: {e}"))
+            .map_err(|e| self.unavailable(e))
     }
     pub fn send(&self, data: Vec<u8>) -> Result<(), String> {
         if data.len() > MAX_INPUT {
@@ -127,7 +171,7 @@ impl InputSender {
         }
         self.0
             .try_send(PtyInput::Raw(data))
-            .map_err(|e| format!("PTY input unavailable: {e}"))
+            .map_err(|e| self.unavailable(e))
     }
 
     async fn send_shell_command(&self, data: Vec<u8>, shell_pid: Pid) -> Result<(), String> {
@@ -142,7 +186,7 @@ impl InputSender {
                 reply,
             })
             .await
-            .map_err(|e| format!("PTY input unavailable: {e}"))?;
+            .map_err(|e| self.unavailable(e))?;
         result
             .await
             .map_err(|_| "PTY input unavailable".to_string())?
@@ -188,6 +232,8 @@ pub struct PtyHandle {
     exit_tx: mpsc::UnboundedSender<Uuid>,
     /// Notifies the session manager that OSC title/cwd changed so it can re-broadcast state.
     meta_tx: mpsc::UnboundedSender<()>,
+    #[cfg_attr(not(unix), allow(dead_code))]
+    reap_gate: Arc<ReapGate>,
     /// Foreground pgroup at the time each DSR 6 query was forwarded. When a
     /// CPR response arrives, pop the front: if tcgetpgrp(master) differs, the
     /// requester died and the response is stale.
@@ -213,12 +259,44 @@ pub struct PtyHandle {
     color_reports: Arc<AtomicBool>,
     /// The Multipass guest the shell runs in, through `btmux guest-shell`.
     guest: Option<Arc<crate::multipass::Guest>>,
-    /// A popup's program, run instead of the shell.
-    popup: Option<crate::popup::Spawn>,
+    /// A popup's or a pane's program, run instead of the shell.
+    command: Option<crate::popup::Spawn>,
     /// `BTMUX_PANE_ID`: a popup's names the pane it opened over.
     env_pane: Uuid,
     /// The shell's exit status once reaped; 128 + the signal if killed.
     exit_status: Arc<Mutex<Option<i32>>>,
+    /// The pane stays, with its output, once its program exits.
+    keep_open: bool,
+    /// It runs a command, not a shell: its program is never at a prompt.
+    runs_command: bool,
+    /// The reader reached the end of the output.
+    reader_done: Arc<AtomicBool>,
+    /// A kept pane finished: its exit was written to its output.
+    exit_noted: AtomicBool,
+    /// When its exit was handled with its program or output still running.
+    exited_at: Mutex<Option<std::time::Instant>>,
+    /// A finished pane drops output its reader still reads.
+    output_muted: Arc<AtomicBool>,
+}
+
+/// How long a kept pane waits for the rest of its output after its program
+/// exited, while something else, such as a background process, holds the
+/// terminal open.
+#[cfg(not(test))]
+pub const OUTPUT_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+#[cfg(test)]
+pub const OUTPUT_GRACE: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// A finished kept pane, for an upgraded server.
+#[cfg(unix)]
+pub struct Exited {
+    pub status: Option<i32>,
+    pub cols: u16,
+    pub rows: u16,
+    pub journal: Vec<Output>,
+    pub title: Option<String>,
+    pub cwd: Option<String>,
+    pub cwd_remote: bool,
 }
 
 impl PtyHandle {
@@ -234,7 +312,7 @@ impl PtyHandle {
         let probe = Arc::new(Mutex::new(None));
 
         Self {
-            input_tx: InputSender(input_tx),
+            input_tx: InputSender(input_tx, false),
             output_tx,
             scrollback: Arc::new(Mutex::new(Replay::new(
                 80,
@@ -263,6 +341,7 @@ impl PtyHandle {
             pane_id,
             exit_tx: env.exit_tx.clone(),
             meta_tx: env.meta_tx.clone(),
+            reap_gate: env.reap_gate.clone(),
             pending_cpr_pgrps: Arc::new(Mutex::new(VecDeque::new())),
             hidden_input: HiddenInput::new(&probe),
             probe,
@@ -274,27 +353,207 @@ impl PtyHandle {
             palette: env.palette.clone(),
             color_reports: Arc::default(),
             guest: None,
-            popup: None,
+            command: None,
             env_pane: pane_id,
             exit_status: Arc::default(),
+            keep_open: false,
+            runs_command: false,
+            reader_done: Arc::default(),
+            exit_noted: AtomicBool::new(false),
+            exited_at: Mutex::new(None),
+            output_muted: Arc::default(),
         }
     }
 
     /// Run a popup's program over `pane` instead of the shell.
     pub fn with_popup(mut self, pane: Uuid, spawn: crate::popup::Spawn) -> Self {
         self.env_pane = pane;
-        self.popup = Some(spawn);
+        self.command = Some(spawn);
         self
+    }
+
+    fn is_popup(&self) -> bool {
+        self.env_pane != self.pane_id
+    }
+
+    /// Run a program instead of the shell, once spawned.
+    pub fn set_command(&mut self, spawn: crate::popup::Spawn) {
+        self.command = Some(spawn);
+        self.runs_command = true;
+    }
+
+    /// It runs a command rather than a shell.
+    pub fn runs_command(&self) -> bool {
+        self.runs_command
+    }
+
+    pub fn keep_open(&self) -> bool {
+        self.keep_open
+    }
+
+    pub fn set_keep_open(&mut self, keep_open: bool) {
+        self.keep_open = keep_open;
     }
 
     /// A popup's program and directory, until it is spawned.
     pub fn popup_spawn(&self) -> Option<(&crate::popup::Spawn, Option<&Path>)> {
-        Some((self.popup.as_ref()?, self.spawn_cwd.as_deref()))
+        Some((self.command.as_ref()?, self.spawn_cwd.as_deref()))
     }
 
     /// The exit status, once the shell was reaped.
     pub fn exit_status(&self) -> Option<i32> {
         *self.exit_status.lock().unwrap()
+    }
+
+    /// Its program ran and is gone.
+    pub fn exited(&self) -> bool {
+        self.is_spawned() && !self.child_alive()
+    }
+
+    /// Whether the pane's program is still running, for viewers' input.
+    pub fn alive_probe(&self) -> impl Fn() -> bool + Send + Sync + 'static {
+        let child = self.child.clone();
+        move || child.lock().unwrap().is_some()
+    }
+
+    /// Its program exited and, for a kept pane, the pane finished: what
+    /// waiters report, so a capture after the wait has all the output.
+    pub fn finished(&self) -> bool {
+        self.exited() && (!self.keep_open || self.exit_noted.load(Ordering::Acquire))
+    }
+
+    /// As when the reader reaches the end of the output.
+    #[cfg(test)]
+    pub fn end_output(&self) {
+        self.reader_done.store(true, Ordering::Release);
+    }
+
+    /// Whether it still holds its terminal.
+    #[cfg(test)]
+    pub fn has_terminal(&self) -> bool {
+        self.master.is_some()
+    }
+
+    /// ConPTY's output ends only once its console closes, after the program
+    /// exited: closing it lets the reader take what it still holds and end,
+    /// so a kept pane finishes with all its output rather than at the grace.
+    #[cfg(windows)]
+    pub fn close_console(&mut self) {
+        if self.exited() && !self.output_done() {
+            self.master = None;
+        }
+    }
+
+    /// The reader reached the end of the output.
+    pub fn output_done(&self) -> bool {
+        self.reader_done.load(Ordering::Acquire)
+    }
+
+    /// Start the wait for a kept pane's last output after its program
+    /// exited, or for a program to exit after its output ended; `false` if
+    /// it already started.
+    pub fn begin_output_grace(&self) -> bool {
+        let mut since = self.exited_at.lock().unwrap();
+        if since.is_some() {
+            return false;
+        }
+        *since = Some(std::time::Instant::now());
+        true
+    }
+
+    /// The wait from `begin_output_grace` is over.
+    pub fn output_grace_over(&self) -> bool {
+        self.exited_at
+            .lock()
+            .unwrap()
+            .is_some_and(|since| since.elapsed() >= OUTPUT_GRACE)
+    }
+
+    /// Finish a kept pane whose program exited once its output is complete,
+    /// or now if `force`d: write its exit after the last output and release
+    /// the terminal, keeping what it shows. `true` once finished.
+    pub fn finish(&mut self, force: bool) -> bool {
+        if !self.keep_open || !self.exited() {
+            return false;
+        }
+        if self.exit_noted.load(Ordering::Acquire) {
+            return true;
+        }
+        if !force && !self.output_done() {
+            return false;
+        }
+        // A program that died full-screen leaves the alternate screen and its
+        // input modes on: back to the main screen and its history, with the
+        // cursor shown and mouse, focus, and paste reports off, as tmux does.
+        // Leaving restores the cursor, so only from the alternate screen.
+        const RESET: &str =
+            "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1004l\x1b[?1006l\x1b[?2004l\x1b[?25h\x1b[0m";
+        let mut replay = self.scrollback.lock().unwrap();
+        let leave = if replay.alternate_screen() {
+            "\x1b[?1049l"
+        } else {
+            ""
+        };
+        let text = match self.exit_status() {
+            Some(status) => format!("{leave}{RESET}\r\n[exited with status {status}]\r\n"),
+            None => format!("{leave}{RESET}\r\n[exited]\r\n"),
+        };
+        let bytes = Bytes::from(text.into_bytes());
+        {
+            // Under the replay's lock: what a reader still running reads
+            // now is dropped, so nothing follows the exit.
+            self.output_muted.store(true, Ordering::Release);
+            replay.push(Output::Data(bytes.clone()));
+            let _ = self.output_tx.send(Output::Data(bytes));
+        }
+        drop(replay);
+        // Its reader and writer stop on their own, off the manager's lock.
+        self.release();
+        // Its pid may be reused; nothing descends from it now.
+        self.shell_pid = None;
+        self.exit_noted.store(true, Ordering::Release);
+        true
+    }
+
+    /// A finished kept pane, for an upgraded server.
+    #[cfg(unix)]
+    pub fn export_exited(&self) -> Option<Exited> {
+        if !self.keep_open || !self.finished() {
+            return None;
+        }
+        let (cols, rows) = self.size();
+        Some(Exited {
+            status: self.exit_status(),
+            cols,
+            rows,
+            journal: self.journal(),
+            title: self.title.lock().unwrap().clone(),
+            cwd: self.cwd.lock().unwrap().clone(),
+            cwd_remote: self.cwd_remote.load(Ordering::Relaxed),
+        })
+    }
+
+    /// Show what an old server's finished kept pane showed.
+    #[cfg(unix)]
+    pub fn restore_exited(&mut self, exited: Exited) {
+        *self.scrollback.lock().unwrap() = Replay::restore(
+            exited.cols,
+            exited.rows,
+            self.scrollback_bytes,
+            exited.journal,
+        );
+        *self.size.lock().unwrap() = (exited.cols, exited.rows);
+        *self.exit_status.lock().unwrap() = exited.status;
+        *self.title.lock().unwrap() = exited.title;
+        if exited.cwd.is_some() {
+            *self.cwd.lock().unwrap() = exited.cwd;
+        }
+        self.cwd_remote.store(exited.cwd_remote, Ordering::Relaxed);
+        self.keep_open = true;
+        self.reader_done.store(true, Ordering::Release);
+        self.exit_noted.store(true, Ordering::Release);
+        self.input_tx = InputSender::exited();
+        *self.spawned.lock().unwrap() = true;
     }
 
     /// Whether the terminal hides what's typed, as at a password prompt.
@@ -356,10 +615,12 @@ impl PtyHandle {
         let foreground = self.foreground_pgrp()?;
         // Guest programs are no host processes; OSC 133 marks tell them apart.
         if self.guest.is_some() {
-            return (Some(foreground) != self.shell_pid).then(|| "a program".into());
+            return (self.runs_command || Some(foreground) != self.shell_pid)
+                .then(|| "a program".into());
         }
         let name = crate::process::name(foreground);
-        let shell = Some(foreground) == self.shell_pid;
+        // A command, even one a shell runs (`sh -c`), is never at a prompt.
+        let shell = !self.runs_command && Some(foreground) == self.shell_pid;
         // The shell can exec another program in its group (`exec nvim`).
         #[cfg(unix)]
         let shell = shell
@@ -426,6 +687,10 @@ impl PtyHandle {
     }
 
     pub fn foreground_pgrp(&self) -> Option<Pid> {
+        // A master whose program exited may still name its last group.
+        if !self.child_alive() {
+            return None;
+        }
         self.probe.lock().unwrap().as_ref().and_then(foreground)
     }
 
@@ -440,7 +705,8 @@ impl PtyHandle {
 
         // Not kept: a popup's environment can be large. A popup that fails to
         // start is closed.
-        let popup = self.popup.take();
+        let popup = self.command.take();
+        let is_popup = self.is_popup();
         // Prepare all fallible resources before starting worker threads. The PTY
         // kernel buffer retains initial shell output until the reader starts.
         let argv: Vec<String> = match (&self.guest, &popup) {
@@ -448,7 +714,7 @@ impl PtyHandle {
                 let exe = server_exe().ok_or("cannot find the btmux executable")?;
                 let cwd = self.spawn_cwd.as_deref().and_then(Path::to_str);
                 std::iter::once(exe.to_string_lossy().into_owned())
-                    // A popup's directory comes from its guest caller.
+                    // A popup's or command's directory is the caller's.
                     .chain(guest.wrapper_args(cwd, popup.is_some()))
                     .chain(popup.iter().flat_map(|popup| popup.command.guest_args()))
                     .collect()
@@ -476,9 +742,10 @@ impl PtyHandle {
         cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.env("BTMUX_PANE_ID", self.env_pane.to_string());
         // Widgets its programs open show in the popup.
-        match popup {
-            Some(_) => cmd.env("BTMUX_POPUP_ID", self.pane_id.to_string()),
-            None => cmd.env_remove("BTMUX_POPUP_ID"),
+        if is_popup {
+            cmd.env("BTMUX_POPUP_ID", self.pane_id.to_string());
+        } else {
+            cmd.env_remove("BTMUX_POPUP_ID");
         }
         self.bin = server_exe().map(Path::to_path_buf);
         if let Some(exe) = &self.bin {
@@ -545,6 +812,9 @@ impl PtyHandle {
     }
 
     pub async fn send_shell_command(&self, data: Vec<u8>) -> Result<(), String> {
+        if self.runs_command {
+            return Err("The pane runs a command, not a shell".into());
+        }
         let shell_pid = self
             .shell_pid
             .ok_or_else(|| "The pane's shell is unavailable".to_string())?;
@@ -795,6 +1065,7 @@ struct OutputPipeline {
     program_status: Arc<Mutex<program_status::ProgramStatus>>,
     scrollback: Arc<Mutex<Replay>>,
     output_tx: broadcast::Sender<Output>,
+    muted: Arc<AtomicBool>,
     pane_id: Uuid,
     /// The pane's shell and its name when the pipeline started.
     #[cfg(unix)]
@@ -827,6 +1098,7 @@ impl PtyHandle {
             program_status: self.program_status.clone(),
             scrollback: self.scrollback.clone(),
             output_tx: self.output_tx.clone(),
+            muted: self.output_muted.clone(),
             pane_id: self.pane_id,
             #[cfg(unix)]
             shell: self.shell_pid.zip(self.shell_name.clone()),
@@ -878,6 +1150,9 @@ impl OutputPipeline {
             self.hidden_input.check();
         }
         let mut sb = self.scrollback.lock().unwrap();
+        if self.muted.load(Ordering::Acquire) {
+            return sent;
+        }
         if !result.scrollback.is_empty() {
             sb.push(Output::Data(exact_bytes(result.scrollback)));
         }
@@ -1163,6 +1438,7 @@ mod lifecycle_tests {
             meta_tx: mpsc::unbounded_channel().0,
             port: 8044,
             palette: colors::SharedPalette::default(),
+            reap_gate: Default::default(),
         };
         PtyHandle::new_with_cwd(shell, Uuid::new_v4(), &env, None, 100)
     }
@@ -1176,7 +1452,7 @@ mod lifecycle_tests {
     #[tokio::test]
     async fn input_is_bounded() {
         let (tx, _rx) = mpsc::channel(1);
-        let input = InputSender(tx);
+        let input = InputSender(tx, false);
         assert!(input.send(vec![0; 65537]).is_err());
         assert!(input.send(vec![0; 65536]).is_ok());
         assert!(input.send(vec![0]).is_err());
@@ -1302,6 +1578,7 @@ mod lifecycle_tests {
             meta_tx: mpsc::unbounded_channel().0,
             port: 8044,
             palette: colors::SharedPalette::default(),
+            reap_gate: Default::default(),
         };
         env.palette
             .set(colors::Palette::from_theme(&crate::config::default_theme()));
@@ -1473,6 +1750,46 @@ mod lifecycle_tests {
         assert!(new.foreground_program().is_some());
     }
 
+    /// A command that closed its terminal but still runs is handed off,
+    /// not dropped, and stays a command. Only Linux ends a PTY's output once
+    /// the last descriptor closes; macOS waits for the session to let go.
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn handoff_keeps_commands_whose_output_ended() {
+        let mut old = pane("/bin/sh");
+        old.set_command(crate::popup::Spawn {
+            command: crate::popup::PopupCommand::Exec(vec![
+                "sh".into(),
+                "-c".into(),
+                "exec </dev/null >/dev/null 2>&1; sleep 30".into(),
+            ]),
+            env: None,
+        });
+        old.ensure_spawned(80, 24).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !old.output_done() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(old.child_alive());
+        old.stop_io();
+        let (fd, handoff) = old.export_handoff(deadline()).unwrap().unwrap();
+        assert!(handoff.runs_command);
+        let master = unsafe { BorrowedFd::borrow_raw(fd) }
+            .try_clone_to_owned()
+            .unwrap();
+        let pid = old.shell_pid.unwrap();
+        std::mem::forget(old);
+
+        let mut new = pane("/bin/sh");
+        new.adopt(master, handoff).unwrap();
+        assert!(new.runs_command());
+        assert!(new.foreground_program().is_some() || !new.child_alive());
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+    }
+
     #[tokio::test]
     async fn replies_racing_a_handoff_keep_the_shell() {
         let palette = colors::SharedPalette::default();
@@ -1482,6 +1799,7 @@ mod lifecycle_tests {
             meta_tx: mpsc::unbounded_channel().0,
             port: 8044,
             palette: palette.clone(),
+            reap_gate: Default::default(),
         };
         let mut pane = PtyHandle::new_with_cwd("/bin/sh", Uuid::new_v4(), &env, None, 100);
         pane.ensure_spawned(80, 24).unwrap();
@@ -1539,6 +1857,7 @@ mod lifecycle_tests {
             meta_tx: mpsc::unbounded_channel().0,
             port: 8044,
             palette: palette.clone(),
+            reap_gate: Default::default(),
         };
         let mut pane = PtyHandle::new_with_cwd("/bin/sh", Uuid::new_v4(), &env, None, 100);
         pane.ensure_spawned(80, 24).unwrap();

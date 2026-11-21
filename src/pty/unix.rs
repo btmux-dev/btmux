@@ -73,6 +73,10 @@ pub struct Handoff {
     pub prompt: u32,
     /// OSC 7501 records.
     pub programs: Vec<program_status::Record>,
+    /// The pane stays once its program exits.
+    pub keep_open: bool,
+    /// It runs a command, not a shell.
+    pub runs_command: bool,
 }
 
 /// What a reader stopped for a handoff leaves behind.
@@ -328,6 +332,8 @@ impl PtyHandle {
         set_cloexec(master.as_raw_fd(), true).map_err(|e| e.to_string())?;
         *self.title.lock().unwrap() = handoff.title;
         *self.cwd.lock().unwrap() = handoff.cwd;
+        self.keep_open = handoff.keep_open;
+        self.runs_command = handoff.runs_command;
         self.cwd_remote.store(handoff.cwd_remote, Ordering::Relaxed);
         self.spawn_cwd = handoff.spawn_cwd;
         self.bin = handoff.bin;
@@ -391,11 +397,27 @@ impl PtyHandle {
         let input = stopping.input();
         let reader = stopping.reader.take();
         *slot = None;
-        let (Some(reader), Some(pid), Some(master)) =
-            (reader, *self.child.lock().unwrap(), &self.master)
-        else {
+        if self.master.is_none() {
+            return Ok(None);
+        }
+        let Some(pid) = *self.child.lock().unwrap() else {
+            // Reaped before reaping was held: read the rest of its output,
+            // so it ends as an exited pane. Without a reader, it ended at EOF.
+            if let Some(reader) = reader {
+                self.restart(&reader.colors, reader.kitty, reader.pending, input)?;
+            }
             return Ok(None);
         };
+        // Its output ended while its program runs on (it closed or passed on
+        // its terminal): hand it off all the same, so the next server reaches
+        // the end again and reaps the program, closing or finishing the pane.
+        let reader = reader.unwrap_or_else(|| ReaderState {
+            colors: Vec::new(),
+            kitty: KittyKeyboard::default(),
+            pending: Vec::new(),
+            unsent: Vec::new(),
+        });
+        let master = self.master.as_ref().unwrap();
         let (cols, rows) = *self.size.lock().unwrap();
         let journal = self.scrollback.lock().unwrap().snapshot();
         Ok(Some((
@@ -418,6 +440,8 @@ impl PtyHandle {
                 shell_name: self.shell_name.clone(),
                 prompt: self.prompt.load(Ordering::Relaxed),
                 programs: self.program_status.lock().unwrap().records().to_vec(),
+                keep_open: self.keep_open,
+                runs_command: self.runs_command,
             },
         )))
     }
@@ -464,6 +488,19 @@ impl PtyHandle {
             })
     }
 
+    /// Stop the reader and writer of a finished pane and close its terminal,
+    /// keeping what it showed.
+    pub(super) fn release(&mut self) {
+        // They exit once stopped, closing their copies of the descriptor.
+        self.stop_io();
+        self.stopping.get_mut().unwrap().take();
+        // Before `master` closes the descriptor it borrows.
+        self.probe.lock().unwrap().take();
+        self.stop_reader = None;
+        self.master = None;
+        self.input_tx = InputSender::exited();
+    }
+
     fn restart(
         &mut self,
         colors: &[Option<colors::Rgb>],
@@ -504,17 +541,30 @@ impl PtyHandle {
         *self.child.lock().unwrap() = Some(pid);
         let child = self.child.clone();
         let exit_status = self.exit_status.clone();
+        let reap_gate = self.reap_gate.clone();
         let child_exit_tx = self.exit_tx.clone();
         let child_pane_id = self.pane_id;
         std::thread::spawn(move || {
-            let mut status = 0;
-            let reaped = loop {
-                match unsafe { libc::waitpid(pid, &mut status, 0) } {
-                    -1 if std::io::Error::last_os_error().kind()
-                        == std::io::ErrorKind::Interrupted => {}
-                    result => break result == pid,
+            let interrupted =
+                || std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted;
+            // Without reaping, so a handoff can leave the exit to the next server.
+            let exited = loop {
+                let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+                let options = libc::WEXITED | libc::WNOWAIT;
+                match unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, options) } {
+                    -1 if interrupted() => {}
+                    result => break result == 0,
                 }
             };
+            let _reaping = reap_gate.reaping();
+            let mut status = 0;
+            let reaped = exited
+                && loop {
+                    match unsafe { libc::waitpid(pid, &mut status, 0) } {
+                        -1 if interrupted() => {}
+                        result => break result == pid,
+                    }
+                };
             if reaped {
                 *exit_status.lock().unwrap() = Some(if libc::WIFSIGNALED(status) {
                     128 + libc::WTERMSIG(status)
@@ -523,6 +573,7 @@ impl PtyHandle {
                 });
             }
             child.lock().unwrap().take();
+            drop(_reaping);
             // Not our child: the reader reports the exit at EOF instead.
             if reaped {
                 let _ = child_exit_tx.send(child_pane_id);
@@ -572,6 +623,7 @@ impl PtyHandle {
         let mut output = self.output_pipeline(interceptor, input_tx.clone());
         let exit_tx = self.exit_tx.clone();
         let pane_id = self.pane_id;
+        let reader_done = self.reader_done.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             let mut stopped = false;
@@ -616,6 +668,7 @@ impl PtyHandle {
                     unsent: unsent.unwrap_or_default(),
                 }));
             } else {
+                reader_done.store(true, Ordering::Release);
                 let _ = exit_tx.send(pane_id);
             }
         });
@@ -685,7 +738,7 @@ impl PtyHandle {
             let _ = writer_stopped_tx.send(Stopped::Writer(unwritten));
         });
 
-        self.input_tx = InputSender(input_tx);
+        self.input_tx = InputSender(input_tx, false);
     }
 
     fn configure_termios(fd: RawFd) {

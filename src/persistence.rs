@@ -84,15 +84,30 @@ pub fn load(path: &Path) -> Option<Vec<SessionSnapshot>> {
 
 /// Write snapshots to disk atomically (write to a sibling temp file, then
 /// rename) so a crash mid-write can't leave a truncated, unparseable file.
-pub fn save(path: &Path, snapshots: &[SessionSnapshot]) -> Result<(), String> {
+/// Saves `snapshots`, with each of `commands` (panes that run a command)
+/// under a new ID: after a restart it is an ordinary shell, so a waiter for
+/// the command finds it gone rather than waiting on a shell that never ran it.
+pub fn save(
+    path: &Path,
+    snapshots: &[SessionSnapshot],
+    commands: &std::collections::HashSet<uuid::Uuid>,
+) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    let json = serialize_snapshots(snapshots)?;
+    let json = renew_ids(&serialize_snapshots(snapshots)?, commands);
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, path).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// `json` with every one of `ids` replaced by a new ID, wherever it appears
+/// (the pane, its layout leaf).
+fn renew_ids(json: &str, ids: &std::collections::HashSet<uuid::Uuid>) -> String {
+    ids.iter().fold(json.to_owned(), |json, id| {
+        json.replace(&id.to_string(), &uuid::Uuid::new_v4().to_string())
+    })
 }
 
 fn serialize_snapshots(snapshots: &[SessionSnapshot]) -> Result<String, String> {
@@ -146,6 +161,19 @@ mod agent_status_tests {
         PaneAlert, PaneSnapshot,
     };
     use uuid::Uuid;
+
+    #[test]
+    fn command_panes_are_saved_under_new_ids() {
+        let (kept, renewed) = (uuid::Uuid::new_v4(), uuid::Uuid::new_v4());
+        let json =
+            format!(r#"{{"panes":[{{"id":"{kept}"}},{{"id":"{renewed}"}}],"layout":"{renewed}"}}"#);
+        let saved = renew_ids(&json, &std::collections::HashSet::from([renewed]));
+        assert!(saved.contains(&kept.to_string()));
+        assert!(!saved.contains(&renewed.to_string()));
+        let value: serde_json::Value = serde_json::from_str(&saved).unwrap();
+        // The pane and its layout leaf get the same new ID.
+        assert_eq!(value["panes"][1]["id"], value["layout"]);
+    }
 
     #[test]
     fn drops_pane_captures_from_saved_editors() {

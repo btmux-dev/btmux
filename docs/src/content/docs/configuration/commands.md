@@ -1063,35 +1063,47 @@ Options:
 
 ### `btmux new-window`
 
-Create a window in the target session and print its pane's ID
+Create a window in the target session and print its pane's ID. With COMMAND, its pane runs that instead of the shell and closes when it exits (unless --keep-open)
 
 ```text
-Usage: btmux new-window [OPTIONS]
+Usage: btmux new-window [OPTIONS] [COMMAND]...
+
+Arguments:
+  [COMMAND]...  The program and its arguments, run now; a single argument is a command line for the shell. Default: the shell
 
 Options:
-  -t <TARGET>  A pane, window, or session ID, or SESSION[:WINDOW[.PANE]] by name or index; an empty part is the current one (:1, :.2). Default: this pane
-  -n <NAME>    
-  -c <CWD>     Working directory
-  -d           Don't make it the active window
-  -F <FORMAT>  Print with this format instead of the pane ID
+  -t <TARGET>      A pane, window, or session ID, or SESSION[:WINDOW[.PANE]] by name or index; an empty part is the current one (:1, :.2). Default: this pane
+  -n <NAME>        
+  -c <CWD>         Working directory; with COMMAND, the current one by default
+  -d               Don't make it the active window
+  -F <FORMAT>      Print with this format instead of the pane ID
+  -e <NAME=VALUE>  Set an environment variable for COMMAND, as NAME=VALUE. Repeatable
+      --keep-open  Keep the pane, with its output, after its program exits
+      --wait       After printing, wait for the program to exit and exit with its status, as `wait-exit` does. Needs COMMAND: a shell starts only once a client shows its pane
 ```
 
 ### `btmux split-window`
 
-Split the target pane and print the new pane's ID
+Split the target pane and print the new pane's ID. With COMMAND, the new pane runs that instead of the shell and closes when it exits (unless --keep-open)
 
 ```text
-Usage: btmux split-window [OPTIONS]
+Usage: btmux split-window [OPTIONS] [COMMAND]...
+
+Arguments:
+  [COMMAND]...  The program and its arguments, run now; a single argument is a command line for the shell. Default: the shell
 
 Options:
-  -t <TARGET>  A pane, window, or session ID, or SESSION[:WINDOW[.PANE]] by name or index; an empty part is the current one (:1, :.2). Default: this pane
-  -h           Side by side (new pane on the right)
-  -v           Stacked (new pane below); the default
-  -b           Put the new pane left or above
-  -d           Don't make the new pane active
-  -c <CWD>     Working directory; default the target pane's
-  -F <FORMAT>  Print with this format instead of the pane ID
-      --help
+  -t <TARGET>      A pane, window, or session ID, or SESSION[:WINDOW[.PANE]] by name or index; an empty part is the current one (:1, :.2). Default: this pane
+  -h               Side by side (new pane on the right)
+  -v               Stacked (new pane below); the default
+  -b               Put the new pane left or above
+  -d               Don't make the new pane active
+  -c <CWD>         Working directory; default the target pane's, or with COMMAND the current one
+  -F <FORMAT>      Print with this format instead of the pane ID
+      --help       
+  -e <NAME=VALUE>  Set an environment variable for COMMAND, as NAME=VALUE. Repeatable
+      --keep-open  Keep the pane, with its output, after its program exits
+      --wait       After printing, wait for the program to exit and exit with its status, as `wait-exit` does. Needs COMMAND: a shell starts only once a client shows its pane
 ```
 
 ### `btmux kill-pane`
@@ -1202,6 +1214,18 @@ Usage: btmux capture-pane [OPTIONS]
 Options:
   -t <TARGET>  A pane, window, or session ID, or SESSION[:WINDOW[.PANE]] by name or index; an empty part is the current one (:1, :.2). Default: this pane
   -S <START>   History to include: '-' for all, -N for N lines above the screen
+```
+
+### `btmux wait-exit`
+
+Wait for the target pane's program (its command, or its shell) to exit, and exit with its status: 128+N if signal N ended it, 1 if the pane closed before it reported one, 124 on timeout. A pane that is kept open, or closed in the last 5 minutes, reports the status it exited with
+
+```text
+Usage: btmux wait-exit [OPTIONS]
+
+Options:
+  -t <TARGET>              A pane ID (also of a closed pane) or tmux target. Default: this pane
+      --timeout <SECONDS>  Seconds to wait, at most a year; without it, wait until the program exits
 ```
 
 ### `btmux new-worktree`

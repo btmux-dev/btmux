@@ -33,6 +33,7 @@ mod health;
 mod mcp;
 mod multipass;
 mod native_editor;
+mod pane_exit;
 mod pane_git;
 mod pane_ports;
 mod paste_image;
@@ -682,8 +683,11 @@ async fn main() {
     paste_image::shutdown();
     capture::shutdown();
     if let Some(path) = state_file {
-        let snapshots = state.read().await.all_snapshots();
-        if let Err(error) = persistence::save(&path, &snapshots) {
+        let (snapshots, commands) = {
+            let mgr = state.read().await;
+            (mgr.all_snapshots(), mgr.command_panes())
+        };
+        if let Err(error) = persistence::save(&path, &snapshots, &commands) {
             tracing::warn!("failed to persist state to {}: {}", path.display(), error);
         }
     }
@@ -831,15 +835,16 @@ async fn spawn_state_saver(path: std::path::PathBuf, state: AppState) {
                     Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break,
                 }
             }
-            let snapshots = {
+            let (snapshots, commands) = {
                 let mgr = state.read().await;
-                mgr.all_snapshots()
+                (mgr.all_snapshots(), mgr.command_panes())
             };
             let save_path = path.clone();
-            if let Err(e) =
-                tokio::task::spawn_blocking(move || persistence::save(&save_path, &snapshots))
-                    .await
-                    .unwrap_or_else(|e| Err(e.to_string()))
+            if let Err(e) = tokio::task::spawn_blocking(move || {
+                persistence::save(&save_path, &snapshots, &commands)
+            })
+            .await
+            .unwrap_or_else(|e| Err(e.to_string()))
             {
                 tracing::warn!("failed to persist state to {}: {}", path.display(), e);
             }

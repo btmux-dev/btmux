@@ -21,6 +21,17 @@ a file over a pane, optionally at a line, and starts its language servers;
 default, even if the process is still running. The overall timeout defaults
 to 15 seconds. Set either interval or check again with `read_pane_output`.
 
+To know when a command finished, and how, give `create_window` or
+`split_pane` a `command`: the new pane runs that command line instead of the
+shell, starting at once, and closes when it exits unless `keep_open` is set.
+`wait_for_exit` then returns its exit status (128 + N for signal N; `null` if
+the pane closed before it reported one), or `timed_out` after `timeout_ms`
+(10 minutes by default). For a kept pane it returns once the output has
+ended, so `read_pane_output` after it sees all of it. It works for any
+pane's program, including its shell, and for a pane closed in the last 5
+minutes (the last 256 of them). In a sandboxed session the command runs in
+the guest.
+
 Register the server with Claude Code:
 
 ```sh
