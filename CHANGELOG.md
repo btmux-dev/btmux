@@ -18,6 +18,7 @@ actions, saved state, and API types can change in any release.
   ([#181](https://github.com/btmux-dev/btmux/pull/181))
 - `btmux forward` forwards a TCP port that a pane's program listens on, such
   as a dev server, to a local port on your computer.
+  ([#184](https://github.com/btmux-dev/btmux/pull/184))
 
 ### Changed
 
