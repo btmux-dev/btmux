@@ -41,6 +41,7 @@ import { APPEARANCES } from '../lib/appearance';
 import { worktreeLabel } from '../lib/gitIdentity';
 import { actionLabel, popupIndex } from '../lib/actionLabel';
 import { keyCaster } from '../lib/keyCast';
+import { IS_MAC } from '../lib/nvimKeys';
 
 /** How long the display-panes (prefix + q) number overlay stays up, in ms. */
 const DISPLAY_PANES_MS = 1500;
@@ -70,6 +71,21 @@ function sendPrefix(sessionId: string, p: ParsedKey, send: (msg: ClientMessage) 
   if (vscodeOpen && paneId === vscodePaneId) return sendPrefixToVscode(p);
   const text = prefixBytes(p);
   if (paneId && text) send({ type: 'write_pane_input', session_id: sessionId, pane_id: paneId, text });
+}
+
+/** Cmd+Shift+P (Ctrl+Shift+P off macOS) opens the command palette, as in VS Code. */
+function isPaletteChord(e: KeyboardEvent): boolean {
+  return (
+    e.key.toLowerCase() === 'p' &&
+    e.shiftKey &&
+    !e.altKey &&
+    (IS_MAC ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey)
+  );
+}
+
+/** Whether VS Code's iframe has focus; it keeps the chord for its own palette. */
+function vscodeFocused(): boolean {
+  return document.activeElement?.matches('iframe[title="VS Code"]') === true;
 }
 
 /** Actions that stay armed for `repeat-time` after the prefix (tmux `bind -r`). */
@@ -164,6 +180,31 @@ export function useKeybindings(
       const dataset = (e.target as HTMLElement | null)?.dataset;
       const fromSurface =
         dataset?.nvimInput !== undefined || dataset?.browserInput !== undefined || dataset?.nativeEditor !== undefined;
+      if (isPaletteChord(e) && !vscodeFocused()) {
+        e.preventDefault();
+        e.stopPropagation();
+        // Like a handled binding, it ends an armed prefix and repeat window.
+        endRepeat();
+        clearTimeout(timeoutRef.current);
+        if (prefixActiveRef.current) {
+          setPrefixActive(false);
+          prefixActiveRef.current = false;
+        }
+        // Opens wherever a prefix binding would run.
+        const modal =
+          overlayRef.current ||
+          settingsOpenRef.current ||
+          searchOpenRef.current ||
+          windowGridOpenRef.current ||
+          agentGridOpenRef.current ||
+          switcherOpenRef.current;
+        if (!modal) {
+          hidePaneNumbers();
+          keyCaster.note(e, { kind: 'binding', label: castLabel('command-palette') });
+          runAction('command-palette', sessionIdRef.current, sendRef.current, onSwitchToSessionRef.current);
+        }
+        return;
+      }
       if ((e.metaKey || isFKey) && !fromSurface) {
         // PaneTerminal translates Cmd editing chords; other surfaces never see them.
         if (macosEditKeysRef.current && macEditKey(e) !== null && inPaneTerminal(e.target)) return;

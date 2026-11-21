@@ -321,8 +321,8 @@ try {
   await activeFile(fileB);
   await waitForText(page, paneId, 'const x = 1;\n');
   // And with the editor already shown, typing still goes to quick open.
-  await page.keyboard.press('Control+a');
-  await page.keyboard.press(':');
+  // Cmd+Shift+P (Ctrl+Shift+P off macOS) opens the palette from the editor too.
+  await page.keyboard.press('ControlOrMeta+Shift+P');
   await page.keyboard.type('editor quick open');
   await page.keyboard.press('Enter');
   await goToFile.waitFor();

@@ -1021,6 +1021,32 @@ try {
   await page.locator('dialog[open]').waitFor({ state: 'hidden' });
   console.log('PASS command palette cycles results with Ctrl-N/P');
 
+  // Cmd+Shift+P (Ctrl+Shift+P off macOS) opens it from a terminal, without the prefix.
+  await page.locator('[data-pane-terminal]').first().click();
+  await page.keyboard.press('ControlOrMeta+Shift+P');
+  await page.locator('dialog[open] input').waitFor();
+  assert.equal(await page.locator('dialog[open]').count(), 1);
+  await page.keyboard.press('Escape');
+  await page.locator('dialog[open]').waitFor({ state: 'hidden' });
+  // It ends an armed prefix, like a binding would.
+  const shownPanes = () =>
+    page.evaluate(async () => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      const session = useStore.getState().allSessions[0];
+      return session.windows[session.active_window].panes.length as number;
+    });
+  const panesBefore = await shownPanes();
+  await page.locator('[data-pane-terminal]').first().click();
+  await page.keyboard.press('Control+a');
+  await page.keyboard.press('ControlOrMeta+Shift+P');
+  await page.locator('dialog[open] input').waitFor();
+  await page.keyboard.press('Escape');
+  await page.locator('dialog[open]').waitFor({ state: 'hidden' });
+  await page.keyboard.press('%');
+  await page.waitForTimeout(300);
+  assert.equal(await shownPanes(), panesBefore, 'the prefix was disarmed');
+  console.log('PASS Cmd+Shift+P opens the command palette');
+
   await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     const state = useStore.getState();

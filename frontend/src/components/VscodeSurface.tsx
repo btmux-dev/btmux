@@ -11,6 +11,8 @@ import type { VscodeStatus } from '../generated/protocol';
 import { ClientConfig, LayoutRect } from '../state/types';
 import { useStore } from '../state/store';
 import { STARTUP_THEME } from '../state/startupTheme';
+import { paneRectStyle } from '../state/layout';
+import { usePaneMotion } from '../lib/paneMotion';
 import { DOUBLE_ESC_MS } from './NvimSurface';
 import { isDesktopApp } from '../lib/desktopApp';
 import { IS_MAC } from '../lib/nvimKeys';
@@ -88,6 +90,8 @@ export function VscodeSurface({
 }) {
   const visible = open && rect !== null;
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  usePaneMotion(rootRef, rect);
   const [loaded, setLoaded] = useState(false);
   const shown = useStore((s) => s.vscodeShown);
   // Changing the iframe's src (or moving it in the DOM) reloads VS Code, so
@@ -264,15 +268,15 @@ export function VscodeSurface({
 
   return (
     <div
+      ref={rootRef}
       inert={!visible}
       aria-hidden={!visible}
       style={{
         position: 'absolute',
-        ...(rect
-          ? { top: `${rect.top}%`, left: `${rect.left}%`, width: `${rect.width}%`, height: `${rect.height}%` }
-          : { inset: 0 }),
+        ...(rect ? paneRectStyle(rect) : { inset: 0 }),
         // Mirrors TerminalPane's border.
         border: `1px solid ${zoomed ? theme.magenta : focused ? theme.blue : theme.selectionBackground}`,
+        borderRadius: 'var(--radius-container)',
         zIndex: 30,
         overflow: 'hidden',
         visibility: visible ? undefined : 'hidden',

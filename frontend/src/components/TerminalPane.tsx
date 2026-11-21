@@ -5,6 +5,8 @@ import { editorShown, useStore } from '../state/store';
 import { AgentStatus, LayoutRect, ClientConfig } from '../state/types';
 import { ClientMessage } from '../protocol/messages';
 import { STARTUP_THEME } from '../state/startupTheme';
+import { paneRectStyle } from '../state/layout';
+import { usePaneMotion } from '../lib/paneMotion';
 import { PaneCorner, PaneTitleBar } from './PaneTitleBar';
 import { mix, withAlpha } from '../lib/chrome-colors';
 import { findPaneBorderStyle } from '../lib/paneSwitchBorder';
@@ -121,6 +123,8 @@ export function TerminalPane({
 }: Props) {
   const outerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Layout changes animate the box; the terminal keeps its final size.
+  usePaneMotion(outerRef, rect, containerRef);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
 
@@ -322,6 +326,15 @@ export function TerminalPane({
   );
 
   const accentGlow = withAlpha(borderColor, 0.2);
+  // A quick connect (a new pane, a reconnect) shows no label, which would
+  // only flash by.
+  const [slowConnection, setSlowConnection] = useState(false);
+  useEffect(() => {
+    setSlowConnection(false);
+    if (connection === 'connected') return;
+    const timer = window.setTimeout(() => setSlowConnection(true), 1000);
+    return () => window.clearTimeout(timer);
+  }, [connection]);
   const borderPlaying = borderTraceNonce > 0 && animations && paneSwitchBorderStyle !== null;
 
   return (
@@ -338,11 +351,9 @@ export function TerminalPane({
         opacity: nvimOpen ? 0 : undefined,
         flexDirection: 'column',
         position: 'absolute',
-        top: `${rect.top}%`,
-        left: `${rect.left}%`,
-        width: `${rect.width}%`,
-        height: `${rect.height}%`,
+        ...paneRectStyle(rect),
         border: `1px solid ${isActive || isZoomed ? 'transparent' : borderColor}`,
+        borderRadius: 'var(--radius-container)',
         overflow: 'hidden',
         caretColor: 'transparent',
         // A zoomed pane fills the grid and must paint over the panes it covers
@@ -351,7 +362,7 @@ export function TerminalPane({
         transition: animations ? 'border-color .15s ease, background .15s ease' : undefined,
       }}
     >
-      {connection !== 'connected' && (
+      {connection !== 'connected' && (slowConnection || connectionError) && (
         <div
           role="status"
           className={clsx(
@@ -397,6 +408,8 @@ export function TerminalPane({
             position: 'absolute',
             inset: 0,
             border: `1.5px solid ${borderColor}`,
+            // Concentric inside the pane's 1px border.
+            borderRadius: 'max(0px, calc(var(--radius-container) - 1px))',
             boxShadow: `0 0 0 1px ${borderColor}, 0 0 26px ${accentGlow}`,
             pointerEvents: 'none',
             animation: animations ? 'btm-bloom .3s cubic-bezier(.2,.8,.2,1)' : undefined,
@@ -419,16 +432,7 @@ export function TerminalPane({
       )}
       {/* The terminal fills the space below the (optional) title bar. inset-style
           padding around it keeps a small gutter so glyphs don't touch the border. */}
-      <div
-        style={{
-          position: 'relative',
-          flex: 1,
-          minHeight: 0,
-          // Cover wallpaper/transparency only while the terminal canvas is
-          // hidden; once revealed, restore the pane's normal transparency.
-          background: initialReplayRendered ? 'transparent' : (config?.theme?.background ?? STARTUP_THEME.background),
-        }}
-      >
+      <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
         <div
           ref={containerRef}
           className="absolute inset-3"

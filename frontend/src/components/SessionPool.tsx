@@ -6,6 +6,7 @@ import { SessionPane } from './SessionPane';
 
 interface Props {
   send: (msg: ClientMessage) => void;
+  request: (msg: ClientMessage) => Promise<string | null>;
 }
 
 /**
@@ -21,7 +22,7 @@ interface Props {
  */
 const POOL_LIMIT = 4;
 
-export function SessionPool({ send }: Props) {
+export function SessionPool({ send, request }: Props) {
   const allSessions = useStore((s) => s.allSessions);
   const configPreview = useStore((s) => s.configPreview);
   const settingsOpen = useStore((s) => s.settingsOpen);
@@ -74,6 +75,7 @@ export function SessionPool({ send }: Props) {
             isActiveSession={id === activeSessionId}
             previewConfig={id === activeSessionId && settingsOpen ? configPreview : null}
             send={send}
+            request={request}
           />
         ))}
     </>

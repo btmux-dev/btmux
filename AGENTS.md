@@ -122,7 +122,7 @@ derived from each browser tab's URL, so session navigation is per-tab.
 
 ### WebSocket channels
 
-1. **`/ws/control`** (`src/ws/control.rs`) — JSON command channel for structural changes (pane split/kill/navigate/zoom, pane selection/cycling/swapping, layout changes, window create/switch/rename/close, session create/rename/kill, pane capture/input, and config overrides). Each command mutates `SessionManager` and the server **broadcasts** the result. The client does not own canonical layout; divider dragging may use an ephemeral local ratio until the committed `resize_split` push arrives. Auto-reconnects every 2s (`useControlSocket.ts`).
+1. **`/ws/control`** (`src/ws/control.rs`) — JSON command channel for structural changes (pane split/kill/navigate/zoom, pane selection/cycling/swapping, layout changes, window create/switch/rename/close, session create/rename/kill, pane capture/input, and config overrides). Each command mutates `SessionManager` and the server **broadcasts** the result. The client does not own canonical layout; divider dragging (`useDividerDrag`) uses an ephemeral local ratio until the committed `resize_split` push arrives (or the request fails), and terminals keep their grids during the drag (`dividerDragging`), fitting once after the release commits, so the shell redraws its prompt once. A drag whose window or split stops being shown is canceled. Auto-reconnects every 2s (`useControlSocket.ts`).
 
    **Broadcast fan-out:** `SessionManager` owns a `tokio::sync::broadcast::Sender<String>` (`events()`) carrying pre-serialized `ServerMessage` JSON. Every control socket subscribes to that stream, so a mutation in one browser tab, a REST/MCP call, a config reload, or an agent notification reaches _all_ tabs. On connect a socket is also sent its current `Config` + `State` directly so it doesn't wait for the next event. `ServerMessage` includes `State { sessions, all_sessions }` (`Vec<SessionSummary>` for the StatusBar/picker + `Vec<SessionSnapshot>` with full window/layout data), `Config`, `Toast`, pane notification/clear messages, and per-request `CommandResult` replies. `request_id` command results go only to the originating socket.
 
@@ -1007,7 +1007,14 @@ the server's; with neither a Mac, Chromium maps them itself.
 `Leaf` / `VSplit` / `HSplit`. It is serialized with serde `tag = "type"`,
 `rename_all = "snake_case"`, and the frontend's `LayoutNode`
 (`frontend/src/state/types.ts`) plus `computeRectsAndDividers` in
-`frontend/src/state/layout.ts` decode it into percentage-based rects. **After changing Rust wire types, run `just protocol`.** Test-only `ts-rs`
+`frontend/src/state/layout.ts` decode it into percentage-based rects.
+When the shown window's layout changes, `useLayoutMotion` gives each rect the
+one it moves `from` (new panes grow from the outer edge of their split, closed
+ones leave a box shrinking to it, dropped when their window isn't shown), and
+`lib/paneMotion.ts` animates boxes with the Web Animations API: a pane's
+terminal is held at its final size and surfaces over panes are revealed by a
+clip, so contents resize once. A change mid-motion starts from where the box
+shows; dividers take no input until boxes settle. **After changing Rust wire types, run `just protocol`.** Test-only `ts-rs`
 derives generate `frontend/src/generated/protocol.ts`; frontend aliases preserve
 existing import names. The generated layout is a discriminated union.
 

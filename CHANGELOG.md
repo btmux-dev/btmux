@@ -10,6 +10,12 @@ actions, saved state, and API types can change in any release.
 
 ### Added
 
+- `Cmd+Shift+P` (`Ctrl+Shift+P` on Windows and Linux) opens the command
+  palette, as in VS Code.
+  ([#182](https://github.com/btmux-dev/btmux/pull/182))
+- Panes grow and shrink into place when they split, close, or change layout.
+  The programs in them resize once, at the start, so prompts don't flicker.
+  ([#182](https://github.com/btmux-dev/btmux/pull/182))
 - Settings' **Show TOML** panel can show the settings as Home Manager's
   `programs.btmux.settings` in Nix, ready to paste.
   ([#180](https://github.com/btmux-dev/btmux/pull/180))
@@ -19,6 +25,9 @@ actions, saved state, and API types can change in any release.
 
 ### Changed
 
+- Panes, and the editors and browser shown over them, have rounded corners
+  and a small gap between them and around the pane area.
+  ([#182](https://github.com/btmux-dev/btmux/pull/182))
 - Python files in the native editor get ty and ruff instead of pyright, so
   formatting works: ruff formats and lints, ty checks types.
   ([#181](https://github.com/btmux-dev/btmux/pull/181))
@@ -65,6 +74,13 @@ actions, saved state, and API types can change in any release.
 
 ### Fixed
 
+- A new pane no longer flashes an opaque background and "Connecting…" while
+  it connects. The label shows only when connecting takes over a second.
+  ([#182](https://github.com/btmux-dev/btmux/pull/182))
+- Dragging a pane divider no longer makes the shell prompt flicker: terminals
+  resize once, when the divider is released, and the layout no longer jumps
+  back while the server confirms it.
+  ([#182](https://github.com/btmux-dev/btmux/pull/182))
 - The process viewer's port list shows a port's addresses one per line and
   never breaks one mid-address. Short columns fit their values; long
   addresses and process names end in an ellipsis, with the full text on hover.

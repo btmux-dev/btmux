@@ -239,8 +239,23 @@ export function usePaneTerminal({ containerRef, paneId, termOptions, visibleRef,
         );
       });
       const offResize = term.onResize((cols, rows) => setDims({ cols, rows }));
+      // While a divider is dragged, each resize would reflow the grid (clearing
+      // the prompt) and send the shell a SIGWINCH to redraw it, so the prompt
+      // flickers. Fit once when the drag ends instead.
+      let fitAfterDrag = false;
+      const offDrag = useStore.subscribe((s, prev) => {
+        if (s.dividerDragging || !prev.dividerDragging || !fitAfterDrag) return;
+        fitAfterDrag = false;
+        if (!visibleRef.current) return;
+        fit();
+        syncDims();
+      });
       const observer = new ResizeObserver(() => {
         if (!visibleRef.current) return;
+        if (ws && useStore.getState().dividerDragging) {
+          fitAfterDrag = true;
+          return;
+        }
         fit();
         syncDims();
         if (!ws && !reconnectTimer) {
@@ -261,6 +276,7 @@ export function usePaneTerminal({ containerRef, paneId, termOptions, visibleRef,
         clearTimeout(reconnectTimer);
         offData();
         offResize();
+        offDrag();
         container.removeEventListener('keydown', claim, true);
         container.removeEventListener('paste', claim, true);
         container.removeEventListener('paste', onPaste, true);

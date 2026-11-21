@@ -27,8 +27,9 @@ Every option with its default, as `btmux generate-config` prints it. Uncomment a
 # runs without pressing the prefix again (tmux repeat-time). 0 (default) disables.
 # repeat-time = 0
 
-# Enable CSS animations/transitions in the browser (e.g. border highlight when
-# switching panes). Set to false to disable all animated effects.
+# Enable animations in the browser (e.g. border highlight when switching panes,
+# panes growing and shrinking as they split and close). Set to false to disable
+# all animated effects.
 # animations = true
 
 # Show a per-pane title bar (shell/title, working directory, dimensions, zoom

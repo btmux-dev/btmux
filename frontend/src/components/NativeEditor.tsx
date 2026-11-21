@@ -25,6 +25,8 @@ import { useStore } from '../state/store';
 import { runAction } from '../hooks/useKeybindings';
 import { WhichKey } from './WhichKey';
 import { STARTUP_THEME } from '../state/startupTheme';
+import { paneRectStyle } from '../state/layout';
+import { usePaneMotion } from '../lib/paneMotion';
 import {
   getAnimations,
   getTerminalFontFamily,
@@ -132,6 +134,8 @@ export function NativeEditor({
   onActivate: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  usePaneMotion(rootRef, rect);
   const [editor, setEditor] = useState<PaneEditor | null>(null);
   const [, changed] = useReducer((n: number) => n + 1, 0);
   const [closing, setClosing] = useState<string | null>(null);
@@ -291,6 +295,7 @@ export function NativeEditor({
 
   return (
     <div
+      ref={rootRef}
       className="btm-mono"
       data-editor-pane={paneId}
       inert={!visible}
@@ -300,12 +305,10 @@ export function NativeEditor({
       }}
       style={{
         position: 'absolute',
-        top: `${rect.top}%`,
-        left: `${rect.left}%`,
-        width: `${rect.width}%`,
-        height: `${rect.height}%`,
+        ...paneRectStyle(rect),
         // Mirrors TerminalPane's border.
         border: `1px solid ${zoomed ? theme.magenta : focused ? theme.blue : theme.selectionBackground}`,
+        borderRadius: 'var(--radius-container)',
         zIndex: 30,
         display: 'flex',
         flexDirection: 'column',

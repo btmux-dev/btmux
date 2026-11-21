@@ -88,6 +88,9 @@ interface AppStore {
   browserOpen: boolean;
   browserPaneId: string | null;
   browserRect: LayoutRect | null;
+  // A pane divider is being dragged: terminals keep their grids until it ends.
+  dividerDragging: boolean;
+  setDividerDragging: (dragging: boolean) => void;
   // File browser overlay (prefix + f / g)
   fileBrowserOpen: boolean;
   fileBrowserCwd: string | null;
@@ -287,6 +290,8 @@ export const useStore = create<AppStore>((set, get) => ({
   browserOpen: false,
   browserPaneId: null,
   browserRect: null,
+  dividerDragging: false,
+  setDividerDragging: (dragging) => set({ dividerDragging: dragging }),
   fileBrowserOpen: false,
   fileBrowserCwd: null,
   fileBrowserInitialMode: 'files',

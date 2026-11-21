@@ -8,6 +8,8 @@ import { Spinner } from './Spinner';
 import { ClientConfig, LayoutRect } from '../state/types';
 import { useStore } from '../state/store';
 import { STARTUP_THEME } from '../state/startupTheme';
+import { paneRectStyle } from '../state/layout';
+import { usePaneMotion } from '../lib/paneMotion';
 import {
   getCursorAnimationDuration,
   getSmoothScrollDuration,
@@ -91,6 +93,7 @@ export function NvimSurface({
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const layersRef = useRef<HTMLDivElement>(null);
+  usePaneMotion(containerRef, rect);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const gridRef = useRef<NvimGrid | null>(null);
   const refitRef = useRef<() => void>(() => {});
@@ -613,11 +616,10 @@ export function NvimSurface({
       aria-hidden={!visible}
       style={{
         position: 'absolute',
-        ...(rect
-          ? { top: `${rect.top}%`, left: `${rect.left}%`, width: `${rect.width}%`, height: `${rect.height}%` }
-          : { inset: 0 }),
+        ...(rect ? paneRectStyle(rect) : { inset: 0 }),
         // Mirrors TerminalPane's border.
         border: `1px solid ${zoomed ? theme.magenta : focused ? theme.blue : theme.selectionBackground}`,
+        borderRadius: 'var(--radius-container)',
         zIndex: 30,
         overflow: 'hidden',
         visibility: visible ? undefined : 'hidden',
