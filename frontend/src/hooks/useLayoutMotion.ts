@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { collapsedRect, sameBounds, type Bounds } from '../state/layout';
+import { PANE_MOTION } from '../lib/paneMotion';
 import type { LayoutNode, LayoutRect } from '../state/types';
 
 /** A closed pane's empty box, shrinking to the edge it grew from. */
@@ -37,7 +38,8 @@ export function useLayoutMotion({ windowId, layout, zoomed, rects, containerRef 
     rects: Map<string, LayoutRect>;
   } | null>(null);
   const [ghosts, setGhosts] = useState<PaneGhost[]>([]);
-  const [settling, setSettling] = useState(false);
+  // The window whose boxes are still moving.
+  const [settling, setSettling] = useState<string | null>(null);
   const motion = useRef(0);
 
   const layoutKey = layout ? JSON.stringify(layout) : '';
@@ -51,7 +53,9 @@ export function useLayoutMotion({ windowId, layout, zoomed, rects, containerRef 
     prev.layoutKey !== layoutKey;
   const moving = moved
     ? rects.map((rect) => {
-        const from = prev.rects.get(rect.paneId) ?? collapsedRect(layout, rect.paneId, rect);
+        const was = prev.rects.get(rect.paneId);
+        // Geometry only: a rect's own `from` would chain every earlier one.
+        const from = was ? bounds(was) : collapsedRect(layout, rect.paneId, rect);
         return from && !sameBounds(from, rect) ? { ...rect, from } : rect;
       })
     : rects;
@@ -61,18 +65,18 @@ export function useLayoutMotion({ windowId, layout, zoomed, rects, containerRef 
     if (moved && prev) {
       const closed = [...prev.rects.values()].flatMap((rect) => {
         if (rectByPane.has(rect.paneId)) return [];
-        const to = collapsedRect(prev.layout, rect.paneId, rect);
-        return to ? [{ key: rect.paneId, windowId, from: rect, to }] : [];
+        const to = collapsedRect(prev.layout, rect.paneId, bounds(rect));
+        return to ? [{ key: rect.paneId, windowId, from: bounds(rect), to }] : [];
       });
       if (closed.length) setGhosts((current) => [...current, ...closed]);
       // Panes' layout effects, which start their animations, ran first.
       const animations = (containerRef.current?.getAnimations({ subtree: true }) ?? []).filter(
-        (animation) => animation.constructor === Animation,
+        (animation) => animation.id === PANE_MOTION,
       );
       const id = ++motion.current;
-      setSettling(animations.length > 0);
+      setSettling(animations.length > 0 ? windowId : null);
       void Promise.all(animations.map((animation) => animation.finished.catch(() => {}))).then(() => {
-        if (motion.current === id) setSettling(false);
+        if (motion.current === id) setSettling(null);
       });
     }
     shownRef.current =
@@ -93,6 +97,8 @@ export function useLayoutMotion({ windowId, layout, zoomed, rects, containerRef 
     rectByPane,
     ghosts: ghosts.filter((ghost) => ghost.windowId === windowId && !zoomed),
     removeGhost,
-    settling,
+    settling: settling !== null && settling === windowId,
   };
 }
+
+const bounds = ({ top, left, width, height }: Bounds): Bounds => ({ top, left, width, height });

@@ -16,6 +16,9 @@ interface Motion {
 
 const noop = () => {};
 
+/** Marks layout motion's animations, which `useLayoutMotion` waits for. */
+export const PANE_MOTION = 'pane-motion';
+
 /** The theme's layout motion at `el`, or `null` when motion is off. */
 function motion(el: Element): Motion | null {
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return null;
@@ -84,7 +87,7 @@ function animateBox(el: HTMLElement, content: HTMLElement | null, start: Start, 
       height: `${height}px`,
     };
   }
-  const animation = el.animate([from, paneRectStyle(to)], m);
+  const animation = el.animate([from, paneRectStyle(to)], { ...m, id: PANE_MOTION });
   animation.onfinish = () => release();
   return {
     cancel: () => {
@@ -120,7 +123,7 @@ function revealBox(el: HTMLElement, start: Start): Running | null {
         inset(0, 0, 0, 0),
       ],
     },
-    m,
+    { ...m, id: PANE_MOTION },
   );
   const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
   return {
@@ -174,7 +177,7 @@ export function animateGhost(el: HTMLElement, from: Bounds, to: Bounds, done: ()
     done();
     return noop;
   }
-  const animation = el.animate([paneRectStyle(from), paneRectStyle(to)], { ...m, fill: 'forwards' });
+  const animation = el.animate([paneRectStyle(from), paneRectStyle(to)], { ...m, fill: 'forwards', id: PANE_MOTION });
   animation.onfinish = done;
   return () => animation.cancel();
 }
