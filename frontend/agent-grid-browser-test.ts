@@ -706,19 +706,41 @@ try {
     }
     return best;
   };
+  // Waits for the tiles to repack at a new viewport and hold still for 10 frames.
+  const resizeTo = async (viewport: { width: number; height: number }) => {
+    const before = await page.evaluate(() => document.querySelector('[data-agent-tiles]')!.clientWidth);
+    await page.setViewportSize(viewport);
+    await waitForAsync(
+      page,
+      async (before) => {
+        const area = document.querySelector<HTMLElement>('[data-agent-tiles]')!;
+        const sample = () =>
+          area.clientWidth +
+          [...area.querySelectorAll('[data-agent-tile]')]
+            .map((tile) => JSON.stringify(tile.getBoundingClientRect()))
+            .join();
+        if (area.clientWidth === before) return false;
+        const first = sample();
+        for (let i = 0; i < 10; i++) {
+          await new Promise(requestAnimationFrame);
+          if (sample() !== first) return false;
+        }
+        return true;
+      },
+      before,
+    );
+  };
   for (const viewport of [
     { width: 1024, height: 778 },
     { width: 768, height: 587 },
   ]) {
-    await page.setViewportSize(viewport);
-    await page.waitForTimeout(500);
+    await resizeTo(viewport);
     const layout = await tileLayout();
     assert(layout.scrollH <= layout.h, `tiles overflow at ${viewport.width}: ${JSON.stringify(layout)}`);
     const factor = headroom(layout);
     assert(factor > 0.98 && factor < 1.02, `tiles could be ${factor}x at ${viewport.width}: ${JSON.stringify(layout)}`);
   }
-  await page.setViewportSize({ width: 390, height: 700 });
-  await page.waitForTimeout(500);
+  await resizeTo({ width: 390, height: 700 });
   const overflowing = await tileLayout();
   assert(overflowing.scrollH > overflowing.h, `expected overflow: ${JSON.stringify(overflowing)}`);
   for (const tile of overflowing.tiles) {

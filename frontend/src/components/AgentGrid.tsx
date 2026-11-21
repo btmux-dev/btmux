@@ -308,9 +308,10 @@ export function AgentGrid({ send }: Props) {
     observerRef.current = null;
     if (!el) return;
     const measure = () => {
-      // The stack's token gap, resolved to px.
+      // gap-x-3, resolved to px.
       const gap = parseFloat(getComputedStyle(el).columnGap) || 0;
-      if (el.clientWidth > 0 && el.clientHeight > 0) setArea({ w: el.clientWidth, h: el.clientHeight, gap });
+      // 1px slack: client sizes are rounded, and a row a fraction too wide wraps.
+      if (el.clientWidth > 1 && el.clientHeight > 1) setArea({ w: el.clientWidth - 1, h: el.clientHeight - 1, gap });
     };
     measure();
     observerRef.current = new ResizeObserver(measure);
@@ -635,7 +636,8 @@ export function AgentGrid({ send }: Props) {
       wrap="wrap"
       vAlign="center"
       isScrollable
-      className={`h-full min-h-0 min-w-0 flex-1 content-center-safe justify-center-safe gap-x-3 ${tilesShown || allSized ? '' : 'opacity-0'}`}
+      // Tailwind emits plain centering before the safe kind, which browsers without `safe` drop.
+      className={`h-full min-h-0 min-w-0 flex-1 content-center content-center-safe justify-center justify-center-safe gap-x-3 ${tilesShown || allSized ? '' : 'opacity-0'}`}
     >
       {shown.length === 0 && (
         <EmptyState
@@ -654,25 +656,17 @@ export function AgentGrid({ send }: Props) {
           const time = since(entry);
           // The row gap, as a line of its own (gap-x-3's height).
           const rowBreak = packed.lines.some((line, row) => row > 0 && line[0] === i) && (
-            <div key={`break-${entry.paneId}`} aria-hidden className="h-3 basis-full" />
+            <VStack key={`break-${entry.paneId}`} aria-hidden className="h-3 basis-full" />
           );
           return [
             rowBreak,
-            <div
+            // An unsized tile keeps its mirror mounted, which reports the size.
+            <VStack
               key={entry.paneId}
               data-agent-tile={entry.paneId}
-              // An unsized tile keeps its mirror mounted, which reports the size.
-              style={
-                size
-                  ? { width: size.w + CHROME_W, height: size.h + CHROME_H }
-                  : {
-                      position: 'absolute',
-                      width: FALLBACK_SIZE.w,
-                      height: FALLBACK_SIZE.h,
-                      opacity: 0,
-                      pointerEvents: 'none',
-                    }
-              }
+              width={size ? size.w + CHROME_W : FALLBACK_SIZE.w}
+              height={size ? size.h + CHROME_H : FALLBACK_SIZE.h}
+              className={size ? undefined : 'pointer-events-none absolute opacity-0'}
             >
               <SelectableCard
                 label={`${entry.sessionName} › ${entry.windowName} › ${paneLabel(entry)}`}
@@ -766,8 +760,7 @@ export function AgentGrid({ send }: Props) {
                   </HStack>
                   <VStack
                     data-agent-mirror
-                    // Concentric with the card's corners, 8px (padding 2) inside them.
-                    className="relative min-h-0 flex-1 overflow-hidden rounded-[max(0px,calc(var(--radius-container)-var(--spacing-2)))]"
+                    className="rounded-card-inset-2 relative min-h-0 flex-1 overflow-hidden"
                     style={{ background: terminalBg }}
                   >
                     {/* Only while shown: a hidden mirror can't report its size, and closing clears expiries. */}
@@ -784,7 +777,7 @@ export function AgentGrid({ send }: Props) {
                   </VStack>
                 </VStack>
               </SelectableCard>
-            </div>,
+            </VStack>,
           ];
         })}
     </HStack>
