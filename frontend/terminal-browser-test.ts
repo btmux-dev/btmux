@@ -431,6 +431,75 @@ try {
     );
   }
   console.log('PASS session switcher, window grid, and agent grid return focus to the active pane');
+
+  // Dragging a divider keeps the terminals' grids until it ends, so the shell
+  // redraws its prompt once rather than at every step, and the released
+  // layout doesn't jump back while the server confirms it. The control
+  // socket's replies are held to make that wait visible.
+  const dragPage = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+  let holdReplies = false;
+  const held: (string | Buffer)[] = [];
+  let control: { send: (message: string | Buffer) => void } | null = null;
+  await dragPage.routeWebSocket(/\/ws\/control/, (ws) => {
+    control = ws;
+    ws.connectToServer().onMessage((message) => (holdReplies ? held.push(message) : ws.send(message)));
+  });
+  await dragPage.goto(url);
+  await dragPage.getByLabel('Access token').fill(token);
+  await dragPage.getByRole('button', { name: 'Connect', exact: true }).click();
+  await dragPage.locator('[data-pane-terminal]').first().click();
+  const paneCount = await dragPage.locator('[data-pane-terminal]').count();
+  await dragPage.keyboard.press('Control+a');
+  await dragPage.keyboard.press('%');
+  await dragPage.waitForFunction((n) => document.querySelectorAll('[data-pane-terminal]').length > n, paneCount);
+  const left = dragPage.locator('[data-pane-id]:visible').first();
+  const leftId = (await left.getAttribute('data-pane-id'))!;
+  const cols = () =>
+    dragPage.evaluate(async (id) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      return useStore.getState().terminals.get(id).cols as number;
+    }, leftId);
+  const divider = (await dragPage.locator('[style*="col-resize"]').last().boundingBox())!;
+  const startCols = await cols();
+  const startWidth = (await left.boundingBox())!.width;
+  const y = divider.y + divider.height / 2;
+  await dragPage.mouse.move(divider.x + divider.width / 2, y);
+  await dragPage.mouse.down();
+  for (let i = 1; i <= 10; i++) {
+    await dragPage.mouse.move(divider.x + divider.width / 2 - i * 20, y);
+    await dragPage.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+  }
+  assert((await left.boundingBox())!.width < startWidth - 150, 'the pane follows the drag');
+  assert.equal(await cols(), startCols, 'the grid keeps its size while dragging');
+  holdReplies = true;
+  await dragPage.mouse.up();
+  const widths = await left.evaluate(
+    (el) =>
+      new Promise<number[]>((resolve) => {
+        const seen: number[] = [];
+        const end = performance.now() + 300;
+        const tick = () => {
+          seen.push(el.getBoundingClientRect().width);
+          if (performance.now() < end) requestAnimationFrame(tick);
+          else resolve(seen);
+        };
+        requestAnimationFrame(tick);
+      }),
+  );
+  holdReplies = false;
+  for (const message of held.splice(0)) control!.send(message);
+  assert(Math.max(...widths) < startWidth - 150, 'the released layout never jumps back');
+  await waitForAsync(
+    dragPage,
+    async ([id, before]) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      return useStore.getState().terminals.get(id).cols < before;
+    },
+    [leftId, startCols] as const,
+  );
+  assert((await left.boundingBox())!.width < startWidth - 150, 'the server keeps the released layout');
+  await dragPage.close();
+  console.log('PASS dragging a divider resizes the terminal once, on release');
 } finally {
   await browser.close();
 }

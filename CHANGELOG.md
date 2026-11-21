@@ -69,6 +69,9 @@ actions, saved state, and API types can change in any release.
 
 ### Fixed
 
+- Dragging a pane divider no longer makes the shell prompt flicker: terminals
+  resize once, when the divider is released, and the layout no longer jumps
+  back while the server confirms it.
 - The process viewer's port list shows a port's addresses one per line and
   never breaks one mid-address. Short columns fit their values; long
   addresses and process names end in an ellipsis, with the full text on hover.

@@ -39,6 +39,14 @@ export function paneIdsInOrder(layout: LayoutNode): string[] {
   }
 }
 
+/** The stored ratio of the split with this id, or `null` if there is none. */
+export function splitRatio(layout: LayoutNode, id: string): number | null {
+  if (layout.type === 'leaf') return null;
+  if (layout.id === id) return layout.ratio ?? 0.5;
+  const [a, b] = layout.type === 'v_split' ? [layout.left!, layout.right!] : [layout.top!, layout.bottom!];
+  return splitRatio(a, id) ?? splitRatio(b, id);
+}
+
 /**
  * Decode a recursive `LayoutNode` tree into percentage-based pane rects plus the
  * divider lines between splits. Shared by SessionPane (the live grid, which uses

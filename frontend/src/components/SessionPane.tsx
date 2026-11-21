@@ -15,6 +15,7 @@ import {
   PANE_GAP,
   paneIdsInOrder,
   paneRectStyle,
+  splitRatio,
   Divider,
 } from '../state/layout';
 import { ClientMessage } from '../protocol/messages';
@@ -51,6 +52,18 @@ interface Props {
 export function SessionPane({ sessionId, isActiveSession, previewConfig, send }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [ratioOverrides, setRatioOverrides] = useState<Map<string, number>>(new Map());
+  // Ratios sent with `resize_split`, kept as overrides until the server's
+  // layout has them, so a released divider doesn't jump back for a round trip.
+  const committedRef = useRef(new Map<string, number>());
+  const dropOverride = useCallback((id: string) => {
+    committedRef.current.delete(id);
+    setRatioOverrides((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Map(prev);
+      next.delete(id);
+      return next;
+    });
+  }, []);
   const overlay = useStore((s) => s.overlay);
   const windowGridOpen = useStore((s) => s.windowGridOpen);
   const agentGridOpen = useStore((s) => s.agentGridOpen);
@@ -221,22 +234,35 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send }:
         setRatioOverrides((prev) => new Map(prev).set(divider.id, ratio));
       };
 
+      committedRef.current.delete(divider.id);
+      useStore.getState().setDividerDragging(true);
       trackPointerDrag(e, onMove, (upEvent) => {
         // A cancelled touch (a system gesture) keeps the old layout.
         if (upEvent.type === 'pointerup') {
           const ratio = computeRatio(upEvent.clientX, upEvent.clientY);
+          committedRef.current.set(divider.id, ratio);
+          setRatioOverrides((prev) => new Map(prev).set(divider.id, ratio));
           send({ type: 'resize_split', session_id: sessionId, split_id: divider.id, ratio });
-        }
-
-        setRatioOverrides((prev) => {
-          const next = new Map(prev);
-          next.delete(divider.id);
-          return next;
-        });
+          // Without the server's reply, fall back to its layout.
+          window.setTimeout(() => {
+            if (committedRef.current.get(divider.id) === ratio) dropOverride(divider.id);
+          }, 2000);
+        } else dropOverride(divider.id);
+        // Terminals fit once, to the released layout.
+        useStore.getState().setDividerDragging(false);
       });
     },
-    [sessionId, send],
+    [sessionId, send, dropOverride],
   );
+
+  const layout = activeWindow?.layout;
+  useEffect(() => {
+    for (const [id, ratio] of committedRef.current) {
+      const stored = layout ? splitRatio(layout, id) : null;
+      // f32 on the server.
+      if (stored === null || Math.abs(stored - ratio) < 1e-4) dropOverride(id);
+    }
+  }, [layout, dropOverride]);
 
   // Lay out only the active window. Panes of other windows are kept mounted but
   // hidden, so they need no rect of their own.
