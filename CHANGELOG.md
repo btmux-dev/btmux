@@ -23,6 +23,7 @@ actions, saved state, and API types can change in any release.
 - Language servers whose prompts need their answer's details, like nil's
   offer to fetch missing flake inputs, ask in the native editor instead of
   warning that the client can't confirm.
+  ([#195](https://github.com/btmux-dev/btmux/pull/195))
 
 ## [0.0.217] - 2026-11-22
 
