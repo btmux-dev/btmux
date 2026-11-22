@@ -15,6 +15,12 @@ actions, saved state, and API types can change in any release.
   selects every match and `Mod-Alt-Enter` replaces them all.
   ([#193](https://github.com/btmux-dev/btmux/pull/193))
 
+### Fixed
+
+- Holding Cmd (Ctrl outside macOS) over a link a program prints, as Claude
+  Code does, shows the pointer and underline.
+  ([#192](https://github.com/btmux-dev/btmux/pull/192))
+
 ## [0.0.217] - 2026-11-22
 
 ### Added
