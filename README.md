@@ -16,6 +16,8 @@ macOS, Linux, and Windows. Powered by
 [First steps](https://btmux-dev.github.io/btmux/start/first-steps/) ·
 [Changelog](https://btmux-dev.github.io/btmux/project/changelog/)
 
+https://github.com/user-attachments/assets/6fbd9b75-b6f6-4de8-8790-c958d821940b
+
 ## Highlights
 
 - tmux-style sessions, windows, splits, zoom, and key bindings
