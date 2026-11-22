@@ -12,7 +12,7 @@
 import assert from 'node:assert/strict';
 import { chromium, type Page } from 'playwright';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -50,7 +50,7 @@ const sync = path.join(work, 'sync');
 mkdirSync(bin, { recursive: true });
 mkdirSync(sync, { recursive: true });
 symlinkSync(path.join(root, 'target', 'debug', 'btmux'), path.join(bin, 'btmux'));
-for (const agent of ['claude', 'codex', 'gemini']) {
+for (const agent of ['claude', 'codex', 'agy']) {
   writeFileSync(
     path.join(bin, agent),
     `#!/bin/bash\nexec -a ${agent} /bin/bash ${JSON.stringify(path.join(import.meta.dir, 'demo-agent.sh'))} ${agent} "$@"\n`,
@@ -71,6 +71,10 @@ writeFileSync(
   ].join('\n'),
 );
 
+// Pressed key bindings and chords show on screen (`?keys` below); typing doesn't.
+mkdirSync(path.join(configHome, 'btmux'), { recursive: true });
+appendFileSync(path.join(configHome, 'btmux', 'config.toml'), '[key-overlay]\nmode = "chords"\n');
+
 // The demo's sessions; the stack's default one goes.
 const first = demo === 'editor' ? router : repo;
 const firstPane = btmux('new-session', '-s', path.basename(first), '-n', 'main', '-c', first);
@@ -90,7 +94,7 @@ page.on('requestfinished', (request) => {
 const recorder = readFileSync(path.join(path.dirname(require.resolve('@rrweb/record')), 'record.umd.min.cjs'), 'utf8');
 // As a global, whatever module system the page has.
 await page.addInitScript(`(function(){var module,exports,define;${recorder}\n})()`);
-await page.goto(`${url}/s/${path.basename(first)}`);
+await page.goto(`${url}/s/${path.basename(first)}?keys`);
 await page.getByLabel('Access token').fill(token);
 await page.getByRole('button', { name: 'Connect', exact: true }).click();
 await waitForAsync(page, async () => {
@@ -116,7 +120,7 @@ await page.evaluate(
       slimDOMOptions: 'all',
       maskTextSelector: '*',
       maskTextFn: scrub,
-      sampling: { mousemove: 40, scroll: 100, input: 'last' },
+      sampling: { mousemove: 40, scroll: 100, input: 'all' },
     });
   },
   { home: homedir(), user: userInfo().username },
@@ -140,6 +144,12 @@ const press = async (key: string, times = 1, pause = 0.4) => {
 };
 function pace(seconds: number) {
   return page.waitForTimeout(seconds * 1000);
+}
+// A still moment, marked with a `calm` event: `just readme-video` wipes
+// between the dark and light recordings there.
+async function calm(seconds = 2.8) {
+  await page.evaluate(() => (window as any).rrwebRecord.record.addCustomEvent('calm', {}));
+  await pace(seconds);
 }
 async function waitFor(marker: string, seconds: number) {
   const deadline = Date.now() + seconds * 1000;
@@ -182,7 +192,7 @@ const scripts: Record<Demo, () => Promise<void>> = {
     await prefix('"');
     await pace(1.2);
     await line('git log --oneline -8');
-    await pace(1.5);
+    await calm();
     await prefix('ArrowLeft');
     await pace(0.8);
     for (let i = 0; i < 2; i++) {
@@ -263,7 +273,7 @@ const scripts: Record<Demo, () => Promise<void>> = {
     await page.keyboard.press('s');
     await pace(0.6);
     await type('Response');
-    await pace(1.5);
+    await calm();
     await press('Control+n', 4, 1);
     await page.keyboard.press('Escape');
     await pace(0.3);
@@ -303,7 +313,7 @@ const scripts: Record<Demo, () => Promise<void>> = {
     await type('("GET", "/path") => (200, request.');
     await pickCompletion(page, 'path');
     await type('.clone()),');
-    await pace(1.5);
+    await calm();
     await page.keyboard.press('ControlOrMeta+s');
     await pace(1.5);
     await page.keyboard.press('Escape');
@@ -329,12 +339,12 @@ const scripts: Record<Demo, () => Promise<void>> = {
     await pace(1.5);
     await prefix('"');
     await pace(1.2);
-    await line('gemini');
+    await line('agy');
     await pace(1.5);
     await line('explain the routing');
     await waitFor('claude-blocked', 30);
     await waitFor('codex-done', 30);
-    await pace(2.5);
+    await calm();
     // The agent view, with every live pane shown (o shows one, again all);
     // then jump to Claude and approve.
     await prefix('a');
@@ -347,12 +357,12 @@ const scripts: Record<Demo, () => Promise<void>> = {
     await page.keyboard.press('y');
     await waitFor('claude-done', 30);
     await pace(1.5);
-    await waitFor('gemini-done', 60);
+    await waitFor('agy-done', 60);
     await pace(2.5);
-    // Everyone is done; jump to Gemini's answer.
+    // Everyone is done; jump to Antigravity's answer.
     await prefix('a');
     await pace(2.5);
-    await press(await agentKey('Gemini'), 1, 1);
+    await press(await agentKey('Antigravity'), 1, 1);
     await page.keyboard.press('Enter');
     await pace(2.5);
   },
@@ -366,7 +376,7 @@ const scripts: Record<Demo, () => Promise<void>> = {
     await waitFor('codex-done', 30);
     await pace(1.5);
     await prefix('m');
-    await pace(2);
+    await calm();
     const formulas = page.locator('div[title]').filter({ has: page.locator('.katex') });
     for (const formula of await formulas.all()) {
       const box = (await formula.boundingBox())!;
@@ -427,6 +437,74 @@ const strip = (value: any) => {
   for (const child of Object.values(value)) strip(child);
 };
 strip(events);
+
+// rrweb snapshots a <style> as `_cssText`, without a child node. When the page
+// later replaces its text (CodeMirror adds a theme), live playback copies the
+// old CSS into the new text node (rrweb's `appendNode`), so the new rules are
+// lost, though seeking applies them. Such styles get their CSS as a child the
+// first replacement removes.
+function trackStyleText(events: any[]) {
+  const rewritten = new Set<number>();
+  let nextId = 0;
+  const walk = (node: any, visit: (node: any) => void) => {
+    visit(node);
+    for (const child of node.childNodes ?? []) walk(child, visit);
+  };
+  for (const event of events) {
+    if (event.type === 2) walk(event.data.node, (node) => (nextId = Math.max(nextId, node.id + 1)));
+    if (event.type !== 3 || event.data.source !== 0) continue;
+    for (const add of event.data.adds) {
+      walk(add.node, (node) => (nextId = Math.max(nextId, node.id + 1)));
+      if (add.node.type === 3) rewritten.add(add.parentId);
+    }
+  }
+  const child = new Map<number, number>();
+  for (const event of events) {
+    if (event.type === 2)
+      walk(event.data.node, (node) => {
+        if (node.tagName !== 'style' || !rewritten.has(node.id) || node.childNodes.length > 0) return;
+        if (typeof node.attributes._cssText !== 'string') return;
+        const id = nextId++;
+        node.childNodes = [{ type: 3, id, textContent: node.attributes._cssText, isStyle: true }];
+        delete node.attributes._cssText;
+        child.set(node.id, id);
+      });
+    if (event.type !== 3 || event.data.source !== 0) continue;
+    for (const add of event.data.adds) {
+      const id = child.get(add.parentId);
+      if (add.node.type !== 3 || id === undefined) continue;
+      event.data.removes.push({ parentId: add.parentId, id });
+      child.delete(add.parentId);
+    }
+  }
+}
+trackStyleText(events);
+
+// Replays never open popovers, so the key overlay (a manual popover) would
+// stay hidden: it becomes a plain fixed element above everything but modal
+// dialogs instead.
+function keyOverlayOnTop(events: any[]) {
+  const hosts = new Set<number>();
+  const visit = (node: any) => {
+    if (node.attributes && 'data-key-overlay' in node.attributes) {
+      hosts.add(node.id);
+      delete node.attributes.popover;
+      node.attributes.style = `${node.attributes.style ?? ''};z-index:2147483647`;
+    }
+    for (const child of node.childNodes ?? []) visit(child);
+  };
+  for (const event of events) {
+    if (event.type === 2) visit(event.data.node);
+    if (event.type !== 3 || event.data.source !== 0) continue;
+    for (const add of event.data.adds) visit(add.node);
+    for (const change of event.data.attributes) {
+      if (!hosts.has(change.id)) continue;
+      delete change.attributes.popover;
+      if (typeof change.attributes.style === 'string') change.attributes.style += ';z-index:2147483647';
+    }
+  }
+}
+keyOverlayOnTop(events);
 let json = JSON.stringify(events);
 
 // Fonts and images the page loaded from the stack become files beside the

@@ -143,6 +143,7 @@ function KeyOverlayView() {
     <VStack
       ref={hostRef}
       aria-hidden
+      data-key-overlay
       gap={2}
       className={clsx(
         'pointer-events-none fixed inset-auto m-0 overflow-visible border-0 bg-transparent p-0',

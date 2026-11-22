@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { Banner } from '@astryxdesign/core/Banner';
 import { Button } from '@astryxdesign/core/Button';
@@ -13,6 +14,8 @@ import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
 import { Circle, FileWarning, X } from 'lucide-react';
 import type { EditorViewOp, PaneEditor as PaneEditorState } from '../generated/protocol';
 import type { PaneEditor } from '../lib/nativeEditor/paneEditor';
+import type { SearchPanelHandle } from '../lib/nativeEditor/searchPanel';
+import { EditorSearch } from './EditorSearch';
 import type { EditorAppearance } from '../lib/nativeEditor/theme';
 import { onReveal } from '../lib/nativeEditor/reveal';
 import { registerEditorCommands } from '../lib/nativeEditor/registry';
@@ -139,6 +142,7 @@ export function NativeEditor({
   const [editor, setEditor] = useState<PaneEditor | null>(null);
   const [, changed] = useReducer((n: number) => n + 1, 0);
   const [closing, setClosing] = useState<string | null>(null);
+  const [search, setSearch] = useState<SearchPanelHandle | null>(null);
   const [buffers, setBuffers] = useState<BufferSummary[]>([]);
   useEffect(() => editorConnection.subscribeBuffers(setBuffers), []);
   const [servers, setServers] = useState<LspServerStatus[]>([]);
@@ -208,6 +212,8 @@ export function NativeEditor({
         open: (path, line) => opRef.current({ kind: 'open', path, line: line ?? null }),
         close: (path, force) => closeRef.current(path, force),
         action: (name) => actionRef.current(name),
+        // A file switch can mount the next file's panel before the last one's goes.
+        search: (handle, open) => setSearch((shown) => (open ? handle : shown === handle ? null : shown)),
       });
       setEditor(created);
     });
@@ -536,6 +542,7 @@ export function NativeEditor({
           </HStack>
         </HStack>
       )}
+      {search && createPortal(<EditorSearch handle={search} />, search.dom)}
       <Dialog isOpen={closing !== null} onOpenChange={(open) => !open && setClosing(null)} width={420} padding={4}>
         <DialogHeader
           title={`Save changes to ${closing ? basename(closing) : ''}?`}

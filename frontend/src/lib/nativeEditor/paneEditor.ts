@@ -25,6 +25,7 @@ import {
   setSelectedCompletion,
 } from '@codemirror/autocomplete';
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
+import { searchPanel, type SearchPanelHandle } from './searchPanel';
 import { virtualText } from './virtualText';
 import { forEachDiagnostic, lintKeymap } from '@codemirror/lint';
 import { Doc, type DocStatus } from './doc';
@@ -124,6 +125,8 @@ export interface PaneEditorEvents {
   close(path: string, force: boolean): void;
   /** Run a btmux action (a mapping to one that isn't the editor's). */
   action(name: string): void;
+  /** The find and replace panel opened (`open`) or closed. */
+  search(handle: SearchPanelHandle, open: boolean): void;
 }
 
 /** Actions run from visual mode that keep it: they change the selection. */
@@ -306,6 +309,7 @@ export class PaneEditor {
       bracketMatching(),
       closeBrackets(),
       autocompletion({ addToOptions: [codeDetail] }),
+      searchPanel((handle, open) => this.events.search(handle, open)),
       panelSpace,
       rectangularSelection(),
       crosshairCursor(),
