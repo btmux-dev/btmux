@@ -125,18 +125,23 @@ try {
     await box(id!).locator('[data-pane-terminal]').click();
     return id!;
   };
-  // A pause takes effect at the next frame, once `ready` resolves.
-  const pauseMotion = () =>
-    page.evaluate(() =>
-      Promise.all(
-        document
-          .getAnimations()
-          .filter((animation) => animation.constructor === Animation)
-          .map((animation) => {
-            animation.pause();
-            return animation.ready;
-          }),
-      ),
+  // Pauses pane motion, at `progress` of its duration if given; it takes
+  // effect at the next frame, once `ready` resolves.
+  const pauseMotion = (progress?: number) =>
+    page.evaluate(
+      (progress) =>
+        Promise.all(
+          document
+            .getAnimations()
+            .filter((animation) => animation.constructor === Animation)
+            .map((animation) => {
+              animation.pause();
+              const duration = animation.effect?.getComputedTiming().duration;
+              if (progress !== undefined && typeof duration === 'number') animation.currentTime = duration * progress;
+              return animation.ready;
+            }),
+        ),
+      progress,
     );
   const divider = async () => (await page.locator('[style*="col-resize"]').last().boundingBox())!;
 
@@ -291,10 +296,9 @@ try {
   await page.keyboard.press('Enter');
   // Pause the close's motion partway, then split the growing pane.
   await waitForAsync(page, () => document.getAnimations().some((animation) => animation.constructor === Animation));
-  await page.waitForTimeout(40);
-  await pauseMotion();
+  await pauseMotion(0.2);
   const paused = await width(left);
-  assert(paused > beforeCancel + 50 && paused < fullWidth - 50, `paused mid-motion at ${paused}`);
+  assert(paused > beforeCancel + 50 && paused < fullWidth - 50, `paused mid-motion at ${paused} (${beforeCancel}–${fullWidth})`);
   // Right after the commit that adds a pane, its animations have started.
   const interrupted = box(left).evaluate(
     (el) =>

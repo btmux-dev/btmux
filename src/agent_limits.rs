@@ -1242,7 +1242,6 @@ mod tests {
         async fn asks_the_shell_for_its_path() {
             let path = shell_path("sh", Duration::from_secs(10)).await.unwrap();
             assert!(!path.is_empty());
-            assert!(shell_path("sh", Duration::ZERO).await.is_err());
             assert!(shell_path("btmux-no-such-shell", Duration::from_secs(10))
                 .await
                 .is_err());

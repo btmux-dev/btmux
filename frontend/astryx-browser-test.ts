@@ -258,6 +258,8 @@ try {
     await viewer.getByText('sort: port ▲', { exact: true }).waitFor();
     await page.keyboard.press('s');
     await viewer.getByText('sort: protocol ▲', { exact: true }).waitFor();
+    // Leave the expand button, whose tooltip would cover the header.
+    await page.mouse.move(0, 0);
     await viewer.getByRole('button', { name: 'Sort by port', exact: true }).click();
     await viewer.getByText('sort: port ▲', { exact: true }).waitFor();
     await viewer.getByRole('button', { name: 'Sort by listeners first', exact: true }).click();
