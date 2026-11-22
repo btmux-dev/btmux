@@ -1294,7 +1294,54 @@ pub struct Theme {
     pub bright_white: String,
 }
 
+/// `#rgb` as `#rrggbb`, which the browser's color helpers need; other values
+/// are kept.
+fn expand_short_hex(color: &str) -> String {
+    match color.strip_prefix('#') {
+        Some(hex) if hex.len() == 3 && hex.chars().all(|c| c.is_ascii_hexdigit()) => {
+            hex.chars().fold(String::from("#"), |mut out, c| {
+                out.push(c);
+                out.push(c);
+                out
+            })
+        }
+        _ => color.to_string(),
+    }
+}
+
 impl BaseTheme {
+    /// The palette with `#rgb` colors expanded to `#rrggbb`.
+    fn expanded(&self) -> BaseTheme {
+        let e = |c: &String| expand_short_hex(c);
+        let o = |c: &Option<String>| c.as_deref().map(expand_short_hex);
+        BaseTheme {
+            base00: e(&self.base00),
+            base01: e(&self.base01),
+            base02: e(&self.base02),
+            base03: e(&self.base03),
+            base04: e(&self.base04),
+            base05: e(&self.base05),
+            base06: e(&self.base06),
+            base07: e(&self.base07),
+            base08: e(&self.base08),
+            base09: e(&self.base09),
+            base0a: e(&self.base0a),
+            base0b: e(&self.base0b),
+            base0c: e(&self.base0c),
+            base0d: e(&self.base0d),
+            base0e: e(&self.base0e),
+            base0f: e(&self.base0f),
+            base10: o(&self.base10),
+            base11: o(&self.base11),
+            base12: o(&self.base12),
+            base13: o(&self.base13),
+            base14: o(&self.base14),
+            base15: o(&self.base15),
+            base16: o(&self.base16),
+            base17: o(&self.base17),
+        }
+    }
+
     /// Whether all eight base24 slots (base10–base17) are present. base24 is
     /// all-or-nothing: a partial set falls back to the base16 mapping.
     fn is_base24(&self) -> bool {
@@ -1952,7 +1999,7 @@ fn extract_palette(map: &HashMap<String, serde_yaml::Value>) -> Option<BaseTheme
         map.get(key).and_then(|v| match v {
             serde_yaml::Value::String(s) => {
                 let s = s.trim().trim_start_matches('#');
-                Some(format!("#{s}"))
+                Some(expand_short_hex(&format!("#{s}")))
             }
             serde_yaml::Value::Number(n) => {
                 // Some schemes store colors as bare hex integers.
@@ -2365,7 +2412,7 @@ fn variant_palette(file: &FileConfig, mode: ColorMode) -> (BaseTheme, String) {
         ),
     };
     if let Some(palette) = inline {
-        return (palette.clone(), table.to_string());
+        return (palette.expanded(), table.to_string());
     }
     let configured = colors.as_deref().and_then(|colors| {
         let palette = if is_color_scheme_url(colors) {
@@ -3149,6 +3196,26 @@ palette:
         );
         assert_eq!(resolved.color_scheme, "kauz-light");
         assert!(toml::from_str::<FileConfig>("appearance = \"dim\"").is_err());
+    }
+
+    #[test]
+    fn short_hex_colors_expand() {
+        assert_eq!(expand_short_hex("#a24"), "#aa2244");
+        assert_eq!(expand_short_hex("#1e1e2e"), "#1e1e2e");
+        assert_eq!(expand_short_hex("#xyz"), "#xyz");
+        let yaml =
+            BASE24_YAML.replacen(&parse_color_scheme(BASE24_YAML).unwrap().base08, "#a24", 1);
+        let palette = parse_color_scheme(&yaml).unwrap();
+        assert_eq!(palette.base08, "#aa2244");
+        let file = FileConfig {
+            theme_dark: Some(BaseTheme {
+                base08: "#a24".into(),
+                ..palette
+            }),
+            ..FileConfig::default()
+        };
+        let resolved = resolve_binds(&file, ColorMode::Dark);
+        assert_eq!(resolved.theme.red, "#aa2244");
     }
 
     #[test]

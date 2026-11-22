@@ -62,20 +62,19 @@ export function WindowThumbnail({
               left: `${r.left}%`,
               width: `${r.width}%`,
               height: `${r.height}%`,
-              padding: '3px',
-              boxSizing: 'border-box',
+              // Gap and padding shrink with the slot, so narrow splits keep a preview.
+              containerType: 'size',
               cursor: interactive ? 'pointer' : undefined,
             }}
           >
             <div
               style={{
-                position: 'relative',
-                width: '100%',
-                height: '100%',
+                position: 'absolute',
+                inset: 'min(3px, 5cqmin)',
                 overflow: 'hidden',
                 boxSizing: 'border-box',
                 // Keep content clear of the border and rounded corners.
-                padding: '4px',
+                padding: 'min(4px, 10cqmin)',
                 borderRadius: 'var(--radius-inner)',
                 border: `${isActive || isHovered ? 1.5 : 1}px solid ${
                   isHovered ? c.warn : isActive ? c.accent : c.borderDim
