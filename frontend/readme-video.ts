@@ -58,6 +58,11 @@ const pageHtml = `<!doctype html>
 <script src="/replay.js"></script>
 </head><body></body></html>`;
 
+// The docs player's replay of pane motion, for the page to import.
+const built = await Bun.build({ entrypoints: [path.join(root, 'docs', 'src', 'scripts', 'demo-animations.ts')] });
+assert(built.success, 'building demo-animations.ts failed');
+const animations = await built.outputs[0].text();
+
 const browser = await chromium.launch({ headless: true });
 const frames = mkdtempSync(path.join(tmpdir(), 'btmux-readme-video-'));
 try {
@@ -69,6 +74,7 @@ try {
     if (pathname === '/') return route.fulfill({ contentType: 'text/html', body: pageHtml });
     if (pathname === '/replay.js')
       return route.fulfill({ contentType: 'text/javascript', path: path.join(replay, 'replay.umd.min.cjs') });
+    if (pathname === '/animations.js') return route.fulfill({ contentType: 'text/javascript', body: animations });
     if (pathname === '/style.css')
       return route.fulfill({ contentType: 'text/css', path: path.join(replay, 'style.css') });
     const file = path.join(demos, path.basename(pathname));
@@ -81,6 +87,7 @@ try {
   const durations = await page.evaluate(
     async ({ segments, origin, speed }) => {
       const { Replayer } = (window as any).rrwebReplay;
+      const { replayAnimations } = await import(`${origin}/animations.js`);
       const load = async (file: string) => {
         const response = await fetch(`${origin}/demos/${file}`);
         const stream = response.body!.pipeThrough(new DecompressionStream('gzip'));
@@ -114,6 +121,7 @@ try {
             showWarning: false,
             speed,
           });
+          replayAnimations(replayer, events);
           replayer.pause(0);
           players.push({ replayer, stage });
         }

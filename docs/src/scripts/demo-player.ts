@@ -4,6 +4,7 @@
 // neither exists. It loads once near the viewport, loops, pauses out of view,
 // and doesn't autoplay for reduced motion.
 import "@rrweb/replay/dist/style.css";
+import { replayAnimations } from "./demo-animations";
 
 const demos = `${new URL(`${import.meta.env.BASE_URL.replace(/\/?$/, "/")}demos`, location.origin)}`;
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
@@ -152,6 +153,7 @@ class BtmuxDemo extends HTMLElement {
       showWarning: false,
     });
     this.replayer = replayer;
+    replayAnimations(replayer, events);
     const total = replayer.getMetaData().totalTime;
     this.seek.max = String(total);
     replayer.on("finish", () => {
