@@ -122,6 +122,28 @@ await page.evaluate(
       maskTextFn: scrub,
       sampling: { mousemove: 40, scroll: 100, input: 'all' },
     });
+    // rrweb records no Web Animations (pane motion), so each becomes an
+    // `animate` event, which the players start again (`animate-cancel` stops
+    // it). Emitted after rrweb's mutations, which give a new pane's node its id.
+    const { record } = w.rrwebRecord;
+    const animate = Element.prototype.animate;
+    let next = 0;
+    Element.prototype.animate = function (keyframes, options) {
+      const animation = animate.call(this, keyframes, options);
+      const key = next++;
+      const started = performance.now();
+      let emitted = false;
+      animation.addEventListener('finish', () => (emitted = false));
+      setTimeout(() => {
+        const id = record.mirror.getId(this);
+        if (id < 0 || animation.playState === 'idle') return;
+        const timing = typeof options === 'number' ? { duration: options } : options;
+        record.addCustomEvent('animate', { id, key, keyframes, options: timing, elapsed: performance.now() - started });
+        emitted = true;
+      });
+      animation.addEventListener('cancel', () => emitted && record.addCustomEvent('animate-cancel', { key }));
+      return animation;
+    };
   },
   { home: homedir(), user: userInfo().username },
 );

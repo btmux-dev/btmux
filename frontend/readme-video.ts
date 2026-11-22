@@ -114,6 +114,23 @@ try {
             showWarning: false,
             speed,
           });
+          // Pane motion, as docs/src/scripts/demo-player.ts replays it.
+          const running = new Map<number, Animation>();
+          const start = replayer.getMetaData().startTime;
+          replayer.on('custom-event', (event: any) => {
+            const { tag, payload } = event.data;
+            if (tag === 'animate-cancel') running.get(payload.key)?.cancel();
+            if (tag !== 'animate') return;
+            const elapsed = replayer.getCurrentTime() - (event.timestamp - start) + payload.elapsed;
+            const { duration = 0, delay = 0 } = payload.options ?? {};
+            if (elapsed >= delay + duration) return;
+            const node = replayer.getMirror().getNode(payload.id);
+            if (typeof node?.animate !== 'function') return;
+            const animation = node.animate(payload.keyframes, payload.options);
+            animation.playbackRate = speed;
+            animation.currentTime = elapsed;
+            running.set(payload.key, animation);
+          });
           replayer.pause(0);
           players.push({ replayer, stage });
         }

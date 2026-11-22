@@ -32,6 +32,37 @@ async function fetchRecording(
   );
 }
 
+// Recordings carry Web Animations (pane motion) as `animate` custom events
+// (see frontend/docs-demos.ts); this starts them again in the replay, where
+// they are, skipping ones a seek passed. frontend/readme-video.ts has a copy.
+function replayAnimations(replayer: Replayer) {
+  const running = new Map<number, Animation>();
+  const start = replayer.getMetaData().startTime;
+  replayer.on("custom-event", (event: any) => {
+    const { tag, payload } = event.data;
+    if (tag === "animate-cancel") {
+      running.get(payload.key)?.cancel();
+      running.delete(payload.key);
+    }
+    if (tag !== "animate") return;
+    const elapsed =
+      replayer.getCurrentTime() - (event.timestamp - start) + payload.elapsed;
+    const { duration = 0, delay = 0 } = payload.options ?? {};
+    if (elapsed >= delay + duration) return;
+    const node = replayer.getMirror().getNode(payload.id) as Element | null;
+    if (typeof node?.animate !== "function") return;
+    const animation = node.animate(payload.keyframes, payload.options);
+    animation.playbackRate = replayer.config.speed;
+    animation.currentTime = elapsed;
+    running.set(payload.key, animation);
+    animation.onfinish = () => running.delete(payload.key);
+  });
+  replayer.on("pause", () => {
+    for (const animation of running.values()) animation.cancel();
+    running.clear();
+  });
+}
+
 const format = (ms: number) => {
   const s = Math.max(0, Math.round(ms / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -152,6 +183,7 @@ class BtmuxDemo extends HTMLElement {
       showWarning: false,
     });
     this.replayer = replayer;
+    replayAnimations(replayer);
     const total = replayer.getMetaData().totalTime;
     this.seek.max = String(total);
     replayer.on("finish", () => {
