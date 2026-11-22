@@ -12,7 +12,6 @@ import { createStaticSource } from '@astryxdesign/core/Typeahead';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { Selector } from '@astryxdesign/core/Selector';
 import { Button } from '@astryxdesign/core/Button';
-import { Heading } from '@astryxdesign/core/Heading';
 import { Text } from '@astryxdesign/core/Text';
 import { List, ListItem } from '@astryxdesign/core/List';
 import { Layout, LayoutContent, LayoutFooter, HStack, VStack, Section } from '@astryxdesign/core/Layout';
@@ -20,107 +19,20 @@ import { InfoDialog } from './InfoDialog';
 import { ConfigErrorDialog } from './ConfigErrorBanner';
 import { useStore } from '../state/store';
 import type { ClientMessage } from '../protocol/messages';
-import type { Bind, ClientConfig, Command, NewSessionSandbox, Runtime } from '../state/types';
-import { getPrefix, getSmoothScrollDuration, getVscodeKeys } from '../state/configDefaults';
-import { KeyCap, KeyHint } from './KeyHint';
+import type { ClientConfig, Command, NewSessionSandbox, Runtime } from '../state/types';
+import { getPrefix, getVscodeKeys } from '../state/configDefaults';
+import { KeyHint } from './KeyHint';
 import { actionLabel } from '../lib/actionLabel';
 import { runAction } from '../hooks/useKeybindings';
 import { EDITOR_COMMANDS } from '../lib/nativeEditor/registry';
-import { cmKeyCap, editorKeyRows, editorKeys, type EditorKey } from '../lib/nativeEditor/keyHelp';
-import { OPEN_SETTINGS, workbenchKeys, workbenchKeysFor } from '../lib/workbenchKeys';
+import { cmKeyCap, editorKeys, type EditorKey } from '../lib/nativeEditor/keyHelp';
+import { OPEN_SETTINGS, workbenchKeysFor } from '../lib/workbenchKeys';
 import { EditorKeys } from './EditorKeys';
+import { KEY_SECTIONS, KeysDialog } from './KeysDialog';
 import { usePressHint } from '../hooks/usePressHint';
-import { smoothScrollBy } from '../lib/smoothScroll';
 import { smartCase } from '../lib/smartCase';
 import { plainTextInput } from '../lib/touch';
 import { isDesktopApp, openDesktopWindow, switchDesktopServer } from '../lib/desktopApp';
-
-/** Ordered keybinding-help sections, each matching a set of action names. */
-const KEY_SECTIONS: { title: string; actions: string[] }[] = [
-  {
-    title: 'Panes',
-    actions: [
-      'split-horizontal',
-      'split-vertical',
-      'navigate-left',
-      'navigate-right',
-      'navigate-up',
-      'navigate-down',
-      'resize-pane-left',
-      'resize-pane-right',
-      'resize-pane-up',
-      'resize-pane-down',
-      'resize-pane-left-5',
-      'resize-pane-right-5',
-      'resize-pane-up-5',
-      'resize-pane-down-5',
-      'zoom-pane',
-      'kill-pane',
-      'next-pane',
-      'last-pane',
-      'swap-pane-back',
-      'swap-pane-forward',
-      'next-layout',
-      'display-panes',
-      'capture-pane',
-      'search-pane',
-      'scroll-page-up',
-      'scroll-page-down',
-      'paste-clipboard',
-      'toggle-latex',
-      'file-browser',
-      'git-view',
-      'process-view',
-      'editor',
-      'editor-native',
-      ...EDITOR_COMMANDS,
-      'editor-neovim',
-      'editor-vscode',
-      'shut-down-neovim',
-      'shut-down-vscode',
-      'browser',
-    ],
-  },
-  {
-    title: 'Windows',
-    actions: [
-      'new-window',
-      'next-window',
-      'prev-window',
-      'last-window',
-      'rename-window',
-      'window-grid',
-      'agent-grid',
-      'kill-window',
-      'new-worktree',
-      'remove-worktree',
-    ],
-  },
-  {
-    title: 'Sessions',
-    actions: [
-      'choose-session',
-      'new-session',
-      'rename-session',
-      'kill-session',
-      'next-session',
-      'prev-session',
-      'last-session',
-    ],
-  },
-  {
-    title: 'General',
-    actions: [
-      'command-palette',
-      'list-keys',
-      'toggle-key-overlay',
-      'choose-appearance',
-      'choose-colors',
-      'choose-font',
-      'choose-font-weight',
-    ],
-  },
-];
 
 interface Props {
   sessionId: string;
@@ -194,14 +106,6 @@ function actionCommands(commands: Command[], config: ClientConfig | null): Palet
     });
 }
 
-/** Unique actions of a keybinding-help section, each with all of its keys. */
-function sectionBinds(actions: string[], binds: Bind[]): { action: string; keys: string[] }[] {
-  return actions.flatMap((action) => {
-    const keys = binds.filter((bind) => bind.action === action).map((bind) => bind.key);
-    return keys.length ? [{ action, keys }] : [];
-  });
-}
-
 /**
  * Palette input that keeps the first result highlighted whenever the query or results change,
  * and cycles through the results with Ctrl-N/P.
@@ -236,7 +140,6 @@ export function Overlay({ sessionId, send, config }: Props) {
   const [pickerIndex, setPickerIndex] = useState(0);
   const [applied, setApplied] = useState<string | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
-  const keysRef = useRef<HTMLDivElement>(null);
   // The palette or picker dialog, for hint taps.
   const dialogRef = useRef<HTMLDialogElement>(null);
   const pressHint = usePressHint(dialogRef);
@@ -594,110 +497,5 @@ export function Overlay({ sessionId, send, config }: Props) {
       </Dialog>
     );
   }
-  const sections = [
-    ...KEY_SECTIONS,
-    {
-      title: 'Other',
-      actions: [
-        ...new Set(
-          overlay.binds
-            .filter((bind) => !KEY_SECTIONS.some((section) => section.actions.includes(bind.action)))
-            .map((bind) => bind.action),
-        ),
-      ],
-    },
-  ];
-  return (
-    <Dialog
-      isOpen
-      onOpenChange={changeOpen}
-      width={960}
-      maxHeight="85dvh"
-      onKeyDown={(event) => {
-        event.stopPropagation();
-        const direction = !event.ctrlKey ? 0 : event.key === 'd' ? 1 : event.key === 'u' ? -1 : 0;
-        const viewport = keysRef.current;
-        if (direction && viewport) {
-          event.preventDefault();
-          smoothScrollBy(viewport, direction * (viewport.clientHeight / 2), getSmoothScrollDuration(config));
-        }
-      }}
-    >
-      <Layout
-        header={
-          <DialogHeader
-            title={overlay.title}
-            subtitle={`Press ${getPrefix(config)}, then a key`}
-            hasDivider
-            onOpenChange={changeOpen}
-          />
-        }
-        content={
-          <LayoutContent ref={keysRef} padding={4}>
-            <VStack gap={0}>
-              {sections.map((section) => {
-                const binds = sectionBinds(section.actions, overlay.binds);
-                return binds.length ? (
-                  <Section key={section.title} variant="transparent">
-                    <Heading level={3}>{section.title}</Heading>
-                    <List density="compact" hasDividers>
-                      {binds.map(({ action, keys }) => (
-                        <ListItem
-                          key={action}
-                          label={actionLabel(action, config?.popups)}
-                          endContent={
-                            <HStack gap={1}>
-                              {keys.map((key) => (
-                                <KeyCap key={key} keys={key} />
-                              ))}
-                            </HStack>
-                          }
-                        />
-                      ))}
-                    </List>
-                  </Section>
-                ) : null;
-              })}
-              {getVscodeKeys(config) && (
-                <Section variant="transparent" data-workbench-key-help>
-                  <Heading level={3}>VS Code keys</Heading>
-                  <Text color="secondary">Without the prefix. VS Code keeps them while it has focus.</Text>
-                  <List density="compact" hasDividers>
-                    {workbenchKeys()
-                      // Quick open is the native editor's.
-                      .filter(({ action }) => action !== 'editor-quick-open' || config?.editor === 'native')
-                      .map(({ action, key, terminal }) => (
-                        <ListItem
-                          key={action}
-                          label={
-                            (action === OPEN_SETTINGS ? 'Settings' : actionLabel(action, config?.popups)) +
-                            (terminal ? ' (in a terminal)' : '')
-                          }
-                          endContent={<KeyCap keys={cmKeyCap(key)} />}
-                        />
-                      ))}
-                  </List>
-                </Section>
-              )}
-              {config && (
-                <Section variant="transparent" data-editor-key-help>
-                  <Heading level={3}>Native editor</Heading>
-                  <Text color="secondary">
-                    {config.vim_mode
-                      ? 'In the editor, without the prefix. Vim mode is on.'
-                      : 'In the editor, without the prefix. Vim mode is off.'}
-                  </Text>
-                  <List density="compact" hasDividers>
-                    {editorKeyRows(config).map((row, i) => (
-                      <ListItem key={i} label={row.label} endContent={<EditorKeys keys={row.keys} />} />
-                    ))}
-                  </List>
-                </Section>
-              )}
-            </VStack>
-          </LayoutContent>
-        }
-      />
-    </Dialog>
-  );
+  return <KeysDialog title={overlay.title} binds={overlay.binds} config={config} onClose={close} />;
 }

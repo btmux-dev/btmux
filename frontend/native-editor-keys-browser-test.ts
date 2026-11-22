@@ -122,6 +122,7 @@ try {
   const helpKeys = async () => {
     await page.keyboard.press('Control+a');
     await page.keyboard.type('?');
+    await page.getByRole('dialog').getByRole('tab', { name: 'Editor' }).click();
     const section = page.locator('[data-editor-key-help]');
     await section.waitFor();
     const rows = await section
