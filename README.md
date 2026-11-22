@@ -16,7 +16,7 @@ macOS, Linux, and Windows. Powered by
 [First steps](https://btmux-dev.github.io/btmux/start/first-steps/) ·
 [Changelog](https://btmux-dev.github.io/btmux/project/changelog/)
 
-https://github.com/user-attachments/assets/6a82882c-1821-4196-b13c-ba59b55b5530
+https://github.com/user-attachments/assets/0de7c12a-b7b3-4151-859e-c44684bc1472
 
 ## Highlights
 
