@@ -62,7 +62,7 @@ export function WindowThumbnail({
               left: `${r.left}%`,
               width: `${r.width}%`,
               height: `${r.height}%`,
-              padding: interactive ? '3px' : '0',
+              padding: '3px',
               boxSizing: 'border-box',
               cursor: interactive ? 'pointer' : undefined,
             }}
@@ -76,7 +76,7 @@ export function WindowThumbnail({
                 boxSizing: 'border-box',
                 // Keep content clear of the border and rounded corners.
                 padding: '4px',
-                borderRadius: interactive ? '6px' : undefined,
+                borderRadius: 'var(--radius-inner)',
                 border: `${isActive || isHovered ? 1.5 : 1}px solid ${
                   isHovered ? c.warn : isActive ? c.accent : c.borderDim
                 }`,

@@ -58,7 +58,7 @@ export function JsonPreview() {
           showLineNumbers
           customStyle={{
             margin: 0,
-            borderRadius: '0.5rem',
+            borderRadius: 'var(--radius-container)',
             fontSize: '1em',
           }}
         >
@@ -70,7 +70,7 @@ export function JsonPreview() {
         </pre>
       )}
       {(lineTruncated || fileContent.truncated) && (
-        <div className="mt-2 rounded bg-muted px-3 py-1.5 text-xs text-secondary">
+        <div className="mt-2 rounded-sm bg-muted px-3 py-1.5 text-xs text-secondary">
           Preview truncated ({formatSize(fileContent.size)} total)
         </div>
       )}
