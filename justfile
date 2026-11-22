@@ -299,6 +299,11 @@ docs-demos-upload:
         [[ -e "docs/public/demos/$name" ]] || gh release delete-asset media "$name" --yes
     done
 
+# Join the demos into one MP4 for the README (target/readme-video.mp4), wiping between dark and light
+readme-video:
+    cd docs && bun install
+    cd frontend && bunx playwright install chromium && bun readme-video.ts
+
 # Download the demos from the "media" release into docs/public/demos
 docs-demos-fetch:
     mkdir -p docs/public/demos
