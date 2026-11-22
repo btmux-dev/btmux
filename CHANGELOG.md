@@ -8,6 +8,8 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+## [0.0.218] - 2026-11-22
+
 ### Changed
 
 - The native editor's find and replace (`Mod-f`) uses btmux's own controls,
