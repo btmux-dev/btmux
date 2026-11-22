@@ -8,6 +8,12 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Changed
+
+- The key help (`<prefix> + ?`) has tabs: the prefix's key bindings, the
+  VS Code-style shortcuts, and the native editor's keys.
+  ([#189](https://github.com/btmux-dev/btmux/pull/189))
+
 ### Fixed
 
 - Window grid panes have rounded corners and a gap between them, as in the

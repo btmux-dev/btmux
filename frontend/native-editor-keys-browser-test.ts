@@ -122,8 +122,21 @@ try {
   const helpKeys = async () => {
     await page.keyboard.press('Control+a');
     await page.keyboard.type('?');
+    /** The shown panel's scroll offset. */
+    const scrolled = () =>
+      page.locator('[id^="keys-"][role="tabpanel"]').evaluate((panel) => {
+        let el = panel as HTMLElement | null;
+        while (el && !/auto|scroll/.test(getComputedStyle(el).overflowY)) el = el.parentElement;
+        return el?.scrollTop ?? -1;
+      });
+    // Scrolled Prefix, then Shift+Tab cycles to Editor, which starts at the top.
+    await page.getByRole('tabpanel', { name: 'Prefix' }).waitFor();
+    await page.keyboard.press('Control+d');
+    await until('Prefix scrolled', async () => (await scrolled()) > 0);
+    await page.keyboard.press('Shift+Tab');
     const section = page.locator('[data-editor-key-help]');
     await section.waitFor();
+    assert.equal(await scrolled(), 0);
     const rows = await section
       .locator('li')
       .evaluateAll((items) =>

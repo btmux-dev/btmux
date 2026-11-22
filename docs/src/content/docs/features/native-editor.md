@@ -29,7 +29,7 @@ Keys follow VS Code's defaults. These are the ones to know first:
 | `Mod-k`, then another key   | VS Code's chords; a popup lists them, and other keys type   |
 | Esc twice                   | Hides the editor                                            |
 
-`<prefix> + ?` lists every key the editor has, under Native editor, and the
+`<prefix> + ?` lists every key the editor has, in its Editor tab, and the
 command palette shows each editor command's keys beside it. Both follow Vim
 mode and your own mappings.
 
