@@ -177,6 +177,25 @@ async function run(mac: boolean) {
   await setConfig(page, '', 'config.vscode_keys === true && config.prefix === "C-a"');
   console.log(`PASS ${platform}: the prefix and vscode-keys = false`);
 
+  // Key help's Shortcuts tab, turned off while shown, falls back to Prefix with focus on its tab.
+  await terminal(other).click();
+  await page.keyboard.press('Control+a');
+  await page.keyboard.type('?');
+  const help = page.getByRole('dialog', { name: 'Key bindings' });
+  await help.getByRole('tab', { name: 'Shortcuts' }).click();
+  await help.getByRole('tabpanel', { name: 'Shortcuts' }).waitFor();
+  await setConfig(page, 'vscode-keys = false\n', 'config.vscode_keys === false');
+  await help.getByRole('tabpanel', { name: 'Prefix' }).waitFor();
+  await help.getByRole('tab', { name: 'Shortcuts' }).waitFor({ state: 'detached' });
+  assert.ok(await help.getByRole('tab', { name: 'Prefix' }).evaluate((tab) => tab === document.activeElement));
+  // Turned back on, Prefix stays selected.
+  await setConfig(page, '', 'config.vscode_keys === true');
+  await help.getByRole('tab', { name: 'Shortcuts' }).waitFor();
+  assert.equal(await help.getByRole('tabpanel', { name: 'Prefix' }).count(), 1);
+  await page.keyboard.press('Escape');
+  await help.waitFor({ state: 'detached' });
+  console.log(`PASS ${platform}: key help falls back to Prefix when Shortcuts goes`);
+
   if (mac) {
     // Cmd+P opens quick open over the focused terminal's pane.
     await page.request.post(`${url}/api/panes/${two.pane}/input`, {

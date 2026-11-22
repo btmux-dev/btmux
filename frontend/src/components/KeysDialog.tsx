@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { Heading } from '@astryxdesign/core/Heading';
 import { Text } from '@astryxdesign/core/Text';
@@ -134,6 +134,14 @@ export function KeysDialog({
     ...(config ? ['editor' as const] : []),
   ];
   const shown = tabs.includes(tab) ? tab : 'prefix';
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  // A tab the config removed falls back to Prefix, keeping focus in the dialog.
+  useLayoutEffect(() => {
+    if (shown === tab) return;
+    setTab(shown);
+    const dialog = dialogRef.current;
+    if (dialog && !dialog.contains(document.activeElement)) dialog.querySelector<HTMLElement>('[role="tab"]')?.focus();
+  });
   const changeOpen = (open: boolean) => {
     if (!open) onClose();
   };
@@ -153,6 +161,7 @@ export function KeysDialog({
   const panel = (id: KeysTab) => ({ id: `keys-${id}`, role: 'tabpanel', 'aria-label': TAB_LABELS[id] });
   return (
     <Dialog
+      ref={dialogRef}
       isOpen
       onOpenChange={changeOpen}
       width={960}
@@ -192,7 +201,8 @@ export function KeysDialog({
               </LayoutHeader>
             }
             content={
-              <LayoutContent ref={keysRef} padding={4}>
+              // Keyed so each panel starts at the top.
+              <LayoutContent key={shown} ref={keysRef} padding={4}>
                 {shown === 'vscode' ? (
                   <VStack gap={2} {...panel('vscode')} data-workbench-key-help>
                     <Text color="secondary">As in VS Code, in the focused pane or popup.</Text>
@@ -214,7 +224,11 @@ export function KeysDialog({
                   </VStack>
                 ) : shown === 'editor' && config ? (
                   <VStack gap={2} {...panel('editor')} data-editor-key-help>
-                    <Text color="secondary">{config.vim_mode ? 'Vim mode is on.' : 'Vim mode is off.'}</Text>
+                    <Text color="secondary">
+                      {config.vim_mode
+                        ? 'In the native editor. Vim mode is on.'
+                        : 'In the native editor. Vim mode is off.'}
+                    </Text>
                     <List density="compact" hasDividers>
                       {editorKeyRows(config).map((row, i) => (
                         <ListItem key={i} label={row.label} endContent={<EditorKeys keys={row.keys} />} />
