@@ -124,21 +124,23 @@ await page.evaluate(
     });
     // rrweb records no Web Animations (pane motion), so each becomes an
     // `animate` event, which the players start again (`animate-cancel` stops
-    // it). Emitted after rrweb's mutations, which give a new pane's node its id.
+    // it). Emitted after rrweb's mutations, which give a new pane's node its
+    // id; `atLayout` moves it back onto the one it animates.
     const { record } = w.rrwebRecord;
     const animate = Element.prototype.animate;
     let next = 0;
     Element.prototype.animate = function (keyframes, options) {
       const animation = animate.call(this, keyframes, options);
       const key = next++;
-      const started = performance.now();
+      const started = Date.now();
+      const after = w.demoEvents.length;
       let emitted = false;
       animation.addEventListener('finish', () => (emitted = false));
       setTimeout(() => {
         const id = record.mirror.getId(this);
         if (id < 0 || animation.playState === 'idle') return;
         const timing = typeof options === 'number' ? { duration: options } : options;
-        record.addCustomEvent('animate', { id, key, keyframes, options: timing, elapsed: performance.now() - started });
+        record.addCustomEvent('animate', { id, key, keyframes, options: timing, started, after });
         emitted = true;
       });
       animation.addEventListener('cancel', () => emitted && record.addCustomEvent('animate-cancel', { key }));
@@ -446,7 +448,7 @@ async function pickCompletion(page: Page, label: string) {
 
 await scripts[demo]();
 
-const events: any[] = await page.evaluate(() => {
+let events: any[] = await page.evaluate(() => {
   const w = window as any;
   w.stopDemo();
   return w.demoEvents;
@@ -501,6 +503,28 @@ function trackStyleText(events: any[]) {
   }
 }
 trackStyleText(events);
+
+// Each `animate` event moves to just after the first mutation recorded after
+// its animation started (the layout change it animates), at its timestamp, so
+// players never show the new layout for a frame before animating to it.
+function atLayout(events: any[]) {
+  const moved = new Map<any, any[]>();
+  events.forEach((event, index) => {
+    if (event.type !== 5 || event.data.tag !== 'animate') return;
+    const { started, after } = event.data.payload;
+    delete event.data.payload.started;
+    delete event.data.payload.after;
+    const layout = events.slice(after, index).find((e) => e.type === 3 && e.data.source === 0);
+    if (layout) {
+      event.timestamp = layout.timestamp;
+      moved.set(layout, [...(moved.get(layout) ?? []), event]);
+    }
+    event.data.payload.elapsed = Math.max(0, event.timestamp - started);
+  });
+  const placed = new Set([...moved.values()].flat());
+  return events.flatMap((event) => (placed.has(event) ? [] : [event, ...(moved.get(event) ?? [])]));
+}
+events = atLayout(events);
 
 // Replays never open popovers, so the key overlay (a manual popover) would
 // stay hidden: it becomes a plain fixed element above everything but modal
