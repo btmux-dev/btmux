@@ -8,6 +8,8 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+## [0.0.217] - 2026-11-22
+
 ### Added
 
 - The status bar shows the free space on the server's home volume beside
