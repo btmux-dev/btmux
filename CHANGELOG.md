@@ -8,6 +8,13 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Changed
+
+- The native editor's find and replace (`Mod-f`) uses btmux's own controls,
+  with toggles for case, whole words, and regular expressions; `Alt-Enter`
+  selects every match and `Mod-Alt-Enter` replaces them all.
+  ([#193](https://github.com/btmux-dev/btmux/pull/193))
+
 ## [0.0.217] - 2026-11-22
 
 ### Added
