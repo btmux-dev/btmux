@@ -189,9 +189,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn home_volume_has_space() {
-        let home = dirs::home_dir().expect("home directory");
-        let space = disk_space(&home).expect("home volume space");
+    fn existing_dir_has_space() {
+        // Not home: Nix builds set HOME to a missing directory. On Windows
+        // this is under the user profile, as home is.
+        let space = disk_space(&std::env::temp_dir()).expect("temp dir volume space");
         assert!(space.total > 0);
         assert!(space.available <= space.total);
     }
