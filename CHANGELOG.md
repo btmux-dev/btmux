@@ -12,6 +12,7 @@ actions, saved state, and API types can change in any release.
 
 - The key help (`<prefix> + ?`) has tabs: the prefix's key bindings, the
   VS Code-style shortcuts, and the native editor's keys.
+  ([#189](https://github.com/btmux-dev/btmux/pull/189))
 
 ## [0.0.216] - 2026-11-21
 
