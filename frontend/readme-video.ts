@@ -22,13 +22,14 @@ const replay = path.join(root, 'docs', 'node_modules', '@rrweb', 'replay', 'dist
 const output = path.join(root, 'target', 'readme-video.mp4');
 assert(existsSync(replay), 'run `cd docs && bun install` first');
 
-// Demo, its first theme, and when (0–1 of its length) the wipe to the other starts.
+// Demo and its first theme. The wipe to the other starts at the recording's
+// `calm` mark, a still moment `docs-demos.ts` picks.
 const segments = [
-  { name: 'panes', from: 'dark', wipeAt: 0.19 },
-  { name: 'files', from: 'light', wipeAt: 0.5 },
-  { name: 'editor', from: 'dark', wipeAt: 0.5 },
-  { name: 'agents', from: 'light', wipeAt: 0.45 },
-  { name: 'latex', from: 'dark', wipeAt: 0.5 },
+  { name: 'panes', from: 'dark' },
+  { name: 'files', from: 'light' },
+  { name: 'editor', from: 'dark' },
+  { name: 'agents', from: 'light' },
+  { name: 'latex', from: 'dark' },
 ];
 for (const { name } of segments)
   for (const scheme of ['dark', 'light'])
@@ -93,8 +94,14 @@ try {
         segment.className = 'segment';
         document.body.append(segment);
         const players = [];
+        let wipeAt = 0;
         for (const scheme of [from, to]) {
           const events = await load(`${name}-${scheme}.json.gz`);
+          if (scheme === from) {
+            const mark = events.find((e: any) => e.type === 5 && e.data.tag === 'calm');
+            if (!mark) throw new Error(`${name}-${scheme} has no calm mark; run just docs-demos`);
+            wipeAt = mark.timestamp - events[0].timestamp;
+          }
           if (events.some((e: any) => e.type === 3 && e.data.source === 1)) segment.classList.add('mouse');
           const stage = document.createElement('div');
           stage.className = 'stage';
@@ -114,7 +121,7 @@ try {
         const edge = document.createElement('div');
         edge.className = 'edge';
         segment.append(edge);
-        built.push({ segment, players, edge });
+        built.push({ segment, players, edge, wipeAt });
       }
       await Promise.all(built.flatMap((b) => b.players.map((p) => p.replayer.iframe.contentDocument?.fonts.ready)));
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -143,7 +150,7 @@ try {
   });
 
   await page.evaluate(
-    async ({ segments, speed }) => {
+    async ({ speed }) => {
       const built = (window as any).built as any[];
       const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
       const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
@@ -168,7 +175,8 @@ try {
         await animate(i === 0 ? 1 : FADE, (t) => (segment.style.opacity = String(t)));
         // Hide the previous segment once covered.
         if (i > 0) built[i - 1].segment.style.visibility = 'hidden';
-        const wipeAt = segments[i].wipeAt * total;
+        // Just after the mark, once the last key's effect has settled.
+        const wipeAt = (built[i].wipeAt + 300) / speed;
         await sleep(Math.max(0, wipeAt - (i === 0 ? 0 : FADE)));
         edge.style.display = 'block';
         await animate(WIPE, (t) => {
@@ -182,7 +190,7 @@ try {
       }
       await sleep(1200);
     },
-    { segments, speed },
+    { speed },
   );
   await cdp.send('Page.stopScreencast');
   await Promise.all(writes);
