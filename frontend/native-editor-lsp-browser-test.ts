@@ -225,10 +225,11 @@ try {
   await page.keyboard.press('Escape');
   console.log('PASS call hierarchy');
 
-  // A code lens runs a command; the server's question comes up in the focused tab.
+  // A code lens runs a command; the server's question comes up in the focused
+  // tab, and the chosen item goes back whole, even when titles repeat.
   await pane.locator('.cm-lsp-code-lens button', { hasText: 'Ask me' }).click();
-  await page.getByText('Yes', { exact: true }).click();
-  await until('the answer', () => log().includes('answer window/showMessageRequest {"title":"Yes"}'));
+  await page.getByText('Yes', { exact: true }).nth(1).click();
+  await until('the answer', () => log().includes('answer window/showMessageRequest {"choice":2,"title":"Yes"}'));
   console.log('PASS code lenses and server prompts');
 
   // Watched files reach the server.

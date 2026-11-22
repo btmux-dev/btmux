@@ -647,10 +647,11 @@ function showPrompts() {
     const overlay: Overlay = {
       mode: 'picker',
       title: prompt.message,
-      items: prompt.actions.map((action) => ({ id: action, label: action })),
-      onSelect: (action) => {
+      // By index: titles may repeat.
+      items: prompt.actions.map((action, i) => ({ id: String(i), label: action })),
+      onSelect: (id) => {
         answered = true;
-        editorConnection.answerPrompt(prompt.server, prompt.token, action);
+        editorConnection.answerPrompt(prompt.server, prompt.token, Number(id));
         // The picker stays open for previews; one answer is all a prompt takes.
         useStore.getState().setOverlay(null);
       },

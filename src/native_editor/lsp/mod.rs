@@ -96,11 +96,13 @@ enum Pending {
 
 /// What a tab's answer to a prompt goes to.
 enum Prompt {
-    /// `window/showMessageRequest`, by its request id.
-    Message(Value),
+    /// `window/showMessageRequest`, by its request id, with its action items,
+    /// whose chosen one is the reply, properties included.
+    Message(Value, Vec<Value>),
     /// `workspace/applyEdit` with changes that need confirmation: its
-    /// request id and edit.
-    Edit(Value, Value),
+    /// request id, edit, and whether its first action skips them (else
+    /// cancels); the second applies all.
+    Edit(Value, Value, bool),
 }
 
 /// After a change, wait this long for more before pulling diagnostics.
@@ -414,7 +416,7 @@ fn client_capabilities() -> Value {
             },
         },
         "window": {
-            "showMessage": { "messageActionItem": { "additionalPropertiesSupport": false } },
+            "showMessage": { "messageActionItem": { "additionalPropertiesSupport": true } },
             "showDocument": { "support": true },
             "workDoneProgress": true,
         },
@@ -850,8 +852,8 @@ impl Inner {
                 let prompts: Vec<_> = server.prompts.drain().collect();
                 for (_, prompt) in prompts {
                     server.send(match prompt {
-                        Prompt::Message(rid) => response(rid, Value::Null),
-                        Prompt::Edit(rid, _) => not_applied(rid, NO_TAB),
+                        Prompt::Message(rid, _) => response(rid, Value::Null),
+                        Prompt::Edit(rid, ..) => not_applied(rid, NO_TAB),
                     });
                 }
             }
@@ -1072,7 +1074,7 @@ impl super::Hub {
     }
 
     /// A tab answered a prompt; the first answer wins.
-    pub(super) fn lsp_prompt_answer(&'static self, id: u64, token: u64, action: Option<String>) {
+    pub(super) fn lsp_prompt_answer(&'static self, id: u64, token: u64, action: Option<usize>) {
         let mut inner = self.inner.lock().unwrap();
         let Some(server) = inner.lsp.servers.get_mut(&id) else {
             return;
@@ -1081,14 +1083,17 @@ impl super::Hub {
             return;
         };
         let apply = match prompt {
-            Prompt::Message(rid) => {
-                let result = action.map_or(Value::Null, |title| json!({ "title": title }));
+            Prompt::Message(rid, mut items) => {
+                let result = match action {
+                    Some(i) if i < items.len() => items.swap_remove(i),
+                    _ => Value::Null,
+                };
                 server.send(response(rid, result));
                 None
             }
-            Prompt::Edit(rid, mut edit) => match action.as_deref() {
-                Some(APPLY_ALL) => Some((rid, edit)),
-                Some(SKIP_CONFIRMATIONS) => {
+            Prompt::Edit(rid, mut edit, skip) => match action {
+                Some(1) => Some((rid, edit)),
+                Some(0) if skip => {
                     annotations::skip_confirmations(&mut edit);
                     Some((rid, edit))
                 }
@@ -1407,10 +1412,8 @@ impl Inner {
                 } else {
                     // The safe choice first, so Enter doesn't apply what needs confirming.
                     let mut rest = edit.clone();
-                    let first = match annotations::skip_confirmations(&mut rest) {
-                        true => SKIP_CONFIRMATIONS,
-                        false => CANCEL,
-                    };
+                    let skip = annotations::skip_confirmations(&mut rest);
+                    let first = if skip { SKIP_CONFIRMATIONS } else { CANCEL };
                     let actions = vec![first.to_owned(), APPLY_ALL.to_owned()];
                     let what = match params["label"].as_str() {
                         Some(label) => format!("{}: {label} includes", server.name),
@@ -1420,7 +1423,13 @@ impl Inner {
                         "{what} changes that need confirmation: {}",
                         labels.join(", ")
                     );
-                    self.prompt(id, Prompt::Edit(rid, edit.clone()), 2, message, actions);
+                    self.prompt(
+                        id,
+                        Prompt::Edit(rid, edit.clone(), skip),
+                        2,
+                        message,
+                        actions,
+                    );
                     return Answer::Later;
                 }
             }
@@ -1483,13 +1492,18 @@ impl Inner {
                 } else {
                     let level = params["type"].as_u64().unwrap_or(3) as u8;
                     let message = params["message"].as_str().unwrap_or_default().to_owned();
-                    let actions = params["actions"]
+                    let items: Vec<Value> = params["actions"]
                         .as_array()
                         .into_iter()
                         .flatten()
+                        .filter(|a| a["title"].is_string())
+                        .cloned()
+                        .collect();
+                    let actions = items
+                        .iter()
                         .filter_map(|a| a["title"].as_str().map(str::to_owned))
                         .collect();
-                    self.prompt(id, Prompt::Message(rid), level, message, actions);
+                    self.prompt(id, Prompt::Message(rid, items), level, message, actions);
                     return Answer::Later;
                 }
             }
@@ -1578,7 +1592,7 @@ impl Inner {
             "$/cancelRequest" => {
                 let canceled = &message["params"]["id"];
                 let token = server.prompts.iter().find_map(|(token, prompt)| {
-                    let (Prompt::Message(rid) | Prompt::Edit(rid, _)) = prompt;
+                    let (Prompt::Message(rid, _) | Prompt::Edit(rid, ..)) = prompt;
                     (rid == canceled).then_some(*token)
                 });
                 if let Some(token) = token {

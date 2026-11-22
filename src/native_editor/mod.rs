@@ -67,13 +67,15 @@ pub enum EditorClientMessage {
         #[cfg_attr(test, ts(type = "number | null"))]
         version: Option<u64>,
     },
-    /// Answer a server's prompt (`lsp_prompt`); `action` is the chosen title.
+    /// Answer a server's prompt (`lsp_prompt`); `action` is the chosen
+    /// action's index, since titles may repeat.
     LspPromptAnswer {
         #[cfg_attr(test, ts(type = "number"))]
         server: u64,
         #[cfg_attr(test, ts(type = "number"))]
         token: u64,
-        action: Option<String>,
+        #[cfg_attr(test, ts(type = "number | null"))]
+        action: Option<usize>,
     },
     /// Apply an LSP `WorkspaceEdit` from language server `server` (a rename,
     /// a code action), loading files as needed; its positions are in
