@@ -20,6 +20,9 @@ actions, saved state, and API types can change in any release.
   session switcher, and the status bar's critical CPU and memory levels use
   the color scheme's red.
   ([#190](https://github.com/btmux-dev/btmux/pull/190))
+- Color schemes may use three-digit colors (`#a24`); high CPU load no longer
+  stays yellow with them.
+  ([#190](https://github.com/btmux-dev/btmux/pull/190))
 
 ## [0.0.216] - 2026-11-21
 
