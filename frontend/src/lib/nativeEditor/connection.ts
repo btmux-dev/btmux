@@ -261,7 +261,7 @@ class EditorConnection {
     return () => this.statusListeners.delete(fn);
   }
 
-  answerPrompt(server: number, token: number, action: string | null) {
+  answerPrompt(server: number, token: number, action: number | null) {
     this.send({ type: 'lsp_prompt_answer', server, token, action });
   }
 
