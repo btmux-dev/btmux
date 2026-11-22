@@ -10,7 +10,7 @@ actions, saved state, and API types can change in any release.
 
 ### Added
 
-- The status bar shows disk usage of the home directory's volume beside
+- The status bar shows the free space on the server's home volume beside
   memory. ([#191](https://github.com/btmux-dev/btmux/pull/191))
 
 ### Changed

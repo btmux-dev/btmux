@@ -7,9 +7,8 @@ export interface SysStats {
   mem_total: number;
   net_rx: number;
   net_tx: number;
-  disk_used: number;
-  /** 0 when the disk is unknown. */
-  disk_total: number;
+  /** The server's home volume; null when unknown or stale. */
+  disk: { total: number; available: number } | null;
 }
 
 const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/sysstat`;

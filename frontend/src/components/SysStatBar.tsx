@@ -92,26 +92,37 @@ interface UsageMeterProps {
   label: string;
   used: number;
   total: number;
+  /** Spoken and shown on hover, e.g. "3.1G of 16.0G used". */
+  detail: string;
   c: ChromePalette;
   barH: number;
   iconSize: number;
 }
 
-function UsageMeter({ icon: MeterIcon, label, used, total, c, barH, iconSize }: UsageMeterProps) {
-  const pct = total ? used / total : 0;
+function UsageMeter({ icon: MeterIcon, label, used, total, detail, c, barH, iconSize }: UsageMeterProps) {
+  const pct = total ? Math.min(1, used / total) : 0;
   const color =
     pct > 0.85 ? readableColor(c.danger, mix(c.bodyBg, c.fgDim, 0.2), MARK_CONTRAST) : pct > 0.65 ? c.warn : c.accent;
   const barW = Math.round(barH * 0.9);
   const innerH = Math.round(barH * 0.55);
-  const amount = `${fmtBytes(used)} / ${fmtBytes(total)}`;
+  const percent = fmtPct(used, total);
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-      <span title={`${label}: ${amount} used`} style={{ display: 'flex', color: c.fgMuted, flexShrink: 0 }}>
-        <MeterIcon size={iconSize} aria-label={label} />
+    <div
+      role="meter"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(pct * 100)}
+      aria-valuetext={`${percent}, ${detail}`}
+      title={`${label}: ${detail}`}
+      style={{ display: 'flex', alignItems: 'center', gap: '5px' }}
+    >
+      <span aria-hidden style={{ display: 'flex', color: c.fgMuted, flexShrink: 0 }}>
+        <MeterIcon size={iconSize} />
       </span>
       <div
-        title={amount}
+        aria-hidden
         style={{
           position: 'relative',
           width: `${barW}px`,
@@ -131,8 +142,8 @@ function UsageMeter({ icon: MeterIcon, label, used, total, c, barH, iconSize }: 
           }}
         />
       </div>
-      <span style={{ color: VALUE_COLOR, minWidth: '4ch', fontVariantNumeric: 'tabular-nums' }}>
-        {fmtPct(used, total)}
+      <span aria-hidden style={{ color: VALUE_COLOR, minWidth: '4ch', fontVariantNumeric: 'tabular-nums' }}>
+        {percent}
       </span>
     </div>
   );
@@ -193,16 +204,18 @@ export function SysStatBar({ c, barH, font, animations }: Props) {
         label="Memory"
         used={stats.mem_used}
         total={stats.mem_total}
+        detail={`${fmtBytes(stats.mem_used)} of ${fmtBytes(stats.mem_total)} used`}
         c={c}
         barH={barH}
         iconSize={iconSize}
       />
-      {stats.disk_total > 0 && (
+      {stats.disk && (
         <UsageMeter
           icon={HardDrive}
-          label="Disk"
-          used={stats.disk_used}
-          total={stats.disk_total}
+          label="Server home volume"
+          used={stats.disk.total - stats.disk.available}
+          total={stats.disk.total}
+          detail={`${fmtBytes(stats.disk.available)} free of ${fmtBytes(stats.disk.total)}`}
           c={c}
           barH={barH}
           iconSize={iconSize}
