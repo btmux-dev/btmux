@@ -8,6 +8,11 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Added
+
+- The status bar shows the free space on the server's home volume beside
+  memory. ([#191](https://github.com/btmux-dev/btmux/pull/191))
+
 ### Changed
 
 - The key help (`<prefix> + ?`) has tabs: the prefix's key bindings, the
@@ -29,7 +34,7 @@ actions, saved state, and API types can change in any release.
 ### Added
 
 - Antigravity CLI (`agy`) gets what Claude Code and Codex have: `btmux skill
-  setup` installs its status hooks, the btmux skill, and the hook that tells
+setup` installs its status hooks, the btmux skill, and the hook that tells
   it its pane, and agent view's Usage tab shows its plan limits. The About
   dialog's Health tab lists it.
   ([#188](https://github.com/btmux-dev/btmux/pull/188))

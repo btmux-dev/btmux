@@ -123,6 +123,17 @@ try {
   await page.getByRole('button', { name: 'Switch session', exact: true }).hover();
   await page.getByRole('tooltip').filter({ hasText: 'Switch session' }).waitFor();
   await page.mouse.move(0, 0);
+  for (const [name, text] of [
+    ['Memory', / used$/],
+    ['Server home volume', / free of /],
+  ] as const) {
+    const meter = page.getByRole('meter', { name, exact: true });
+    await meter.waitFor();
+    const now = Number(await meter.getAttribute('aria-valuenow'));
+    assert(now >= 0 && now <= 100, `${name} meter value ${now}`);
+    assert.match((await meter.getAttribute('aria-valuetext')) ?? '', text);
+  }
+  console.log('PASS status bar memory and disk meters');
   const theme = await page.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     const config = useStore.getState().config;
