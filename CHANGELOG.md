@@ -11,7 +11,7 @@ actions, saved state, and API types can change in any release.
 ### Added
 
 - The status bar shows disk usage of the home directory's volume beside
-  memory.
+  memory. ([#191](https://github.com/btmux-dev/btmux/pull/191))
 
 ### Changed
 
@@ -34,7 +34,7 @@ actions, saved state, and API types can change in any release.
 ### Added
 
 - Antigravity CLI (`agy`) gets what Claude Code and Codex have: `btmux skill
-  setup` installs its status hooks, the btmux skill, and the hook that tells
+setup` installs its status hooks, the btmux skill, and the hook that tells
   it its pane, and agent view's Usage tab shows its plan limits. The About
   dialog's Health tab lists it.
   ([#188](https://github.com/btmux-dev/btmux/pull/188))
