@@ -8,6 +8,11 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Added
+
+- The status bar shows disk usage of the home directory's volume beside
+  memory.
+
 ### Changed
 
 - The key help (`<prefix> + ?`) has tabs: the prefix's key bindings, the

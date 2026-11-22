@@ -1,4 +1,5 @@
-import { Cpu, MemoryStick, Network } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { Cpu, HardDrive, MemoryStick, Network } from 'lucide-react';
 import { useSysStats } from '../hooks/useSysStats';
 import type { ChromePalette } from '../lib/chrome-colors';
 import { mix, withAlpha } from '../lib/chrome-colors';
@@ -39,7 +40,7 @@ function fmtBytes(bytes: number): string {
   return `${bytes}B`;
 }
 
-function fmtMemPct(used: number, total: number): string {
+function fmtPct(used: number, total: number): string {
   if (!total) return '0%';
   return `${Math.round((used / total) * 100)}%`;
 }
@@ -86,6 +87,57 @@ function CpuBars({ cpu, c, barH }: { cpu: number[]; c: ChromePalette; barH: numb
   );
 }
 
+interface UsageMeterProps {
+  icon: LucideIcon;
+  label: string;
+  used: number;
+  total: number;
+  c: ChromePalette;
+  barH: number;
+  iconSize: number;
+}
+
+function UsageMeter({ icon: MeterIcon, label, used, total, c, barH, iconSize }: UsageMeterProps) {
+  const pct = total ? used / total : 0;
+  const color =
+    pct > 0.85 ? readableColor(c.danger, mix(c.bodyBg, c.fgDim, 0.2), MARK_CONTRAST) : pct > 0.65 ? c.warn : c.accent;
+  const barW = Math.round(barH * 0.9);
+  const innerH = Math.round(barH * 0.55);
+  const amount = `${fmtBytes(used)} / ${fmtBytes(total)}`;
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+      <span title={`${label}: ${amount} used`} style={{ display: 'flex', color: c.fgMuted, flexShrink: 0 }}>
+        <MeterIcon size={iconSize} aria-label={label} />
+      </span>
+      <div
+        title={amount}
+        style={{
+          position: 'relative',
+          width: `${barW}px`,
+          height: `${Math.round(innerH * 0.55)}px`,
+          background: withAlpha(c.fgDim, 0.2),
+          borderRadius: '2px',
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: `${Math.round(barW * pct)}px`,
+            background: color,
+            borderRadius: '2px',
+          }}
+        />
+      </div>
+      <span style={{ color: VALUE_COLOR, minWidth: '4ch', fontVariantNumeric: 'tabular-nums' }}>
+        {fmtPct(used, total)}
+      </span>
+    </div>
+  );
+}
+
 export function SysStatBar({ c, barH, font, animations }: Props) {
   const { stats, state } = useSysStats();
 
@@ -109,16 +161,6 @@ export function SysStatBar({ c, barH, font, animations }: Props) {
     );
   }
 
-  const memPct = stats.mem_total ? stats.mem_used / stats.mem_total : 0;
-  const memColor =
-    memPct > 0.85
-      ? readableColor(c.danger, mix(c.bodyBg, c.fgDim, 0.2), MARK_CONTRAST)
-      : memPct > 0.65
-        ? c.warn
-        : c.accent;
-  const memBarW = Math.round(barH * 0.9);
-  const memFillW = Math.round(memBarW * memPct);
-  const innerH = Math.round(barH * 0.55);
   const iconSize = Math.max(11, font + 1);
   const netRxSaturation = networkSaturation(stats.net_rx);
   const netTxSaturation = networkSaturation(stats.net_tx);
@@ -146,39 +188,26 @@ export function SysStatBar({ c, barH, font, animations }: Props) {
         <CpuBars cpu={stats.cpu} c={c} barH={barH} />
       </div>
 
-      {/* Memory bar */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-        <span
-          title={`Memory: ${fmtBytes(stats.mem_used)} / ${fmtBytes(stats.mem_total)} used`}
-          style={{ display: 'flex', color: c.fgMuted, flexShrink: 0 }}
-        >
-          <MemoryStick size={iconSize} aria-label="Memory" />
-        </span>
-        <div
-          title={`${fmtBytes(stats.mem_used)} / ${fmtBytes(stats.mem_total)}`}
-          style={{
-            position: 'relative',
-            width: `${memBarW}px`,
-            height: `${Math.round(innerH * 0.55)}px`,
-            background: withAlpha(c.fgDim, 0.2),
-            borderRadius: '2px',
-            overflow: 'hidden',
-          }}
-        >
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              width: `${memFillW}px`,
-              background: memColor,
-              borderRadius: '2px',
-            }}
-          />
-        </div>
-        <span style={{ color: VALUE_COLOR, minWidth: '4ch', fontVariantNumeric: 'tabular-nums' }}>
-          {fmtMemPct(stats.mem_used, stats.mem_total)}
-        </span>
-      </div>
+      <UsageMeter
+        icon={MemoryStick}
+        label="Memory"
+        used={stats.mem_used}
+        total={stats.mem_total}
+        c={c}
+        barH={barH}
+        iconSize={iconSize}
+      />
+      {stats.disk_total > 0 && (
+        <UsageMeter
+          icon={HardDrive}
+          label="Disk"
+          used={stats.disk_used}
+          total={stats.disk_total}
+          c={c}
+          barH={barH}
+          iconSize={iconSize}
+        />
+      )}
 
       {/* Network */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: c.fgDim }}>
