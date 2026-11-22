@@ -184,8 +184,15 @@ async function run(mac: boolean) {
   const help = page.getByRole('dialog', { name: 'Key bindings' });
   await help.getByRole('tab', { name: 'Shortcuts' }).click();
   await help.getByRole('tabpanel', { name: 'Shortcuts' }).waitFor();
-  await setConfig(page, 'vscode-keys = false\n', 'config.vscode_keys === false');
-  await help.getByRole('tabpanel', { name: 'Prefix' }).waitFor();
+  await setConfig(
+    page,
+    'vscode-keys = false\n[keys]\nlist-keys = "y"\n',
+    'config.vscode_keys === false && config.binds.some((b) => b.key === "y")',
+  );
+  const prefixPanel = help.getByRole('tabpanel', { name: 'Prefix' });
+  await prefixPanel.waitFor();
+  // Its list follows the reload too.
+  await prefixPanel.locator('kbd', { hasText: /^y$/ }).waitFor();
   await help.getByRole('tab', { name: 'Shortcuts' }).waitFor({ state: 'detached' });
   assert.ok(await help.getByRole('tab', { name: 'Prefix' }).evaluate((tab) => tab === document.activeElement));
   // Turned back on, Prefix stays selected.

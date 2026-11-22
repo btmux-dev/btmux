@@ -117,7 +117,7 @@ const TAB_LABELS: Record<KeysTab, string> = { prefix: 'Prefix', vscode: 'Shortcu
 
 export function KeysDialog({
   title,
-  binds,
+  binds: openedBinds,
   config,
   onClose,
 }: {
@@ -127,6 +127,8 @@ export function KeysDialog({
   onClose: () => void;
 }) {
   const [tab, setTab] = useState<KeysTab>('prefix');
+  // Live, like the prefix and tabs, so a config reload can't leave them disagreeing.
+  const binds = config?.binds ?? openedBinds;
   const keysRef = useRef<HTMLDivElement>(null);
   const tabs: KeysTab[] = [
     'prefix',
@@ -209,7 +211,9 @@ export function KeysDialog({
                     <List density="compact" hasDividers>
                       {workbenchKeys()
                         // Quick open is the native editor's.
-                        .filter(({ action }) => action !== 'editor-quick-open' || config?.editor === 'native')
+                        .filter(
+                          ({ action }) => action !== 'editor-quick-open' || (config?.editor ?? 'native') === 'native',
+                        )
                         .map(({ action, key, terminal }) => (
                           <ListItem
                             key={action}
