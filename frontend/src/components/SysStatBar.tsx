@@ -2,6 +2,7 @@ import { Cpu, MemoryStick, Network } from 'lucide-react';
 import { useSysStats } from '../hooks/useSysStats';
 import type { ChromePalette } from '../lib/chrome-colors';
 import { mix, withAlpha } from '../lib/chrome-colors';
+import { readableColor } from '../lib/astryx-theme';
 import { CONNECTION_STATE_LABEL } from '../lib/connectionState';
 
 interface Props {
@@ -43,10 +44,15 @@ function fmtMemPct(used: number, total: number): string {
   return `${Math.round((used / total) * 100)}%`;
 }
 
+// Non-text contrast for chart marks (WCAG 1.4.11), so critical bars stay
+// visible whatever the palette's red.
+const MARK_CONTRAST = 3;
+
 function CpuBars({ cpu, c, barH }: { cpu: number[]; c: ChromePalette; barH: number }) {
   const innerH = Math.round(barH * 0.55);
   const barW = Math.max(2, Math.round(barH * 0.13));
   const gap = Math.max(1, Math.round(barW * 0.4));
+  const danger = readableColor(c.danger, c.bodyBg, MARK_CONTRAST);
 
   return (
     <div
@@ -60,7 +66,7 @@ function CpuBars({ cpu, c, barH }: { cpu: number[]; c: ChromePalette; barH: numb
       {cpu.map((pct, i) => {
         // Color: green → yellow → red based on load
         const t = Math.min(1, pct / 100);
-        const color = t < 0.6 ? mix(c.accent, c.warn, t / 0.6) : mix(c.warn, '#ff5f5f', (t - 0.6) / 0.4);
+        const color = t < 0.6 ? mix(c.accent, c.warn, t / 0.6) : mix(c.warn, danger, (t - 0.6) / 0.4);
         const h = Math.max(1, Math.round(innerH * Math.max(0.04, t)));
         return (
           <div
@@ -71,7 +77,6 @@ function CpuBars({ cpu, c, barH }: { cpu: number[]; c: ChromePalette; barH: numb
               height: `${h}px`,
               background: color,
               borderRadius: '1px',
-              opacity: 0.9,
               flexShrink: 0,
             }}
           />
@@ -105,7 +110,12 @@ export function SysStatBar({ c, barH, font, animations }: Props) {
   }
 
   const memPct = stats.mem_total ? stats.mem_used / stats.mem_total : 0;
-  const memColor = memPct > 0.85 ? '#ff5f5f' : memPct > 0.65 ? c.warn : c.accent;
+  const memColor =
+    memPct > 0.85
+      ? readableColor(c.danger, mix(c.bodyBg, c.fgDim, 0.2), MARK_CONTRAST)
+      : memPct > 0.65
+        ? c.warn
+        : c.accent;
   const memBarW = Math.round(barH * 0.9);
   const memFillW = Math.round(memBarW * memPct);
   const innerH = Math.round(barH * 0.55);
@@ -162,7 +172,6 @@ export function SysStatBar({ c, barH, font, animations }: Props) {
               width: `${memFillW}px`,
               background: memColor,
               borderRadius: '2px',
-              opacity: 0.85,
             }}
           />
         </div>

@@ -238,7 +238,7 @@ export const pickerExtension = [
       color: 'inherit',
       background: 'transparent',
       border: '1px solid var(--color-border)',
-      borderRadius: '4px',
+      borderRadius: 'var(--radius-inner)',
       outline: 'none',
     },
     '.cm-btmux-picker ul': {

@@ -68,6 +68,8 @@ export interface ChromePalette {
   warn: string;
   /** Ink color for text on the warm fill. */
   warnInk: string;
+  /** Critical levels (CPU, memory). */
+  danger: string;
   /** Zoom indicator accent. */
   zoom: string;
   /** App/body background. */
@@ -113,6 +115,7 @@ export function chromePalette(theme: Theme | null): ChromePalette {
     accentGlow: withAlpha(accent, 0.2),
     warn: t.yellow,
     warnInk: bodyBg,
+    danger: t.red,
     zoom: t.magenta,
     bodyBg,
     barBg,

@@ -22,7 +22,7 @@ export function CsvPreview() {
   }
 
   return (
-    <div className="overflow-auto rounded border border-border">
+    <div className="overflow-auto rounded-lg border border-border">
       <table className="w-full">
         <thead className="bg-muted">
           <tr>

@@ -437,7 +437,7 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send, r
                   color: accent,
                   background: bg,
                   border: `2px solid ${accent}`,
-                  borderRadius: '8px',
+                  borderRadius: 'var(--radius-element)',
                   padding: '0.1em 0.4em',
                   fontFamily: 'var(--btmux-font)',
                   fontWeight: 'bold',

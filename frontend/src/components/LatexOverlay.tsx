@@ -29,7 +29,7 @@ export function LatexOverlay({ theme, termFont, matches, onHover, onClose }: Pro
         flexDirection: 'column',
         background: withAlpha(c.panelBg, 0.95),
         border: `1px solid ${c.border}`,
-        borderRadius: 8,
+        borderRadius: 'var(--radius-element)',
         boxShadow: `0 8px 30px ${withAlpha('#000000', 0.35)}`,
         color: c.fg,
         zIndex: 5,
@@ -71,7 +71,7 @@ export function LatexOverlay({ theme, termFont, matches, onHover, onClose }: Pro
             onMouseEnter={() => onHover(m)}
             style={{
               padding: m.display ? '10px 12px' : '6px 12px',
-              borderRadius: 6,
+              borderRadius: 'var(--radius-inner)',
               border: `1px solid ${c.borderDim}`,
               background: withAlpha(c.bodyBg, 0.6),
               fontSize: Math.round(termFont * 1.1),
