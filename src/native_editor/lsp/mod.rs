@@ -96,8 +96,9 @@ enum Pending {
 
 /// What a tab's answer to a prompt goes to.
 enum Prompt {
-    /// `window/showMessageRequest`, by its request id.
-    Message(Value),
+    /// `window/showMessageRequest`, by its request id, with its action items,
+    /// whose chosen one is the reply, properties included.
+    Message(Value, Vec<Value>),
     /// `workspace/applyEdit` with changes that need confirmation: its
     /// request id and edit.
     Edit(Value, Value),
@@ -414,7 +415,7 @@ fn client_capabilities() -> Value {
             },
         },
         "window": {
-            "showMessage": { "messageActionItem": { "additionalPropertiesSupport": false } },
+            "showMessage": { "messageActionItem": { "additionalPropertiesSupport": true } },
             "showDocument": { "support": true },
             "workDoneProgress": true,
         },
@@ -850,7 +851,7 @@ impl Inner {
                 let prompts: Vec<_> = server.prompts.drain().collect();
                 for (_, prompt) in prompts {
                     server.send(match prompt {
-                        Prompt::Message(rid) => response(rid, Value::Null),
+                        Prompt::Message(rid, _) => response(rid, Value::Null),
                         Prompt::Edit(rid, _) => not_applied(rid, NO_TAB),
                     });
                 }
@@ -1081,8 +1082,13 @@ impl super::Hub {
             return;
         };
         let apply = match prompt {
-            Prompt::Message(rid) => {
-                let result = action.map_or(Value::Null, |title| json!({ "title": title }));
+            Prompt::Message(rid, items) => {
+                let result = action.map_or(Value::Null, |title| {
+                    items
+                        .into_iter()
+                        .find(|item| item["title"] == title.as_str())
+                        .unwrap_or_else(|| json!({ "title": title }))
+                });
                 server.send(response(rid, result));
                 None
             }
@@ -1483,13 +1489,18 @@ impl Inner {
                 } else {
                     let level = params["type"].as_u64().unwrap_or(3) as u8;
                     let message = params["message"].as_str().unwrap_or_default().to_owned();
-                    let actions = params["actions"]
+                    let items: Vec<Value> = params["actions"]
                         .as_array()
                         .into_iter()
                         .flatten()
+                        .filter(|a| a["title"].is_string())
+                        .cloned()
+                        .collect();
+                    let actions = items
+                        .iter()
                         .filter_map(|a| a["title"].as_str().map(str::to_owned))
                         .collect();
-                    self.prompt(id, Prompt::Message(rid), level, message, actions);
+                    self.prompt(id, Prompt::Message(rid, items), level, message, actions);
                     return Answer::Later;
                 }
             }
@@ -1578,7 +1589,7 @@ impl Inner {
             "$/cancelRequest" => {
                 let canceled = &message["params"]["id"];
                 let token = server.prompts.iter().find_map(|(token, prompt)| {
-                    let (Prompt::Message(rid) | Prompt::Edit(rid, _)) = prompt;
+                    let (Prompt::Message(rid, _) | Prompt::Edit(rid, _)) = prompt;
                     (rid == canceled).then_some(*token)
                 });
                 if let Some(token) = token {

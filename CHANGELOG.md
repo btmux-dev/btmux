@@ -20,6 +20,9 @@ actions, saved state, and API types can change in any release.
 - Holding Cmd (Ctrl outside macOS) over a link a program prints, as Claude
   Code does, shows the pointer and underline.
   ([#192](https://github.com/btmux-dev/btmux/pull/192))
+- Language servers whose prompts need their answer's details, like nil's
+  offer to fetch missing flake inputs, ask in the native editor instead of
+  warning that the client can't confirm.
 
 ## [0.0.217] - 2026-11-22
 

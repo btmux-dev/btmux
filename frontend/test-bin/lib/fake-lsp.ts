@@ -31,7 +31,8 @@
 //   tooltip, a command on ": " (fake.hint), the location of other.fake on
 //   "hint", and an edit inserting the hint
 // - document highlights, symbols, call hierarchy: occurrences of WORD
-// - code lenses: "fake.ask" on line 1, which asks the user (showMessageRequest)
+// - code lenses: "fake.ask" on line 1, which asks the user (showMessageRequest,
+//   whose "Yes" has a property)
 // - code actions: replace "bad" with "good"; on a last line "end", append "!"
 //   and uppercase it, which needs confirmation, or have the server uppercase
 //   "end!" (workspace/applyEdit, needing confirmation); on "move me", create
@@ -498,7 +499,7 @@ function handle(msg: any): unknown {
         request('window/showMessageRequest', {
           type: 3,
           message: 'Proceed?',
-          actions: [{ title: 'Yes' }, { title: 'No' }],
+          actions: [{ title: 'Yes', ok: true }, { title: 'No' }],
         });
       if (p.command === 'fake.shout') {
         const [uri, line] = p.arguments;

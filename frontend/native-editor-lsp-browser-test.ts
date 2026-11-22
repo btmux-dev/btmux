@@ -228,7 +228,7 @@ try {
   // A code lens runs a command; the server's question comes up in the focused tab.
   await pane.locator('.cm-lsp-code-lens button', { hasText: 'Ask me' }).click();
   await page.getByText('Yes', { exact: true }).click();
-  await until('the answer', () => log().includes('answer window/showMessageRequest {"title":"Yes"}'));
+  await until('the answer', () => log().includes('answer window/showMessageRequest {"ok":true,"title":"Yes"}'));
   console.log('PASS code lenses and server prompts');
 
   // Watched files reach the server.
