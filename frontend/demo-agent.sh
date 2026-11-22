@@ -1,7 +1,7 @@
 #!/bin/bash
 # A scripted coding agent for docs-demos.ts.
 #
-#   exec -a <claude|codex|gemini> /bin/bash demo-agent.sh <name>
+#   exec -a <claude|codex|agy> /bin/bash demo-agent.sh <name>
 #
 # argv[0] makes btmux detect it as that agent; it reports its state through
 # the pane's hook endpoint, like the real agents' hooks. BTMUX_DEMO picks the
@@ -91,11 +91,11 @@ agents:codex)
         "PORT=0 picks a free port, so the runs no longer collide."
     done_turn "The tests race for port 3000; PORT=0 makes them pick free ports."
     ;;
-agents:gemini)
-    step "ReadFolder src/routes" 2
-    step "ReadManyFiles src/routes/*.ts" 4
-    step "SearchText \"pattern\"" 4
-    step "ReadFile src/server.ts" 5
+agents:agy)
+    step "List src/routes" 2
+    step "Read src/routes/*.ts" 4
+    step "Search \"pattern\"" 4
+    step "Read src/server.ts" 5
     say 0 "Each route is a pattern and a handler; handle() tries them in order."
     done_turn "Each route is a pattern and a handler; handle() tries them in order."
     ;;

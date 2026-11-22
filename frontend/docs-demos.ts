@@ -50,7 +50,7 @@ const sync = path.join(work, 'sync');
 mkdirSync(bin, { recursive: true });
 mkdirSync(sync, { recursive: true });
 symlinkSync(path.join(root, 'target', 'debug', 'btmux'), path.join(bin, 'btmux'));
-for (const agent of ['claude', 'codex', 'gemini']) {
+for (const agent of ['claude', 'codex', 'agy']) {
   writeFileSync(
     path.join(bin, agent),
     `#!/bin/bash\nexec -a ${agent} /bin/bash ${JSON.stringify(path.join(import.meta.dir, 'demo-agent.sh'))} ${agent} "$@"\n`,
@@ -116,7 +116,7 @@ await page.evaluate(
       slimDOMOptions: 'all',
       maskTextSelector: '*',
       maskTextFn: scrub,
-      sampling: { mousemove: 40, scroll: 100, input: 'last' },
+      sampling: { mousemove: 40, scroll: 100, input: 'all' },
     });
   },
   { home: homedir(), user: userInfo().username },
@@ -329,7 +329,7 @@ const scripts: Record<Demo, () => Promise<void>> = {
     await pace(1.5);
     await prefix('"');
     await pace(1.2);
-    await line('gemini');
+    await line('agy');
     await pace(1.5);
     await line('explain the routing');
     await waitFor('claude-blocked', 30);
@@ -347,12 +347,12 @@ const scripts: Record<Demo, () => Promise<void>> = {
     await page.keyboard.press('y');
     await waitFor('claude-done', 30);
     await pace(1.5);
-    await waitFor('gemini-done', 60);
+    await waitFor('agy-done', 60);
     await pace(2.5);
-    // Everyone is done; jump to Gemini's answer.
+    // Everyone is done; jump to Antigravity's answer.
     await prefix('a');
     await pace(2.5);
-    await press(await agentKey('Gemini'), 1, 1);
+    await press(await agentKey('Antigravity'), 1, 1);
     await page.keyboard.press('Enter');
     await pace(2.5);
   },
@@ -427,6 +427,48 @@ const strip = (value: any) => {
   for (const child of Object.values(value)) strip(child);
 };
 strip(events);
+
+// rrweb snapshots a <style> as `_cssText`, without a child node. When the page
+// later replaces its text (CodeMirror adds a theme), live playback copies the
+// old CSS into the new text node (rrweb's `appendNode`), so the new rules are
+// lost, though seeking applies them. Such styles get their CSS as a child the
+// first replacement removes.
+function trackStyleText(events: any[]) {
+  const rewritten = new Set<number>();
+  let nextId = 0;
+  const walk = (node: any, visit: (node: any) => void) => {
+    visit(node);
+    for (const child of node.childNodes ?? []) walk(child, visit);
+  };
+  for (const event of events) {
+    if (event.type === 2) walk(event.data.node, (node) => (nextId = Math.max(nextId, node.id + 1)));
+    if (event.type !== 3 || event.data.source !== 0) continue;
+    for (const add of event.data.adds) {
+      walk(add.node, (node) => (nextId = Math.max(nextId, node.id + 1)));
+      if (add.node.type === 3) rewritten.add(add.parentId);
+    }
+  }
+  const child = new Map<number, number>();
+  for (const event of events) {
+    if (event.type === 2)
+      walk(event.data.node, (node) => {
+        if (node.tagName !== 'style' || !rewritten.has(node.id) || node.childNodes.length > 0) return;
+        if (typeof node.attributes._cssText !== 'string') return;
+        const id = nextId++;
+        node.childNodes = [{ type: 3, id, textContent: node.attributes._cssText, isStyle: true }];
+        delete node.attributes._cssText;
+        child.set(node.id, id);
+      });
+    if (event.type !== 3 || event.data.source !== 0) continue;
+    for (const add of event.data.adds) {
+      const id = child.get(add.parentId);
+      if (add.node.type !== 3 || id === undefined) continue;
+      event.data.removes.push({ parentId: add.parentId, id });
+      child.delete(add.parentId);
+    }
+  }
+}
+trackStyleText(events);
 let json = JSON.stringify(events);
 
 // Fonts and images the page loaded from the stack become files beside the
