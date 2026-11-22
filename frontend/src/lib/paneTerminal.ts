@@ -464,7 +464,7 @@ export class PaneTerminal {
 
   private onMouseMove = (event: MouseEvent) => {
     this.pointer = { x: event.clientX, y: event.clientY, target: event.target };
-    this.linkModifierHeld = linkModifier(event);
+    this.setLinkModifier(linkModifier(event));
     this.updateUrlHover();
   };
 
@@ -498,15 +498,21 @@ export class PaneTerminal {
     this.emit(text);
   };
 
+  /** Also wterm's class for OSC 8 links: useKeybindings stops Cmd keys before its own listener. */
+  private setLinkModifier(held: boolean) {
+    this.linkModifierHeld = held;
+    this.element.classList.toggle('link-modifier-active', held);
+  }
+
   private onLinkModifier = (event: Event) => {
-    if (event instanceof KeyboardEvent) this.linkModifierHeld = linkModifier(event);
+    if (event instanceof KeyboardEvent) this.setLinkModifier(linkModifier(event));
     if (this.pointer) this.updateUrlHover();
   };
 
   private onWindowBlur = () => {
     this.swallowMouseUp = false;
     this.swallowClick = false;
-    this.linkModifierHeld = false;
+    this.setLinkModifier(false);
     this.pointer = null;
     this.clearUrlHover();
   };
