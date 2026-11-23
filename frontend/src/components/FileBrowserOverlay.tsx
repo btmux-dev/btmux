@@ -223,6 +223,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   );
 
   useEffect(() => {
+    if (!isGitMode) pendingGitPopupRef.current = null;
+  }, [isGitMode]);
+
+  useEffect(() => {
     if (!gitStatus) return;
     const kind = pendingGitPopupRef.current;
     pendingGitPopupRef.current = null;
