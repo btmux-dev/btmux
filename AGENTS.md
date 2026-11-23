@@ -594,7 +594,8 @@ Language servers (`native_editor/lsp/`) have btmux as their only client.
 `[[language]]` and `[language-server.NAME]` (Helix-style) override built-in
 ones by name (`lsp/config.rs`); a buffer's servers start when it loads, one
 process per server and root (the outermost root marker, as in Helix, no higher
-than the Git worktree), found as plan limits find agent CLIs, in its own process group.
+than the Git worktree), found as plan limits find agent CLIs, in its own process group;
+a root at home or above is sent as no workspace folder, so servers don't scan it.
 The backend sends `didOpen`/`didChange`/`didSave`/`didClose` itself; the LSP
 document version is the collab version. Each tab runs one
 `@codemirror/lsp-client` per server (`lib/nativeEditor/lsp.ts`) over `lsp`

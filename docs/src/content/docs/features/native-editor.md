@@ -193,7 +193,9 @@ btmux searches its own `PATH` and then your shell's `PATH`. Preconfigured
 servers include rust-analyzer, typescript-language-server, ty and ruff
 (Python), gopls, clangd, lua-language-server, nil (Nix), bash-language-server,
 taplo (TOML), just-lsp (justfiles), yaml-language-server, and
-vscode-langservers-extracted (JSON, CSS, HTML). The About dialog's Health tab
+vscode-langservers-extracted (JSON, CSS, HTML), and rumdl and harper-ls
+(Markdown: rumdl lints, formats, and follows links; harper-ls checks spelling
+and grammar). The About dialog's Health tab
 lists each configured server and whether btmux found it.
 
 A file can have several servers, as Python has ty for types, completions,
@@ -230,6 +232,18 @@ nixfmt by default (Nixpkgs builds in its own); for older ones, or another
 formatter, set `config = { nil = { formatting = { command = ["alejandra"] } } }`
 under `[language-server.nil]`, along with `command = "nil"`. Files in a
 [sandboxed session](sandbox.md)'s mounts get their servers inside the VM.
+
+rumdl runs with its default rules and ignores its config files, the
+repository's (`.rumdl.toml`, `.markdownlint.json`, …) and your own, since
+they can name commands rumdl runs on code blocks when a file opens. If you
+open only repositories you trust, replace it with a table that lets rumdl
+read them:
+
+```toml
+[language-server.rumdl]
+command = "rumdl"
+args = ["server"]
+```
 
 Diagnostics, semantic highlighting, inlay hints, code lenses, folding, and
 completion with signature help need no keys. The rest:
