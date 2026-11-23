@@ -42,7 +42,7 @@ import { keyboardTooltips } from './hover';
 import { noteOpened, quickOpen } from './quickOpen';
 import { EDITOR_COMMANDS, LSP_COMMANDS, QUICK_OPEN_NEEDS_FOLDER } from './registry';
 import { Sequences } from './sequences';
-import { NAVIGATION_KEYS } from './keyHelp';
+import { fileKeys, NAVIGATION_KEYS } from './keyHelp';
 import { JumpList, type Jump } from './jumps';
 import { vscodeKeys } from './vscodeKeys';
 import { isDesktopApp } from '../desktopApp';
@@ -121,6 +121,8 @@ export interface PaneEditorEvents {
   error(message: string): void;
   /** Open `path` in this pane (a jump to another file), on `line` if given. */
   open(path: string, line?: number | null): void;
+  /** Show the file `step` tabs from the active one, wrapping around. */
+  cycle(step: number): void;
   /** Close `path`, asking to save unsaved changes unless `force` discards them. */
   close(path: string, force: boolean): void;
   /** Run a btmux action (a mapping to one that isn't the editor's). */
@@ -167,6 +169,7 @@ export class PaneEditor {
     epoch: () => this.epoch,
     hide: () => this.events.hide(),
     close: (force) => this.close(force),
+    cycle: (step) => this.cycle(step),
     mode: (mode) => {
       if (mode === this.vimMode) return;
       this.vimMode = mode;
@@ -257,6 +260,8 @@ export class PaneEditor {
         // In the desktop app, Mod-W closes the file; with none, the window
         // closes as elsewhere (`close.js`), as the key goes unhandled.
         ...(isDesktopApp() ? [{ key: 'Mod-w', run: () => this.close(false) }] : []),
+        ...fileKeys().next.map((key) => ({ key, run: () => this.cycle(1), preventDefault: true, scope: EARLY_SCOPE })),
+        ...fileKeys().prev.map((key) => ({ key, run: () => this.cycle(-1), preventDefault: true, scope: EARLY_SCOPE })),
       ]),
     ];
   }
@@ -677,6 +682,16 @@ export class PaneEditor {
     return true;
   }
 
+  /**
+   * Show the open file `step` tabs over, wrapping around. The server picks
+   * it from its own tabs, which this client may not have caught up with.
+   */
+  cycle(step: number): boolean {
+    if (!this.active) return false;
+    this.events.cycle(step);
+    return true;
+  }
+
   /** Show quick open, once the active file is loaded. */
   quickOpen(): boolean {
     if (this.quickOpenWaiting) return true;
@@ -707,6 +722,8 @@ export class PaneEditor {
     if (action === 'editor-quick-open') return this.quickOpen();
     if (action === 'editor-go-back' || action === 'editor-go-forward')
       return this.navigate(action === 'editor-go-back');
+    if (action === 'editor-next-file' || action === 'editor-prev-file')
+      return this.cycle(action === 'editor-next-file' ? 1 : -1);
     const run = editorCommands[action];
     const doc = this.active ? this.docs.get(this.active) : undefined;
     if (!run || !doc?.view) return false;

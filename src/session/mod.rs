@@ -119,6 +119,10 @@ pub enum EditorViewOp {
         path: String,
         index: usize,
     },
+    /// Make the file `step` tabs from the active one active, wrapping around.
+    Cycle {
+        step: i32,
+    },
 }
 
 impl PaneEditor {
@@ -209,6 +213,18 @@ impl PaneEditor {
                     let file = self.files.remove(i);
                     self.files.insert(index.min(self.files.len()), file);
                 }
+            }
+            EditorViewOp::Cycle { step } => {
+                let Some(at) = self
+                    .active
+                    .as_ref()
+                    .and_then(|a| self.files.iter().position(|f| f == a))
+                else {
+                    return;
+                };
+                let n = self.files.len() as i64;
+                let to = (at as i64 + i64::from(step)).rem_euclid(n) as usize;
+                self.active = Some(self.files[to].clone());
             }
         }
     }
@@ -468,6 +484,33 @@ mod editor_tests {
         e.apply(EditorViewOp::Close { path: "/b".into() });
         e.apply(EditorViewOp::Close { path: "/a".into() });
         assert_eq!((e.active, e.shown), (None, false));
+    }
+
+    #[test]
+    fn cycles_from_the_active_file() {
+        let mut e = PaneEditor::default();
+        for path in ["/a", "/b", "/c"] {
+            open(&mut e, path);
+        }
+        e.apply(EditorViewOp::Activate { path: "/a".into() });
+        // Each step starts where the last left, however fast they come.
+        e.apply(EditorViewOp::Cycle { step: 1 });
+        e.apply(EditorViewOp::Cycle { step: 1 });
+        assert_eq!(e.active.as_deref(), Some("/c"));
+        e.apply(EditorViewOp::Cycle { step: 1 });
+        assert_eq!(e.active.as_deref(), Some("/a"));
+        e.apply(EditorViewOp::Cycle { step: -1 });
+        assert_eq!(e.active.as_deref(), Some("/c"));
+        // A file another client closed isn't reopened.
+        e.apply(EditorViewOp::Activate { path: "/a".into() });
+        e.apply(EditorViewOp::Close { path: "/b".into() });
+        e.apply(EditorViewOp::Cycle { step: 1 });
+        assert_eq!(e.files, ["/a", "/c"]);
+        assert_eq!(e.active.as_deref(), Some("/c"));
+        // Nothing active, nothing to cycle.
+        let mut empty = PaneEditor::default();
+        empty.apply(EditorViewOp::Cycle { step: 1 });
+        assert_eq!(empty.active, None);
     }
 
     #[test]

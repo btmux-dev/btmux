@@ -8,6 +8,13 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Added
+
+- Keys for the native editor's next and previous file: `Alt-PageDown` and
+  `Alt-PageUp`, VS Code's in the desktop app, and `gt`/`gT`, `]b`/`[b`,
+  `:bn`, and `:bp` in Vim mode.
+  ([#197](https://github.com/btmux-dev/btmux/pull/197))
+
 ### Fixed
 
 - Reopening Git mode no longer briefly shows the last status, or drops popup

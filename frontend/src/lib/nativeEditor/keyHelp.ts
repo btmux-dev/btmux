@@ -17,6 +17,15 @@ export const NAVIGATION_KEYS = IS_MAC
     ? { back: 'Alt-ArrowLeft', forward: 'Alt-ArrowRight' }
     : { back: 'Ctrl-Alt--', forward: 'Ctrl-Shift--' };
 
+/**
+ * Next and previous file: VS Code's in the desktop app, as browsers keep
+ * them for their own tabs; `Alt-PageDown`/`Alt-PageUp` everywhere.
+ */
+export const fileKeys = () => ({
+  next: ['Alt-PageDown', ...(isDesktopApp() ? ['Ctrl-Tab', IS_MAC ? 'Cmd-Alt-ArrowRight' : 'Ctrl-PageDown'] : [])],
+  prev: ['Alt-PageUp', ...(isDesktopApp() ? ['Ctrl-Shift-Tab', IS_MAC ? 'Cmd-Alt-ArrowLeft' : 'Ctrl-PageUp'] : [])],
+});
+
 /** VS Code's `Mod-k` chords, as codemirror-vim key names. */
 export const PLAIN_CHORDS: [string[], string][] = [
   [['k', 'i'], 'editor-hover'],
@@ -49,6 +58,8 @@ export function plainKeys(): Record<string, string[]> {
     'editor-problems': ['Mod-Shift-m'],
     'editor-go-back': [NAVIGATION_KEYS.back],
     'editor-go-forward': [NAVIGATION_KEYS.forward],
+    'editor-next-file': fileKeys().next,
+    'editor-prev-file': fileKeys().prev,
     'editor-next-hunk': ['Alt-F5'],
     'editor-prev-hunk': ['Shift-Alt-F5'],
   };

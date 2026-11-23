@@ -15,6 +15,8 @@ export interface VimHost {
   hide(): void;
   /** Close the shown file; `force` discards unsaved changes. */
   close(force: boolean): void;
+  /** Show the open file `step` tabs over. */
+  cycle(step: number): void;
   /** The mode changed: NORMAL, INSERT, …, or null without vim. */
   mode(mode: string | null): void;
 }
@@ -44,6 +46,8 @@ Vim.defineEx('xit', 'x', saveAndHide);
 Vim.defineEx('quit', 'q', (cm) => hostOf(cm)?.hide());
 Vim.defineEx('qall', 'qa', (cm) => hostOf(cm)?.hide());
 Vim.defineEx('bdelete', 'bd', (cm, params) => hostOf(cm)?.close(bang(params)));
+Vim.defineEx('bnext', 'bn', (cm) => hostOf(cm)?.cycle(1));
+Vim.defineEx('bprevious', 'bp', (cm) => hostOf(cm)?.cycle(-1));
 
 // `gq`: format with the language server when it formats ranges, else hard
 // wrap, as codemirror-vim's own `gq` does (Neovim sets 'formatexpr' to the
