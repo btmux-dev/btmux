@@ -203,6 +203,18 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   // A selection doesn't outlive the browser; the yank register does.
   useEffect(() => () => store.getState().clearSelection(), [store]);
 
+  // Nor does Git data: a reopen would show it, and take keys, until it reloads.
+  useEffect(
+    () => () => {
+      const state = store.getState();
+      state.setGitStatus(null);
+      state.setGitLog(null);
+      state.setGitDiff(null);
+      state.setGitCommitDiff(null);
+    },
+    [store],
+  );
+
   // Refocus after the popup's dialog has unmounted; focusing earlier hits the
   // still-modal dialog's inert backdrop and focus falls to <body>.
   const gitPopupOpened = useRef(false);
