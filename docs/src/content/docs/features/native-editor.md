@@ -75,7 +75,9 @@ open editors at once.
 - `:w` saves (`:w!` overwrites changes made on disk), `:q` hides the editor
   and keeps unsaved changes, `:wq` or `:x` saves and hides it, and `:bd`
   closes the file (`:bd!` discards unsaved changes). `:bn` and `:bp` show
-  the next and previous open file.
+  the next and previous open file. `:copen` and `:cclose` show and hide the
+  [problems list](#problems-list), and `:cw` shows it only if there are
+  problems.
 - A double Esc hides the editor only from normal mode with no command pending,
   so leaving insert mode never hides it.
 - Ctrl chords such as `Ctrl-d` and `Ctrl-v` go to Vim, except the btmux
@@ -258,7 +260,7 @@ completion with signature help need no keys. The rest:
 | Calls to the symbol                    | `Shift-Alt-H`                                                        |
 | Grow or shrink the selection by syntax | `Ctrl-Shift-Cmd-→` / `←` (`Shift-Alt-→` / `←` elsewhere), or `Mod-I` |
 | Next or previous problem               | `F8` / `Shift-F8`                                                    |
-| All problems                           | `Mod-Shift-M`                                                        |
+| Show or hide the problems list         | `Mod-Shift-M`                                                        |
 | Format the document or the selection   | `Shift-Alt-F`; `Mod-K Mod-F` the selection                           |
 | Fold or unfold everything              | `Mod-K Mod-0` / `Mod-K Mod-J`                                        |
 
@@ -267,6 +269,23 @@ Diagnostics are underlined, and hovering one shows its message. With
 diagnostics**, each line's most severe error, warning, or info also shows at
 the end of the line, with a count of the others. Hints don't, since they
 mostly fade unused code.
+
+### Problems list
+
+The problems list is a quickfix list for diagnostics: every file's errors,
+warnings, and infos, errors first, then by file and line. It lists what the
+language servers of the editor's open files report, including files that
+aren't open. It updates as servers publish. Hints aren't listed.
+
+`Mod-Shift-M` (`:copen` in Vim mode) shows it and moves focus to it; picking
+a problem opens its file at the problem, and the list stays open.
+
+| Key                  | Does                        |
+| -------------------- | --------------------------- |
+| `↓` / `↑`, `j` / `k` | Next or previous problem    |
+| `Enter`, `o`, click  | Go to the problem           |
+| `Esc`, `q`           | Hide the list               |
+| `Mod-Shift-M`        | Hide the list, or show it   |
 
 `[native-editor] format-on-save = true` formats on every save. Renames and
 code actions also change files that aren't open: those wait in the editor,

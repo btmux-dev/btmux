@@ -14,6 +14,10 @@ actions, saved state, and API types can change in any release.
   formatting, links, and headings) and harper-ls (spelling and grammar),
   each used when installed. rumdl ignores its config files, which can run
   commands. ([#198](https://github.com/btmux-dev/btmux/pull/198))
+- A problems list in the native editor: every file's diagnostics, errors
+  first. `Mod-Shift-M` shows or hides it, as do `:copen` and `:cclose` in Vim
+  mode.
+  ([#199](https://github.com/btmux-dev/btmux/pull/199))
 
 ## [0.0.219] - 2026-11-23
 

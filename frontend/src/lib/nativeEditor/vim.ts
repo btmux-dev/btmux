@@ -19,6 +19,8 @@ export interface VimHost {
   cycle(step: number): void;
   /** The mode changed: NORMAL, INSERT, …, or null without vim. */
   mode(mode: string | null): void;
+  /** Show or hide the problems list; `auto` shows it only if there are problems. */
+  problems(open: boolean | 'auto'): void;
 }
 
 const hosts = new WeakMap<EditorView, VimHost>();
@@ -48,6 +50,15 @@ Vim.defineEx('qall', 'qa', (cm) => hostOf(cm)?.hide());
 Vim.defineEx('bdelete', 'bd', (cm, params) => hostOf(cm)?.close(bang(params)));
 Vim.defineEx('bnext', 'bn', (cm) => hostOf(cm)?.cycle(1));
 Vim.defineEx('bprevious', 'bp', (cm) => hostOf(cm)?.cycle(-1));
+// The problems list is the quickfix list.
+// After the command line closes, which focuses the text again.
+const problems = (cm: CodeMirror, open: boolean | 'auto') => {
+  const host = hostOf(cm);
+  if (host) setTimeout(() => host.problems(open));
+};
+Vim.defineEx('copen', 'cope', (cm) => problems(cm, true));
+Vim.defineEx('cclose', 'ccl', (cm) => problems(cm, false));
+Vim.defineEx('cwindow', 'cw', (cm) => problems(cm, 'auto'));
 
 // `gq`: format with the language server when it formats ranges, else hard
 // wrap, as codemirror-vim's own `gq` does (Neovim sets 'formatexpr' to the

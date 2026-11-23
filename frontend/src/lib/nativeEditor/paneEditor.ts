@@ -27,7 +27,7 @@ import {
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
 import { searchPanel, type SearchPanelHandle } from './searchPanel';
 import { virtualText } from './virtualText';
-import { forEachDiagnostic, lintKeymap } from '@codemirror/lint';
+import { forEachDiagnostic } from '@codemirror/lint';
 import { Doc, type DocStatus } from './doc';
 import { editorConnection } from './connection';
 import { editorTheme, type EditorAppearance } from './theme';
@@ -35,6 +35,8 @@ import { detectIndent, languageFor } from './languages';
 import { codeDetail } from './completion';
 import { panelSpace } from './panelSpace';
 import { dropFailedDiagnostics, format, lspExtension, setDisplay, workingServers } from './lsp';
+import { offset, type Position } from './lspText';
+import { ProblemsList } from './problems';
 import { serverFoldsChanged } from './features';
 import { gitSigns, gitSummary } from './gitSigns';
 import { editorCommands, toDiagnostic } from './actions';
@@ -157,6 +159,9 @@ export class PaneEditor {
   private readonly vimC = new Compartment();
   private readonly virtualTextC = new Compartment();
   private virtualText = false;
+  private readonly problemsC = new Compartment();
+  private readonly problemsList: ProblemsList;
+  private problemsOpen = false;
   /** Docs' working servers when last configured. */
   private working = new WeakMap<Doc, string>();
   private stopStatus: () => void;
@@ -175,6 +180,7 @@ export class PaneEditor {
       this.vimMode = mode;
       this.events.changed();
     },
+    problems: (open) => this.setProblems(open === 'auto' ? this.problemsList.any() : open),
   };
   private waiting: { path: string; resolve: (view: EditorView | null) => void }[] = [];
   private quickOpenWaiting = false;
@@ -214,6 +220,18 @@ export class PaneEditor {
         if (this.vim) this.vimLib?.feedKeys(this.view, keys);
       },
       changed: () => this.events.changed(),
+    });
+    this.problemsList = new ProblemsList({
+      servers: () => [...this.docs.values()].flatMap((d) => d.servers),
+      // Hidden files' states don't follow their servers, which have their latest.
+      state: (path) => {
+        const doc = this.docs.get(path);
+        return doc?.view ? doc.state : null;
+      },
+      root: () => workspaceFolder(findPaneState(useStore.getState(), this.paneId)),
+      jump: (path, at) => this.jump(path, at),
+      close: () => this.setProblems(false),
+      key: (e) => runScopeHandlers(this.view, e, EARLY_SCOPE),
     });
     this.view = new EditorView({ parent, state: this.placeholder() });
     // Drop a server's features once it fails, and add them back if it recovers.
@@ -301,6 +319,7 @@ export class PaneEditor {
       // Ahead of the keymaps, so vim's chords win over theirs.
       this.vimC.of(this.vimExtension()),
       this.virtualTextC.of(this.virtualText ? virtualText : []),
+      this.problemsC.of(this.problemsOpen ? this.problemsList.extension : []),
       lineNumbers(),
       gitSigns(() => doc.git),
       highlightActiveLineGutter(),
@@ -329,6 +348,8 @@ export class PaneEditor {
         // VS Code's next and previous problem, ahead of lint's F8.
         { key: 'F8', run: (view) => toDiagnostic(view, 'next'), preventDefault: true },
         { key: 'Shift-F8', run: (view) => toDiagnostic(view, 'prev'), preventDefault: true },
+        // VS Code's Problems view.
+        { key: 'Mod-Shift-m', run: () => this.setProblems(!this.problemsOpen), preventDefault: true },
         { key: NAVIGATION_KEYS.back, run: () => this.navigate(true), preventDefault: true },
         { key: NAVIGATION_KEYS.forward, run: () => this.navigate(false), preventDefault: true },
         ...vscodeKeys(
@@ -340,7 +361,6 @@ export class PaneEditor {
         ...historyKeymap,
         ...foldKeymap,
         ...completionKeymap,
-        ...lintKeymap,
         indentWithTab,
       ]),
       EditorView.updateListener.of((update) => {
@@ -531,6 +551,7 @@ export class PaneEditor {
 
   /** Follow the pane's open files, showing `active`. */
   setFiles(files: string[], active: string | null) {
+    let changed = false;
     for (const [path, doc] of this.docs) {
       if (files.includes(path)) continue;
       if (doc.view) this.view.setState(this.placeholder());
@@ -538,6 +559,7 @@ export class PaneEditor {
       doc.close();
       this.docs.delete(path);
       this.conflicts.delete(path);
+      changed = true;
     }
     for (const path of files) {
       if (this.docs.has(path)) continue;
@@ -549,7 +571,10 @@ export class PaneEditor {
       this.docs.set(path, doc);
       doc.open();
       void this.loadLanguage(doc);
+      changed = true;
     }
+    // Their servers are what's listed.
+    if (changed) this.problemsList.refresh();
     if (active !== this.active || (active && !this.docs.get(active)?.view)) {
       const focused = this.view.hasFocus;
       const from = active !== this.active ? this.here() : null;
@@ -581,6 +606,8 @@ export class PaneEditor {
   }
 
   private docChanged(doc: Doc) {
+    // Loading tells its servers.
+    this.problemsList.refresh();
     if (doc.path === this.active && !doc.view && doc.state) {
       const focused = this.view.hasFocus;
       doc.attach(this.view);
@@ -641,6 +668,35 @@ export class PaneEditor {
 
   private applyVim() {
     for (const doc of this.docs.values()) doc.update({ effects: this.vimC.reconfigure(this.vimExtension()) });
+  }
+
+  /** Show or hide the problems list, focusing it when shown. */
+  setProblems(open: boolean): boolean {
+    if (open) this.problemsList.focus();
+    else this.problemsList.hidden();
+    if (open === this.problemsOpen) return true;
+    this.problemsOpen = open;
+    const extension = open ? this.problemsList.extension : [];
+    for (const doc of this.docs.values()) doc.update({ effects: this.problemsC.reconfigure(extension) });
+    if (!open) this.view.focus();
+    return true;
+  }
+
+  /** Show `path` at `at` (a problem's start), as a jump. */
+  private jump(path: string, at: Position) {
+    // In the shown file, it is a jump even right after switching to it; to
+    // another, the switch records where it left.
+    if (path === this.active && this.docs.get(path)?.view) this.landed = false;
+    void this.display(path).then((view) => {
+      if (!view) return;
+      const pos = offset(view.state.doc, at);
+      view.dispatch({
+        selection: { anchor: pos },
+        effects: EditorView.scrollIntoView(pos, { y: 'center' }),
+        userEvent: 'select.jump',
+      });
+      view.focus();
+    });
   }
 
   /** Show diagnostics' messages at the end of their lines, or not. */
@@ -724,6 +780,7 @@ export class PaneEditor {
       return this.navigate(action === 'editor-go-back');
     if (action === 'editor-next-file' || action === 'editor-prev-file')
       return this.cycle(action === 'editor-next-file' ? 1 : -1);
+    if (action === 'editor-problems') return this.setProblems(!this.problemsOpen);
     const run = editorCommands[action];
     const doc = this.active ? this.docs.get(this.active) : undefined;
     if (!run || !doc?.view) return false;

@@ -327,7 +327,15 @@ try {
   await row('h').getByText('Hover (+git)').waitFor();
   assert.equal(await row('s').count(), 0);
   await page.keyboard.press('x');
-  await pane.locator('.cm-panel-lint').waitFor();
+  await pane.locator('.cm-btmux-problems').waitFor();
+  // :copen focuses the list once the command line has closed.
+  await page.keyboard.press('Escape');
+  await pane.locator('.cm-btmux-problems').waitFor({ state: 'detached' });
+  await page.keyboard.type(':copen');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.activeElement?.closest('.cm-btmux-problems'));
+  await page.keyboard.press('q');
+  await pane.locator('.cm-btmux-problems').waitFor({ state: 'detached' });
   await content.click();
   // ,h is a mapping and a prefix: it runs once no more keys come.
   await page.keyboard.type('ggw,h');
