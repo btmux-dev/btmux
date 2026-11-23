@@ -8,6 +8,8 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+## [0.0.220] - 2026-11-23
+
 ### Added
 
 - Markdown language servers in the native editor: rumdl (linting,
