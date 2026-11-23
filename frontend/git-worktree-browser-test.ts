@@ -51,7 +51,8 @@ try {
     const { useStore } = await import('/src/state/store.tsx' as string);
     return !!useStore.getState().config;
   });
-  const openGitMode = async (host = pane) => {
+  // Without `loaded`, keys may arrive while the status loads.
+  const openGitMode = async (host = pane, loaded = true) => {
     await page.evaluate(
       async ({ pane, repo }) => {
         const { useStore } = await import('/src/state/store.tsx' as string);
@@ -60,7 +61,7 @@ try {
       },
       { pane: host, repo },
     );
-    await page.getByText('main', { exact: true }).first().waitFor();
+    if (loaded) await page.getByText('main', { exact: true }).first().waitFor();
     await page
       .getByRole('button', { name: 'Close file browser' })
       .evaluate((button) => (button.closest('[tabindex="-1"]') as HTMLElement).focus());
@@ -135,7 +136,8 @@ try {
   assert.equal((await windows())[1]?.name, 'existing');
   console.log('PASS create and visit');
 
-  await openGitMode();
+  // A popup key typed before the status loads opens once it has.
+  await openGitMode(pane, false);
   assert.doesNotMatch(page.url(), /\/w\/existing$/);
   await page.keyboard.press('%');
   await list.getByText('existing', { exact: true }).click();

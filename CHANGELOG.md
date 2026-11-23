@@ -15,6 +15,12 @@ actions, saved state, and API types can change in any release.
   `:bn`, and `:bp` in Vim mode.
   ([#197](https://github.com/btmux-dev/btmux/pull/197))
 
+### Fixed
+
+- Reopening Git mode no longer briefly shows the last status, or drops popup
+  keys like `%` typed before the new status loads.
+  ([#196](https://github.com/btmux-dev/btmux/pull/196))
+
 ## [0.0.218] - 2026-11-22
 
 ### Changed
