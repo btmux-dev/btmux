@@ -121,6 +121,8 @@ export interface PaneEditorEvents {
   error(message: string): void;
   /** Open `path` in this pane (a jump to another file), on `line` if given. */
   open(path: string, line?: number | null): void;
+  /** Show the file `step` tabs from the active one, wrapping around. */
+  cycle(step: number): void;
   /** Close `path`, asking to save unsaved changes unless `force` discards them. */
   close(path: string, force: boolean): void;
   /** Run a btmux action (a mapping to one that isn't the editor's). */
@@ -148,8 +150,6 @@ export class PaneEditor {
   private conflicts = new Set<string>();
   private reveals = new Map<string, number>();
   private active: string | null = null;
-  /** The pane's open files, in tab order. */
-  private files: string[] = [];
   private appearance: EditorAppearance;
   private readonly themeC = new Compartment();
   private readonly languageC = new Compartment();
@@ -531,7 +531,6 @@ export class PaneEditor {
 
   /** Follow the pane's open files, showing `active`. */
   setFiles(files: string[], active: string | null) {
-    this.files = files;
     for (const [path, doc] of this.docs) {
       if (files.includes(path)) continue;
       if (doc.view) this.view.setState(this.placeholder());
@@ -683,12 +682,13 @@ export class PaneEditor {
     return true;
   }
 
-  /** Show the open file `step` tabs over, wrapping around. */
+  /**
+   * Show the open file `step` tabs over, wrapping around. The server picks
+   * it from its own tabs, which this client may not have caught up with.
+   */
   cycle(step: number): boolean {
-    const at = this.active ? this.files.indexOf(this.active) : -1;
-    if (at < 0) return false;
-    const n = this.files.length;
-    if (n > 1) this.events.open(this.files[(((at + step) % n) + n) % n]);
+    if (!this.active) return false;
+    this.events.cycle(step);
     return true;
   }
 

@@ -133,7 +133,7 @@ export type PaneEditor = { shown: boolean,
 files: Array<string>, active: string | null, };
 
 // prettier-ignore
-export type EditorViewOp = { "kind": "show" } | { "kind": "hide" } | { "kind": "toggle" } | { "kind": "open", path: string, line: number | null, } | { "kind": "close", path: string, } | { "kind": "activate", path: string, } | { "kind": "move", path: string, index: number, };
+export type EditorViewOp = { "kind": "show" } | { "kind": "hide" } | { "kind": "toggle" } | { "kind": "open", path: string, line: number | null, } | { "kind": "close", path: string, } | { "kind": "activate", path: string, } | { "kind": "move", path: string, index: number, } | { "kind": "cycle", step: number, };
 
 // prettier-ignore
 export type PaneSnapshot = { id: string, title: string | null, cwd: string | null,

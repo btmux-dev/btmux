@@ -210,6 +210,7 @@ export function NativeEditor({
         hide: () => opRef.current({ kind: 'hide' }),
         error: (message) => useStore.getState().showToast(message, 'error'),
         open: (path, line) => opRef.current({ kind: 'open', path, line: line ?? null }),
+        cycle: (step) => opRef.current({ kind: 'cycle', step }),
         close: (path, force) => closeRef.current(path, force),
         action: (name) => actionRef.current(name),
         // A file switch can mount the next file's panel before the last one's goes.

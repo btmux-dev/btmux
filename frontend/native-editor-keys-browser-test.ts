@@ -424,6 +424,16 @@ try {
   await until('the last file', async () => (await pane.getByRole('tab').last().getAttribute('aria-selected')) === 'true');
   await page.keyboard.press('Alt+PageDown');
   await shownTab('main.fake');
+  // Two presses before any state update arrives: each starts where the last left.
+  const pressTwice = (key: string) =>
+    content.evaluate((el, key) => {
+      for (let i = 0; i < 2; i++)
+        el.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, altKey: true, bubbles: true, cancelable: true }));
+    }, key);
+  await pressTwice('PageDown');
+  await shownTab('long.txt');
+  await pressTwice('PageUp');
+  await shownTab('main.fake');
   console.log('PASS Alt-PageDown and Alt-PageUp cycle the open files');
 
   // Without vim, VS Code's keys, which the editor's keymaps bind.
