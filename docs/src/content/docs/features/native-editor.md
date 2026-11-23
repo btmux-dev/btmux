@@ -23,6 +23,7 @@ Keys follow VS Code's defaults. These are the ones to know first:
 | `Mod-p`                   | Quick open: finds a file under the pane's folder            |
 | `Mod-f`                   | Finds and replaces in the file                              |
 | `Alt-w`                   | Closes the file, asking to save unsaved changes             |
+| `Alt-PageDown` / `Alt-PageUp` | Shows the next or previous open file                    |
 | `Ctrl--` / `Ctrl-Shift--` | Goes back or forward to where you jumped from, across files |
 | `Ctrl-g`                  | Goes to a line                                              |
 | `Mod-Shift-Enter`         | Inserts a line above                                        |
@@ -38,6 +39,9 @@ Mod is Cmd on macOS and Ctrl elsewhere. Go back and forward are `Alt-←` and
 `Alt-→` on Windows, and `Ctrl-Alt--` and `Ctrl-Shift--` on Linux. Browsers
 keep `Mod-w` and `Mod-t`, so the editor takes them only in the desktop app:
 `Mod-w` closes the file there, and Close Window moves to `Cmd-Shift-W`.
+Browsers also keep VS Code's keys for the next and previous file, which the
+desktop app adds: `Ctrl-Tab` and `Ctrl-Shift-Tab`, and `Cmd-Alt-→` and
+`Cmd-Alt-←` on macOS or `Ctrl-PageDown` and `Ctrl-PageUp` elsewhere.
 
 In find and replace, `Enter` goes to the next match and `Shift-Enter` to the
 previous one; `Alt-Enter` selects every match. In the replace field, `Enter`
@@ -70,7 +74,8 @@ open editors at once.
   finished.
 - `:w` saves (`:w!` overwrites changes made on disk), `:q` hides the editor
   and keeps unsaved changes, `:wq` or `:x` saves and hides it, and `:bd`
-  closes the file (`:bd!` discards unsaved changes).
+  closes the file (`:bd!` discards unsaved changes). `:bn` and `:bp` show
+  the next and previous open file.
 - A double Esc hides the editor only from normal mode with no command pending,
   so leaving insert mode never hides it.
 - Ctrl chords such as `Ctrl-d` and `Ctrl-v` go to Vim, except the btmux
@@ -105,6 +110,7 @@ Space.
 | `]d` / `[d`, `]D` / `[D`   | Next / previous diagnostic, last / first     |
 | `<C-w>d`                   | Shows the diagnostics on the line            |
 | `Ctrl-o` / `Ctrl-i`        | Goes back / forward, across files            |
+| `gt` / `gT`, `]b` / `[b`   | Next / previous open file                    |
 
 The [Git signs](#git-signs) mappings start with `<leader>h`. Neovim's
 insert-mode `Ctrl-s` (signature help) isn't mapped, as `Ctrl+S` saves outside

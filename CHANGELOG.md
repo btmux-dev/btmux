@@ -8,6 +8,12 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Added
+
+- Keys for the native editor's next and previous file: `Alt-PageDown` and
+  `Alt-PageUp`, VS Code's in the desktop app, and `gt`/`gT`, `]b`/`[b`,
+  `:bn`, and `:bp` in Vim mode.
+
 ## [0.0.218] - 2026-11-22
 
 ### Changed

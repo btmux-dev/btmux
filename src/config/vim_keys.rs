@@ -64,6 +64,10 @@ const DEFAULT_VIM_KEYS: &[(&str, &str, &[VimMode])] = &[
     ("<leader>f", "editor-format", NV),
     ("<C-o>", "editor-go-back", N),
     ("<C-i>", "editor-go-forward", N),
+    ("gt", "editor-next-file", N),
+    ("gT", "editor-prev-file", N),
+    ("]b", "editor-next-file", N),
+    ("[b", "editor-prev-file", N),
 ];
 
 /// Default which-key group names.

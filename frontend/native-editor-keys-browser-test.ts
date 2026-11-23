@@ -244,6 +244,25 @@ try {
   await at('Ln 300, Col 1');
   console.log('PASS CTRL-O and CTRL-I follow jumps across files');
 
+  // gt/gT, ]b/[b, and :bn/:bp cycle the open files, wrapping around.
+  const shownTab = (name: string) => pane.getByRole('tab', { name, selected: true }).waitFor();
+  await shownTab('long.txt');
+  await page.keyboard.type('gt');
+  await shownTab('main.fake');
+  await page.keyboard.type('gT');
+  await shownTab('long.txt');
+  await page.keyboard.type('[b');
+  await shownTab('other.fake');
+  await page.keyboard.type(']b');
+  await shownTab('long.txt');
+  await page.keyboard.type(':bn');
+  await page.keyboard.press('Enter');
+  await shownTab('main.fake');
+  await page.keyboard.type(':bp');
+  await page.keyboard.press('Enter');
+  await shownTab('long.txt');
+  console.log('PASS gt, gT, ]b, [b, :bn, and :bp cycle the open files');
+
   // Panels float over the text but leave the cursor's line clear of them,
   // even with nowhere left to scroll: at the end of the file, and at the top.
   const clearOf = (panel: 'top' | 'bottom') =>
@@ -393,6 +412,19 @@ try {
   assert.equal(await page.getByRole('dialog', { name: /^Save changes/ }).count(), 0);
   assert.equal(await pane.getByRole('tab', { name: 'main.fake' }).count(), 1);
   console.log('PASS VS Code chords, F8, and Go Back without vim');
+
+  // Alt-PageDown and Alt-PageUp cycle the open files.
+  await shownTab('main.fake');
+  await page.keyboard.press('Alt+PageDown');
+  await shownTab('other.fake');
+  await page.keyboard.press('Alt+PageUp');
+  await shownTab('main.fake');
+  // The first file's previous is the last.
+  await page.keyboard.press('Alt+PageUp');
+  await until('the last file', async () => (await pane.getByRole('tab').last().getAttribute('aria-selected')) === 'true');
+  await page.keyboard.press('Alt+PageDown');
+  await shownTab('main.fake');
+  console.log('PASS Alt-PageDown and Alt-PageUp cycle the open files');
 
   // Without vim, VS Code's keys, which the editor's keymaps bind.
   assert.equal(await paletteKeys('go to definition'), 'F12');

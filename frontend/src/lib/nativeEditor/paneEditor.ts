@@ -42,7 +42,7 @@ import { keyboardTooltips } from './hover';
 import { noteOpened, quickOpen } from './quickOpen';
 import { EDITOR_COMMANDS, LSP_COMMANDS, QUICK_OPEN_NEEDS_FOLDER } from './registry';
 import { Sequences } from './sequences';
-import { NAVIGATION_KEYS } from './keyHelp';
+import { fileKeys, NAVIGATION_KEYS } from './keyHelp';
 import { JumpList, type Jump } from './jumps';
 import { vscodeKeys } from './vscodeKeys';
 import { isDesktopApp } from '../desktopApp';
@@ -148,6 +148,8 @@ export class PaneEditor {
   private conflicts = new Set<string>();
   private reveals = new Map<string, number>();
   private active: string | null = null;
+  /** The pane's open files, in tab order. */
+  private files: string[] = [];
   private appearance: EditorAppearance;
   private readonly themeC = new Compartment();
   private readonly languageC = new Compartment();
@@ -167,6 +169,7 @@ export class PaneEditor {
     epoch: () => this.epoch,
     hide: () => this.events.hide(),
     close: (force) => this.close(force),
+    cycle: (step) => this.cycle(step),
     mode: (mode) => {
       if (mode === this.vimMode) return;
       this.vimMode = mode;
@@ -257,6 +260,8 @@ export class PaneEditor {
         // In the desktop app, Mod-W closes the file; with none, the window
         // closes as elsewhere (`close.js`), as the key goes unhandled.
         ...(isDesktopApp() ? [{ key: 'Mod-w', run: () => this.close(false) }] : []),
+        ...fileKeys().next.map((key) => ({ key, run: () => this.cycle(1), preventDefault: true, scope: EARLY_SCOPE })),
+        ...fileKeys().prev.map((key) => ({ key, run: () => this.cycle(-1), preventDefault: true, scope: EARLY_SCOPE })),
       ]),
     ];
   }
@@ -526,6 +531,7 @@ export class PaneEditor {
 
   /** Follow the pane's open files, showing `active`. */
   setFiles(files: string[], active: string | null) {
+    this.files = files;
     for (const [path, doc] of this.docs) {
       if (files.includes(path)) continue;
       if (doc.view) this.view.setState(this.placeholder());
@@ -677,6 +683,15 @@ export class PaneEditor {
     return true;
   }
 
+  /** Show the open file `step` tabs over, wrapping around. */
+  cycle(step: number): boolean {
+    const at = this.active ? this.files.indexOf(this.active) : -1;
+    if (at < 0) return false;
+    const n = this.files.length;
+    if (n > 1) this.events.open(this.files[(((at + step) % n) + n) % n]);
+    return true;
+  }
+
   /** Show quick open, once the active file is loaded. */
   quickOpen(): boolean {
     if (this.quickOpenWaiting) return true;
@@ -707,6 +722,8 @@ export class PaneEditor {
     if (action === 'editor-quick-open') return this.quickOpen();
     if (action === 'editor-go-back' || action === 'editor-go-forward')
       return this.navigate(action === 'editor-go-back');
+    if (action === 'editor-next-file' || action === 'editor-prev-file')
+      return this.cycle(action === 'editor-next-file' ? 1 : -1);
     const run = editorCommands[action];
     const doc = this.active ? this.docs.get(this.active) : undefined;
     if (!run || !doc?.view) return false;

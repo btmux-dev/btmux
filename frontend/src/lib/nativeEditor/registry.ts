@@ -44,6 +44,8 @@ export const FILE_COMMANDS = [
   'editor-problems',
   'editor-go-back',
   'editor-go-forward',
+  'editor-next-file',
+  'editor-prev-file',
   'editor-fold-all',
   'editor-unfold-all',
 ];
