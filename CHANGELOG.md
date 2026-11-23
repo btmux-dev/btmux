@@ -13,6 +13,7 @@ actions, saved state, and API types can change in any release.
 - Keys for the native editor's next and previous file: `Alt-PageDown` and
   `Alt-PageUp`, VS Code's in the desktop app, and `gt`/`gT`, `]b`/`[b`,
   `:bn`, and `:bp` in Vim mode.
+  ([#197](https://github.com/btmux-dev/btmux/pull/197))
 
 ## [0.0.218] - 2026-11-22
 
