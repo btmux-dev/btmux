@@ -17,19 +17,19 @@ on disk or warns you if there are unsaved edits.
 
 Keys follow VS Code's defaults. These are the ones to know first:
 
-| Key                       | Does                                                        |
-| ------------------------- | ----------------------------------------------------------- |
-| `Mod-s`                   | Saves                                                       |
-| `Mod-p`                   | Quick open: finds a file under the pane's folder            |
-| `Mod-f`                   | Finds and replaces in the file                              |
-| `Alt-w`                   | Closes the file, asking to save unsaved changes             |
-| `Alt-PageDown` / `Alt-PageUp` | Shows the next or previous open file                    |
-| `Ctrl--` / `Ctrl-Shift--` | Goes back or forward to where you jumped from, across files |
-| `Ctrl-g`                  | Goes to a line                                              |
-| `Mod-Shift-Enter`         | Inserts a line above                                        |
-| `Mod-d` / `Mod-F2`        | Selects the next or every occurrence of the word            |
-| `Mod-k`, then another key | VS Code's chords; a popup lists them, and other keys type   |
-| Esc twice                 | Hides the editor                                            |
+| Key                           | Does                                                        |
+| ----------------------------- | ----------------------------------------------------------- |
+| `Mod-s`                       | Saves                                                       |
+| `Mod-p`                       | Quick open: finds a file under the pane's folder            |
+| `Mod-f`                       | Finds and replaces in the file                              |
+| `Alt-w`                       | Closes the file, asking to save unsaved changes             |
+| `Alt-PageDown` / `Alt-PageUp` | Shows the next or previous open file                        |
+| `Ctrl--` / `Ctrl-Shift--`     | Goes back or forward to where you jumped from, across files |
+| `Ctrl-g`                      | Goes to a line                                              |
+| `Mod-Shift-Enter`             | Inserts a line above                                        |
+| `Mod-d` / `Mod-F2`            | Selects the next or every occurrence of the word            |
+| `Mod-k`, then another key     | VS Code's chords; a popup lists them, and other keys type   |
+| Esc twice                     | Hides the editor                                            |
 
 `<prefix> + ?` lists every key the editor has, in its Editor tab, and the
 command palette shows each editor command's keys beside it. Both follow Vim
