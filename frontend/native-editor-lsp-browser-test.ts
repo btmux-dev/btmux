@@ -34,7 +34,10 @@ writeFileSync(
     '[language-server.second]\ncommand = "fake-lsp"\nargs = ["--second"]\n' +
     '[[language]]\nname = "duo"\nfile-types = ["duo"]\nlanguage-servers = ["first", "second"]\n' +
     '[language-server.late]\ncommand = "fake-lsp"\nargs = ["--second", "--slow-init"]\n' +
-    '[[language]]\nname = "late"\nfile-types = ["late"]\nlanguage-servers = ["late"]\n',
+    '[[language]]\nname = "late"\nfile-types = ["late"]\nlanguage-servers = ["late"]\n' +
+    // A server for one file, for the problems list.
+    '[language-server.solo]\ncommand = "fake-lsp"\nargs = ["--second"]\n' +
+    '[[language]]\nname = "solo"\nfile-types = ["solo"]\nlanguage-servers = ["solo"]\n',
 );
 const log = () => {
   try {
@@ -818,14 +821,68 @@ try {
     .locator('li[role=option]')
     .evaluateAll((rows) => rows.map((r) => (r.className.includes('error') ? 1 : r.className.includes('warning') ? 2 : 3)));
   assert.deepEqual(severities, [...severities].sort((a, b) => a - b));
-  await page.waitForFunction(() => document.activeElement?.closest('.cm-btmux-problems'));
+  const inList = () => page.waitForFunction(() => document.activeElement?.closest('.cm-btmux-problems'));
+  const inText = () => page.waitForFunction(() => document.activeElement?.matches('.cm-content[data-native-editor]'));
+  await inList();
   await duoRows.nth(0).click();
   await pane.getByText('Ln 2, Col 1', { exact: true }).waitFor();
-  await page.waitForFunction(() => document.activeElement?.matches('[data-native-editor]'));
-  // It stays open after a jump; Mod-Shift-M closes it.
-  await problems.waitFor();
+  await inText();
+  // It stays open after a jump; a right click doesn't jump.
+  await duoRows.nth(1).click({ button: 'right' });
+  await page.waitForTimeout(300);
+  await pane.getByText('Ln 2, Col 1', { exact: true }).waitFor();
+
+  // Edits move rows at once, before the slow server publishes again.
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).focus();
+  const edited = Date.now();
+  await page.keyboard.press('ControlOrMeta+Home');
+  await page.keyboard.press('Enter');
+  await duoRows.filter({ hasText: 'main.duo:3:1bad word' }).waitFor();
+  assert(Date.now() - edited < 1500, 'the row waited for the server');
+  await page.keyboard.press('ControlOrMeta+z');
+  await until('the undo', async () => (await lines(page, paneId)) === 'lint\nbad clean FMT\n');
+
+  // Mod-Shift-M closes it from the text and from the list.
   await page.keyboard.press('ControlOrMeta+Shift+m');
   await problems.waitFor({ state: 'detached' });
+  await page.keyboard.press('ControlOrMeta+Shift+m');
+  await inList();
+  await page.keyboard.press('ControlOrMeta+Shift+m');
+  await problems.waitFor({ state: 'detached' });
+  await inText();
+
+  // Every row is reachable, and closing a file in the background drops its server's.
+  const many = join(dir, 'many.fake');
+  const solo = join(dir, 'x.solo');
+  writeFileSync(many, 'bad\n'.repeat(600));
+  writeFileSync(solo, 'lint\n');
+  for (const path of [many, solo])
+    await api(`/api/panes/${paneId}/open-editor`, 'POST', { path, line: 1, editor: 'native' });
+  await pane.locator('[aria-label^="Language server solo"][data-lsp-state="ready"]').waitFor();
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: duo, line: 1, editor: 'native' });
+  await until('main.duo again', async () => (await lines(page, paneId)) === 'lint\nbad clean FMT\n');
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).focus();
+  await page.keyboard.press('ControlOrMeta+Shift+m');
+  await inList();
+  const counts = async () => {
+    const m = /(\d+) errors?, (\d+) warnings?/.exec((await problems.locator('.cm-btmux-problems-counts').textContent()) ?? '');
+    return m ? { errors: Number(m[1]), warnings: Number(m[2]) } : { errors: 0, warnings: 0 };
+  };
+  await until('600 errors', async () => (await counts()).errors >= 601);
+  assert((await problems.locator('li[role=option]').count()) < 100, 'rows not in view were drawn');
+  const warnings = (await counts()).warnings;
+  await page.keyboard.press('End');
+  const selectedRow = problems.locator('li[aria-selected=true]');
+  await until('the last row', async () => /^W/.test((await selectedRow.textContent()) ?? ''));
+  await page.keyboard.press('Home');
+  await until('the first row', async () => /^E/.test((await selectedRow.textContent()) ?? ''));
+  await pane.locator('[title="Close x.solo (Delete)"]').dispatchEvent('click');
+  await until("the closed file's warning", async () => (await counts()).warnings === warnings - 1);
+  // Its server serves other open files, so this one's stay.
+  await pane.locator('[title="Close many.fake (Delete)"]').dispatchEvent('click');
+  await page.keyboard.press('Escape');
+  await problems.waitFor({ state: 'detached' });
+  await inText();
   console.log('PASS the problems list');
 
   // One server's failed completion leaves the other's suggestions.

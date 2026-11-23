@@ -51,9 +51,14 @@ Vim.defineEx('bdelete', 'bd', (cm, params) => hostOf(cm)?.close(bang(params)));
 Vim.defineEx('bnext', 'bn', (cm) => hostOf(cm)?.cycle(1));
 Vim.defineEx('bprevious', 'bp', (cm) => hostOf(cm)?.cycle(-1));
 // The problems list is the quickfix list.
-Vim.defineEx('copen', 'cope', (cm) => hostOf(cm)?.problems(true));
-Vim.defineEx('cclose', 'ccl', (cm) => hostOf(cm)?.problems(false));
-Vim.defineEx('cwindow', 'cw', (cm) => hostOf(cm)?.problems('auto'));
+// After the command line closes, which focuses the text again.
+const problems = (cm: CodeMirror, open: boolean | 'auto') => {
+  const host = hostOf(cm);
+  if (host) setTimeout(() => host.problems(open));
+};
+Vim.defineEx('copen', 'cope', (cm) => problems(cm, true));
+Vim.defineEx('cclose', 'ccl', (cm) => problems(cm, false));
+Vim.defineEx('cwindow', 'cw', (cm) => problems(cm, 'auto'));
 
 // `gq`: format with the language server when it formats ranges, else hard
 // wrap, as codemirror-vim's own `gq` does (Neovim sets 'formatexpr' to the

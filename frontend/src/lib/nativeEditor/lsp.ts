@@ -208,7 +208,7 @@ export function onDiagnostics(listener: () => void): () => void {
   return () => diagnosticListeners.delete(listener);
 }
 
-/** A diagnostic in any file, as its server last published it. */
+/** A diagnostic in any file. */
 export interface FileDiagnostic {
   path: string;
   /** Zero-based, in UTF-16 code units, as LSP counts. */
@@ -220,8 +220,27 @@ export interface FileDiagnostic {
   code?: string | number;
 }
 
-/** Every file's diagnostics from `servers` that haven't failed. */
-export function fileDiagnostics(servers: Iterable<number>): FileDiagnostic[] {
+/** A shown diagnostic, with what its server sent. */
+type LspDiagnostic = Diagnostic & { lsp?: ServerDiagnostic };
+
+const fromServer = (path: string, d: ServerDiagnostic, start: Position): FileDiagnostic => ({
+  path,
+  start,
+  // Unset is a hint, as `serverDiagnostics` shows it.
+  severity: d.severity ?? 4,
+  message: d.message,
+  source: d.source,
+  code: d.code,
+});
+
+/**
+ * Every file's diagnostics from `servers` that haven't failed. In files with
+ * a state (`stateOf`), at their positions mapped through edits since.
+ */
+export function fileDiagnostics(
+  servers: Iterable<number>,
+  stateOf: (path: string) => EditorState | null,
+): FileDiagnostic[] {
   const found: FileDiagnostic[] = [];
   for (const server of new Set(servers)) {
     const c = clients.get(server);
@@ -229,16 +248,15 @@ export function fileDiagnostics(servers: Iterable<number>): FileDiagnostic[] {
     for (const params of diagnostics.get(c)?.values() ?? []) {
       const path = pathOf(params.uri);
       if (!path) continue;
-      for (const d of params.diagnostics)
-        found.push({
-          path,
-          start: d.range.start,
-          // Unset is a hint, as `serverDiagnostics` shows it.
-          severity: d.severity ?? 4,
-          message: d.message,
-          source: d.source,
-          code: d.code,
-        });
+      const state = stateOf(path);
+      const mapped = state?.field(serverDiagnosticsField, false)?.get(c) as LspDiagnostic[] | undefined;
+      if (state && mapped) {
+        for (const d of mapped) {
+          if (!d.lsp) continue;
+          const line = state.doc.lineAt(d.from);
+          found.push(fromServer(path, d.lsp, { line: line.number - 1, character: d.from - line.from }));
+        }
+      } else for (const d of params.diagnostics) found.push(fromServer(path, d, d.range.start));
     }
   }
   return found;
@@ -330,7 +348,8 @@ function serverDiagnostics(plugin: LSPPlugin, params: PublishParams): Diagnostic
       .join(' ')
       .trim();
     const code = d.code;
-    return {
+    const shown: LspDiagnostic = {
+      lsp: d,
       from,
       to,
       severity,
@@ -340,6 +359,7 @@ function serverDiagnostics(plugin: LSPPlugin, params: PublishParams): Diagnostic
       renderMessage:
         (code === undefined || code === '') && !d.relatedInformation?.length ? undefined : () => renderMessage(d),
     };
+    return shown;
   });
 }
 

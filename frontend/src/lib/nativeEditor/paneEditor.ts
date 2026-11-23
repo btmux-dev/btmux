@@ -223,6 +223,7 @@ export class PaneEditor {
     });
     this.problemsList = new ProblemsList({
       servers: () => [...this.docs.values()].flatMap((d) => d.servers),
+      state: (path) => this.docs.get(path)?.state ?? null,
       root: () => workspaceFolder(findPaneState(useStore.getState(), this.paneId)),
       jump: (path, at) => this.jump(path, at),
       close: () => this.setProblems(false),
@@ -545,6 +546,7 @@ export class PaneEditor {
 
   /** Follow the pane's open files, showing `active`. */
   setFiles(files: string[], active: string | null) {
+    let changed = false;
     for (const [path, doc] of this.docs) {
       if (files.includes(path)) continue;
       if (doc.view) this.view.setState(this.placeholder());
@@ -552,6 +554,7 @@ export class PaneEditor {
       doc.close();
       this.docs.delete(path);
       this.conflicts.delete(path);
+      changed = true;
     }
     for (const path of files) {
       if (this.docs.has(path)) continue;
@@ -563,7 +566,10 @@ export class PaneEditor {
       this.docs.set(path, doc);
       doc.open();
       void this.loadLanguage(doc);
+      changed = true;
     }
+    // Their servers are what's listed.
+    if (changed) this.problemsList.refresh();
     if (active !== this.active || (active && !this.docs.get(active)?.view)) {
       const focused = this.view.hasFocus;
       const from = active !== this.active ? this.here() : null;
@@ -595,6 +601,8 @@ export class PaneEditor {
   }
 
   private docChanged(doc: Doc) {
+    // Loading tells its servers.
+    this.problemsList.refresh();
     if (doc.path === this.active && !doc.view && doc.state) {
       const focused = this.view.hasFocus;
       doc.attach(this.view);
@@ -670,6 +678,9 @@ export class PaneEditor {
 
   /** Show `path` at `at` (a problem's start), as a jump. */
   private jump(path: string, at: Position) {
+    // In the shown file, it is a jump even right after switching to it; to
+    // another, the switch records where it left.
+    if (path === this.active && this.docs.get(path)?.view) this.landed = false;
     void this.display(path).then((view) => {
       if (!view) return;
       const pos = offset(view.state.doc, at);
