@@ -8,6 +8,12 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Added
+
+- Markdown language servers in the native editor: rumdl (linting,
+  formatting, links, and headings) and harper-ls (spelling and grammar),
+  each used when installed.
+
 ## [0.0.219] - 2026-11-23
 
 ### Added

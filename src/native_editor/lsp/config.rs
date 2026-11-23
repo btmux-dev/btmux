@@ -133,6 +133,13 @@ const LANGUAGES: &[Builtin] = &[
         &[],
         &["vscode-html-language-server"],
     ),
+    (
+        "markdown",
+        "markdown",
+        &["md", "markdown", "mkd"],
+        &[".rumdl.toml", "rumdl.toml"],
+        &["rumdl", "harper-ls"],
+    ),
 ];
 
 /// Built-in languages' whole file names, matched ignoring case.
@@ -174,6 +181,8 @@ const SERVERS: &[(&str, &str, &[&str])] = &[
         "vscode-html-language-server",
         &["--stdio"],
     ),
+    ("rumdl", "rumdl", &["server"]),
+    ("harper-ls", "harper-ls", &["--stdio"]),
 ];
 
 /// Languages and servers, resolved from the config file and the built-ins.
@@ -402,6 +411,8 @@ mod tests {
         let builtin = LspConfig::resolve(&FileConfig::default(), "/bin/sh");
         let python = builtin.language(Path::new("/x/a.py")).unwrap();
         assert_eq!(python.language_servers, ["ty", "ruff"]);
+        let markdown = builtin.language(Path::new("/x/README.md")).unwrap();
+        assert_eq!(markdown.language_servers, ["rumdl", "harper-ls"]);
     }
 
     #[test]

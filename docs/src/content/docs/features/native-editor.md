@@ -191,7 +191,9 @@ btmux searches its own `PATH` and then your shell's `PATH`. Preconfigured
 servers include rust-analyzer, typescript-language-server, ty and ruff
 (Python), gopls, clangd, lua-language-server, nil (Nix), bash-language-server,
 taplo (TOML), just-lsp (justfiles), yaml-language-server, and
-vscode-langservers-extracted (JSON, CSS, HTML). The About dialog's Health tab
+vscode-langservers-extracted (JSON, CSS, HTML), and rumdl and harper-ls
+(Markdown: rumdl lints, formats, and follows links; harper-ls checks spelling
+and grammar). The About dialog's Health tab
 lists each configured server and whether btmux found it.
 
 A file can have several servers, as Python has ty for types, completions,
