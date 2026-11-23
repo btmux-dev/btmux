@@ -142,6 +142,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   const gitPreviewGenRef = useRef(0);
   const gitCommitPreviewGenRef = useRef(0);
   const filePreviewGenRef = useRef(0);
+  // Bumped on entering Git mode and on close: older replies must not reach the store.
+  const gitGenRef = useRef(0);
+  // A popup key typed while the status loads, opened once it's a repo.
+  const pendingGitPopupRef = useRef<GitPopupKind | null>(null);
   const [ignoreAllSpace, setIgnoreAllSpace] = useState(false);
   const [diffContext, setDiffContext] = useState(DEFAULT_DIFF_CONTEXT);
   const [browserReady, setBrowserReady] = useState(false);
@@ -206,6 +210,9 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
   // Nor does Git data: a reopen would show it, and take keys, until it reloads.
   useEffect(
     () => () => {
+      gitGenRef.current += 1;
+      gitPreviewGenRef.current += 1;
+      gitCommitPreviewGenRef.current += 1;
       const state = store.getState();
       state.setGitStatus(null);
       state.setGitLog(null);
@@ -214,6 +221,13 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     },
     [store],
   );
+
+  useEffect(() => {
+    if (!gitStatus) return;
+    const kind = pendingGitPopupRef.current;
+    pendingGitPopupRef.current = null;
+    if (kind && gitStatus.is_repo) setGitPopup(kind);
+  }, [gitStatus]);
 
   // Refocus after the popup's dialog has unmounted; focusing earlier hits the
   // still-modal dialog's inert backdrop and focus falls to <body>.
@@ -327,6 +341,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   const enterGitMode = useCallback(
     async (path: string) => {
+      const gen = ++gitGenRef.current;
       store.getState().setIsGitMode(true);
       store.getState().setGitView('status');
       store.getState().setGitFocusedIndex(0);
@@ -337,16 +352,20 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
       store.getState().setGitCommitDiff(null);
       try {
         const resp = await fileSend('git_status', { path, include_diff_stats: true });
+        if (gen !== gitGenRef.current) return;
         const status = resp.payload as unknown as GitStatusResult;
         store.getState().setGitStatus(status);
         if (status.is_repo) {
           const logResp = await fileSend('git_log', { path, max_count: 200 });
+          if (gen !== gitGenRef.current) return;
           store.getState().setGitLog(logResp.payload as unknown as GitLogResult);
         } else {
           store.getState().setGitLog({ commits: [], truncated: false });
         }
       } catch (e) {
+        if (gen !== gitGenRef.current) return;
         console.error('git mode load failed:', e);
+        pendingGitPopupRef.current = null;
         store.getState().setIsGitMode(false);
       }
     },
@@ -401,9 +420,11 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   const gitStage = useCallback(
     async (paths: string | string[]) => {
+      const gen = gitGenRef.current;
       try {
         for (const path of typeof paths === 'string' ? [paths] : paths) {
           const resp = await fileSend('git_stage', { path, cwd: currentPath });
+          if (gen !== gitGenRef.current) return;
           const payload = resp.payload as { status: GitStatusResult };
           store.getState().setGitStatus(payload.status);
         }
@@ -416,8 +437,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   const gitUnstage = useCallback(
     async (path: string) => {
+      const gen = gitGenRef.current;
       try {
         const resp = await fileSend('git_unstage', { path, cwd: currentPath });
+        if (gen !== gitGenRef.current) return;
         const payload = resp.payload as { status: GitStatusResult };
         store.getState().setGitStatus(payload.status);
       } catch (e) {
@@ -429,8 +452,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   const gitRunAll = useCallback(
     async (kind: 'stage_all' | 'unstage_all') => {
+      const gen = gitGenRef.current;
       try {
         const resp = await fileSend('git_run', { cwd: currentPath, op: { kind } satisfies GitOp });
+        if (gen !== gitGenRef.current) return;
         store.getState().setGitStatus((resp.payload as { status: GitStatusResult }).status);
       } catch (e) {
         console.error(`${kind} failed:`, e);
@@ -443,11 +468,13 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
     async (target: PendingDiscard) => {
       const deleted = 'path' in target && target.untracked ? target.path : null;
       const type = deleted !== null ? 'git_delete_untracked' : 'git_discard';
+      const gen = gitGenRef.current;
       try {
         const resp = await fileSend(type, {
           ...(deleted !== null ? { path: deleted } : { paths: 'paths' in target ? target.paths : [target.path] }),
           cwd: currentPath,
         });
+        if (gen !== gitGenRef.current) return;
         const payload = resp.payload as { status: GitStatusResult };
         store.getState().setGitStatus(payload.status);
         if (deleted !== null && store.getState().gitDiff?.path === deleted) store.getState().setGitDiff(null);
@@ -461,12 +488,14 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   // Apply the status returned by a history-changing operation and reload the log.
   const applyGitChange = useCallback(
-    async (status: GitStatusResult) => {
+    async (status: GitStatusResult, gen: number) => {
+      if (gen !== gitGenRef.current) return;
       store.getState().setGitStatus(status);
       store.getState().setGitDiff(null);
       store.getState().setGitCommitDiff(null);
       try {
         const logResp = await fileSend('git_log', { path: currentPath, max_count: 200 });
+        if (gen !== gitGenRef.current) return;
         store.getState().setGitLog(logResp.payload as unknown as GitLogResult);
       } catch (e) {
         console.error('git_log refresh failed:', e);
@@ -477,9 +506,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   const gitCommit = useCallback(
     async (subject: string, body: string) => {
+      const gen = gitGenRef.current;
       try {
         const resp = await fileSend('git_commit', { subject, body, cwd: currentPath });
-        await applyGitChange((resp.payload as { status: GitStatusResult }).status);
+        await applyGitChange((resp.payload as { status: GitStatusResult }).status, gen);
       } catch (e) {
         console.error('git_commit failed:', e);
         throw e;
@@ -498,9 +528,10 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   const gitRun = useCallback(
     async (op: GitOp) => {
+      const gen = gitGenRef.current;
       const resp = await fileSend('git_run', { cwd: currentPath, op });
       const payload = resp.payload as { status: GitStatusResult; output: string };
-      await applyGitChange(payload.status);
+      await applyGitChange(payload.status, gen);
       return payload.output;
     },
     [fileSend, currentPath, applyGitChange],
@@ -508,10 +539,11 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   const gitRunWorktree = useCallback(
     async (op: WorktreeOp) => {
+      const gen = gitGenRef.current;
       const resp = await fileSend('git_worktree', { cwd: currentPath, session_id: sessionId, op });
       // No status when the op visits the worktree, which closes the browser.
       const payload = resp.payload as { status: GitStatusResult | null; output: string };
-      if (payload.status) await applyGitChange(payload.status);
+      if (payload.status) await applyGitChange(payload.status, gen);
       return payload.output;
     },
     [fileSend, currentPath, sessionId, applyGitChange],
@@ -813,6 +845,15 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
 
   // Keyboard handler — only active while this overlay (or a child) has focus.
   useEffect(() => {
+    // Until the status loads, a popup key waits for it to confirm a repo.
+    const openGitPopupKey = (e: KeyboardEvent) => {
+      const kind = GIT_POPUP_KEYS[e.key];
+      if (!kind || e.ctrlKey || e.metaKey || e.altKey || (gitStatus && !gitStatus.is_repo)) return false;
+      e.preventDefault();
+      if (gitStatus) setGitPopup(kind);
+      else pendingGitPopupRef.current = kind;
+      return true;
+    };
     const handler = (e: KeyboardEvent) => {
       // A fresh press past an end wraps; a held key stops there.
       const step = (index: number, delta: number, count: number) => stepIndex(index, delta, count, !e.repeat);
@@ -933,11 +974,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
             if (!e.ctrlKey && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
           }
 
-          if (gitStatus?.is_repo && !e.ctrlKey && !e.metaKey && !e.altKey && GIT_POPUP_KEYS[e.key]) {
-            e.preventDefault();
-            setGitPopup(GIT_POPUP_KEYS[e.key]!);
-            return;
-          }
+          if (openGitPopupKey(e)) return;
 
           if (e.ctrlKey && e.key === 'd') {
             e.preventDefault();
@@ -1021,11 +1058,7 @@ export function FileBrowserOverlay({ cwd, sessionId, paneId, send, onClose }: Fi
           if (!e.ctrlKey && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
         }
 
-        if (gitStatus?.is_repo && !e.ctrlKey && !e.metaKey && !e.altKey && GIT_POPUP_KEYS[e.key]) {
-          e.preventDefault();
-          setGitPopup(GIT_POPUP_KEYS[e.key]!);
-          return;
-        }
+        if (openGitPopupKey(e)) return;
 
         if (e.ctrlKey && e.key === 'd') {
           e.preventDefault();
