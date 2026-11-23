@@ -876,10 +876,21 @@ try {
   await until('the last row', async () => /^W/.test((await selectedRow.textContent()) ?? ''));
   await page.keyboard.press('Home');
   await until('the first row', async () => /^E/.test((await selectedRow.textContent()) ?? ''));
+  // A hidden file's rows are its server's latest.
+  writeFileSync(solo, 'lint lint\n');
+  await until("the hidden file's new warning", async () => (await counts()).warnings === warnings + 1);
   await pane.locator('[title="Close x.solo (Delete)"]').dispatchEvent('click');
   await until("the closed file's warning", async () => (await counts()).warnings === warnings - 1);
   // Its server serves other open files, so this one's stay.
   await pane.locator('[title="Close many.fake (Delete)"]').dispatchEvent('click');
+  // The editor's chords that don't need the text work from the list.
+  await inList();
+  await page.keyboard.press('ControlOrMeta+p');
+  const picker = pane.locator('.cm-btmux-picker');
+  await picker.waitFor();
+  await page.keyboard.press('Escape');
+  await picker.waitFor({ state: 'detached' });
+  await problems.locator('ul').focus();
   await page.keyboard.press('Escape');
   await problems.waitFor({ state: 'detached' });
   await inText();

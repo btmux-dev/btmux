@@ -10,7 +10,7 @@ import type { Position } from './lspText';
 export interface ProblemsHost {
   /** Servers whose diagnostics are listed. */
   servers(): number[];
-  /** An open file's state, whose diagnostics follow its edits. */
+  /** The shown file's state, whose diagnostics follow its edits. */
   state(path: string): EditorState | null;
   /** The folder paths are shown relative to. */
   root(): string | null;
@@ -18,7 +18,11 @@ export interface ProblemsHost {
   jump(path: string, at: Position): void;
   /** Esc, Mod-Shift-M, or the close button. */
   close(): void;
+  /** Run the editor's chords that don't need the text (quick open); true if one ran. */
+  key(event: KeyboardEvent): boolean;
 }
+
+const slashes = (path: string) => path.replace(/\\/g, '/');
 
 /** Rows drawn beyond each edge of the visible ones. */
 const OVERSCAN = 10;
@@ -77,6 +81,11 @@ export class ProblemsList {
     else this.focusNext = true;
   }
 
+  /** Closed: a list that never mounted doesn't take focus later. */
+  hidden() {
+    this.focusNext = false;
+  }
+
   /** List again: the open files, and so the servers, changed. */
   refresh() {
     this.current?.refresh();
@@ -115,6 +124,9 @@ export class ProblemsList {
     list.tabIndex = 0;
     list.setAttribute('role', 'listbox');
     list.setAttribute('aria-label', 'Problems');
+    // Inline, as the theme's styles may mount after the first draw, which reads the height.
+    list.style.maxHeight = '12.5em';
+    list.style.overflowY = 'auto';
     // Editor input, so the keybinding hook lets Cmd chords (Mod-Shift-M) through.
     list.dataset.nativeEditor = '';
     dom.append(header, list);
@@ -138,7 +150,8 @@ export class ProblemsList {
       mark.className = 'cm-btmux-problem-severity';
       mark.textContent = letter;
       mark.title = severity;
-      const path = prefix && d.path.startsWith(prefix) ? d.path.slice(prefix.length) : d.path;
+      const full = slashes(d.path);
+      const path = prefix && full.startsWith(prefix) ? full.slice(prefix.length) : d.path;
       const location = document.createElement('span');
       location.className = 'cm-btmux-problem-location';
       location.textContent = `${path}:${d.start.line + 1}:${d.start.character + 1}`;
@@ -161,6 +174,14 @@ export class ProblemsList {
     };
 
     const height = () => rowPx || FALLBACK_ROW_PX;
+    // Stand in for the rows above and below the drawn ones.
+    const spacer = (px: number) => {
+      const li = document.createElement('li');
+      li.setAttribute('role', 'presentation');
+      li.className = 'cm-btmux-problems-spacer';
+      li.style.height = `${px}px`;
+      return li;
+    };
     const pageRows = () => Math.max(1, Math.floor(list.clientHeight / height()));
 
     /** Only the rows in view (and a few more) are in the DOM; scrolled to `scroll` if given. */
@@ -170,7 +191,6 @@ export class ProblemsList {
         const empty = document.createElement('li');
         empty.className = 'cm-btmux-problems-empty';
         empty.textContent = 'No problems';
-        list.style.paddingTop = list.style.paddingBottom = '';
         list.replaceChildren(empty);
         list.setAttribute('aria-activedescendant', '');
         return;
@@ -182,15 +202,13 @@ export class ProblemsList {
         rowPx = probe.offsetHeight;
       }
       const px = height();
-      const visible = list.clientHeight || px * 10;
+      const visible = Math.min(list.clientHeight || px * 10, window.innerHeight);
       const top = Math.max(0, Math.min(scroll ?? list.scrollTop, n * px - visible));
       const start = Math.max(0, Math.floor(top / px) - OVERSCAN);
       const end = Math.min(n, Math.ceil((top + visible) / px) + OVERSCAN);
-      list.style.paddingTop = `${start * px}px`;
-      list.style.paddingBottom = `${(n - end) * px}px`;
       const rows: HTMLElement[] = [];
       for (let i = start; i < end; i++) rows.push(row(i));
-      list.replaceChildren(...rows);
+      list.replaceChildren(spacer(start * px), ...rows, spacer((n - end) * px));
       // Set once there is room for it.
       if (scroll !== undefined) list.scrollTop = top;
       list.setAttribute('aria-activedescendant', `${id}-${index}`);
@@ -218,7 +236,7 @@ export class ProblemsList {
         ...(infos ? [`${infos} info`] : []),
       ].join(', ');
       const root = this.host.root();
-      prefix = root ? `${root.replace(/\/+$/, '')}/` : null;
+      prefix = root ? `${slashes(root).replace(/\/+$/, '')}/` : null;
       // The same problem again, the one nearest where it was if there are several.
       let kept = -1;
       if (this.selected !== null)
@@ -262,6 +280,11 @@ export class ProblemsList {
         this.host.close();
         return;
       }
+      if ((e.metaKey || e.ctrlKey || e.altKey) && this.host.key(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       if (e.metaKey || e.altKey) return;
       // Ctrl-N/Ctrl-P as in vim's menus, Ctrl-J/Ctrl-K as in fzf.
       const ctrl = e.ctrlKey && !e.shiftKey ? e.key.toLowerCase() : '';
@@ -288,7 +311,6 @@ export class ProblemsList {
     return {
       dom,
       mount: () => {
-        // Once the theme's styles are mounted, which bound the list's height.
         schedule();
         stopDiagnostics = onDiagnostics(schedule);
         stopStatus = editorConnection.onLspStatus(schedule);
@@ -334,8 +356,6 @@ const theme = EditorView.theme({
     margin: 0,
     padding: 0,
     overflowX: 'hidden',
-    overflowY: 'auto',
-    maxHeight: '12.5em',
     outline: 'none',
   },
   // One line each, so rows are one height (`draw`).
@@ -364,5 +384,6 @@ const theme = EditorView.theme({
   },
   '.cm-btmux-problem-message': { flex: '1 1 0', minWidth: '10ch', overflow: 'hidden', textOverflow: 'ellipsis' },
   '.cm-btmux-problem-source': { opacity: 0.6, flex: 'none' },
+  '.cm-btmux-problems li.cm-btmux-problems-spacer': { padding: 0, cursor: 'default' },
   '.cm-btmux-problems-empty': { opacity: 0.6, cursor: 'default', padding: '1px 12px' },
 });

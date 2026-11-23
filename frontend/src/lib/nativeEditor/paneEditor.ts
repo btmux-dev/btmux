@@ -223,10 +223,15 @@ export class PaneEditor {
     });
     this.problemsList = new ProblemsList({
       servers: () => [...this.docs.values()].flatMap((d) => d.servers),
-      state: (path) => this.docs.get(path)?.state ?? null,
+      // Hidden files' states don't follow their servers, which have their latest.
+      state: (path) => {
+        const doc = this.docs.get(path);
+        return doc?.view ? doc.state : null;
+      },
       root: () => workspaceFolder(findPaneState(useStore.getState(), this.paneId)),
       jump: (path, at) => this.jump(path, at),
       close: () => this.setProblems(false),
+      key: (e) => runScopeHandlers(this.view, e, EARLY_SCOPE),
     });
     this.view = new EditorView({ parent, state: this.placeholder() });
     // Drop a server's features once it fails, and add them back if it recovers.
@@ -668,6 +673,7 @@ export class PaneEditor {
   /** Show or hide the problems list, focusing it when shown. */
   setProblems(open: boolean): boolean {
     if (open) this.problemsList.focus();
+    else this.problemsList.hidden();
     if (open === this.problemsOpen) return true;
     this.problemsOpen = open;
     const extension = open ? this.problemsList.extension : [];
