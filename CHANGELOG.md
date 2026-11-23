@@ -8,6 +8,13 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Added
+
+- Markdown language servers in the native editor: rumdl (linting,
+  formatting, links, and headings) and harper-ls (spelling and grammar),
+  each used when installed. rumdl ignores its config files, which can run
+  commands. ([#198](https://github.com/btmux-dev/btmux/pull/198))
+
 ## [0.0.219] - 2026-11-23
 
 ### Added

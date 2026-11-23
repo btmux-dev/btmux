@@ -448,6 +448,18 @@ fn toml_json(value: &Option<toml::Value>) -> Value {
 }
 
 /// `section` (dotted) of the server's settings, for `workspace/configuration`.
+/// A server's workspace folders: its root, or none for home or above.
+fn workspace_folders(root: &std::path::Path) -> Value {
+    if watch::too_broad(root) {
+        return Value::Null;
+    }
+    let name = root
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    json!([{ "uri": config::uri(root), "name": name }])
+}
+
 fn setting(settings: &Value, section: Option<&str>) -> Value {
     let Some(section) = section.filter(|s| !s.is_empty()) else {
         return settings.clone();
@@ -652,12 +664,15 @@ impl Inner {
             move |message| super::hub().lsp_receive(id, generation, message),
             move |exit| super::hub().lsp_exited(id, generation, exit),
         );
-        let root = config::uri(&server.root);
-        let folder = server
-            .root
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        // No folder for home or above, so servers don't scan it.
+        let (root, path) = if watch::too_broad(&server.root) {
+            (Value::Null, Value::Null)
+        } else {
+            (
+                json!(config::uri(&server.root)),
+                json!(crate::fs_ops::client_path(&server.root)),
+            )
+        };
         let _ = handle.tx.send(json!({
             "jsonrpc": "2.0",
             "id": INITIALIZE,
@@ -666,8 +681,8 @@ impl Inner {
                 "processId": std::process::id(),
                 "clientInfo": { "name": "btmux", "version": env!("CARGO_PKG_VERSION") },
                 "rootUri": root,
-                "rootPath": crate::fs_ops::client_path(&server.root),
-                "workspaceFolders": [{ "uri": root, "name": folder }],
+                "rootPath": path,
+                "workspaceFolders": workspace_folders(&server.root),
                 "initializationOptions": toml_json(&server.config.initialization_options),
                 "capabilities": client_capabilities(),
             },
@@ -1442,17 +1457,7 @@ impl Inner {
                     .collect();
                 response(rid, Value::Array(values))
             }
-            "workspace/workspaceFolders" => {
-                let name = server
-                    .root
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                response(
-                    rid,
-                    json!([{ "uri": config::uri(&server.root), "name": name }]),
-                )
-            }
+            "workspace/workspaceFolders" => response(rid, workspace_folders(&server.root)),
             "client/registerCapability" => {
                 for registration in params["registrations"].as_array().into_iter().flatten() {
                     if registration["method"] != "workspace/didChangeWatchedFiles" {
@@ -1641,6 +1646,15 @@ impl Inner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_workspace_folder_at_home_or_above() {
+        let home = dirs::home_dir().unwrap();
+        assert!(workspace_folders(&home).is_null());
+        assert!(workspace_folders(std::path::Path::new("/")).is_null());
+        let project = home.join("project");
+        assert_eq!(workspace_folders(&project)[0]["name"], "project");
+    }
 
     #[test]
     fn settings_by_section() {

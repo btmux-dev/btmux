@@ -133,6 +133,14 @@ const LANGUAGES: &[Builtin] = &[
         &[],
         &["vscode-html-language-server"],
     ),
+    (
+        "markdown",
+        "markdown",
+        &["md", "markdown", "mkd"],
+        // The worktree, so links resolve across it and Harper finds its dictionary.
+        &[],
+        &["rumdl", "harper-ls"],
+    ),
 ];
 
 /// Built-in languages' whole file names, matched ignoring case.
@@ -174,7 +182,29 @@ const SERVERS: &[(&str, &str, &[&str])] = &[
         "vscode-html-language-server",
         &["--stdio"],
     ),
+    ("rumdl", "rumdl", &["server"]),
+    ("harper-ls", "harper-ls", &["--stdio"]),
 ];
+
+/// (server, settings, initialization options) for built-in servers, as TOML.
+const SERVER_OPTIONS: &[(&str, &str, &str)] = &[
+    // Repo configs can enable code-block tools, which run commands; ignore them.
+    (
+        "rumdl",
+        "",
+        "configurationPreference = \"editorOnly\"\nsettings = {}",
+    ),
+    // Harper rejects settings without its section.
+    ("harper-ls", "harper-ls = {}", ""),
+];
+
+fn toml_table(source: &str) -> Option<toml::Value> {
+    (!source.is_empty()).then(|| toml::from_str(source).expect("built-in server options"))
+}
+
+fn options(name: &str) -> Option<&'static (&'static str, &'static str, &'static str)> {
+    SERVER_OPTIONS.iter().find(|(n, _, _)| *n == name)
+}
 
 /// Languages and servers, resolved from the config file and the built-ins.
 #[derive(Debug, Default)]
@@ -195,6 +225,8 @@ impl LspConfig {
                     LanguageServerConfig {
                         command: command.to_string(),
                         args: args.iter().map(|a| a.to_string()).collect(),
+                        config: options(name).and_then(|(_, c, _)| toml_table(c)),
+                        initialization_options: options(name).and_then(|(_, _, i)| toml_table(i)),
                         ..Default::default()
                     },
                 )
@@ -402,6 +434,16 @@ mod tests {
         let builtin = LspConfig::resolve(&FileConfig::default(), "/bin/sh");
         let python = builtin.language(Path::new("/x/a.py")).unwrap();
         assert_eq!(python.language_servers, ["ty", "ruff"]);
+        let markdown = builtin.language(Path::new("/x/README.md")).unwrap();
+        assert_eq!(markdown.language_servers, ["rumdl", "harper-ls"]);
+        assert!(markdown.roots.is_empty());
+        let rumdl = &builtin.servers["rumdl"];
+        assert_eq!(
+            rumdl.initialization_options.as_ref().unwrap()["configurationPreference"].as_str(),
+            Some("editorOnly")
+        );
+        assert!(rumdl.config.is_none());
+        assert!(builtin.servers["harper-ls"].config.as_ref().unwrap()["harper-ls"].is_table());
     }
 
     #[test]

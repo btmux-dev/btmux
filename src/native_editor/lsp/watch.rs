@@ -242,8 +242,8 @@ impl Watching {
     }
 }
 
-/// Home, or above it: no project, and far too much to watch.
-fn too_broad(root: &Path) -> bool {
+/// Home, or above it: no project, and far too much to watch or scan.
+pub(super) fn too_broad(root: &Path) -> bool {
     root.parent().is_none() || dirs::home_dir().is_some_and(|home| home.starts_with(root))
 }
 

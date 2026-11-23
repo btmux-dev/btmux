@@ -262,9 +262,10 @@ Every option with its default, as `btmux generate-config` prints it. Uncomment a
 
 # Language servers for the native editor. Built in: rust-analyzer,
 # typescript-language-server, ty and ruff, gopls, clangd, lua-language-server, nil,
-# bash-language-server, taplo, just-lsp, yaml-language-server, and the
-# vscode-langservers-extracted servers (JSON, CSS, HTML), each used when found
-# on PATH. A table of the same name replaces a built-in one.
+# bash-language-server, taplo, just-lsp, yaml-language-server, the
+# vscode-langservers-extracted servers (JSON, CSS, HTML), and rumdl and harper-ls
+# (Markdown), each used when found on PATH. A table of the same name replaces a
+# built-in one.
 # [native-editor]
 # format-on-save = false
 # vim = false   # Vim keybindings; :w saves, :q hides, a double Esc hides only from normal mode
