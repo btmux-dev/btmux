@@ -327,7 +327,7 @@ try {
   await row('h').getByText('Hover (+git)').waitFor();
   assert.equal(await row('s').count(), 0);
   await page.keyboard.press('x');
-  await pane.locator('.cm-panel-lint').waitFor();
+  await pane.locator('.cm-btmux-problems').waitFor();
   await content.click();
   // ,h is a mapping and a prefix: it runs once no more keys come.
   await page.keyboard.type('ggw,h');

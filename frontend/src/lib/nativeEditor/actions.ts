@@ -1,7 +1,7 @@
 // The native editor's named commands: palette actions, `[keys]` and vim mappings.
 import type { EditorView } from '@codemirror/view';
 import { foldAll, unfoldAll } from '@codemirror/language';
-import { forEachDiagnostic, openLintPanel } from '@codemirror/lint';
+import { forEachDiagnostic } from '@codemirror/lint';
 import { useStore } from '../../state/store';
 import {
   canFormatRange,
@@ -72,7 +72,6 @@ export const editorCommands: Record<string, (view: EditorView) => boolean | Prom
     if (!showDiagnostics(view)) useStore.getState().showToast('No problems on this line', 'info');
     return true;
   },
-  'editor-problems': openLintPanel,
   'editor-fold-all': foldAll,
   'editor-unfold-all': unfoldAll,
   ...gitCommands,

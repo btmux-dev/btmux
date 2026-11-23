@@ -200,6 +200,50 @@ function reveal(uri: string, at: Position | null) {
 /** The latest diagnostics per client and URI. */
 const diagnostics = new Map<LSPClient, Map<string, PublishParams>>();
 
+const diagnosticListeners = new Set<() => void>();
+
+/** Calls `listener` when any server publishes diagnostics; returns the unsubscribe function. */
+export function onDiagnostics(listener: () => void): () => void {
+  diagnosticListeners.add(listener);
+  return () => diagnosticListeners.delete(listener);
+}
+
+/** A diagnostic in any file, as its server last published it. */
+export interface FileDiagnostic {
+  path: string;
+  /** Zero-based, in UTF-16 code units, as LSP counts. */
+  start: Position;
+  /** 1 error, 2 warning, 3 info, 4 hint. */
+  severity: number;
+  message: string;
+  source?: string;
+  code?: string | number;
+}
+
+/** Every file's diagnostics from `servers` that haven't failed. */
+export function fileDiagnostics(servers: Iterable<number>): FileDiagnostic[] {
+  const found: FileDiagnostic[] = [];
+  for (const server of new Set(servers)) {
+    const c = clients.get(server);
+    if (!c || serverFailed(server)) continue;
+    for (const params of diagnostics.get(c)?.values() ?? []) {
+      const path = pathOf(params.uri);
+      if (!path) continue;
+      for (const d of params.diagnostics)
+        found.push({
+          path,
+          start: d.range.start,
+          // Unset is a hint, as `serverDiagnostics` shows it.
+          severity: d.severity ?? 4,
+          message: d.message,
+          source: d.source,
+          code: d.code,
+        });
+    }
+  }
+  return found;
+}
+
 const setServerDiagnostics = StateEffect.define<{ client: LSPClient; list: Diagnostic[] }>();
 /** Drop the diagnostics of servers not in the set. */
 const keepServerDiagnostics = StateEffect.define<ReadonlySet<LSPClient>>();
@@ -543,6 +587,7 @@ function client(server: number): LSPClient {
         byUri.set(params.uri, params);
         for (const file of (c.workspace as BtmuxWorkspace).files)
           if (file.uri === params.uri) showDiagnostics(file.view, c);
+        for (const listener of diagnosticListeners) listener();
         return true;
       },
       'window/showMessage': (_, params: { type: number; message: string }) => {

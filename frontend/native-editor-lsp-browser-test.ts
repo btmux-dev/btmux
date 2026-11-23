@@ -807,6 +807,27 @@ try {
   assert.equal(await error.textContent(), 'bad');
   console.log("PASS a server's diagnostics stay on their text while another publishes");
 
+  // The problems list: every file's, most severe first, whatever the position.
+  await page.keyboard.press('ControlOrMeta+Shift+m');
+  const problems = pane.locator('.cm-btmux-problems');
+  const duoRows = problems.locator('li[role=option]', { hasText: 'main.duo' });
+  await until('both problems', async () => (await duoRows.count()) === 2);
+  assert.match((await duoRows.nth(0).textContent()) ?? '', /^E.*main\.duo:2:1bad word/);
+  assert.match((await duoRows.nth(1).textContent()) ?? '', /^W.*main\.duo:1:1second lint/);
+  const severities = await problems
+    .locator('li[role=option]')
+    .evaluateAll((rows) => rows.map((r) => (r.className.includes('error') ? 1 : r.className.includes('warning') ? 2 : 3)));
+  assert.deepEqual(severities, [...severities].sort((a, b) => a - b));
+  await page.waitForFunction(() => document.activeElement?.closest('.cm-btmux-problems'));
+  await duoRows.nth(0).click();
+  await pane.getByText('Ln 2, Col 1', { exact: true }).waitFor();
+  await page.waitForFunction(() => document.activeElement?.matches('[data-native-editor]'));
+  // It stays open after a jump; Mod-Shift-M closes it.
+  await problems.waitFor();
+  await page.keyboard.press('ControlOrMeta+Shift+m');
+  await problems.waitFor({ state: 'detached' });
+  console.log('PASS the problems list');
+
   // One server's failed completion leaves the other's suggestions.
   await page.keyboard.press('ControlOrMeta+End');
   await page.keyboard.type(' fa');

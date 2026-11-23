@@ -8,6 +8,12 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Added
+
+- A problems list in the native editor: every file's diagnostics, errors
+  first. `Mod-Shift-M` shows or hides it, as do `:copen` and `:cclose` in Vim
+  mode.
+
 ## [0.0.219] - 2026-11-23
 
 ### Added
