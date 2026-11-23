@@ -8,6 +8,8 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+## [0.0.219] - 2026-11-23
+
 ### Added
 
 - Keys for the native editor's next and previous file: `Alt-PageDown` and
