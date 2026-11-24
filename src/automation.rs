@@ -314,6 +314,21 @@ pub async fn send_prompt(
     wait: bool,
     timeout: Duration,
 ) -> Result<Option<PromptOutcome>, Error> {
+    send_prompt_to(state, pane_id, None, prompt, wait, timeout).await
+}
+
+/// `send_prompt`, refused unless the pane's agent is `agent_id`, when given:
+/// a caller that chose an agent must not reach one that replaced it.
+pub async fn send_prompt_to(
+    state: &AppState,
+    pane_id: Uuid,
+    agent_id: Option<u64>,
+    prompt: &str,
+    wait: bool,
+    timeout: Duration,
+) -> Result<Option<PromptOutcome>, Error> {
+    let replaced =
+        |mgr: &SessionManager| agent_id.is_some_and(|id| mgr.agent_id(pane_id) != Some(id));
     let lock = state
         .read()
         .await
@@ -333,6 +348,11 @@ pub async fn send_prompt(
         let status = mgr.agent_status(pane_id).ok_or_else(|| {
             Error::Conflict("no agent detected in this pane; send keys instead".into())
         })?;
+        if replaced(&mgr) {
+            return Err(Error::Conflict(
+                "the agent has exited or was replaced".into(),
+            ));
+        }
         // Typed text would answer a pending dialog.
         if let Some(conflict) = mgr.prompt_conflict(pane_id, std::time::Instant::now()) {
             return Err(Error::Conflict(conflict.into()));
@@ -384,7 +404,7 @@ pub async fn send_prompt(
     {
         // A dialog drawn since the check would take the Enter as its answer.
         let mgr = state.read().await;
-        let conflict = if mgr.agent_incarnation(pane_id) != incarnation {
+        let conflict = if mgr.agent_incarnation(pane_id) != incarnation || replaced(&mgr) {
             Some("the agent was replaced")
         } else {
             mgr.prompt_conflict(pane_id, std::time::Instant::now())
@@ -679,6 +699,27 @@ mod tests {
             .ok()
             .unwrap();
         assert!(screen.contains("btmux-42"), "{screen}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn send_prompt_to_refuses_another_agent() {
+        let (state, pane_id) = pane().await;
+        set(&state, pane_id, AgentState::Idle).await;
+        let id = state.read().await.agent_id(pane_id).unwrap();
+        let send = |agent| {
+            send_prompt_to(
+                &state,
+                pane_id,
+                Some(agent),
+                "echo btmux-sent",
+                false,
+                DEFAULT_WAIT,
+            )
+        };
+        let error = send(id + 1).await;
+        assert!(matches!(error, Err(Error::Conflict(message)) if message.contains("replaced")));
+        assert!(send(id).await.ok().unwrap().is_none());
     }
 
     /// Makes the pane's shell a detected `agent` whose screen the detector reads.

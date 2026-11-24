@@ -38,6 +38,7 @@ import { KeyHint } from './KeyHint';
 import { usePressHint } from '../hooks/usePressHint';
 import { chromePalette } from '../lib/chrome-colors';
 import { AgentUsageView } from './AgentUsageView';
+import { AgentBroadcastDialog, type BroadcastTarget } from './AgentBroadcastDialog';
 import { cycleTabs, enterTabPanel } from '../lib/tabKeys';
 import { NARROW_QUERY } from '../lib/touch';
 
@@ -336,6 +337,18 @@ export function AgentGrid({ send }: Props) {
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [killing, setKilling] = useState<AgentPaneEntry | null>(null);
+  const [broadcasting, setBroadcasting] = useState(false);
+  const broadcastTargets = useMemo<BroadcastTarget[]>(
+    () =>
+      ordered.map((entry) => ({
+        paneId: entry.paneId,
+        agentId: entry.agentId,
+        label: paneLabel(entry),
+        place: `${entry.sessionName} › ${entry.windowName}`,
+        status: entry.agentStatus,
+      })),
+    [ordered],
+  );
   const dialogRef = useRef<HTMLDialogElement>(null);
   // A synthetic Tab moves no focus, so hints must reach the dialog's handler.
   const focusDialog = useCallback(() => dialogRef.current?.focus(), []);
@@ -410,6 +423,11 @@ export function AgentGrid({ send }: Props) {
     requestAnimationFrame(() => dialogRef.current?.focus());
   };
 
+  const closeBroadcast = () => {
+    setBroadcasting(false);
+    requestAnimationFrame(() => dialogRef.current?.focus());
+  };
+
   const toggleShown = (entry: AgentPaneEntry) => {
     const next = new Set(shownIds);
     if (!next.delete(entry.paneId)) next.add(entry.paneId);
@@ -443,6 +461,11 @@ export function AgentGrid({ send }: Props) {
     }
     if (TAB_KEYS.has(e.key) && (e.target as Element).closest('[role="tablist"]')) return;
     if (n === 0 || !selected) return;
+    if (e.key === 'b' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      setBroadcasting(true);
+      return;
+    }
     if (e.key === 'Enter' || e.key === ' ') {
       const target = e.target as Element;
       // Space on a focused row shows or hides it; the row's button would go to the pane.
@@ -822,6 +845,7 @@ export function AgentGrid({ send }: Props) {
           }
         }}
       />
+      <AgentBroadcastDialog isOpen={open && broadcasting} targets={broadcastTargets} onClose={closeBroadcast} />
       <Layout
         header={
           <>
@@ -912,6 +936,7 @@ const HINTS: [string[], string][] = [
   [['enter'], 'go to pane'],
   [['space'], 'show/hide'],
   [['o'], 'only'],
+  [['b'], 'broadcast prompt'],
   [['r'], 'reset agent state'],
   [['x'], 'kill agent session'],
   [['esc'], 'close'],
