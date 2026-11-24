@@ -8,6 +8,8 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+## [0.0.222] - 2026-11-24
+
 ### Added
 
 - Agent view's `b` sends one prompt to several agents at once. ([#203](https://github.com/btmux-dev/btmux/pull/203))
