@@ -240,11 +240,11 @@ formatter, set `config = { nil = { formatting = { command = ["alejandra"] } } }`
 under `[language-server.nil]`, along with `command = "nil"`. Files in a
 [sandboxed session](sandbox.md)'s mounts get their servers inside the VM.
 
-rumdl runs with its default rules and ignores its config files, the
-repository's (`.rumdl.toml`, `.markdownlint.json`, …) and your own, since
-they can name commands rumdl runs on code blocks when a file opens. If you
-open only repositories you trust, replace it with a table that lets rumdl
-read them:
+rumdl runs with its default rules, minus the line length limit (MD013),
+and ignores its config files, the repository's (`.rumdl.toml`,
+`.markdownlint.json`, …) and your own, since they can name commands rumdl
+runs on code blocks when a file opens. If you open only repositories you
+trust, replace it with a table that lets rumdl read them:
 
 ```toml
 [language-server.rumdl]

@@ -17,6 +17,11 @@ actions, saved state, and API types can change in any release.
   the `editor-close-others` action, and `:BufOnly` in Vim mode. ([#200](https://github.com/btmux-dev/btmux/pull/200))
 - `Tab` completes command names on the native editor's Vim `:` line. ([#200](https://github.com/btmux-dev/btmux/pull/200))
 
+### Changed
+
+- rumdl no longer reports lines over 80 columns (MD013) in the native
+  editor. ([#201](https://github.com/btmux-dev/btmux/pull/201))
+
 ### Fixed
 
 - Formatting in the native editor no longer moves the cursor to the start
