@@ -8,6 +8,10 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Added
+
+- Agent view's `b` sends one prompt to several agents at once.
+
 ## [0.0.221] - 2026-11-24
 
 ### Added

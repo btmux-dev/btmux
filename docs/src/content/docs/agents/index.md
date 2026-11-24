@@ -118,8 +118,19 @@ tile with GitHub status and reported cost. Each client remembers its tiles.
 | `o`                  | Show only this agent's tile, and back to all    |
 | `r`                  | Reset the agent's state                         |
 | `x`                  | End the agent's session (asks first)            |
+| `b`                  | Send one prompt to several agents               |
 | `Tab`                | Switch to the [Usage](usage.md) tab             |
 | `Esc`                | Close                                           |
+
+### Broadcasting a prompt
+
+`b` opens a dialog for sending one prompt to several agents at once. Type
+the prompt, tick the agents to send it to, and press `Enter` or **Send**
+(`Shift+Enter` starts a new line). Every agent starts ticked except
+**blocked** ones, since typed text would answer their question. A busy
+agent gets the prompt queued after its current turn. If some agents can't
+take it, a toast says why, and the dialog stays open with only those agents
+ticked, to try again.
 
 ## Notifications
 

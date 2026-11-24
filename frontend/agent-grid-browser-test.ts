@@ -647,6 +647,34 @@ try {
   assert.equal(await page.evaluate(() => document.querySelectorAll(':modal').length), 0, 'no modal is left');
   await page.locator(`[data-pane-id="${closedAgent.id}"]`).click({ timeout: 5000 });
 
+  // `b` sends one prompt to the agents ticked, and closes back to the grid.
+  await setOpen(page, true);
+  await page.locator('dialog[open]').waitFor({ timeout: 5000 });
+  await waitForAsync(page, () => !!document.querySelector('dialog[open]')?.contains(document.activeElement));
+  await page.keyboard.press('b');
+  const broadcast = page.getByRole('dialog', { name: 'Broadcast prompt' });
+  await broadcast.waitFor({ timeout: 5000 });
+  await waitForAsync(page, () => document.activeElement?.tagName === 'TEXTAREA');
+  await broadcast.getByRole('button', { name: 'Select none', exact: true }).click();
+  const recipients = [agents[0], agents[1]];
+  for (const name of ['agent-a', 'agent-b'])
+    await broadcast.locator('li', { hasText: `${name} ›` }).getByRole('checkbox').check();
+  await broadcast.getByRole('textbox', { name: 'Prompt' }).fill('broadcast-$((6*7))');
+  await page.keyboard.press('Enter');
+  await broadcast.waitFor({ state: 'hidden', timeout: 5000 });
+  assert.equal(await page.locator('dialog[open]').count(), 1, 'the grid stays open');
+  for (const agent of recipients) {
+    const deadline = Date.now() + 5000;
+    while (!(await (await fetch(`${url}/api/panes/${agent.id}/output`, { headers })).text()).includes('broadcast-$'))
+      {
+        assert(Date.now() < deadline, `${agent.id} got no prompt`);
+        await Bun.sleep(50);
+      }
+  }
+  const others = await (await fetch(`${url}/api/panes/${agents[2].id}/output`, { headers })).text();
+  assert(!others.includes('broadcast-$'), 'an unticked agent gets nothing');
+  await setOpen(page, false);
+
   // Tiles of mixed heights take the largest scale any ordered rows allow, where greedy
   // wrapping can settle smaller, and an overflowing layout scrolls back to its first row.
   await setOpen(page, true);
