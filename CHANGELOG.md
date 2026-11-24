@@ -11,6 +11,13 @@ actions, saved state, and API types can change in any release.
 ### Added
 
 - Agent view's `b` sends one prompt to several agents at once. ([#203](https://github.com/btmux-dev/btmux/pull/203))
+- The native editor soft-wraps long lines; `[native-editor] soft-wrap = false`,
+  also in Settings as **Soft wrap**, turns it off. ([#202](https://github.com/btmux-dev/btmux/pull/202))
+
+### Fixed
+
+- The key help's editor tab lists the Vim commands `:bn`, `:bp`, `:copen`,
+  `:cclose`, `:cw`, `:lopen`, `:lclose`, and `:lw`. ([#202](https://github.com/btmux-dev/btmux/pull/202))
 
 ## [0.0.221] - 2026-11-24
 

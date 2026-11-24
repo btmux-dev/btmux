@@ -152,6 +152,9 @@ fn apply(doc: &mut DocumentMut, u: &ConfigUpdate) {
     if let Some(v) = u.virtual_text {
         push(&mut native_editor, "virtual-text", Some(v.into()));
     }
+    if let Some(v) = u.soft_wrap {
+        push(&mut native_editor, "soft-wrap", Some(v.into()));
+    }
     if let Some(v) = u.window_grid_count {
         push(
             &mut root,
@@ -477,12 +480,13 @@ mod tests {
             ConfigUpdate {
                 vim_mode: Some(true),
                 virtual_text: Some(true),
+                soft_wrap: Some(true),
                 ..ConfigUpdate::default()
             },
         );
         assert!(
             text.contains(
-                "[native-editor]\nformat-on-save = true\nvim = true\nvirtual-text = true\n"
+                "[native-editor]\nformat-on-save = true\nvim = true\nvirtual-text = true\nsoft-wrap = true\n"
             ),
             "{text}"
         );

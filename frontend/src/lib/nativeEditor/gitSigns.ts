@@ -29,6 +29,7 @@ import type { Blame } from '../../generated/protocol';
 import { useStore } from '../../state/store';
 import { editorConnection } from './connection';
 import { viewDocs } from './doc';
+import { WRAP } from './wrap';
 
 export interface GitBase {
   /** Changes with each new index text; staging names the one it diffed against. */
@@ -767,6 +768,8 @@ export function gitSigns(initial: () => GitBase | null): Extension {
       '.cm-git-added-line': { backgroundColor: 'color-mix(in srgb, var(--btm-editor-green) 12%, transparent)' },
       '.cm-git-added-text': { backgroundColor: 'color-mix(in srgb, var(--btm-editor-green) 28%, transparent)' },
       '.cm-git-blame': { opacity: 0.5, paddingLeft: '3em', fontStyle: 'italic', whiteSpace: 'pre' },
+      // Wider than the content, they would stop every line wrapping.
+      '.cm-lineWrapping .cm-git-removed-line, .cm-lineWrapping .cm-git-blame': WRAP,
       // Scrolls in the space CodeMirror shrinks it to, like hovers.
       '.cm-git-blame-tooltip': { padding: '4px 8px', maxWidth: '60ch', maxHeight: '30em', overflow: 'auto' },
       '.cm-git-blame-head': { fontWeight: 'bold' },

@@ -226,6 +226,27 @@ try {
   await page.keyboard.press('ControlOrMeta+z');
   console.log('PASS the preview marks the words the current text removed');
 
+  // A preview wider than the pane leaves soft-wrapped lines wrapped.
+  const wide = path.join(repo, 'wide.txt');
+  writeFileSync(wide, `${'x'.repeat(1200)}\n${'word '.repeat(240)}\n`);
+  git('add', 'wide.txt');
+  writeFileSync(wide, `short\n${'word '.repeat(240)}\n`);
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: wide, line: 1, editor: 'native' });
+  await waitFor(() => signs(page), ['1:change']);
+  const layout = () =>
+    page.evaluate(() => {
+      const scroller = document.querySelector('[data-native-editor]')!.closest('.cm-scroller')!;
+      const [short, long] = Array.from(document.querySelectorAll('[data-native-editor] > .cm-line'), (l) =>
+        l.getBoundingClientRect().height,
+      );
+      return { overflows: scroller.scrollWidth > scroller.clientWidth, wrapped: long > 3 * short };
+    });
+  await waitFor(layout, { overflows: false, wrapped: true });
+  await page.locator('.cm-git-change').first().click();
+  await preview.waitFor();
+  await waitFor(layout, { overflows: false, wrapped: true });
+  console.log('PASS a wide preview keeps lines wrapped');
+
   // Vim gets gitsigns' suggested mappings, on the Space leader.
   const configHome = process.env.BTMUX_TEST_CONFIG_HOME;
   if (configHome) {
