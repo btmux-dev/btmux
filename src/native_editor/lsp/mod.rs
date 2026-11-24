@@ -88,8 +88,8 @@ struct Request {
 enum Pending {
     /// A tab's request, by its own id.
     Tab(SocketId, Value),
-    /// btmux's pull of a document's diagnostics.
-    Pull(String),
+    /// btmux's pull of a document's diagnostics: its buffer, at a version.
+    Pull(String, Uuid, u64),
     /// btmux's own request, answered with the response.
     Btmux(tokio::sync::oneshot::Sender<Value>),
 }
@@ -157,17 +157,27 @@ pub(super) struct Server {
 
 type ServerKey = (String, PathBuf, Option<String>);
 
-/// A document's diagnostics: published, and pulled (`textDocument/diagnostic`).
+/// A document's diagnostics: published, and pulled (`textDocument/diagnostic`),
+/// each with the buffer version its positions refer to.
 #[derive(Default)]
 struct Diagnostics {
-    pushed: Vec<Value>,
-    pulled: Vec<Value>,
+    pushed: (Vec<Value>, Option<u64>),
+    pulled: (Vec<Value>, Option<u64>),
 }
 
 impl Diagnostics {
+    /// `versions` gives each diagnostic's version, as the sources' differ.
     fn params(&self, uri: &str) -> Value {
-        let all: Vec<_> = self.pushed.iter().chain(&self.pulled).cloned().collect();
-        json!({ "uri": uri, "diagnostics": all })
+        let (mut all, mut versions) = (Vec::new(), Vec::new());
+        for (items, version) in [&self.pushed, &self.pulled] {
+            all.extend(items.iter().cloned());
+            versions.extend(items.iter().map(|_| *version));
+        }
+        json!({ "uri": uri, "diagnostics": all, "versions": versions })
+    }
+
+    fn items(&self) -> impl Iterator<Item = &Value> {
+        self.pushed.0.iter().chain(&self.pulled.0)
     }
 }
 
@@ -730,23 +740,49 @@ impl Inner {
             return;
         };
         let params = json!({ "textDocument": { "uri": uri } });
-        server.request(Pending::Pull(uri), "textDocument/diagnostic", params);
+        let version = b.version;
+        server.request(
+            Pending::Pull(uri, buffer, version),
+            "textDocument/diagnostic",
+            params,
+        );
     }
 
     /// Take one source's diagnostics for `uri`; tabs get both sources'
     /// together, and tabs connecting later get them from the cache.
-    fn publish(&mut self, id: u64, uri: &str, pulled: bool, items: Vec<Value>) {
+    fn publish(
+        &mut self,
+        id: u64,
+        uri: &str,
+        pulled: bool,
+        items: Vec<Value>,
+        version: Option<u64>,
+    ) {
         let Some(server) = self.lsp.servers.get_mut(&id) else {
             return;
         };
+        // Versions name an open buffer's text; a closed one's are gone.
+        let open = server
+            .buffers
+            .iter()
+            .filter_map(|b| self.buffers.get(b))
+            .find(|b| config::uri(&b.path) == uri);
+        let version = match open {
+            Some(_) if pulled => version,
+            // The server's version if it gives one, else the last it was
+            // sent: a guess, wrong for a publish computed before that,
+            // which the server's next publish corrects.
+            Some(b) => version.or(Some(b.version)),
+            None => None,
+        };
         let entry = server.diagnostics.entry(uri.to_owned()).or_default();
         if pulled {
-            entry.pulled = items;
+            entry.pulled = (items, version);
         } else {
-            entry.pushed = items;
+            entry.pushed = (items, version);
         }
         let params = entry.params(uri);
-        if entry.pushed.is_empty() && entry.pulled.is_empty() {
+        if entry.items().next().is_none() {
             server.diagnostics.remove(uri);
         }
         let message = notification("textDocument/publishDiagnostics", params);
@@ -839,6 +875,11 @@ impl Inner {
                 continue;
             };
             server.buffers.remove(&buffer);
+            // A reopened buffer's versions start over.
+            if let Some(entry) = server.diagnostics.get_mut(&config::uri(path)) {
+                entry.pushed.1 = None;
+                entry.pulled.1 = None;
+            }
             if server.ready() {
                 server.send(notification(
                     "textDocument/didClose",
@@ -1050,7 +1091,7 @@ impl super::Hub {
                 if under.is_some_and(|under| !path.starts_with(under)) {
                     continue;
                 }
-                for d in diagnostics.pushed.iter().chain(&diagnostics.pulled) {
+                for d in diagnostics.items() {
                     let severity = match d["severity"].as_u64() {
                         Some(1) => "error",
                         Some(2) => "warning",
@@ -1183,12 +1224,15 @@ impl super::Hub {
                         reply["id"] = tab_id;
                         inner.send_lsp(socket, id, reply);
                     }
-                    Some(Pending::Pull(uri)) => {
+                    Some(Pending::Pull(uri, buffer, version)) => {
+                        // Not if the buffer closed meanwhile: a reopened one's
+                        // versions start over.
+                        let version = inner.buffers.contains_key(&buffer).then_some(version);
                         let result = &message["result"];
                         if result["kind"] == "full" {
                             let items = result["items"].clone();
                             let items = items.as_array().cloned().unwrap_or_default();
-                            inner.publish(id, &uri, true, items);
+                            inner.publish(id, &uri, true, items, version);
                         }
                     }
                     Some(Pending::Btmux(tx)) => {
@@ -1589,7 +1633,7 @@ impl Inner {
                         .as_array()
                         .cloned()
                         .unwrap_or_default();
-                    self.publish(id, uri, false, items);
+                    self.publish(id, uri, false, items, params["version"].as_u64());
                 }
                 return;
             }
@@ -1646,6 +1690,20 @@ impl Inner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagnostics_carry_their_sources_versions() {
+        let d = Diagnostics {
+            pushed: (
+                vec![json!({ "message": "a" }), json!({ "message": "b" })],
+                Some(3),
+            ),
+            pulled: (vec![json!({ "message": "c" })], None),
+        };
+        let params = d.params("file:///x");
+        assert_eq!(params["diagnostics"].as_array().unwrap().len(), 3);
+        assert_eq!(params["versions"], json!([3, 3, null]));
+    }
 
     #[test]
     fn no_workspace_folder_at_home_or_above() {

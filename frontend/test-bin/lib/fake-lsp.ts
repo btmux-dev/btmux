@@ -49,7 +49,9 @@
 // - --no-init: never answers initialize; --crash-init: exits on the first
 //   initialize (once, with a marker in $BTMUX_FAKE_LSP); --no-format: no
 //   formatting; --slow-publish: diagnostics only pushed, 2 s late after changes;
-//   --slow-init: answers initialize after 2 s
+//   --slow-init: answers initialize after 2 s; --no-version: only text sync,
+//   publishing diagnostics without the document version; --late-publish:
+//   diagnostics 300 ms late after changes
 // - --second: another server for the same files, with only a warning on every
 //   "lint", a code action replacing it with "clean", "Second hover for WORD",
 //   formatting that uppercases every "fmt", completion failing 500 ms late, and
@@ -120,6 +122,8 @@ function send(message: unknown) {
 
 const SECOND = process.argv.includes('--second');
 const SLOW_PUBLISH = process.argv.includes('--slow-publish');
+const NO_VERSION = process.argv.includes('--no-version');
+const LATE_PUBLISH = process.argv.includes('--late-publish');
 
 function publish(uri: string) {
   const doc = docs.get(uri)!;
@@ -133,7 +137,7 @@ function publish(uri: string) {
     send({
       jsonrpc: '2.0',
       method: 'textDocument/publishDiagnostics',
-      params: { uri, version: doc.version, diagnostics },
+      params: { uri, version: NO_VERSION ? undefined : doc.version, diagnostics },
     });
     return;
   }
@@ -161,7 +165,7 @@ function publish(uri: string) {
   send({
     jsonrpc: '2.0',
     method: 'textDocument/publishDiagnostics',
-    params: { uri, version: doc.version, diagnostics },
+    params: { uri, version: NO_VERSION ? undefined : doc.version, diagnostics },
   });
 }
 
@@ -209,6 +213,8 @@ function second(msg: any): unknown {
 }
 
 function handle(msg: any): unknown {
+  // Only text sync, so no feature's request syncs the editor.
+  if (NO_VERSION && msg.method === 'initialize') return { capabilities: { textDocumentSync: { openClose: true, change: 2 } } };
   if (SECOND) return second(msg);
   const p = msg.params;
   switch (msg.method) {
@@ -658,7 +664,7 @@ function notify(msg: any) {
       }
       doc.version = p.textDocument.version;
       log(`version ${doc.version} ${JSON.stringify(doc.text)}`);
-      const late = SLOW_PUBLISH ? 2000 : SECOND ? 1000 : 0;
+      const late = SLOW_PUBLISH ? 2000 : SECOND ? 1000 : LATE_PUBLISH ? 300 : 0;
       const uri = p.textDocument.uri;
       if (late) setTimeout(() => docs.has(uri) && publish(uri), late);
       else publish(uri);

@@ -2,7 +2,7 @@
 import { expect, test } from 'bun:test';
 import { ChangeSet, EditorState, Text } from '@codemirror/state';
 import { collab, getSyncedVersion, receiveUpdates, sendableUpdates } from '@codemirror/collab';
-import { freshFrom } from './src/lib/nativeEditor/doc';
+import { Doc, freshFrom } from './src/lib/nativeEditor/doc';
 import { detectIndent } from './src/lib/nativeEditor/languages';
 import { decodeTokens } from './src/lib/nativeEditor/features';
 import { lspProgress } from './src/lib/nativeEditor/lspProgress';
@@ -16,6 +16,52 @@ test('updates are skipped up to the synced version, and a gap is detected', () =
   expect(freshFrom(3, 3)).toBe(0);
   expect(freshFrom(5, 3)).toBe(2);
   expect(freshFrom(3, 4)).toBe('gap');
+});
+
+test('a doc maps language server positions from the versions it keeps', () => {
+  const open = (servers: number[]) => {
+    const doc = new Doc('/x/a.txt', () => [], () => {});
+    doc.opened({
+      id: 'b',
+      path: '/x/a.txt',
+      text: 'abc',
+      version: 5,
+      dirty: false,
+      disk: 'same',
+      line_ending: 'lf',
+      language_id: null,
+      uri: 'file:///x/a.txt',
+      servers,
+    });
+    return doc;
+  };
+  const insert = (at: number, length: number, text: string) =>
+    ChangeSet.of({ from: at, insert: text }, length).toJSON();
+  const doc = open([1]);
+  doc.updates(5, [{ client_id: 'other', changes: insert(0, 3, 'xx') }]);
+  const at5 = doc.since(5);
+  expect(at5 !== null && at5 !== 'ahead' && at5.doc.toString()).toBe('abc');
+  expect(at5 !== null && at5 !== 'ahead' && at5.changes.mapPos(1)).toBe(3);
+  expect(doc.since(6)).not.toBeNull();
+  expect(doc.since(7)).toBe('ahead');
+  // Before it opened.
+  expect(doc.since(4)).toBeNull();
+
+  // Large replacements are dropped from the history by size.
+  const big = 'y'.repeat(600_000);
+  let length = 5;
+  for (let v = 6; v < 9; v++) {
+    doc.updates(v, [{ client_id: 'other', changes: ChangeSet.of({ from: 0, to: length, insert: big }, length).toJSON() }]);
+    length = big.length;
+  }
+  expect(doc.since(9)).not.toBeNull();
+  expect(doc.since(8)).not.toBeNull();
+  expect(doc.since(7)).toBeNull();
+
+  // No history without language servers.
+  const plain = open([]);
+  plain.updates(5, [{ client_id: 'other', changes: insert(0, 3, 'xx') }]);
+  expect(plain.since(5)).toBeNull();
 });
 
 test('indent detection prefers tabs, else the common space step', () => {
