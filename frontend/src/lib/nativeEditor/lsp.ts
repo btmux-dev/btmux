@@ -8,7 +8,7 @@ import {
   type Transport,
   type WorkspaceFile,
 } from '@codemirror/lsp-client';
-import { EditorState, Facet, Prec, StateEffect, StateField, type Extension } from '@codemirror/state';
+import { ChangeSet, EditorState, Facet, Prec, StateEffect, StateField, type Extension } from '@codemirror/state';
 import { EditorView, keymap, showPanel, type Panel, type Tooltip } from '@codemirror/view';
 import { getIndentUnit, indentUnit, LanguageDescription } from '@codemirror/language';
 import { setDiagnostics, type Diagnostic } from '@codemirror/lint';
@@ -122,6 +122,8 @@ class BtmuxWorkspace extends Workspace {
 
 type PublishParams = {
   uri: string;
+  /** Each diagnostic's buffer version, added by btmux. */
+  versions?: (number | null)[];
   diagnostics: {
     range: { start: { line: number; character: number }; end: { line: number; character: number } };
     severity?: number;
@@ -336,12 +338,23 @@ function showDiagnostics(view: EditorView, client: LSPClient) {
 }
 
 function serverDiagnostics(plugin: LSPPlugin, params: PublishParams): Diagnostic[] {
-  // Positions are in the synced document; map them over edits since.
-  const synced = plugin.syncedDoc;
-  const changes = plugin.unsyncedChanges;
-  return params.diagnostics.flatMap((d) => {
-    const start = offset(synced, d.range.start);
-    const end = offset(synced, d.range.end);
+  // Positions are in the buffer at the version btmux stamped them with
+  // (servers may have seen edits this tab hasn't synced, or not yet seen
+  // its own); map them over edits since. Unknown, the current text is the
+  // best guess.
+  const doc = viewDocs.get(plugin.view);
+  const current = { doc: plugin.view.state.doc, changes: ChangeSet.empty(plugin.view.state.doc.length) };
+  const bases = new Map<number, typeof current>();
+  const baseAt = (version: number | null | undefined) => {
+    if (version == null || !doc) return current;
+    let base = bases.get(version);
+    if (!base) bases.set(version, (base = doc.since(version) ?? current));
+    return base;
+  };
+  return params.diagnostics.flatMap((d, i) => {
+    const { doc: text, changes } = baseAt(params.versions?.[i]);
+    const start = offset(text, d.range.start);
+    const end = offset(text, d.range.end);
     const from = changes.mapPos(start, 1);
     const to = Math.max(from, changes.mapPos(end, -1));
     // Its text was deleted since (a formatter replacing the file): left

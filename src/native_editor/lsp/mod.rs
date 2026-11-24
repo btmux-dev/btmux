@@ -88,8 +88,8 @@ struct Request {
 enum Pending {
     /// A tab's request, by its own id.
     Tab(SocketId, Value),
-    /// btmux's pull of a document's diagnostics.
-    Pull(String),
+    /// btmux's pull of a document's diagnostics, at a buffer version.
+    Pull(String, Option<u64>),
     /// btmux's own request, answered with the response.
     Btmux(tokio::sync::oneshot::Sender<Value>),
 }
@@ -157,17 +157,27 @@ pub(super) struct Server {
 
 type ServerKey = (String, PathBuf, Option<String>);
 
-/// A document's diagnostics: published, and pulled (`textDocument/diagnostic`).
+/// A document's diagnostics: published, and pulled (`textDocument/diagnostic`),
+/// each with the buffer version its positions refer to.
 #[derive(Default)]
 struct Diagnostics {
-    pushed: Vec<Value>,
-    pulled: Vec<Value>,
+    pushed: (Vec<Value>, Option<u64>),
+    pulled: (Vec<Value>, Option<u64>),
 }
 
 impl Diagnostics {
+    /// `versions` gives each diagnostic's version, as the sources' differ.
     fn params(&self, uri: &str) -> Value {
-        let all: Vec<_> = self.pushed.iter().chain(&self.pulled).cloned().collect();
-        json!({ "uri": uri, "diagnostics": all })
+        let (mut all, mut versions) = (Vec::new(), Vec::new());
+        for (items, version) in [&self.pushed, &self.pulled] {
+            all.extend(items.iter().cloned());
+            versions.extend(items.iter().map(|_| *version));
+        }
+        json!({ "uri": uri, "diagnostics": all, "versions": versions })
+    }
+
+    fn items(&self) -> impl Iterator<Item = &Value> {
+        self.pushed.0.iter().chain(&self.pulled.0)
     }
 }
 
@@ -730,23 +740,35 @@ impl Inner {
             return;
         };
         let params = json!({ "textDocument": { "uri": uri } });
-        server.request(Pending::Pull(uri), "textDocument/diagnostic", params);
+        let version = Some(b.version);
+        server.request(
+            Pending::Pull(uri, version),
+            "textDocument/diagnostic",
+            params,
+        );
     }
 
     /// Take one source's diagnostics for `uri`; tabs get both sources'
     /// together, and tabs connecting later get them from the cache.
-    fn publish(&mut self, id: u64, uri: &str, pulled: bool, items: Vec<Value>) {
+    fn publish(
+        &mut self,
+        id: u64,
+        uri: &str,
+        pulled: bool,
+        items: Vec<Value>,
+        version: Option<u64>,
+    ) {
         let Some(server) = self.lsp.servers.get_mut(&id) else {
             return;
         };
         let entry = server.diagnostics.entry(uri.to_owned()).or_default();
         if pulled {
-            entry.pulled = items;
+            entry.pulled = (items, version);
         } else {
-            entry.pushed = items;
+            entry.pushed = (items, version);
         }
         let params = entry.params(uri);
-        if entry.pushed.is_empty() && entry.pulled.is_empty() {
+        if entry.items().next().is_none() {
             server.diagnostics.remove(uri);
         }
         let message = notification("textDocument/publishDiagnostics", params);
@@ -1050,7 +1072,7 @@ impl super::Hub {
                 if under.is_some_and(|under| !path.starts_with(under)) {
                     continue;
                 }
-                for d in diagnostics.pushed.iter().chain(&diagnostics.pulled) {
+                for d in diagnostics.items() {
                     let severity = match d["severity"].as_u64() {
                         Some(1) => "error",
                         Some(2) => "warning",
@@ -1183,12 +1205,12 @@ impl super::Hub {
                         reply["id"] = tab_id;
                         inner.send_lsp(socket, id, reply);
                     }
-                    Some(Pending::Pull(uri)) => {
+                    Some(Pending::Pull(uri, version)) => {
                         let result = &message["result"];
                         if result["kind"] == "full" {
                             let items = result["items"].clone();
                             let items = items.as_array().cloned().unwrap_or_default();
-                            inner.publish(id, &uri, true, items);
+                            inner.publish(id, &uri, true, items, version);
                         }
                     }
                     Some(Pending::Btmux(tx)) => {
@@ -1589,7 +1611,17 @@ impl Inner {
                         .as_array()
                         .cloned()
                         .unwrap_or_default();
-                    self.publish(id, uri, false, items);
+                    // The server's version if it gives one, else the last it
+                    // was sent: a later publish corrects one for an earlier.
+                    let version = params["version"].as_u64().or_else(|| {
+                        server
+                            .buffers
+                            .iter()
+                            .filter_map(|b| self.buffers.get(b))
+                            .find(|b| config::uri(&b.path) == uri)
+                            .map(|b| b.version)
+                    });
+                    self.publish(id, uri, false, items, version);
                 }
                 return;
             }

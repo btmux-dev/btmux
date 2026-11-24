@@ -614,7 +614,9 @@ completion request yields nothing rather than ending the others); other features
 the first server with the capability, and edits and commands back to the one
 that gave them.
 The backend answers the server's requests (`workspace/configuration` from
-`config`, `applyEdit`, …), caches diagnostics for tabs connecting later, and
+`config`, `applyEdit`, …), caches diagnostics for tabs connecting later
+(stamped with the buffer version they refer to: the server's, else the last
+it was sent, as tabs may not have synced edits it has), and
 keeps `$/progress` work in `lsp_status`, which editors show as progress toasts
 (`ProgressCard`, shared with the Neovim surface). Renames (whose panel asks
 `prepareRename` for the range and name, if the server has it) and code actions go through

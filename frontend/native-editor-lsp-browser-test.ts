@@ -37,7 +37,10 @@ writeFileSync(
     '[[language]]\nname = "late"\nfile-types = ["late"]\nlanguage-servers = ["late"]\n' +
     // A server for one file, for the problems list.
     '[language-server.solo]\ncommand = "fake-lsp"\nargs = ["--second"]\n' +
-    '[[language]]\nname = "solo"\nfile-types = ["solo"]\nlanguage-servers = ["solo"]\n',
+    '[[language]]\nname = "solo"\nfile-types = ["solo"]\nlanguage-servers = ["solo"]\n' +
+    // A server publishing without versions, as Harper does.
+    '[language-server.bare]\ncommand = "fake-lsp"\nargs = ["--no-version"]\n' +
+    '[[language]]\nname = "bare"\nfile-types = ["bare"]\nlanguage-servers = ["bare"]\n',
 );
 const log = () => {
   try {
@@ -946,6 +949,22 @@ try {
   await page.keyboard.press('Shift+Alt+f');
   await until('the format', async () => (await lines(page, paneId)) === 'FMT\n');
   console.log('PASS a command run while the server starts waits for it');
+
+  // A server publishing without a version right after an edit: its
+  // positions already include the edit, which the tab hasn't synced.
+  const bare = join(dir, 'x.bare');
+  writeFileSync(bare, 'xxx bad\n');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: bare, line: 1, editor: 'native' });
+  await until('the bare file', async () => (await lines(page, paneId)) === 'xxx bad\n');
+  const bareError = pane.locator('.cm-lintRange-error');
+  await until('its error', async () => (await bareError.count()) === 1 && (await bareError.textContent()) === 'bad');
+  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+  await page.keyboard.press('ControlOrMeta+Home');
+  for (let i = 0; i < 3; i++) await page.keyboard.press('Delete');
+  await until('the edit', async () => (await lines(page, paneId)) === ' bad\n');
+  await page.waitForTimeout(1000);
+  assert.equal(await bareError.textContent(), 'bad');
+  console.log('PASS diagnostics published without a version stay on their text');
 } catch (error) {
   const shot = process.env.TEST_SHOT;
   if (shot) for (const context of browser.contexts()) await context.pages()[0]?.screenshot({ path: shot });

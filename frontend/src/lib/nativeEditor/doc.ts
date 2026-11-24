@@ -33,6 +33,9 @@ export interface DocStatus {
   lineEnding: LineEnding;
 }
 
+/** Confirmed updates kept for mapping language server positions. */
+const HISTORY = 500;
+
 const randomId = () => Math.random().toString(36).slice(2, 12);
 
 /** The doc each view shows. */
@@ -55,6 +58,8 @@ export class Doc implements BufferListener {
   private ownState: EditorState | null = null;
   /** The document at the synced version: what unconfirmed changes apply to. */
   private synced: Text | null = null;
+  /** Recent confirmed updates: the document at `version` and the changes to the next. */
+  private history: { version: number; doc: Text; changes: ChangeSet }[] = [];
   /** Where the view was scrolled when this doc was last shown. */
   private scroll: StateEffect<unknown> | null = null;
   /** Updates already pushed; all unconfirmed ones go with each push, and the server skips repeats. */
@@ -145,6 +150,7 @@ export class Doc implements BufferListener {
       extensions: [this.extensions(this, info.text), collab({ startVersion: info.version, clientID: this.clientID })],
     });
     this.synced = state.doc;
+    this.history = [];
     this.sent = new WeakSet();
     if (this.view) this.view.setState(state);
     else this.ownState = state;
@@ -180,7 +186,15 @@ export class Doc implements BufferListener {
     const fresh = updates.slice(from).map((u) => ({ changes: ChangeSet.fromJSON(u.changes), clientID: u.client_id }));
     if (fresh.length) {
       this.ownConfirmed += fresh.filter((u) => u.clientID === this.clientID).length;
-      if (this.synced) this.synced = fresh.reduce((doc, u) => u.changes.apply(doc), this.synced);
+      let synced = this.synced;
+      let at = getSyncedVersion(state);
+      if (synced)
+        for (const u of fresh) {
+          this.history.push({ version: at++, doc: synced, changes: u.changes });
+          synced = u.changes.apply(synced);
+        }
+      this.synced = synced;
+      if (this.history.length > HISTORY) this.history.splice(0, this.history.length - HISTORY);
       this.apply(receiveUpdates(state, fresh));
     }
     // Others' changes rebase ours, which then go again.
@@ -242,6 +256,30 @@ export class Doc implements BufferListener {
    */
   confirmed(mark: number): boolean {
     return this.ownConfirmed >= mark;
+  }
+
+  /**
+   * The document at the server's `version` and the changes from it to the
+   * current one, for positions a language server gave at that version.
+   * Null if this editor hasn't got it (yet, or any more).
+   */
+  since(version: number): { doc: Text; changes: ChangeSet } | null {
+    const state = this.state;
+    const synced = this.synced;
+    if (!state || !synced) return null;
+    const at = getSyncedVersion(state);
+    if (version > at) return null;
+    let doc = synced;
+    let changes = ChangeSet.empty(synced.length);
+    if (version < at) {
+      const start = this.history.findIndex((h) => h.version === version);
+      if (start < 0) return null;
+      doc = this.history[start].doc;
+      changes = ChangeSet.empty(doc.length);
+      for (const h of this.history.slice(start)) changes = changes.compose(h.changes);
+    }
+    for (const u of sendableUpdates(state)) changes = changes.compose(u.changes);
+    return { doc, changes };
   }
 
   /** The server's version once it has every change pushed: what language server positions refer to. */
