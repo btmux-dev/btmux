@@ -11,6 +11,7 @@ import { AgentStatusBadge } from './PaneTitleBar';
 
 export interface BroadcastTarget {
   paneId: string;
+  agentId: number | null;
   label: string;
   /** Session › window. */
   place: string;
@@ -23,63 +24,110 @@ interface Props {
   onClose: () => void;
 }
 
-/** Submits one prompt to each chosen agent, queued behind any running turn. */
-async function sendPrompt(paneId: string, prompt: string): Promise<void> {
-  const response = await fetch(`/api/panes/${encodeURIComponent(paneId)}/prompt`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, wait: false }),
-  });
-  if (!response.ok) throw new Error((await response.text()) || response.statusText);
+/** One agent instance: a new agent in the same pane is another target, never checked for it. */
+const keyOf = (target: BroadcastTarget) => `${target.paneId}:${target.agentId}`;
+
+/** Typed text would answer a blocked agent's question, so the server refuses it. */
+const eligible = (target: BroadcastTarget) => target.agentId != null && target.status.state !== 'blocked';
+
+/** `failed`: nothing reached the agent. `unknown`: it may have; resending could repeat it. */
+type Outcome = { kind: 'sent' } | { kind: 'failed' | 'unknown'; reason: string };
+
+async function sendPrompt(target: BroadcastTarget, prompt: string): Promise<Outcome> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/panes/${encodeURIComponent(target.paneId)}/prompt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, wait: false, agent_id: target.agentId }),
+    });
+  } catch (error) {
+    // The server may have submitted it before the reply was lost.
+    return { kind: 'unknown', reason: error instanceof Error ? error.message : String(error) };
+  }
+  if (response.ok) return { kind: 'sent' };
+  const reason = (await response.text().catch(() => '')) || response.statusText;
+  // 4xx are refusals; a 409 after pasting (automation::send_prompt_to) and 5xx may have left text in the pane.
+  const unknown = response.status >= 500 || reason.includes('was pasted');
+  return { kind: unknown ? 'unknown' : 'failed', reason };
 }
 
 /** A prompt typed once and sent to several agents. */
 export function AgentBroadcastDialog({ isOpen, targets, onClose }: Props) {
   const [prompt, setPrompt] = useState('');
-  const [chosen, setChosen] = useState<string[]>([]);
+  // The draft's recipients, kept with it; null picks every eligible agent at the next opening.
+  const [chosen, setChosen] = useState<string[] | null>(null);
+  // Agents that may have received the draft already, unchecked until the user checks them again.
+  const [unknown, setUnknown] = useState<ReadonlySet<string>>(new Set());
   const [sending, setSending] = useState(false);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const wasOpen = useRef(false);
+  const openRef = useRef(isOpen);
+  openRef.current = isOpen;
 
-  // Each opening starts with every agent not waiting on a dialog, which typed text would answer.
   useEffect(() => {
     if (isOpen && !wasOpen.current) {
-      setChosen(targets.filter((t) => t.status.state !== 'blocked').map((t) => t.paneId));
+      if (chosen === null) setChosen(targets.filter(eligible).map(keyOf));
       requestAnimationFrame(() => promptRef.current?.focus());
     }
     wasOpen.current = isOpen;
-  }, [isOpen, targets]);
+  }, [isOpen, targets, chosen]);
 
-  const live = new Set(targets.map((t) => t.paneId));
-  const recipients = chosen.filter((id) => live.has(id));
+  const byKey = new Map(targets.map((t) => [keyOf(t), t]));
+  const recipients = (chosen ?? []).flatMap((key) => {
+    const target = byKey.get(key);
+    return target && eligible(target) ? [target] : [];
+  });
   const canSend = !sending && prompt.trim() !== '' && recipients.length > 0;
+  const eligibleKeys = targets.filter(eligible).map(keyOf);
+  const allChosen = eligibleKeys.length > 0 && eligibleKeys.every((key) => chosen?.includes(key));
 
   const submit = async () => {
     if (!canSend) return;
+    // The draft and its recipients stay read-only until every reply is in, even if the dialog is closed meanwhile.
     setSending(true);
-    const text = prompt;
-    const results = await Promise.allSettled(recipients.map((id) => sendPrompt(id, text)));
+    const outcomes = await Promise.all(recipients.map((target) => sendPrompt(target, prompt)));
     setSending(false);
-    const { showToast } = useStore.getState();
-    const failures = results.flatMap((result, i) => {
-      if (result.status === 'fulfilled') return [];
-      const target = targets.find((t) => t.paneId === recipients[i]);
-      const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
-      return [`${target ? `${target.place} › ${target.label}` : recipients[i]}: ${reason}`];
+    const describe = (target: BroadcastTarget, reason: string) => `${target.place} › ${target.label}: ${reason}`;
+    const failed: string[] = [];
+    const uncertain: string[] = [];
+    const lines: string[] = [];
+    outcomes.forEach((outcome, i) => {
+      if (outcome.kind === 'sent') return;
+      (outcome.kind === 'failed' ? failed : uncertain).push(keyOf(recipients[i]));
+      const note = outcome.kind === 'unknown' ? ' (may have received it)' : '';
+      lines.push(describe(recipients[i], outcome.reason + note));
     });
-    const sent = recipients.length - failures.length;
-    if (failures.length === 0) {
+    const sent = recipients.length - failed.length - uncertain.length;
+    const { showToast } = useStore.getState();
+    if (lines.length === 0) {
       showToast(`Sent to ${sent} agent${sent === 1 ? '' : 's'}`, 'success');
       setPrompt('');
-      onClose();
-    } else {
-      showToast(`Sent to ${sent} of ${recipients.length} agents`, 'error', { body: failures.join('\n') });
-      // Keeps the prompt and only the agents that missed it, to retry.
-      setChosen(recipients.filter((_, i) => results[i].status === 'rejected'));
+      setChosen(null);
+      setUnknown(new Set());
+      if (openRef.current) onClose();
+      return;
     }
+    showToast(`Sent to ${sent} of ${recipients.length} agents`, 'error', { body: lines.join('\n') });
+    // Only agents that certainly didn't get it are checked again; the rest need a deliberate check.
+    setChosen(failed);
+    setUnknown(new Set(uncertain));
   };
 
-  const allChosen = recipients.length === targets.length;
+  const description = (target: BroadcastTarget) => {
+    const note =
+      target.status.state === 'blocked'
+        ? 'Waiting for a decision; answer it in its pane first'
+        : unknown.has(keyOf(target))
+          ? 'May have received this prompt already'
+          : null;
+    return (
+      <VStack gap={0.5}>
+        <Text className="btm-mono">{target.place}</Text>
+        {note && <Text color="secondary">{note}</Text>}
+      </VStack>
+    );
+  };
 
   return (
     <Dialog
@@ -117,8 +165,9 @@ export function AgentBroadcastDialog({ isOpen, targets, onClose }: Props) {
                 label="Prompt"
                 value={prompt}
                 onChange={setPrompt}
+                isReadOnly={sending}
                 rows={5}
-                placeholder="Sent to each agent below, queued if it is busy"
+                placeholder="Sent to each agent checked below"
               />
               <VStack gap={1}>
                 <HStack gap={2} vAlign="center" hAlign="between">
@@ -127,16 +176,25 @@ export function AgentBroadcastDialog({ isOpen, targets, onClose }: Props) {
                     label={allChosen ? 'Select none' : 'Select all'}
                     variant="ghost"
                     size="sm"
-                    onClick={() => setChosen(allChosen ? [] : targets.map((t) => t.paneId))}
+                    isDisabled={sending || eligibleKeys.length === 0}
+                    onClick={() => setChosen(allChosen ? [] : eligibleKeys)}
                   />
                 </HStack>
-                <CheckboxList label="Agents" isLabelHidden density="compact" value={recipients} onChange={setChosen}>
+                <CheckboxList
+                  label="Agents"
+                  isLabelHidden
+                  density="compact"
+                  isReadOnly={sending}
+                  value={recipients.map(keyOf)}
+                  onChange={setChosen}
+                >
                   {targets.map((target) => (
                     <CheckboxListItem
-                      key={target.paneId}
-                      value={target.paneId}
+                      key={keyOf(target)}
+                      value={keyOf(target)}
                       label={target.label}
-                      description={<Text className="btm-mono">{target.place}</Text>}
+                      isDisabled={!eligible(target)}
+                      description={description(target)}
                       endContent={<AgentStatusBadge status={target.status} />}
                     />
                   ))}
@@ -151,7 +209,7 @@ export function AgentBroadcastDialog({ isOpen, targets, onClose }: Props) {
               <Text type="supporting" color="secondary">
                 Shift+Enter for a new line
               </Text>
-              <Button label="Cancel" variant="ghost" onClick={onClose} />
+              <Button label="Close" variant="ghost" onClick={onClose} />
               <Button
                 label={recipients.length ? `Send to ${recipients.length}` : 'Send'}
                 variant="primary"

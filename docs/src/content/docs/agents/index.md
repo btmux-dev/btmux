@@ -126,11 +126,21 @@ tile with GitHub status and reported cost. Each client remembers its tiles.
 
 `b` opens a dialog for sending one prompt to several agents at once. Type
 the prompt, tick the agents to send it to, and press `Enter` or **Send**
-(`Shift+Enter` starts a new line). Every agent starts ticked except
-**blocked** ones, since typed text would answer their question. A busy
-agent gets the prompt queued after its current turn. If some agents can't
-take it, a toast says why, and the dialog stays open with only those agents
-ticked, to try again.
+(`Shift+Enter` starts a new line). Every agent starts ticked.
+
+- A **blocked** agent can't be ticked: it is waiting for you to answer a
+  question or permission request, and typed text would answer it. Answer it
+  in its pane first; sending a prompt never answers it for you.
+- A busy agent gets the prompt while it works. Whether it reads it in the
+  current turn or after depends on the agent.
+- A ticked agent replaced by another in the same pane doesn't get the
+  prompt, and the new agent isn't ticked.
+
+Closing the dialog keeps the draft and its ticks for next time; sending
+clears both. If some agents can't take the prompt, a toast says why, and
+only those agents stay ticked, to try again. An agent whose reply was lost
+might have received it, so it is left unticked and marked, to tick again
+only if it didn't.
 
 ## Notifications
 

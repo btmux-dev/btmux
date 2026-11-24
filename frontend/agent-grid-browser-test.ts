@@ -651,28 +651,60 @@ try {
   await setOpen(page, true);
   await page.locator('dialog[open]').waitFor({ timeout: 5000 });
   await waitForAsync(page, () => !!document.querySelector('dialog[open]')?.contains(document.activeElement));
-  await page.keyboard.press('b');
   const broadcast = page.getByRole('dialog', { name: 'Broadcast prompt' });
-  await broadcast.waitFor({ timeout: 5000 });
-  await waitForAsync(page, () => document.activeElement?.tagName === 'TEXTAREA');
+  const promptBox = broadcast.getByRole('textbox', { name: 'Prompt' });
+  const row = (name: string) => broadcast.locator('li', { hasText: `${name} ›` }).getByRole('checkbox');
+  const checkedRows = () => broadcast.getByRole('checkbox', { checked: true }).count();
+  const openBroadcast = async () => {
+    await page.keyboard.press('b');
+    await broadcast.waitFor({ timeout: 5000 });
+    await waitForAsync(page, () => document.activeElement?.tagName === 'TEXTAREA');
+  };
+  const received = async (pane: string) =>
+    (await (await fetch(`${url}/api/panes/${pane}/output`, { headers })).text()).includes('broadcast-$');
+  await openBroadcast();
   await broadcast.getByRole('button', { name: 'Select none', exact: true }).click();
-  const recipients = [agents[0], agents[1]];
-  for (const name of ['agent-a', 'agent-b'])
-    await broadcast.locator('li', { hasText: `${name} ›` }).getByRole('checkbox').check();
-  await broadcast.getByRole('textbox', { name: 'Prompt' }).fill('broadcast-$((6*7))');
+  await row('agent-a').check();
+  await row('agent-b').check();
+  await promptBox.fill('broadcast-$((6*7))');
+  // Closing keeps the draft with its recipients.
+  await page.keyboard.press('Escape');
+  await broadcast.waitFor({ state: 'hidden', timeout: 5000 });
+  await openBroadcast();
+  assert.equal(await promptBox.inputValue(), 'broadcast-$((6*7))');
+  assert.equal(await checkedRows(), 2, 'reopening keeps the ticks');
+  // A new agent in a ticked pane isn't ticked for the old one.
+  for (const [event, session] of [
+    ['SessionEnd', 'agent-b'],
+    ['UserPromptSubmit', 'agent-b-2'],
+  ]) {
+    const hook = await fetch(`${url}/api/panes/${agents[1].id}/notify`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ hook_event_name: event, session_id: session }),
+    });
+    assert(hook.ok);
+  }
+  const untickDeadline = Date.now() + 5000;
+  while ((await checkedRows()) !== 1) {
+    assert(Date.now() < untickDeadline, 'a replaced agent stays ticked');
+    await Bun.sleep(50);
+  }
+  assert(await row('agent-a').isChecked());
   await page.keyboard.press('Enter');
   await broadcast.waitFor({ state: 'hidden', timeout: 5000 });
   assert.equal(await page.locator('dialog[open]').count(), 1, 'the grid stays open');
-  for (const agent of recipients) {
-    const deadline = Date.now() + 5000;
-    while (!(await (await fetch(`${url}/api/panes/${agent.id}/output`, { headers })).text()).includes('broadcast-$'))
-      {
-        assert(Date.now() < deadline, `${agent.id} got no prompt`);
-        await Bun.sleep(50);
-      }
+  const deadline = Date.now() + 5000;
+  while (!(await received(agents[0].id))) {
+    assert(Date.now() < deadline, 'agent-a got no prompt');
+    await Bun.sleep(50);
   }
-  const others = await (await fetch(`${url}/api/panes/${agents[2].id}/output`, { headers })).text();
-  assert(!others.includes('broadcast-$'), 'an unticked agent gets nothing');
+  for (const agent of [agents[1], agents[2]]) assert(!(await received(agent.id)), 'an unticked agent gets nothing');
+  // Sending clears the draft.
+  await openBroadcast();
+  assert.equal(await promptBox.inputValue(), '');
+  await page.keyboard.press('Escape');
+  await broadcast.waitFor({ state: 'hidden', timeout: 5000 });
   await setOpen(page, false);
 
   // Tiles of mixed heights take the largest scale any ordered rows allow, where greedy

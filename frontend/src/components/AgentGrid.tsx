@@ -342,6 +342,7 @@ export function AgentGrid({ send }: Props) {
     () =>
       ordered.map((entry) => ({
         paneId: entry.paneId,
+        agentId: entry.agentId,
         label: paneLabel(entry),
         place: `${entry.sessionName} › ${entry.windowName}`,
         status: entry.agentStatus,

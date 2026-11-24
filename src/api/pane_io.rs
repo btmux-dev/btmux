@@ -207,6 +207,9 @@ pub(crate) struct PanePromptRequest {
     /// How long to wait, in milliseconds: 10 minutes by default, at most an
     /// hour.
     timeout_ms: Option<u64>,
+    /// The agent instance meant (a pane's `agent_id`); refused with 409 if
+    /// another has replaced it.
+    agent_id: Option<u64>,
 }
 
 fn default_true() -> bool {
@@ -236,7 +239,7 @@ pub(crate) enum PromptReply {
         (status = 200, description = "With `wait`, the turn's outcome; without, `{\"submitted\": true}`", body = PromptReply),
         (status = 400, description = "The prompt is more than 64 KiB", body = String, content_type = "text/plain"),
         (status = 404, description = "No such pane", body = String, content_type = "text/plain"),
-        (status = 409, description = "No agent, a dialog is waiting for an answer, the agent is busy (with `wait`), or the agent can't take a multi-line prompt", body = String, content_type = "text/plain"),
+        (status = 409, description = "No agent, the agent isn't `agent_id`, a dialog is waiting for an answer, the agent is busy (with `wait`), or the agent can't take a multi-line prompt", body = String, content_type = "text/plain"),
         (status = 500, description = "Writing to the pane failed", body = String, content_type = "text/plain"),
     ),
 ))]
@@ -245,9 +248,10 @@ pub(crate) async fn api_pane_prompt(
     Path(pane_id): Path<Uuid>,
     Json(body): Json<PanePromptRequest>,
 ) -> Response {
-    match automation::send_prompt(
+    match automation::send_prompt_to(
         &state,
         pane_id,
+        body.agent_id,
         &body.prompt,
         body.wait,
         automation::wait_duration(body.timeout_ms),

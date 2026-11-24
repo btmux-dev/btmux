@@ -2784,7 +2784,7 @@
             }
           },
           "409": {
-            "description": "No agent, a dialog is waiting for an answer, the agent is busy (with `wait`), or the agent can't take a multi-line prompt",
+            "description": "No agent, the agent isn't `agent_id`, a dialog is waiting for an answer, the agent is busy (with `wait`), or the agent can't take a multi-line prompt",
             "content": {
               "text/plain": {
                 "schema": {
@@ -6390,6 +6390,15 @@
             ],
             "format": "int64",
             "description": "How long to wait, in milliseconds: 10 minutes by default, at most an\nhour.",
+            "minimum": 0
+          },
+          "agent_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The agent instance meant (a pane's `agent_id`); refused with 409 if\nanother has replaced it.",
             "minimum": 0
           }
         }
