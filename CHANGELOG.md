@@ -10,7 +10,7 @@ actions, saved state, and API types can change in any release.
 
 ### Added
 
-- Agent view's `b` sends one prompt to several agents at once.
+- Agent view's `b` sends one prompt to several agents at once. ([#203](https://github.com/btmux-dev/btmux/pull/203))
 
 ## [0.0.221] - 2026-11-24
 
