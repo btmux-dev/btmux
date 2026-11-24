@@ -15,12 +15,18 @@ export interface VimHost {
   hide(): void;
   /** Close the shown file; `force` discards unsaved changes. */
   close(force: boolean): void;
+  /** Close every file but the shown one, keeping those with unsaved changes. */
+  closeOthers(): void;
   /** Show the open file `step` tabs over. */
   cycle(step: number): void;
   /** The mode changed: NORMAL, INSERT, …, or null without vim. */
   mode(mode: string | null): void;
-  /** Show or hide the problems list; `auto` shows it only if there are problems. */
-  problems(open: boolean | 'auto'): void;
+  /**
+   * Show or hide the problems list, listing the workspace's (the quickfix
+   * list) or the shown file's (the location list); `auto` shows it only if
+   * it has problems.
+   */
+  problems(open: boolean | 'auto', scope: 'workspace' | 'file'): void;
 }
 
 const hosts = new WeakMap<EditorView, VimHost>();
@@ -40,25 +46,76 @@ const saveAndHide = (cm: CodeMirror, params: { argString?: string }) => {
   void host.save(bang(params)).then((saved) => saved && host.epoch() === epoch && host.hide());
 };
 
+/** Ex command names, for completing them on the command line. */
+const exNames = new Set([
+  'colorscheme',
+  'map',
+  'imap',
+  'nmap',
+  'vmap',
+  'omap',
+  'noremap',
+  'nnoremap',
+  'vnoremap',
+  'inoremap',
+  'onoremap',
+  'unmap',
+  'mapclear',
+  'nmapclear',
+  'vmapclear',
+  'imapclear',
+  'omapclear',
+  'undo',
+  'redo',
+  'set',
+  'setlocal',
+  'setglobal',
+  'sort',
+  'substitute',
+  'startinsert',
+  'nohlsearch',
+  'yank',
+  'put',
+  'delmarks',
+  'marks',
+  'registers',
+  'vglobal',
+  'delete',
+  'join',
+  'normal',
+  'global',
+]);
+
+const defineEx = (name: string, prefix: string, fn: Parameters<typeof Vim.defineEx>[2]) => {
+  Vim.defineEx(name, prefix, fn);
+  exNames.add(name);
+};
+
 // Global to vim, so defined once; each resolves the editor from its view.
-Vim.defineEx('write', 'w', (cm, params) => void hostOf(cm)?.save(bang(params)));
-Vim.defineEx('wq', 'wq', saveAndHide);
-Vim.defineEx('xit', 'x', saveAndHide);
+defineEx('write', 'w', (cm, params) => void hostOf(cm)?.save(bang(params)));
+defineEx('wq', 'wq', saveAndHide);
+defineEx('xit', 'x', saveAndHide);
 // Hiding keeps unsaved changes (the server holds them), so `:q` needs no `!`.
-Vim.defineEx('quit', 'q', (cm) => hostOf(cm)?.hide());
-Vim.defineEx('qall', 'qa', (cm) => hostOf(cm)?.hide());
-Vim.defineEx('bdelete', 'bd', (cm, params) => hostOf(cm)?.close(bang(params)));
-Vim.defineEx('bnext', 'bn', (cm) => hostOf(cm)?.cycle(1));
-Vim.defineEx('bprevious', 'bp', (cm) => hostOf(cm)?.cycle(-1));
+defineEx('quit', 'q', (cm) => hostOf(cm)?.hide());
+defineEx('qall', 'qa', (cm) => hostOf(cm)?.hide());
+defineEx('bdelete', 'bd', (cm, params) => hostOf(cm)?.close(bang(params)));
+// As vim-bufonly's.
+defineEx('BufOnly', 'BufOnly', (cm) => hostOf(cm)?.closeOthers());
+defineEx('bnext', 'bn', (cm) => hostOf(cm)?.cycle(1));
+defineEx('bprevious', 'bp', (cm) => hostOf(cm)?.cycle(-1));
 // The problems list is the quickfix list.
 // After the command line closes, which focuses the text again.
-const problems = (cm: CodeMirror, open: boolean | 'auto') => {
+const problems = (cm: CodeMirror, open: boolean | 'auto', scope: 'workspace' | 'file') => {
   const host = hostOf(cm);
-  if (host) setTimeout(() => host.problems(open));
+  if (host) setTimeout(() => host.problems(open, scope));
 };
-Vim.defineEx('copen', 'cope', (cm) => problems(cm, true));
-Vim.defineEx('cclose', 'ccl', (cm) => problems(cm, false));
-Vim.defineEx('cwindow', 'cw', (cm) => problems(cm, 'auto'));
+defineEx('copen', 'cope', (cm) => problems(cm, true, 'workspace'));
+defineEx('cclose', 'ccl', (cm) => problems(cm, false, 'workspace'));
+defineEx('cwindow', 'cw', (cm) => problems(cm, 'auto', 'workspace'));
+// The location list, as `vim.diagnostic.setloclist()` fills it.
+defineEx('lopen', 'lop', (cm) => problems(cm, true, 'file'));
+defineEx('lclose', 'lcl', (cm) => problems(cm, false, 'file'));
+defineEx('lwindow', 'lw', (cm) => problems(cm, 'auto', 'file'));
 
 // `gq`: format with the language server when it formats ranges, else hard
 // wrap, as codemirror-vim's own `gq` does (Neovim sets 'formatexpr' to the
@@ -277,5 +334,96 @@ const altKeys = Prec.highest(
   }),
 );
 
+/** Tab on the `:` line: the command names starting with the typed one, cycled through and listed, as Vim's wildmenu. */
+type Completing = { head: string; matches: string[]; index: number; value: string; list: HTMLElement | null };
+const completing = new WeakMap<HTMLInputElement, Completing>();
+
+/** The input of vim's `:` line, if `target` is it (not `/` or `?`). */
+function exInput(target: EventTarget | null): HTMLInputElement | null {
+  if (!(target instanceof HTMLInputElement) || !target.closest('.cm-vim-panel')) return null;
+  return target.parentElement?.firstChild?.textContent === ':' ? target : null;
+}
+
+function showMatches(input: HTMLInputElement, state: Completing) {
+  if (state.matches.length < 2) return;
+  if (!state.list) {
+    state.list = document.createElement('span');
+    state.list.className = 'cm-btmux-ex-matches';
+    input.parentElement?.after(state.list);
+  }
+  state.list.replaceChildren(
+    ...state.matches.map((name, i) => {
+      const item = document.createElement('span');
+      item.textContent = name;
+      if (i === state.index) item.className = 'cm-btmux-ex-match-selected';
+      return item;
+    }),
+  );
+  state.list.children[state.index]?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+const exCompletion = ViewPlugin.define((view) => {
+  const keydown = (e: KeyboardEvent) => {
+    const input = exInput(e.target);
+    if (!input) return;
+    if (e.key !== 'Tab' || e.ctrlKey || e.altKey || e.metaKey) {
+      // Vim changes the line without input events (Ctrl-U, history): any other key starts over.
+      if (!['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) forget(input);
+      return;
+    }
+    // Tab would move focus, which closes the line.
+    e.preventDefault();
+    e.stopPropagation();
+    let state = completing.get(input);
+    if (state && state.value === input.value) {
+      const n = state.matches.length;
+      state.index = (state.index + (e.shiftKey ? -1 : 1) + n) % n;
+    } else {
+      // A range (`%`, `'<,'>`, `1,5`), then the command's name so far.
+      const typed = /^([\d\s.,$%'<>+;-]*)([A-Za-z]*)$/.exec(input.value);
+      const matches = typed ? [...exNames].filter((name) => name.startsWith(typed[2])).sort() : [];
+      if (!typed || !matches.length) return;
+      state?.list?.remove();
+      state = { head: typed[1], matches, index: e.shiftKey ? matches.length - 1 : 0, value: '', list: null };
+      completing.set(input, state);
+    }
+    input.value = state.value = state.head + state.matches[state.index];
+    showMatches(input, state);
+  };
+  const forget = (input: HTMLInputElement) => {
+    completing.get(input)?.list?.remove();
+    completing.delete(input);
+  };
+  // Typing starts over.
+  const typed = (e: Event) => {
+    const input = exInput(e.target);
+    if (input) forget(input);
+  };
+  view.dom.addEventListener('keydown', keydown, true);
+  view.dom.addEventListener('input', typed, true);
+  return {
+    destroy() {
+      view.dom.removeEventListener('keydown', keydown, true);
+      view.dom.removeEventListener('input', typed, true);
+    },
+  };
+});
+
+const exCompletionTheme = EditorView.theme({
+  '.cm-btmux-ex-matches': {
+    display: 'flex',
+    gap: '2ch',
+    flex: '0 1 auto',
+    minWidth: 0,
+    maxWidth: '70%',
+    marginLeft: '2ch',
+    overflowX: 'auto',
+    scrollbarWidth: 'none',
+    whiteSpace: 'pre',
+  },
+  '.cm-btmux-ex-matches > span': { opacity: 0.6 },
+  '.cm-btmux-ex-matches > .cm-btmux-ex-match-selected': { opacity: 1, color: 'var(--btm-editor-blue)' },
+});
+
 /** Vim, ahead of every keymap so its Ctrl chords win; Esc handling stays the editor's (`PaneEditor.keydown`). */
-export const vimExtension: Extension = [altKeys, vim(), modeReporter];
+export const vimExtension: Extension = [altKeys, vim(), modeReporter, exCompletion, exCompletionTheme];

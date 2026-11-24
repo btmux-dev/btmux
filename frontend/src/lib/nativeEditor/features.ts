@@ -30,7 +30,7 @@ import { IS_MAC } from '../nvimKeys';
 import type { Overlay } from '../../state/types';
 import { editorConnection } from './connection';
 import { viewDocs, type Doc } from './doc';
-import { offset, type Command, type Location, type Position, type Range, type TextEdit } from './lspText';
+import { minimalEdits, offset, type Command, type Location, type Position, type Range, type TextEdit } from './lspText';
 import { openPicker, type PickItem } from './picker';
 import { gather, has, mayHave, plugins, pluginFor, pluginReady, pluginsFor, pluginsReady, serverIds } from './servers';
 
@@ -678,12 +678,11 @@ const formatOptions = (view: EditorView) => ({
 function applyEdits(view: EditorView, edits: TextEdit[] | null, userEvent: string) {
   if (!edits?.length) return;
   const doc = view.state.doc;
-  const changes = edits.map((e) => ({
-    from: offset(doc, e.range.start),
-    to: offset(doc, e.range.end),
-    insert: e.newText,
-  }));
-  view.dispatch({ changes, userEvent });
+  const changes = minimalEdits(
+    doc,
+    edits.map((e) => ({ from: offset(doc, e.range.start), to: offset(doc, e.range.end), insert: e.newText })),
+  );
+  if (changes.length) view.dispatch({ changes, userEvent });
 }
 
 /** Whether the server can format a range (`gq`, format selection). */

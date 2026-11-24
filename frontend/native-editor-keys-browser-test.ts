@@ -331,10 +331,39 @@ try {
   // :copen focuses the list once the command line has closed.
   await page.keyboard.press('Escape');
   await pane.locator('.cm-btmux-problems').waitFor({ state: 'detached' });
-  await page.keyboard.type(':copen');
+  // Tab completes command names, cycling through those that match.
+  await page.keyboard.type(':co');
+  const exLine = pane.locator('.cm-vim-panel input');
+  await page.keyboard.press('Tab');
+  assert.equal(await exLine.inputValue(), 'colorscheme');
+  await pane.locator('.cm-btmux-ex-matches').getByText('copen').waitFor();
+  await page.keyboard.press('Tab');
+  assert.equal(await exLine.inputValue(), 'copen');
+  // Ctrl-U clears the line, and the names with it.
+  await page.keyboard.press('Control+u');
+  assert.equal(await exLine.inputValue(), '');
+  await pane.locator('.cm-btmux-ex-matches').waitFor({ state: 'detached' });
+  await page.keyboard.type('copen');
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => document.activeElement?.closest('.cm-btmux-problems'));
   await page.keyboard.press('q');
+  await pane.locator('.cm-btmux-problems').waitFor({ state: 'detached' });
+  // :lopen lists the shown file's.
+  await page.keyboard.type(':lopen');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.activeElement?.closest('.cm-btmux-problems'));
+  assert.equal(
+    await pane.locator('.cm-btmux-problems').getByRole('button', { name: 'This file' }).getAttribute('aria-pressed'),
+    'true',
+  );
+  // :cclose leaves the location list; :lclose closes it.
+  await content.click();
+  await page.keyboard.type(':cclose');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(300);
+  assert.equal(await pane.locator('.cm-btmux-problems').count(), 1);
+  await page.keyboard.type(':lclose');
+  await page.keyboard.press('Enter');
   await pane.locator('.cm-btmux-problems').waitFor({ state: 'detached' });
   await content.click();
   // ,h is a mapping and a prefix: it runs once no more keys come.

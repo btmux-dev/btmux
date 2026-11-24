@@ -876,6 +876,21 @@ try {
   await until('the last row', async () => /^W/.test((await selectedRow.textContent()) ?? ''));
   await page.keyboard.press('Home');
   await until('the first row', async () => /^E/.test((await selectedRow.textContent()) ?? ''));
+  // f lists only the shown file's, as Vim's location list, and back.
+  const scope = (name: string) => problems.getByRole('button', { name });
+  await page.keyboard.press('f');
+  await until("the shown file's", async () => (await counts()).errors === 1);
+  assert.equal(await scope('This file').getAttribute('aria-pressed'), 'true');
+  assert.equal(await problems.locator('li[role=option]').count(), await duoRows.count());
+  await page.keyboard.press('f');
+  await until('every file again', async () => (await counts()).errors >= 601);
+  assert.equal(await scope('Workspace').getAttribute('aria-pressed'), 'true');
+  // Mod-Shift-M in the list shows every file's, as from the text.
+  await page.keyboard.press('f');
+  await until("the shown file's again", async () => (await counts()).errors === 1);
+  await page.keyboard.press('ControlOrMeta+Shift+M');
+  await until('every file from the chord', async () => (await counts()).errors >= 601);
+  assert.equal(await scope('Workspace').getAttribute('aria-pressed'), 'true');
   // A hidden file's rows are its server's latest.
   writeFileSync(solo, 'lint lint\n');
   await until("the hidden file's new warning", async () => (await counts()).warnings === warnings + 1);

@@ -10,6 +10,7 @@ import { fuzzyMatch } from './src/lib/nativeEditor/picker';
 import { parseQuery } from './src/lib/nativeEditor/quickOpen';
 import { diff, rebase } from './src/lib/nativeEditor/rebase';
 import { gitSigns, gitSummary } from './src/lib/nativeEditor/gitSigns';
+import { minimalChanges, minimalEdits } from './src/lib/nativeEditor/lspText';
 
 test('updates are skipped up to the synced version, and a gap is detected', () => {
   expect(freshFrom(3, 3)).toBe(0);
@@ -169,4 +170,30 @@ test('git signs count lines as Git does, with no line in an empty text', () => {
   expect(summary('a', 'a\n')).toEqual({ added: 0, changed: 1, removed: 0 });
   expect(summary('x', 'y')).toEqual({ added: 0, changed: 1, removed: 0 });
   expect(summary('a\n', 'x\ny')).toEqual({ added: 1, changed: 1, removed: 0 });
+});
+
+test('a whole-file edit applies as the parts that differ, keeping the cursor on its text', () => {
+  const before = '# Title\n\nsome  text here\n* a\n* b\n';
+  const after = '# Title\r\n\r\nsome text here\r\n- a\r\n- b\r\n';
+  let state = EditorState.create({ doc: before, selection: { anchor: before.indexOf('here') } });
+  state = state.update({ changes: minimalChanges(state.doc, 0, state.doc.length, after) }).state;
+  expect(state.doc.toString()).toBe(after.replace(/\r\n/g, '\n'));
+  expect(state.selection.main.head).toBe(state.doc.toString().indexOf('here'));
+  expect(minimalChanges(state.doc, 0, state.doc.length, state.doc.toString())).toEqual([]);
+});
+
+test('adjacent edits in reverse order keep their text in order', () => {
+  // As the server meant: `[1, 2)` to `Yb`, then `[0, 1)` to `aX`, gives `aXYb`.
+  const state = EditorState.create({ doc: 'ab' });
+  const changes = minimalEdits(state.doc, [
+    { from: 1, to: 2, insert: 'Yb' },
+    { from: 0, to: 1, insert: 'aX' },
+  ]);
+  expect(state.update({ changes }).state.doc.toString()).toBe('aXYb');
+  // Insertions at one position keep the order given.
+  const inserts = minimalEdits(state.doc, [
+    { from: 1, to: 1, insert: '1' },
+    { from: 1, to: 1, insert: '2' },
+  ]);
+  expect(state.update({ changes: inserts }).state.doc.toString()).toBe('a12b');
 });
