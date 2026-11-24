@@ -1612,7 +1612,8 @@ impl Inner {
                         .cloned()
                         .unwrap_or_default();
                     // The server's version if it gives one, else the last it
-                    // was sent: a later publish corrects one for an earlier.
+                    // was sent: a guess, wrong for a publish computed before
+                    // that, which the server's next publish corrects.
                     let version = params["version"].as_u64().or_else(|| {
                         server
                             .buffers

@@ -40,7 +40,12 @@ writeFileSync(
     '[[language]]\nname = "solo"\nfile-types = ["solo"]\nlanguage-servers = ["solo"]\n' +
     // A server publishing without versions, as Harper does.
     '[language-server.bare]\ncommand = "fake-lsp"\nargs = ["--no-version"]\n' +
-    '[[language]]\nname = "bare"\nfile-types = ["bare"]\nlanguage-servers = ["bare"]\n',
+    '[[language]]\nname = "bare"\nfile-types = ["bare"]\nlanguage-servers = ["bare"]\n' +
+    '[language-server.drowsy]\ncommand = "fake-lsp"\nargs = ["--no-version", "--late-publish"]\n' +
+    '[[language]]\nname = "drowsy"\nfile-types = ["drowsy"]\nlanguage-servers = ["drowsy"]\n' +
+    // Versioned, 2 s late.
+    '[language-server.tardy]\ncommand = "fake-lsp"\nargs = ["--slow-publish"]\n' +
+    '[[language]]\nname = "tardy"\nfile-types = ["tardy"]\nlanguage-servers = ["tardy"]\n',
 );
 const log = () => {
   try {
@@ -950,21 +955,54 @@ try {
   await until('the format', async () => (await lines(page, paneId)) === 'FMT\n');
   console.log('PASS a command run while the server starts waits for it');
 
-  // A server publishing without a version right after an edit: its
-  // positions already include the edit, which the tab hasn't synced.
-  const bare = join(dir, 'x.bare');
-  writeFileSync(bare, 'xxx bad\n');
-  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: bare, line: 1, editor: 'native' });
-  await until('the bare file', async () => (await lines(page, paneId)) === 'xxx bad\n');
-  const bareError = pane.locator('.cm-lintRange-error');
-  await until('its error', async () => (await bareError.count()) === 1 && (await bareError.textContent()) === 'bad');
-  await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
-  await page.keyboard.press('ControlOrMeta+Home');
-  for (let i = 0; i < 3; i++) await page.keyboard.press('Delete');
-  await until('the edit', async () => (await lines(page, paneId)) === ' bad\n');
-  await page.waitForTimeout(1000);
-  assert.equal(await bareError.textContent(), 'bad');
+  const editor = page.locator(`[data-native-editor][data-pane-id="${paneId}"]`);
+  const errors = pane.locator('.cm-lintRange-error');
+  const errorTexts = () => errors.allTextContents();
+  const openFile = async (path: string, text: string) => {
+    writeFileSync(path, text);
+    await api(`/api/panes/${paneId}/open-editor`, 'POST', { path, line: 1, editor: 'native' });
+    await until(path, async () => (await lines(page, paneId)) === text);
+    await until(`${path}'s error`, async () => (await errorTexts()).join() === 'bad');
+  };
+  // Another "bad" typed at the end, then text deleted before both: only a
+  // fresh publish marks the second.
+  const typeAndDelete = async () => {
+    await editor.click();
+    await page.keyboard.press('ControlOrMeta+End');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('End');
+    await page.keyboard.type(' bad');
+    await page.keyboard.press('Home');
+    for (let i = 0; i < 3; i++) await page.keyboard.press('Delete');
+  };
+
+  // Servers publishing without a version, right after an edit or late: their
+  // positions include edits the tab hasn't synced, or not yet its latest.
+  for (const path of [join(dir, 'x.bare'), join(dir, 'x.drowsy')]) {
+    await openFile(path, 'xxx bad\n');
+    await typeAndDelete();
+    await until('the edit', async () => (await lines(page, paneId)) === ' bad bad\n');
+    await until(`${path}'s fresh errors`, async () => (await errorTexts()).join() === 'bad,bad');
+    await page.waitForTimeout(800);
+    assert.deepEqual(await errorTexts(), ['bad', 'bad']);
+  }
   console.log('PASS diagnostics published without a version stay on their text');
+
+  // A file reopened after an edit, before its server published for it:
+  // diagnostics for the text before aren't shown on the text after.
+  const tardy = join(dir, 'x.tardy');
+  await openFile(tardy, 'xxx bad yyyy\n');
+  await typeAndDelete();
+  await until('the edit', async () => (await lines(page, paneId)) === ' bad yyyy bad\n');
+  await pane.locator('[title="Close x.tardy (Delete)"]').dispatchEvent('click');
+  await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: tardy, line: 1, editor: 'native' });
+  await until('the reopened file', async () => (await lines(page, paneId)) === ' bad yyyy bad\n');
+  for (let i = 0; i < 20 && (await errorTexts()).length < 2; i++) {
+    for (const text of await errorTexts()) assert.equal(text, 'bad');
+    await page.waitForTimeout(100);
+  }
+  await until('the late errors', async () => (await errorTexts()).join() === 'bad,bad');
+  console.log("PASS a reopened file doesn't show diagnostics for its earlier text");
 } catch (error) {
   const shot = process.env.TEST_SHOT;
   if (shot) for (const context of browser.contexts()) await context.pages()[0]?.screenshot({ path: shot });

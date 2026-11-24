@@ -22,7 +22,7 @@ import { languages } from './languages';
 import { minimalEdits, offset, type Position, type Range, type TextEdit } from './lspText';
 import { inlineCompletions } from './inlineCompletion';
 import { editorConnection } from './connection';
-import { viewDocs, type Doc } from './doc';
+import { onConfirmed, viewDocs, type Doc } from './doc';
 import {
   REFRESH_ALL,
   applyWorkspaceEdit,
@@ -337,22 +337,42 @@ function showDiagnostics(view: EditorView, client: LSPClient) {
   });
 }
 
+/** Clients whose diagnostics name a version a doc hasn't got yet, shown again once it has. */
+const awaiting = new WeakMap<Doc, Set<LSPClient>>();
+
+onConfirmed((doc) => {
+  const clients = awaiting.get(doc);
+  if (!clients) return;
+  awaiting.delete(doc);
+  if (doc.view) for (const c of clients) showDiagnostics(doc.view, c);
+});
+
 function serverDiagnostics(plugin: LSPPlugin, params: PublishParams): Diagnostic[] {
   // Positions are in the buffer at the version btmux stamped them with
   // (servers may have seen edits this tab hasn't synced, or not yet seen
-  // its own); map them over edits since. Unknown, the current text is the
-  // best guess.
+  // its own); map them over edits since. A version this tab doesn't have
+  // is left out: one it opened after, or dropped, and one it hasn't got
+  // yet, until it has. Unstamped, the current text is the best guess.
   const doc = viewDocs.get(plugin.view);
   const current = { doc: plugin.view.state.doc, changes: ChangeSet.empty(plugin.view.state.doc.length) };
-  const bases = new Map<number, typeof current>();
+  const bases = new Map<number, typeof current | null>();
   const baseAt = (version: number | null | undefined) => {
     if (version == null || !doc) return current;
-    let base = bases.get(version);
-    if (!base) bases.set(version, (base = doc.since(version) ?? current));
-    return base;
+    if (!bases.has(version)) {
+      const base = doc.since(version);
+      if (base === 'ahead') {
+        let clients = awaiting.get(doc);
+        if (!clients) awaiting.set(doc, (clients = new Set()));
+        clients.add(plugin.client);
+      }
+      bases.set(version, base === 'ahead' ? null : base);
+    }
+    return bases.get(version)!;
   };
   return params.diagnostics.flatMap((d, i) => {
-    const { doc: text, changes } = baseAt(params.versions?.[i]);
+    const base = baseAt(params.versions?.[i]);
+    if (!base) return [];
+    const { doc: text, changes } = base;
     const start = offset(text, d.range.start);
     const end = offset(text, d.range.end);
     const from = changes.mapPos(start, 1);
