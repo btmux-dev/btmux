@@ -339,6 +339,11 @@ try {
   await pane.locator('.cm-btmux-ex-matches').getByText('copen').waitFor();
   await page.keyboard.press('Tab');
   assert.equal(await exLine.inputValue(), 'copen');
+  // Ctrl-U clears the line, and the names with it.
+  await page.keyboard.press('Control+u');
+  assert.equal(await exLine.inputValue(), '');
+  await pane.locator('.cm-btmux-ex-matches').waitFor({ state: 'detached' });
+  await page.keyboard.type('copen');
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => document.activeElement?.closest('.cm-btmux-problems'));
   await page.keyboard.press('q');

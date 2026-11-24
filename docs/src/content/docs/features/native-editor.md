@@ -296,7 +296,7 @@ in Vim mode) opens it that way. **Workspace** lists every file's again.
 | `Enter`, `o`, click  | Go to the problem           |
 | `f`                  | This file's or every file's |
 | `Esc`, `q`           | Hide the list               |
-| `Mod-Shift-M`        | Hide the list, or show it   |
+| `Mod-Shift-M`        | Hide the list, or show all  |
 
 `[native-editor] format-on-save = true` formats on every save. Renames and
 code actions also change files that aren't open: those wait in the editor,

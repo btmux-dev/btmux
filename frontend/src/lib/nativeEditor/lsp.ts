@@ -8,7 +8,7 @@ import {
   type Transport,
   type WorkspaceFile,
 } from '@codemirror/lsp-client';
-import { EditorState, Facet, Prec, StateEffect, StateField, type ChangeSpec, type Extension } from '@codemirror/state';
+import { EditorState, Facet, Prec, StateEffect, StateField, type Extension } from '@codemirror/state';
 import { EditorView, keymap, showPanel, type Panel, type Tooltip } from '@codemirror/view';
 import { getIndentUnit, indentUnit, LanguageDescription } from '@codemirror/language';
 import { setDiagnostics, type Diagnostic } from '@codemirror/lint';
@@ -19,7 +19,7 @@ import type { EditorServerMessage, LspServerStatus } from '../../generated/proto
 import { IS_MAC } from '../nvimKeys';
 import { completionsFrom, serverCompletions } from './completion';
 import { languages } from './languages';
-import { minimalChanges, offset, type Position, type Range, type TextEdit } from './lspText';
+import { minimalEdits, offset, type Position, type Range, type TextEdit } from './lspText';
 import { inlineCompletions } from './inlineCompletion';
 import { editorConnection } from './connection';
 import { viewDocs, type Doc } from './doc';
@@ -555,14 +555,15 @@ export async function format(view: EditorView) {
     if (!plugins(view).includes(plugin)) {
       // Still the formatted text: apply it there, shown or not.
       if (doc.state?.doc !== start) return;
-      const changes = edits.flatMap((e) =>
-        minimalChanges(start, offset(start, e.range.start), offset(start, e.range.end), e.newText),
+      const changes = minimalEdits(
+        start,
+        edits.map((e) => ({ from: offset(start, e.range.start), to: offset(start, e.range.end), insert: e.newText })),
       );
       if (changes.length) doc.update({ changes, userEvent: 'format' });
       return;
     }
     const changed = mapping.getMapping(uri);
-    const changes: ChangeSpec[] = [];
+    const mapped: { from: number; to: number; insert: string }[] = [];
     for (const edit of edits) {
       let from = mapping.mapPosition(uri, edit.range.start);
       let to = mapping.mapPosition(uri, edit.range.end);
@@ -572,8 +573,9 @@ export async function format(view: EditorView) {
         from = changed.mapPos(from, 1);
         to = changed.mapPos(to, -1);
       }
-      changes.push(...minimalChanges(view.state.doc, from, to, edit.newText));
+      mapped.push({ from, to, insert: edit.newText });
     }
+    const changes = minimalEdits(view.state.doc, mapped);
     if (changes.length) view.dispatch({ changes, userEvent: 'format' });
   });
 }

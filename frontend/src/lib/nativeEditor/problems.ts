@@ -19,8 +19,10 @@ export interface ProblemsHost {
   root(): string | null;
   /** Show `path` at `at` and focus the editor. */
   jump(path: string, at: Position): void;
-  /** Esc, Mod-Shift-M, or the close button. */
+  /** Esc or the close button. */
   close(): void;
+  /** Mod-Shift-M: as from the text, hide the workspace's list, else show it. */
+  toggle(): void;
   /** Run the editor's chords that don't need the text (quick open); true if one ran. */
   key(event: KeyboardEvent): boolean;
 }
@@ -143,6 +145,12 @@ export class ProblemsList {
     const workspace = scopeButton('workspace', 'Workspace');
     const file = scopeButton('file', 'This file');
     scopes.append(workspace, file);
+    // Set before the list mounts and takes focus, not on the first render.
+    const pressed = () => {
+      workspace.setAttribute('aria-pressed', String(this.scope === 'workspace'));
+      file.setAttribute('aria-pressed', String(this.scope === 'file'));
+    };
+    pressed();
     const counts = document.createElement('span');
     counts.className = 'cm-btmux-problems-counts';
     const close = document.createElement('button');
@@ -261,8 +269,7 @@ export class ProblemsList {
 
     let scope = this.scope;
     const render = () => {
-      workspace.setAttribute('aria-pressed', String(this.scope === 'workspace'));
-      file.setAttribute('aria-pressed', String(this.scope === 'file'));
+      pressed();
       // Another list: from its top.
       if (scope !== this.scope) {
         scope = this.scope;
@@ -317,11 +324,11 @@ export class ProblemsList {
     };
 
     list.addEventListener('keydown', (e) => {
-      // Mod-Shift-M toggles it from here too.
+      // Mod-Shift-M does here what it does in the text.
       if ((IS_MAC ? e.metaKey : e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'm') {
         e.preventDefault();
         e.stopPropagation();
-        this.host.close();
+        this.host.toggle();
         return;
       }
       if ((e.metaKey || e.ctrlKey || e.altKey) && this.host.key(e)) {

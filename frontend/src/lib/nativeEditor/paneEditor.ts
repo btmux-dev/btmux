@@ -239,6 +239,7 @@ export class PaneEditor {
       root: () => workspaceFolder(findPaneState(useStore.getState(), this.paneId)),
       jump: (path, at) => this.jump(path, at),
       close: () => this.setProblems(false),
+      toggle: () => this.toggleProblems('workspace'),
       key: (e) => runScopeHandlers(this.view, e, EARLY_SCOPE),
     });
     this.view = new EditorView({ parent, state: this.placeholder() });

@@ -350,8 +350,11 @@ export function NativeEditor({
           size="sm"
           menuWidth="180px"
           isDisabled={!state.files.length}
+          // Not on a tab: the active file's. Tabs set their own first.
           onContextMenu={(event) => {
-            // Not on a tab: the active file's.
+            if (!(event.target as Element).closest('[role="tab"]')) setMenuPath(active);
+          }}
+          onTouchStart={(event) => {
             if (!(event.target as Element).closest('[role="tab"]')) setMenuPath(active);
           }}
           items={(() => {
@@ -382,7 +385,9 @@ export function NativeEditor({
                   // Middle click closes, as in browsers.
                   onMouseDown={(event) => event.button === 1 && event.preventDefault()}
                   onAuxClick={(event) => event.button === 1 && close(path)}
+                  // Long presses open the menu without a contextmenu event.
                   onContextMenu={() => setMenuPath(path)}
+                  onTouchStart={() => setMenuPath(path)}
                   // The X can't be a button inside the tab, so Delete closes the focused tab.
                   aria-keyshortcuts="Delete"
                   aria-description="Delete closes the file"

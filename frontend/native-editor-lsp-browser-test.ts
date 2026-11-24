@@ -885,6 +885,12 @@ try {
   await page.keyboard.press('f');
   await until('every file again', async () => (await counts()).errors >= 601);
   assert.equal(await scope('Workspace').getAttribute('aria-pressed'), 'true');
+  // Mod-Shift-M in the list shows every file's, as from the text.
+  await page.keyboard.press('f');
+  await until("the shown file's again", async () => (await counts()).errors === 1);
+  await page.keyboard.press('ControlOrMeta+Shift+M');
+  await until('every file from the chord', async () => (await counts()).errors >= 601);
+  assert.equal(await scope('Workspace').getAttribute('aria-pressed'), 'true');
   // A hidden file's rows are its server's latest.
   writeFileSync(solo, 'lint lint\n');
   await until("the hidden file's new warning", async () => (await counts()).warnings === warnings + 1);

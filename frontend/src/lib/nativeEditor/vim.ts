@@ -364,9 +364,13 @@ function showMatches(input: HTMLInputElement, state: Completing) {
 
 const exCompletion = ViewPlugin.define((view) => {
   const keydown = (e: KeyboardEvent) => {
-    if (e.key !== 'Tab' || e.ctrlKey || e.altKey || e.metaKey) return;
     const input = exInput(e.target);
     if (!input) return;
+    if (e.key !== 'Tab' || e.ctrlKey || e.altKey || e.metaKey) {
+      // Vim changes the line without input events (Ctrl-U, history): any other key starts over.
+      if (!['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) forget(input);
+      return;
+    }
     // Tab would move focus, which closes the line.
     e.preventDefault();
     e.stopPropagation();
@@ -386,13 +390,14 @@ const exCompletion = ViewPlugin.define((view) => {
     input.value = state.value = state.head + state.matches[state.index];
     showMatches(input, state);
   };
+  const forget = (input: HTMLInputElement) => {
+    completing.get(input)?.list?.remove();
+    completing.delete(input);
+  };
   // Typing starts over.
   const typed = (e: Event) => {
     const input = exInput(e.target);
-    const state = input && completing.get(input);
-    if (!state) return;
-    state.list?.remove();
-    completing.delete(input);
+    if (input) forget(input);
   };
   view.dom.addEventListener('keydown', keydown, true);
   view.dom.addEventListener('input', typed, true);

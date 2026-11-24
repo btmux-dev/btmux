@@ -28,6 +28,17 @@ export const lspToSnippet = (text: string) =>
   text.replace(/\\([$}\\])|\$(\d+)/g, (_m, esc, field) => esc || `\${${field}}`);
 
 /**
+ * Several edits to `doc`, each as only the parts that differ
+ * (`minimalChanges`). Sorted by start first (stably, keeping the order of
+ * edits at one position): adjacent edits can each become an insertion at
+ * their shared boundary, which apply in the order given, while LSP allows
+ * edits in any order.
+ */
+export function minimalEdits(doc: Text, edits: { from: number; to: number; insert: string }[]): ChangeSpec[] {
+  return [...edits].sort((a, b) => a.from - b.from).flatMap((e) => minimalChanges(doc, e.from, e.to, e.insert));
+}
+
+/**
  * `insert` in place of `from..to` in `doc`, as only the parts that differ:
  * formatters often replace the whole file, which would move the cursor,
  * selection, and every mark to its start.
