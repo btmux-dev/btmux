@@ -12,18 +12,18 @@ actions, saved state, and API types can change in any release.
 
 - The native editor's problems list can show only the shown file's
   problems: `f` or the header's toggle, the `editor-file-problems` action,
-  and `:lopen`, `:lclose`, and `:lwindow` in Vim mode.
+  and `:lopen`, `:lclose`, and `:lwindow` in Vim mode. ([#200](https://github.com/btmux-dev/btmux/pull/200))
 - Closing the other files in the native editor: a tab's right-click menu,
-  the `editor-close-others` action, and `:BufOnly` in Vim mode.
-- `Tab` completes command names on the native editor's Vim `:` line.
+  the `editor-close-others` action, and `:BufOnly` in Vim mode. ([#200](https://github.com/btmux-dev/btmux/pull/200))
+- `Tab` completes command names on the native editor's Vim `:` line. ([#200](https://github.com/btmux-dev/btmux/pull/200))
 
 ### Fixed
 
 - Formatting in the native editor no longer moves the cursor to the start
   of the file, or piles diagnostics at its end, when a formatter replaces the
-  whole file (rumdl).
+  whole file (rumdl). ([#200](https://github.com/btmux-dev/btmux/pull/200))
 - A line's diagnostics shown from the keyboard scroll instead of spilling
-  past the tooltip.
+  past the tooltip. ([#200](https://github.com/btmux-dev/btmux/pull/200))
 
 ## [0.0.220] - 2026-11-23
 
