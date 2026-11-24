@@ -88,8 +88,8 @@ struct Request {
 enum Pending {
     /// A tab's request, by its own id.
     Tab(SocketId, Value),
-    /// btmux's pull of a document's diagnostics, at a buffer version.
-    Pull(String, Option<u64>),
+    /// btmux's pull of a document's diagnostics: its buffer, at a version.
+    Pull(String, Uuid, u64),
     /// btmux's own request, answered with the response.
     Btmux(tokio::sync::oneshot::Sender<Value>),
 }
@@ -740,9 +740,9 @@ impl Inner {
             return;
         };
         let params = json!({ "textDocument": { "uri": uri } });
-        let version = Some(b.version);
+        let version = b.version;
         server.request(
-            Pending::Pull(uri, version),
+            Pending::Pull(uri, buffer, version),
             "textDocument/diagnostic",
             params,
         );
@@ -760,6 +760,20 @@ impl Inner {
     ) {
         let Some(server) = self.lsp.servers.get_mut(&id) else {
             return;
+        };
+        // Versions name an open buffer's text; a closed one's are gone.
+        let open = server
+            .buffers
+            .iter()
+            .filter_map(|b| self.buffers.get(b))
+            .find(|b| config::uri(&b.path) == uri);
+        let version = match open {
+            Some(_) if pulled => version,
+            // The server's version if it gives one, else the last it was
+            // sent: a guess, wrong for a publish computed before that,
+            // which the server's next publish corrects.
+            Some(b) => version.or(Some(b.version)),
+            None => None,
         };
         let entry = server.diagnostics.entry(uri.to_owned()).or_default();
         if pulled {
@@ -861,6 +875,11 @@ impl Inner {
                 continue;
             };
             server.buffers.remove(&buffer);
+            // A reopened buffer's versions start over.
+            if let Some(entry) = server.diagnostics.get_mut(&config::uri(path)) {
+                entry.pushed.1 = None;
+                entry.pulled.1 = None;
+            }
             if server.ready() {
                 server.send(notification(
                     "textDocument/didClose",
@@ -1205,7 +1224,10 @@ impl super::Hub {
                         reply["id"] = tab_id;
                         inner.send_lsp(socket, id, reply);
                     }
-                    Some(Pending::Pull(uri, version)) => {
+                    Some(Pending::Pull(uri, buffer, version)) => {
+                        // Not if the buffer closed meanwhile: a reopened one's
+                        // versions start over.
+                        let version = inner.buffers.contains_key(&buffer).then_some(version);
                         let result = &message["result"];
                         if result["kind"] == "full" {
                             let items = result["items"].clone();
@@ -1611,18 +1633,7 @@ impl Inner {
                         .as_array()
                         .cloned()
                         .unwrap_or_default();
-                    // The server's version if it gives one, else the last it
-                    // was sent: a guess, wrong for a publish computed before
-                    // that, which the server's next publish corrects.
-                    let version = params["version"].as_u64().or_else(|| {
-                        server
-                            .buffers
-                            .iter()
-                            .filter_map(|b| self.buffers.get(b))
-                            .find(|b| config::uri(&b.path) == uri)
-                            .map(|b| b.version)
-                    });
-                    self.publish(id, uri, false, items, version);
+                    self.publish(id, uri, false, items, params["version"].as_u64());
                 }
                 return;
             }
@@ -1679,6 +1690,20 @@ impl Inner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagnostics_carry_their_sources_versions() {
+        let d = Diagnostics {
+            pushed: (
+                vec![json!({ "message": "a" }), json!({ "message": "b" })],
+                Some(3),
+            ),
+            pulled: (vec![json!({ "message": "c" })], None),
+        };
+        let params = d.params("file:///x");
+        assert_eq!(params["diagnostics"].as_array().unwrap().len(), 3);
+        assert_eq!(params["versions"], json!([3, 3, null]));
+    }
 
     #[test]
     fn no_workspace_folder_at_home_or_above() {

@@ -617,6 +617,7 @@ The backend answers the server's requests (`workspace/configuration` from
 `config`, `applyEdit`, …), caches diagnostics for tabs connecting later
 (stamped with the buffer version they refer to: the server's, else, as a
 guess, the last it was sent, since tabs may not have synced edits it has;
+none for a closed buffer, whose versions a reopened one restarts;
 tabs keep recent versions, up to 1 Mi code units of replaced text, while a
 file has servers, and skip diagnostics for versions they lack), and
 keeps `$/progress` work in `lsp_status`, which editors show as progress toasts
