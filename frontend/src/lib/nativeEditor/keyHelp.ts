@@ -7,6 +7,7 @@ import { isDesktopApp } from '../desktopApp';
 import { IS_MAC } from '../nvimKeys';
 import { keyCapKeys, showKeys } from './keyLayer';
 import { EDITOR_COMMANDS } from './registry';
+import { vimCommandRows } from './vimCommands';
 
 const IS_WINDOWS = typeof navigator !== 'undefined' && /^Win/.test(navigator.platform);
 
@@ -163,15 +164,6 @@ export function editorKeys(action: string, vim: { binds: readonly VimBind[] } | 
   return mapped.length ? mapped : plain;
 }
 
-/** Vim's commands for the editor. */
-export const VIM_BASICS: { label: string; keys: string[] }[] = [
-  { label: 'Save', keys: [':w'] },
-  { label: 'Hide the editor', keys: [':q'] },
-  { label: 'Save and hide the editor', keys: [':wq'] },
-  { label: 'Close the file', keys: [':bd'] },
-  { label: 'Close the other files', keys: [':BufOnly'] },
-];
-
 /** A row of the key help's editor section. */
 export interface EditorKeyRow {
   label: string;
@@ -193,7 +185,7 @@ export function editorKeyRows(config: {
   const vim = config.vim_mode ? { binds: config.vim_binds } : null;
   const literal = (keys: string[]): EditorKey[] => keys.map((key) => ({ caps: [key] }));
   const basics: EditorKeyRow[] = vim
-    ? VIM_BASICS.map((row) => ({ label: row.label, keys: literal(row.keys) }))
+    ? vimCommandRows().map((row) => ({ label: row.label, keys: literal(row.keys) }))
     : plainBasics().map((row) => ({ label: row.label, keys: row.keys.map((key) => ({ caps: [cmKeyCap(key)] })) }));
   basics.push({ label: 'Hide the editor', keys: [{ caps: ['esc', 'esc'] }] });
   const actions = EDITOR_COMMANDS.flatMap((action) => {

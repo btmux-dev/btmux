@@ -5,6 +5,7 @@ import { closeCompletion, completionStatus } from '@codemirror/autocomplete';
 import { EditorView, ViewPlugin, runScopeHandlers } from '@codemirror/view';
 import { canFormatRange, formatRange } from './features';
 import { hunkLines } from './gitSigns';
+import { VIM_COMMANDS, type VimCommandName } from './vimCommands';
 
 /** What ex commands and the mode line reach in the editor showing a view. */
 export interface VimHost {
@@ -86,36 +87,35 @@ const exNames = new Set([
   'global',
 ]);
 
-const defineEx = (name: string, prefix: string, fn: Parameters<typeof Vim.defineEx>[2]) => {
-  Vim.defineEx(name, prefix, fn);
-  exNames.add(name);
-};
-
-// Global to vim, so defined once; each resolves the editor from its view.
-defineEx('write', 'w', (cm, params) => void hostOf(cm)?.save(bang(params)));
-defineEx('wq', 'wq', saveAndHide);
-defineEx('xit', 'x', saveAndHide);
-// Hiding keeps unsaved changes (the server holds them), so `:q` needs no `!`.
-defineEx('quit', 'q', (cm) => hostOf(cm)?.hide());
-defineEx('qall', 'qa', (cm) => hostOf(cm)?.hide());
-defineEx('bdelete', 'bd', (cm, params) => hostOf(cm)?.close(bang(params)));
-// As vim-bufonly's.
-defineEx('BufOnly', 'BufOnly', (cm) => hostOf(cm)?.closeOthers());
-defineEx('bnext', 'bn', (cm) => hostOf(cm)?.cycle(1));
-defineEx('bprevious', 'bp', (cm) => hostOf(cm)?.cycle(-1));
-// The problems list is the quickfix list.
 // After the command line closes, which focuses the text again.
 const problems = (cm: CodeMirror, open: boolean | 'auto', scope: 'workspace' | 'file') => {
   const host = hostOf(cm);
   if (host) setTimeout(() => host.problems(open, scope));
 };
-defineEx('copen', 'cope', (cm) => problems(cm, true, 'workspace'));
-defineEx('cclose', 'ccl', (cm) => problems(cm, false, 'workspace'));
-defineEx('cwindow', 'cw', (cm) => problems(cm, 'auto', 'workspace'));
-// The location list, as `vim.diagnostic.setloclist()` fills it.
-defineEx('lopen', 'lop', (cm) => problems(cm, true, 'file'));
-defineEx('lclose', 'lcl', (cm) => problems(cm, false, 'file'));
-defineEx('lwindow', 'lw', (cm) => problems(cm, 'auto', 'file'));
+
+// Global to vim, so defined once; each resolves the editor from its view.
+const commands: Record<VimCommandName, Parameters<typeof Vim.defineEx>[2]> = {
+  write: (cm, params) => void hostOf(cm)?.save(bang(params)),
+  // Hiding keeps unsaved changes (the server holds them), so `:q` needs no `!`.
+  quit: (cm) => hostOf(cm)?.hide(),
+  qall: (cm) => hostOf(cm)?.hide(),
+  wq: saveAndHide,
+  xit: saveAndHide,
+  bdelete: (cm, params) => hostOf(cm)?.close(bang(params)),
+  BufOnly: (cm) => hostOf(cm)?.closeOthers(),
+  bnext: (cm) => hostOf(cm)?.cycle(1),
+  bprevious: (cm) => hostOf(cm)?.cycle(-1),
+  copen: (cm) => problems(cm, true, 'workspace'),
+  cclose: (cm) => problems(cm, false, 'workspace'),
+  cwindow: (cm) => problems(cm, 'auto', 'workspace'),
+  lopen: (cm) => problems(cm, true, 'file'),
+  lclose: (cm) => problems(cm, false, 'file'),
+  lwindow: (cm) => problems(cm, 'auto', 'file'),
+};
+for (const [name, fn] of Object.entries(commands)) {
+  Vim.defineEx(name, VIM_COMMANDS[name as VimCommandName].prefix, fn);
+  exNames.add(name);
+}
 
 // `gq`: format with the language server when it formats ranges, else hard
 // wrap, as codemirror-vim's own `gq` does (Neovim sets 'formatexpr' to the
