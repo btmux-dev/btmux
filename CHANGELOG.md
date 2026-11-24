@@ -11,12 +11,12 @@ actions, saved state, and API types can change in any release.
 ### Added
 
 - The native editor soft-wraps long lines; `[native-editor] soft-wrap = false`,
-  also in Settings as **Soft wrap**, turns it off.
+  also in Settings as **Soft wrap**, turns it off. ([#202](https://github.com/btmux-dev/btmux/pull/202))
 
 ### Fixed
 
 - The key help's editor tab lists the Vim commands `:bn`, `:bp`, `:copen`,
-  `:cclose`, `:cw`, `:lopen`, `:lclose`, and `:lw`.
+  `:cclose`, `:cw`, `:lopen`, `:lclose`, and `:lw`. ([#202](https://github.com/btmux-dev/btmux/pull/202))
 
 ## [0.0.221] - 2026-11-24
 
