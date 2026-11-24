@@ -8,6 +8,11 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Added
+
+- The native editor soft-wraps long lines; `[native-editor] soft-wrap = false`,
+  also in Settings as **Soft wrap**, turns it off.
+
 ## [0.0.221] - 2026-11-24
 
 ### Added

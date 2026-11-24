@@ -161,6 +161,8 @@ export class PaneEditor {
   private readonly vimC = new Compartment();
   private readonly virtualTextC = new Compartment();
   private virtualText = false;
+  private readonly softWrapC = new Compartment();
+  private softWrap = false;
   private readonly problemsC = new Compartment();
   private readonly problemsList: ProblemsList;
   private problemsOpen = false;
@@ -330,6 +332,7 @@ export class PaneEditor {
       // Ahead of the keymaps, so vim's chords win over theirs.
       this.vimC.of(this.vimExtension()),
       this.virtualTextC.of(this.virtualText ? virtualText : []),
+      this.softWrapC.of(this.softWrap ? EditorView.lineWrapping : []),
       this.problemsC.of(this.problemsOpen ? this.problemsList.extension : []),
       lineNumbers(),
       gitSigns(() => doc.git),
@@ -721,6 +724,14 @@ export class PaneEditor {
     if (on === this.virtualText) return;
     this.virtualText = on;
     for (const doc of this.docs.values()) doc.update({ effects: this.virtualTextC.reconfigure(on ? virtualText : []) });
+  }
+
+  /** Wrap long lines at the view's width, or not. */
+  setSoftWrap(on: boolean) {
+    if (on === this.softWrap) return;
+    this.softWrap = on;
+    for (const doc of this.docs.values())
+      doc.update({ effects: this.softWrapC.reconfigure(on ? EditorView.lineWrapping : []) });
   }
 
   setAppearance(appearance: EditorAppearance) {

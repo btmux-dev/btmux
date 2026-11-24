@@ -270,6 +270,7 @@ Every option with its default, as `btmux generate-config` prints it. Uncomment a
 # format-on-save = false
 # vim = false   # Vim keybindings; :w saves, :q hides, a double Esc hides only from normal mode
 # virtual-text = false   # show diagnostics' messages at the end of their lines
+# soft-wrap = true   # wrap long lines at the editor's width
 # leader = " "       # <leader> in vim-keys and vim-groups: one key, like "," or "<Space>"
 # timeout = 1000     # ms a vim mapping that is also a prefix waits for more keys
 # which-key = true   # show the keys that can follow a pending prefix

@@ -248,6 +248,10 @@ export function NativeEditor({
   }, [editor, config?.virtual_text]);
 
   useEffect(() => {
+    editor?.setSoftWrap(!!config?.soft_wrap);
+  }, [editor, config?.soft_wrap]);
+
+  useEffect(() => {
     editor?.setKeys(
       config?.vim_binds ?? [],
       config?.vim_groups ?? [],

@@ -58,6 +58,10 @@ palette, closes every file but the shown one.
 Quick open starts with open and recent files. Append `:42` to open a file at
 line 42, or enter `:42` alone to jump there in the current file.
 
+Long lines wrap at the editor's width; wrapping only changes the display,
+never the file. To scroll them sideways instead, set
+`[native-editor] soft-wrap = false`, also in Settings as **Soft wrap**.
+
 In the completion menu, quick open, and other pickers, `Ctrl-n` and `Ctrl-p`
 move down and up, as in Vim, and so do `Ctrl-j` and `Ctrl-k`, as in fzf.
 Off macOS, browsers keep `Ctrl-n` for a new window, so use `Ctrl-j` there;
