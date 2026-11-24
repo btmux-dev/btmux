@@ -105,6 +105,7 @@ type Draft = {
   editor: ClientConfig['editor'];
   vimMode: boolean;
   virtualText: boolean;
+  softWrap: boolean;
   windowGridCount: number;
   binds: Record<string, string>;
   keyOverrides: Record<string, string>;
@@ -170,6 +171,7 @@ function initialDraft(config: ClientConfig): Draft {
     editor: config.editor,
     vimMode: config.vim_mode,
     virtualText: config.virtual_text,
+    softWrap: config.soft_wrap,
     windowGridCount: config.window_grid_count,
     binds: Object.fromEntries(config.binds.map((bind) => [bind.action, bind.key])),
     keyOverrides: config.keys,
@@ -226,6 +228,7 @@ function toConfigUpdate(draft: Draft, dirty: Set<DraftKey>): ConfigUpdate {
   if (dirty.has('editor')) update.editor = draft.editor;
   if (dirty.has('vimMode')) update.vim_mode = draft.vimMode;
   if (dirty.has('virtualText')) update.virtual_text = draft.virtualText;
+  if (dirty.has('softWrap')) update.soft_wrap = draft.softWrap;
   if (dirty.has('windowGridCount')) update.window_grid_count = draft.windowGridCount;
   if (dirty.has('binds')) update.keys = draft.keyOverrides;
   if (dirty.has('appearance')) update.appearance = draft.appearance;
@@ -342,6 +345,7 @@ const OPTION_NAMES: Record<DraftKey, string> = {
   editor: 'editor',
   vimMode: 'vim native-editor',
   virtualText: 'virtual-text native-editor diagnostics',
+  softWrap: 'soft-wrap native-editor wrap lines',
   windowGridCount: 'window-grid-count',
   binds: 'keys',
   keyOverrides: 'keys',
@@ -565,6 +569,7 @@ export function ConfigPage({ config, send, request }: Props) {
       show_pane_titles: draft.showPaneTitles,
       vim_mode: draft.vimMode,
       virtual_text: draft.virtualText,
+      soft_wrap: draft.softWrap,
       terminal: {
         ...config.terminal,
         cursorBlink: draft.cursorBlink,
@@ -909,6 +914,7 @@ export function ConfigPage({ config, send, request }: Props) {
         'Inline diagnostics',
         "Show errors, warnings, and infos from language servers at the end of their lines in btmux's editor.",
       ),
+      toggle('softWrap', 'Soft wrap', "Wrap long lines at the width of btmux's editor."),
       formEntry(
         'windowGridCount',
         'Window grid count',

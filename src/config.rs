@@ -708,6 +708,8 @@ pub struct NativeEditorConfig {
     pub vim: bool,
     /// Show diagnostics' messages at the end of their lines.
     pub virtual_text: bool,
+    /// Wrap long lines at the view's width.
+    pub soft_wrap: bool,
     /// How long a mapping that is also a prefix waits for more keys, in ms.
     pub timeout: u32,
     /// Show the keys that can follow a pending prefix.
@@ -723,6 +725,7 @@ struct RawNativeEditor {
     format_on_save: bool,
     vim: bool,
     virtual_text: bool,
+    soft_wrap: bool,
     leader: String,
     timeout: u32,
     which_key: bool,
@@ -736,6 +739,7 @@ impl Default for RawNativeEditor {
             format_on_save: false,
             vim: false,
             virtual_text: false,
+            soft_wrap: true,
             leader: vim_keys::DEFAULT_LEADER.into(),
             timeout: vim_keys::DEFAULT_TIMEOUT,
             which_key: true,
@@ -754,6 +758,7 @@ impl TryFrom<RawNativeEditor> for NativeEditorConfig {
             format_on_save: raw.format_on_save,
             vim: raw.vim,
             virtual_text: raw.virtual_text,
+            soft_wrap: raw.soft_wrap,
             timeout: raw.timeout,
             which_key: raw.which_key,
             vim_binds: vim_keys::resolve(&leader, &raw.vim_keys)?,
@@ -1672,6 +1677,8 @@ pub struct ClientConfig {
     pub vim_mode: bool,
     /// `[native-editor] virtual-text`.
     pub virtual_text: bool,
+    /// `[native-editor] soft-wrap`.
+    pub soft_wrap: bool,
     /// Vim mappings in the native editor: defaults and `[native-editor.vim-keys]`.
     pub vim_binds: Vec<VimBind>,
     /// Which-key group names: defaults and `[native-editor.vim-groups]`.
@@ -2310,6 +2317,7 @@ pub fn generate_config_toml() -> String {
 # format-on-save = false
 # vim = false   # Vim keybindings; :w saves, :q hides, a double Esc hides only from normal mode
 # virtual-text = false   # show diagnostics' messages at the end of their lines
+# soft-wrap = true   # wrap long lines at the editor's width
 # leader = " "       # <leader> in vim-keys and vim-groups: one key, like "," or "<Space>"
 # timeout = {DEFAULT_VIM_TIMEOUT}     # ms a vim mapping that is also a prefix waits for more keys
 # which-key = true   # show the keys that can follow a pending prefix
@@ -2650,6 +2658,7 @@ pub fn resolve_binds(file: &FileConfig, system: ColorMode) -> ClientConfig {
         format_on_save: file.native_editor.format_on_save,
         vim_mode: file.native_editor.vim,
         virtual_text: file.native_editor.virtual_text,
+        soft_wrap: file.native_editor.soft_wrap,
         vim_binds: file.native_editor.vim_binds.clone(),
         vim_groups: file.native_editor.vim_groups.clone(),
         vim_timeout: file.native_editor.timeout,
@@ -2717,6 +2726,8 @@ pub struct ConfigUpdate {
     pub vim_mode: Option<bool>,
     /// `[native-editor] virtual-text`.
     pub virtual_text: Option<bool>,
+    /// `[native-editor] soft-wrap`.
+    pub soft_wrap: Option<bool>,
     pub window_grid_count: Option<u32>,
     pub appearance: Option<Appearance>,
     pub colors_dark: Option<String>,
@@ -2799,6 +2810,9 @@ impl ConfigUpdate {
         }
         if other.virtual_text.is_some() {
             self.virtual_text = other.virtual_text;
+        }
+        if other.soft_wrap.is_some() {
+            self.soft_wrap = other.soft_wrap;
         }
         if other.window_grid_count.is_some() {
             self.window_grid_count = other.window_grid_count;
@@ -2965,6 +2979,9 @@ pub fn resolve_with_overrides(
     }
     if let Some(on) = overrides.virtual_text {
         file.native_editor.virtual_text = on;
+    }
+    if let Some(on) = overrides.soft_wrap {
+        file.native_editor.soft_wrap = on;
     }
     if let Some(window_grid_count) = overrides.window_grid_count {
         file.window_grid_count = Some(window_grid_count.clamp(1, 24));
@@ -3461,6 +3478,7 @@ palette:
     fn native_editor_settings_default_off_and_parse() {
         let defaults = FileConfig::default().native_editor;
         assert!(!defaults.format_on_save && !defaults.vim && !defaults.virtual_text);
+        assert!(defaults.soft_wrap);
         assert!(!resolve_binds(&FileConfig::default(), ColorMode::Dark).vim_mode);
         let example = generate_config_toml();
         let table = example
@@ -3474,11 +3492,12 @@ palette:
         let file: FileConfig = toml::from_str(&table).unwrap();
         assert_eq!(file.native_editor, NativeEditorConfig::default());
         let file: FileConfig = toml::from_str(
-            "[native-editor]\nvim = true\nformat-on-save = true\nvirtual-text = true\n",
+            "[native-editor]\nvim = true\nformat-on-save = true\nvirtual-text = true\nsoft-wrap = false\n",
         )
         .unwrap();
         assert!(file.native_editor.vim && file.native_editor.format_on_save);
         assert!(resolve_binds(&file, ColorMode::Dark).virtual_text);
+        assert!(!resolve_binds(&file, ColorMode::Dark).soft_wrap);
         assert!(resolve_binds(&file, ColorMode::Dark).vim_mode);
         assert!(toml::from_str::<FileConfig>("[native-editor]\nvim-mode = true\n").is_err());
     }
@@ -3645,6 +3664,7 @@ palette:
                 editor: Some(Editor::Pane),
                 vim_mode: Some(true),
                 virtual_text: Some(true),
+                soft_wrap: Some(true),
                 window_grid_count: Some(9),
                 cursor_blink: Some(false),
                 scrollback: Some(42),
@@ -3675,6 +3695,7 @@ palette:
         assert_eq!(resolved.editor, Editor::Pane);
         assert!(resolved.vim_mode);
         assert!(resolved.virtual_text);
+        assert!(resolved.soft_wrap);
         assert_eq!(resolved.window_grid_count, 9);
         assert_eq!(resolved.terminal.cursor_blink, Some(false));
         assert_eq!(resolved.terminal.scrollback, Some(42));
