@@ -12,7 +12,7 @@ import {
   rectangularSelection,
   runScopeHandlers,
 } from '@codemirror/view';
-import { Compartment, EditorSelection, EditorState, Prec, type Extension } from '@codemirror/state';
+import { Compartment, EditorSelection, EditorState, Prec, type StateEffect, type Extension } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { bracketMatching, foldGutter, foldKeymap, indentOnInput, indentUnit } from '@codemirror/language';
 import {
@@ -27,6 +27,7 @@ import {
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
 import { searchPanel, type SearchPanelHandle } from './searchPanel';
 import { virtualText } from './virtualText';
+import { cursorVisible } from './wrap';
 import { forEachDiagnostic } from '@codemirror/lint';
 import { Doc, type DocStatus } from './doc';
 import { editorConnection } from './connection';
@@ -730,8 +731,13 @@ export class PaneEditor {
   setSoftWrap(on: boolean) {
     if (on === this.softWrap) return;
     this.softWrap = on;
-    for (const doc of this.docs.values())
-      doc.update({ effects: this.softWrapC.reconfigure(on ? EditorView.lineWrapping : []) });
+    for (const doc of this.docs.values()) {
+      const effects: StateEffect<unknown>[] = [this.softWrapC.reconfigure(on ? EditorView.lineWrapping : [])];
+      // Reflowing moves the cursor; keep it in view if it was.
+      if (doc.view && cursorVisible(doc.view))
+        effects.push(EditorView.scrollIntoView(doc.view.state.selection.main.head));
+      doc.update({ effects });
+    }
   }
 
   setAppearance(appearance: EditorAppearance) {

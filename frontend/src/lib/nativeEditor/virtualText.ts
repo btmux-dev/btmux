@@ -2,6 +2,7 @@
 import { forEachDiagnostic, setDiagnosticsEffect, type Diagnostic } from '@codemirror/lint';
 import type { Range } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
+import { WRAP } from './wrap';
 
 const RANK: Record<Diagnostic['severity'], number> = { error: 0, warning: 1, info: 2, hint: 3 };
 
@@ -76,6 +77,8 @@ const theme = EditorView.baseTheme({
     fontStyle: 'italic',
     backgroundColor: 'color-mix(in srgb, currentColor 12%, transparent)',
   },
+  // Wider than the content, it would stop every line wrapping.
+  '.cm-lineWrapping .cm-btmux-virtualText': WRAP,
   '.cm-btmux-virtualText-error': { color: 'var(--btm-editor-red)' },
   '.cm-btmux-virtualText-warning': { color: 'var(--btm-editor-yellow)' },
   '.cm-btmux-virtualText-info': { color: 'var(--btm-editor-blue)' },
