@@ -8,6 +8,11 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Changed
+
+- rumdl no longer reports lines over 80 columns (MD013) in the native
+  editor.
+
 ## [0.0.220] - 2026-11-23
 
 ### Added

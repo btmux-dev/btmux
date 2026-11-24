@@ -189,10 +189,11 @@ const SERVERS: &[(&str, &str, &[&str])] = &[
 /// (server, settings, initialization options) for built-in servers, as TOML.
 const SERVER_OPTIONS: &[(&str, &str, &str)] = &[
     // Repo configs can enable code-block tools, which run commands; ignore them.
+    // MD013 (80-column lines) is off.
     (
         "rumdl",
         "",
-        "configurationPreference = \"editorOnly\"\nsettings = {}",
+        "configurationPreference = \"editorOnly\"\nsettings = { disable = [\"MD013\"] }",
     ),
     // Harper rejects settings without its section.
     ("harper-ls", "harper-ls = {}", ""),
@@ -441,6 +442,13 @@ mod tests {
         assert_eq!(
             rumdl.initialization_options.as_ref().unwrap()["configurationPreference"].as_str(),
             Some("editorOnly")
+        );
+        assert_eq!(
+            rumdl.initialization_options.as_ref().unwrap()["settings"]["disable"]
+                .as_array()
+                .unwrap()[0]
+                .as_str(),
+            Some("MD013")
         );
         assert!(rumdl.config.is_none());
         assert!(builtin.servers["harper-ls"].config.as_ref().unwrap()["harper-ls"].is_table());
