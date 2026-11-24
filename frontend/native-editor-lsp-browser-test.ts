@@ -811,7 +811,7 @@ try {
   console.log("PASS a server's diagnostics stay on their text while another publishes");
 
   // The problems list: every file's, most severe first, whatever the position.
-  await page.keyboard.press('ControlOrMeta+Shift+m');
+  await page.keyboard.press('ControlOrMeta+Shift+M');
   const problems = pane.locator('.cm-btmux-problems');
   const duoRows = problems.locator('li[role=option]', { hasText: 'main.duo' });
   await until('both problems', async () => (await duoRows.count()) === 2);
@@ -843,11 +843,11 @@ try {
   await until('the undo', async () => (await lines(page, paneId)) === 'lint\nbad clean FMT\n');
 
   // Mod-Shift-M closes it from the text and from the list.
-  await page.keyboard.press('ControlOrMeta+Shift+m');
+  await page.keyboard.press('ControlOrMeta+Shift+M');
   await problems.waitFor({ state: 'detached' });
-  await page.keyboard.press('ControlOrMeta+Shift+m');
+  await page.keyboard.press('ControlOrMeta+Shift+M');
   await inList();
-  await page.keyboard.press('ControlOrMeta+Shift+m');
+  await page.keyboard.press('ControlOrMeta+Shift+M');
   await problems.waitFor({ state: 'detached' });
   await inText();
 
@@ -862,7 +862,7 @@ try {
   await api(`/api/panes/${paneId}/open-editor`, 'POST', { path: duo, line: 1, editor: 'native' });
   await until('main.duo again', async () => (await lines(page, paneId)) === 'lint\nbad clean FMT\n');
   await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).focus();
-  await page.keyboard.press('ControlOrMeta+Shift+m');
+  await page.keyboard.press('ControlOrMeta+Shift+M');
   await inList();
   const counts = async () => {
     const m = /(\d+) errors?, (\d+) warnings?/.exec((await problems.locator('.cm-btmux-problems-counts').textContent()) ?? '');
