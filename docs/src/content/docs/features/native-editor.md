@@ -233,11 +233,11 @@ formatter, set `config = { nil = { formatting = { command = ["alejandra"] } } }`
 under `[language-server.nil]`, along with `command = "nil"`. Files in a
 [sandboxed session](sandbox.md)'s mounts get their servers inside the VM.
 
-rumdl runs with its default rules and ignores its config files, the
-repository's (`.rumdl.toml`, `.markdownlint.json`, …) and your own, since
-they can name commands rumdl runs on code blocks when a file opens. If you
-open only repositories you trust, replace it with a table that lets rumdl
-read them:
+rumdl runs with its default rules, minus the line length limit (MD013),
+and ignores its config files, the repository's (`.rumdl.toml`,
+`.markdownlint.json`, …) and your own, since they can name commands rumdl
+runs on code blocks when a file opens. If you open only repositories you
+trust, replace it with a table that lets rumdl read them:
 
 ```toml
 [language-server.rumdl]
@@ -280,12 +280,12 @@ aren't open. It updates as servers publish. Hints aren't listed.
 `Mod-Shift-M` (`:copen` in Vim mode) shows it and moves focus to it; picking
 a problem opens its file at the problem, and the list stays open.
 
-| Key                  | Does                        |
-| -------------------- | --------------------------- |
-| `↓` / `↑`, `j` / `k` | Next or previous problem    |
-| `Enter`, `o`, click  | Go to the problem           |
-| `Esc`, `q`           | Hide the list               |
-| `Mod-Shift-M`        | Hide the list, or show it   |
+| Key                  | Does                      |
+| -------------------- | ------------------------- |
+| `↓` / `↑`, `j` / `k` | Next or previous problem  |
+| `Enter`, `o`, click  | Go to the problem         |
+| `Esc`, `q`           | Hide the list             |
+| `Mod-Shift-M`        | Hide the list, or show it |
 
 `[native-editor] format-on-save = true` formats on every save. Renames and
 code actions also change files that aren't open: those wait in the editor,
