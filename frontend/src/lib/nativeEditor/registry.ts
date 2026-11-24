@@ -42,10 +42,12 @@ export const FILE_COMMANDS = [
   'editor-last-diagnostic',
   'editor-show-diagnostics',
   'editor-problems',
+  'editor-file-problems',
   'editor-go-back',
   'editor-go-forward',
   'editor-next-file',
   'editor-prev-file',
+  'editor-close-others',
   'editor-fold-all',
   'editor-unfold-all',
 ];

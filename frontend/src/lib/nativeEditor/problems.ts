@@ -1,5 +1,6 @@
 // The problems list: every file's diagnostics in a bottom panel, most severe
-// first, as Vim's quickfix list or VS Code's Problems view.
+// first, as Vim's quickfix list or VS Code's Problems view, or only the shown
+// file's, as Vim's location list or VS Code's "Show Active File Only".
 import type { EditorState, Extension } from '@codemirror/state';
 import { EditorView, showPanel, type Panel } from '@codemirror/view';
 import { IS_MAC } from '../nvimKeys';
@@ -12,6 +13,8 @@ export interface ProblemsHost {
   servers(): number[];
   /** The shown file's state, whose diagnostics follow its edits. */
   state(path: string): EditorState | null;
+  /** The shown file. */
+  active(): string | null;
   /** The folder paths are shown relative to. */
   root(): string | null;
   /** Show `path` at `at` and focus the editor. */
@@ -55,6 +58,9 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 let nextId = 0;
 
+/** Every open file's problems, or the shown file's. */
+export type ProblemsScope = 'workspace' | 'file';
+
 interface Shown {
   focus(): void;
   refresh(): void;
@@ -70,6 +76,7 @@ export class ProblemsList {
   /** Focus the list once the next panel mounts. */
   private focusNext = false;
   private current: Shown | null = null;
+  scope: ProblemsScope = 'workspace';
 
   constructor(private readonly host: ProblemsHost) {
     this.extension = [showPanel.of((view) => this.panel(view)), theme];
@@ -86,13 +93,23 @@ export class ProblemsList {
     this.focusNext = false;
   }
 
+  /** List the workspace's problems, or the shown file's. */
+  setScope(scope: ProblemsScope) {
+    if (scope === this.scope) return;
+    this.scope = scope;
+    this.current?.refresh();
+  }
+
   /** List again: the open files, and so the servers, changed. */
   refresh() {
     this.current?.refresh();
   }
 
   private problems() {
-    return sortedProblems(fileDiagnostics(this.host.servers(), (path) => this.host.state(path)));
+    const all = sortedProblems(fileDiagnostics(this.host.servers(), (path) => this.host.state(path)));
+    if (this.scope === 'workspace') return all;
+    const active = this.host.active();
+    return all.filter((d) => d.path === active);
   }
 
   /** Whether any problem would be listed. */
@@ -109,6 +126,23 @@ export class ProblemsList {
     const title = document.createElement('span');
     title.className = 'cm-btmux-problems-title';
     title.textContent = 'Problems';
+    // Which problems: a segmented toggle, also `f` in the list.
+    const scopes = document.createElement('span');
+    scopes.className = 'cm-btmux-problems-scopes';
+    scopes.setAttribute('role', 'group');
+    scopes.setAttribute('aria-label', 'Show problems of');
+    const scopeButton = (scope: ProblemsScope, label: string) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      button.title = 'f switches';
+      button.addEventListener('mousedown', (e) => e.preventDefault());
+      button.addEventListener('click', () => this.setScope(scope));
+      return button;
+    };
+    const workspace = scopeButton('workspace', 'Workspace');
+    const file = scopeButton('file', 'This file');
+    scopes.append(workspace, file);
     const counts = document.createElement('span');
     counts.className = 'cm-btmux-problems-counts';
     const close = document.createElement('button');
@@ -118,7 +152,7 @@ export class ProblemsList {
     close.setAttribute('aria-label', 'Close problems');
     close.addEventListener('mousedown', (e) => e.preventDefault());
     close.addEventListener('click', () => this.host.close());
-    header.append(title, counts, close);
+    header.append(title, scopes, counts, close);
     const list = document.createElement('ul');
     list.id = id;
     list.tabIndex = 0;
@@ -190,7 +224,7 @@ export class ProblemsList {
       if (!n) {
         const empty = document.createElement('li');
         empty.className = 'cm-btmux-problems-empty';
-        empty.textContent = 'No problems';
+        empty.textContent = this.scope === 'file' ? 'No problems in this file' : 'No problems';
         list.replaceChildren(empty);
         list.setAttribute('aria-activedescendant', '');
         return;
@@ -225,7 +259,17 @@ export class ProblemsList {
       draw(top < scroll ? top : top + px > scroll + list.clientHeight ? top + px - list.clientHeight : scroll);
     };
 
+    let scope = this.scope;
     const render = () => {
+      workspace.setAttribute('aria-pressed', String(this.scope === 'workspace'));
+      file.setAttribute('aria-pressed', String(this.scope === 'file'));
+      // Another list: from its top.
+      if (scope !== this.scope) {
+        scope = this.scope;
+        this.selected = null;
+        index = 0;
+        list.scrollTop = 0;
+      }
       const all = this.problems();
       const errors = all.filter((d) => d.severity === 1).length;
       const warnings = all.filter((d) => d.severity === 2).length;
@@ -298,6 +342,7 @@ export class ProblemsList {
       else if (plain === 'PageUp') select(index - pageRows());
       else if (plain === 'Enter' || plain === 'o') open(index);
       else if (plain === 'Escape' || plain === 'q') this.host.close();
+      else if (plain === 'f') this.setScope(this.scope === 'file' ? 'workspace' : 'file');
       else handled = false;
       if (handled) {
         e.preventDefault();
@@ -343,6 +388,19 @@ const theme = EditorView.theme({
   '.cm-btmux-problems-header': { display: 'flex', alignItems: 'center', gap: '1em', padding: '2px 4px 2px 12px' },
   '.cm-btmux-problems-title': { fontWeight: 'bold' },
   '.cm-btmux-problems-counts': { opacity: 0.6, flex: 1 },
+  '.cm-btmux-problems-scopes': { display: 'flex', gap: '2px' },
+  '.cm-btmux-problems-header .cm-btmux-problems-scopes button': {
+    fontSize: 'inherit',
+    lineHeight: 'inherit',
+    padding: '0 6px',
+    borderRadius: '4px',
+    background: 'transparent',
+    opacity: 0.6,
+  },
+  '.cm-btmux-problems-header .cm-btmux-problems-scopes button[aria-pressed=true]': {
+    opacity: 1,
+    background: 'var(--btm-editor-selection)',
+  },
   '.cm-btmux-problems-header button': {
     border: 'none',
     color: 'inherit',

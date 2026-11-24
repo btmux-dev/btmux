@@ -11,6 +11,7 @@ import { StatusDot, type StatusDotProps } from '@astryxdesign/core/StatusDot';
 import { Text } from '@astryxdesign/core/Text';
 import { Tooltip } from '@astryxdesign/core/Tooltip';
 import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
+import { ContextMenu } from '@astryxdesign/core/ContextMenu';
 import { Circle, FileWarning, X } from 'lucide-react';
 import type { EditorViewOp, PaneEditor as PaneEditorState } from '../generated/protocol';
 import type { PaneEditor } from '../lib/nativeEditor/paneEditor';
@@ -212,6 +213,7 @@ export function NativeEditor({
         open: (path, line) => opRef.current({ kind: 'open', path, line: line ?? null }),
         cycle: (step) => opRef.current({ kind: 'cycle', step }),
         close: (path, force) => closeRef.current(path, force),
+        closeOthers: () => closeOthersRef.current(),
         action: (name) => actionRef.current(name),
         // A file switch can mount the next file's panel before the last one's goes.
         search: (handle, open) => setSearch((shown) => (open ? handle : shown === handle ? null : shown)),
@@ -281,16 +283,19 @@ export function NativeEditor({
   const lsp = status ? servers.filter((s) => status.servers.includes(s.id)) : [];
   const animations = getAnimations(config);
   const work = status ? progress.filter((p) => status.servers.includes(p.server)) : [];
-  /** Close `path`, asking about unsaved changes; true if it closes without asking. */
-  const close = (path: string, force = false) => {
+  /** Whether closing `path` here would leave unsaved changes in no pane. */
+  const losesChanges = (path: string) =>
+    !!editor?.status(path)?.dirty &&
     // Another pane showing the file keeps its unsaved changes.
-    const elsewhere = useStore
+    !useStore
       .getState()
       .allSessions.some((s) =>
         s.windows.some((w) => w.panes.some((p) => p.id !== paneId && p.editor.files.includes(path))),
       );
-    if (!editor?.status(path)?.dirty || elsewhere) op({ kind: 'close', path });
-    else if (force) void editor.revert(path).then(() => op({ kind: 'close', path }));
+  /** Close `path`, asking about unsaved changes; true if it closes without asking. */
+  const close = (path: string, force = false) => {
+    if (!losesChanges(path)) op({ kind: 'close', path });
+    else if (force) void editor?.revert(path).then(() => op({ kind: 'close', path }));
     else {
       setClosing(path);
       return false;
@@ -299,6 +304,21 @@ export function NativeEditor({
   };
   const closeRef = useRef(close);
   closeRef.current = close;
+  /** Close the files `which` picks out from `keep` (the active file by default), keeping unsaved ones open. */
+  const closeOthers = (keep = state.active, which: 'others' | 'right' = 'others') => {
+    if (!keep) return;
+    const at = state.files.indexOf(keep);
+    const others = state.files.filter((path, i) => path !== keep && (which === 'others' || i > at));
+    const kept = others.filter(losesChanges);
+    if (keep !== state.active) op({ kind: 'activate', path: keep });
+    for (const path of others) if (!kept.includes(path)) op({ kind: 'close', path });
+    if (kept.length)
+      useStore.getState().showToast(`Kept ${plural(kept.length, 'file')} with unsaved changes open`, 'info');
+  };
+  const closeOthersRef = useRef(closeOthers);
+  closeOthersRef.current = closeOthers;
+  /** The tab right-clicked, for the tab menu. */
+  const [menuPath, setMenuPath] = useState<string | null>(null);
 
   return (
     <div
@@ -325,46 +345,72 @@ export function NativeEditor({
       }}
     >
       <HStack gap={1} vAlign="center" className="btm-sans shrink-0 pr-1">
-        <TabList size="sm" role="tablist" value={active ?? ''} onChange={(path) => op({ kind: 'activate', path })}>
-          {state.files.map((path) => {
-            const dirty = !!editor?.status(path)?.dirty;
-            return (
-              <Tab
-                key={path}
-                value={path}
-                label={basename(path)}
-                panelId={panelId}
-                className="group"
-                // Middle click closes, as in browsers.
-                onMouseDown={(event) => event.button === 1 && event.preventDefault()}
-                onAuxClick={(event) => event.button === 1 && close(path)}
-                // The X can't be a button inside the tab, so Delete closes the focused tab.
-                aria-keyshortcuts="Delete"
-                aria-description="Delete closes the file"
-                onKeyDown={(event) => {
-                  if (event.key !== 'Delete' || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey)
-                    return;
-                  event.preventDefault();
-                  const tab = event.currentTarget;
-                  const tabs = [
-                    ...(tab.closest('[role="tablist"]')?.querySelectorAll<HTMLElement>('[role="tab"]') ?? []),
-                  ];
-                  const at = tabs.indexOf(tab);
-                  // Focus stays in the strip once this tab goes; asking to save keeps it.
-                  if (close(path)) (tabs[at + 1] ?? tabs[at - 1])?.focus();
-                }}
-                endContent={
-                  <TabClose
-                    name={basename(path)}
-                    dirty={dirty}
-                    selected={path === active}
-                    onClose={() => close(path)}
-                  />
-                }
-              />
-            );
-          })}
-        </TabList>
+        <ContextMenu
+          label="File"
+          size="sm"
+          menuWidth="180px"
+          isDisabled={!state.files.length}
+          onContextMenu={(event) => {
+            // Not on a tab: the active file's.
+            if (!(event.target as Element).closest('[role="tab"]')) setMenuPath(active);
+          }}
+          items={(() => {
+            const path = menuPath && state.files.includes(menuPath) ? menuPath : active;
+            if (!path) return [];
+            const at = state.files.indexOf(path);
+            return [
+              { label: 'Close', onClick: () => close(path) },
+              { label: 'Close others', isDisabled: state.files.length < 2, onClick: () => closeOthers(path) },
+              {
+                label: 'Close to the right',
+                isDisabled: at === state.files.length - 1,
+                onClick: () => closeOthers(path, 'right'),
+              },
+            ];
+          })()}
+        >
+          <TabList size="sm" role="tablist" value={active ?? ''} onChange={(path) => op({ kind: 'activate', path })}>
+            {state.files.map((path) => {
+              const dirty = !!editor?.status(path)?.dirty;
+              return (
+                <Tab
+                  key={path}
+                  value={path}
+                  label={basename(path)}
+                  panelId={panelId}
+                  className="group"
+                  // Middle click closes, as in browsers.
+                  onMouseDown={(event) => event.button === 1 && event.preventDefault()}
+                  onAuxClick={(event) => event.button === 1 && close(path)}
+                  onContextMenu={() => setMenuPath(path)}
+                  // The X can't be a button inside the tab, so Delete closes the focused tab.
+                  aria-keyshortcuts="Delete"
+                  aria-description="Delete closes the file"
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Delete' || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey)
+                      return;
+                    event.preventDefault();
+                    const tab = event.currentTarget;
+                    const tabs = [
+                      ...(tab.closest('[role="tablist"]')?.querySelectorAll<HTMLElement>('[role="tab"]') ?? []),
+                    ];
+                    const at = tabs.indexOf(tab);
+                    // Focus stays in the strip once this tab goes; asking to save keeps it.
+                    if (close(path)) (tabs[at + 1] ?? tabs[at - 1])?.focus();
+                  }}
+                  endContent={
+                    <TabClose
+                      name={basename(path)}
+                      dirty={dirty}
+                      selected={path === active}
+                      onClose={() => close(path)}
+                    />
+                  }
+                />
+              );
+            })}
+          </TabList>
+        </ContextMenu>
         <HStack gap={0} className="ml-auto">
           {unsaved.length > 0 && (
             <DropdownMenu

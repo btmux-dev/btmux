@@ -50,7 +50,10 @@ beside the find field match case, whole words, or a regular expression.
 
 Each tab has an X that closes it, shown on the active tab and on hover; on a
 tab with unsaved changes, a dot takes its place until you hover. A middle
-click closes a tab too, and so does `Delete` on a focused tab.
+click closes a tab too, and so does `Delete` on a focused tab. Right-click a
+tab to close the other files or those to its right; files with unsaved
+changes stay open. The `editor-close-others` action, also in the command
+palette, closes every file but the shown one.
 
 Quick open starts with open and recent files. Append `:42` to open a file at
 line 42, or enter `:42` alone to jump there in the current file.
@@ -75,9 +78,13 @@ open editors at once.
 - `:w` saves (`:w!` overwrites changes made on disk), `:q` hides the editor
   and keeps unsaved changes, `:wq` or `:x` saves and hides it, and `:bd`
   closes the file (`:bd!` discards unsaved changes). `:bn` and `:bp` show
-  the next and previous open file. `:copen` and `:cclose` show and hide the
-  [problems list](#problems-list), and `:cw` shows it only if there are
-  problems.
+  the next and previous open file, and `:BufOnly` closes the others.
+  `:copen` and `:cclose` show and hide the [problems list](#problems-list)
+  with every file's problems, and `:cw` shows it only if there are any.
+  `:lopen`, `:lclose`, and `:lw` do the same with the shown file's, as
+  Vim's location list.
+- `Tab` on the `:` line completes the command's name; `Tab` and `Shift-Tab`
+  again cycle through the names that match.
 - A double Esc hides the editor only from normal mode with no command pending,
   so leaving insert mode never hides it.
 - Ctrl chords such as `Ctrl-d` and `Ctrl-v` go to Vim, except the btmux
@@ -278,12 +285,16 @@ language servers of the editor's open files report, including files that
 aren't open. It updates as servers publish. Hints aren't listed.
 
 `Mod-Shift-M` (`:copen` in Vim mode) shows it and moves focus to it; picking
-a problem opens its file at the problem, and the list stays open.
+a problem opens its file at the problem, and the list stays open. To list only
+the shown file's problems, as VS Code's "Show Active File Only", pick **This
+file** in its header or press `f`; the `editor-file-problems` action (`:lopen`
+in Vim mode) opens it that way. **Workspace** lists every file's again.
 
 | Key                  | Does                        |
 | -------------------- | --------------------------- |
 | `↓` / `↑`, `j` / `k` | Next or previous problem    |
 | `Enter`, `o`, click  | Go to the problem           |
+| `f`                  | This file's or every file's |
 | `Esc`, `q`           | Hide the list               |
 | `Mod-Shift-M`        | Hide the list, or show it   |
 

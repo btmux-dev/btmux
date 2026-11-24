@@ -36,7 +36,7 @@ import { codeDetail } from './completion';
 import { panelSpace } from './panelSpace';
 import { dropFailedDiagnostics, format, lspExtension, setDisplay, workingServers } from './lsp';
 import { offset, type Position } from './lspText';
-import { ProblemsList } from './problems';
+import { ProblemsList, type ProblemsScope } from './problems';
 import { serverFoldsChanged } from './features';
 import { gitSigns, gitSummary } from './gitSigns';
 import { editorCommands, toDiagnostic } from './actions';
@@ -127,6 +127,8 @@ export interface PaneEditorEvents {
   cycle(step: number): void;
   /** Close `path`, asking to save unsaved changes unless `force` discards them. */
   close(path: string, force: boolean): void;
+  /** Close every file but the active one, keeping those with unsaved changes. */
+  closeOthers(): void;
   /** Run a btmux action (a mapping to one that isn't the editor's). */
   action(name: string): void;
   /** The find and replace panel opened (`open`) or closed. */
@@ -174,13 +176,18 @@ export class PaneEditor {
     epoch: () => this.epoch,
     hide: () => this.events.hide(),
     close: (force) => this.close(force),
+    closeOthers: () => this.closeOthers(),
     cycle: (step) => this.cycle(step),
     mode: (mode) => {
       if (mode === this.vimMode) return;
       this.vimMode = mode;
       this.events.changed();
     },
-    problems: (open) => this.setProblems(open === 'auto' ? this.problemsList.any() : open),
+    problems: (open, scope) => {
+      // `any` counts the scope it asks about.
+      if (open === 'auto') this.problemsList.setScope(scope);
+      this.setProblems(open === 'auto' ? this.problemsList.any() : open, scope);
+    },
   };
   private waiting: { path: string; resolve: (view: EditorView | null) => void }[] = [];
   private quickOpenWaiting = false;
@@ -228,6 +235,7 @@ export class PaneEditor {
         const doc = this.docs.get(path);
         return doc?.view ? doc.state : null;
       },
+      active: () => this.active,
       root: () => workspaceFolder(findPaneState(useStore.getState(), this.paneId)),
       jump: (path, at) => this.jump(path, at),
       close: () => this.setProblems(false),
@@ -349,7 +357,7 @@ export class PaneEditor {
         { key: 'F8', run: (view) => toDiagnostic(view, 'next'), preventDefault: true },
         { key: 'Shift-F8', run: (view) => toDiagnostic(view, 'prev'), preventDefault: true },
         // VS Code's Problems view.
-        { key: 'Mod-Shift-m', run: () => this.setProblems(!this.problemsOpen), preventDefault: true },
+        { key: 'Mod-Shift-m', run: () => this.toggleProblems('workspace'), preventDefault: true },
         { key: NAVIGATION_KEYS.back, run: () => this.navigate(true), preventDefault: true },
         { key: NAVIGATION_KEYS.forward, run: () => this.navigate(false), preventDefault: true },
         ...vscodeKeys(
@@ -670,8 +678,14 @@ export class PaneEditor {
     for (const doc of this.docs.values()) doc.update({ effects: this.vimC.reconfigure(this.vimExtension()) });
   }
 
-  /** Show or hide the problems list, focusing it when shown. */
-  setProblems(open: boolean): boolean {
+  /** Hide the problems list if it shows `scope`'s, else show them. */
+  private toggleProblems(scope: ProblemsScope): boolean {
+    return this.setProblems(!this.problemsOpen || this.problemsList.scope !== scope, scope);
+  }
+
+  /** Show or hide the problems list, focusing it when shown; `scope` picks whose it lists. */
+  setProblems(open: boolean, scope?: ProblemsScope): boolean {
+    if (open && scope) this.problemsList.setScope(scope);
     if (open) this.problemsList.focus();
     else this.problemsList.hidden();
     if (open === this.problemsOpen) return true;
@@ -738,6 +752,12 @@ export class PaneEditor {
     return true;
   }
 
+  closeOthers(): boolean {
+    if (!this.active) return false;
+    this.events.closeOthers();
+    return true;
+  }
+
   /**
    * Show the open file `step` tabs over, wrapping around. The server picks
    * it from its own tabs, which this client may not have caught up with.
@@ -780,7 +800,9 @@ export class PaneEditor {
       return this.navigate(action === 'editor-go-back');
     if (action === 'editor-next-file' || action === 'editor-prev-file')
       return this.cycle(action === 'editor-next-file' ? 1 : -1);
-    if (action === 'editor-problems') return this.setProblems(!this.problemsOpen);
+    if (action === 'editor-problems') return this.toggleProblems('workspace');
+    if (action === 'editor-file-problems') return this.toggleProblems('file');
+    if (action === 'editor-close-others') return this.closeOthers();
     const run = editorCommands[action];
     const doc = this.active ? this.docs.get(this.active) : undefined;
     if (!run || !doc?.view) return false;

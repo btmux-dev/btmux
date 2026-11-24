@@ -674,6 +674,22 @@ try {
     assert.match(lspLog(), /textDocument\/didSave/);
     console.log('PASS format on save');
 
+    // A format replacing the whole file leaves the cursor on its text.
+    const editorPane = page.locator(`[data-editor-pane="${paneId}"]`);
+    await page.keyboard.press('ControlOrMeta+Home');
+    await page.keyboard.press('End');
+    await page.keyboard.type('   ');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Home');
+    for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowRight');
+    await editorPane.getByText('Ln 3, Col 5', { exact: true }).waitFor();
+    await page.keyboard.press('Shift+Alt+f');
+    await waitForText(page, paneId, 'let bad = 1;\nuse item;\nfakeCompletion\nend');
+    await editorPane.getByText('Ln 3, Col 5', { exact: true }).waitFor();
+    await page.keyboard.press('ControlOrMeta+s');
+    console.log('PASS a whole-file format keeps the cursor');
+
     // A tab's X closes it, active or not, asking about unsaved changes; so does a middle click.
     const thirdTab = page.getByRole('tab', { name: 'third.fake' });
     const otherTab = page.getByRole('tab', { name: 'other.fake' });
@@ -728,6 +744,24 @@ try {
     assert.equal(await editorText(page, paneId), 'two\n');
     assert.equal(readFileSync(two, 'utf8'), 'two\n');
     console.log('PASS formatting follows its file when the view switches');
+
+    // The tab menu closes the other files, keeping unsaved ones open.
+    await page.getByRole('tab', { name: 'slow.fake' }).click();
+    await waitForText(page, paneId, 'slow\n');
+    await page.locator(`[data-native-editor][data-pane-id="${paneId}"]`).click();
+    await page.keyboard.type('x');
+    await mainTab.click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Close others' }).click();
+    await page.getByRole('tab', { name: 'two.fake' }).waitFor({ state: 'detached' });
+    await page.getByText('Kept 1 file with unsaved changes open').first().waitFor();
+    assert.equal(await mainTab.getAttribute('aria-selected'), 'true');
+    const slowTab = page.getByRole('tab', { name: 'slow.fake' });
+    assert.equal(await slowTab.count(), 1);
+    await slowTab.click({ button: 'middle' });
+    const saveSlow = page.getByRole('dialog', { name: 'Save changes to slow.fake?' });
+    await saveSlow.getByRole('button', { name: "Don't save", exact: true }).click();
+    await slowTab.waitFor({ state: 'detached' });
+    console.log('PASS the tab menu closes the other files');
 
     // A server that isn't installed shows in the status line, and its features stay off.
     const lspConfig = [

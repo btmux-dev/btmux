@@ -183,8 +183,9 @@ export function editorTheme(a: EditorAppearance): Extension {
         // Close buttons inherit the background, which would stack.
         '.cm-panels [name=close]': { backgroundColor: 'transparent' },
         // CodeMirror shrinks a tooltip that doesn't fit to the space left;
-        // its documentation scrolls there rather than spilling out.
-        '.cm-tooltip.cm-tooltip-hover, .cm-tooltip.cm-lsp-hover-tooltip': {
+        // its documentation scrolls there rather than spilling out. So do
+        // a line's diagnostics shown from the keyboard (`hover.ts`).
+        '.cm-tooltip.cm-tooltip-hover, .cm-tooltip.cm-lsp-hover-tooltip, .cm-tooltip.cm-tooltip-lint': {
           maxWidth: 'min(90ch, 90vw)',
           maxHeight: '30em',
           overflow: 'auto',

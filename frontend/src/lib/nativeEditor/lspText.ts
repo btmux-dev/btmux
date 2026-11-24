@@ -1,6 +1,7 @@
 // LSP positions, ranges, and snippets, as the native editor's language
 // server features share them.
-import type { Text } from '@codemirror/state';
+import { diff } from '@codemirror/merge';
+import type { ChangeSpec, Text } from '@codemirror/state';
 
 export type Position = { line: number; character: number };
 export type Range = { start: Position; end: Position };
@@ -25,3 +26,20 @@ export function offsetChecked(doc: Text, pos: Position) {
 /** An LSP snippet in CodeMirror's syntax: `$1` as `${1}`. */
 export const lspToSnippet = (text: string) =>
   text.replace(/\\([$}\\])|\$(\d+)/g, (_m, esc, field) => esc || `\${${field}}`);
+
+/**
+ * `insert` in place of `from..to` in `doc`, as only the parts that differ:
+ * formatters often replace the whole file, which would move the cursor,
+ * selection, and every mark to its start.
+ */
+export function minimalChanges(doc: Text, from: number, to: number, insert: string): ChangeSpec[] {
+  // The editor's line breaks; a lone `\r` would insert one.
+  const text = insert.replace(/\r\n?/g, '\n');
+  const old = doc.sliceString(from, to);
+  if (old === text) return [];
+  return diff(old, text, { scanLimit: 20_000, timeout: 100 }).map((c) => ({
+    from: from + c.fromA,
+    to: from + c.toA,
+    insert: text.slice(c.fromB, c.toB),
+  }));
+}

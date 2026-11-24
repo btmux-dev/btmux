@@ -8,7 +8,7 @@ import {
   type Transport,
   type WorkspaceFile,
 } from '@codemirror/lsp-client';
-import { EditorState, Facet, Prec, StateEffect, StateField, type Extension } from '@codemirror/state';
+import { EditorState, Facet, Prec, StateEffect, StateField, type ChangeSpec, type Extension } from '@codemirror/state';
 import { EditorView, keymap, showPanel, type Panel, type Tooltip } from '@codemirror/view';
 import { getIndentUnit, indentUnit, LanguageDescription } from '@codemirror/language';
 import { setDiagnostics, type Diagnostic } from '@codemirror/lint';
@@ -19,7 +19,7 @@ import type { EditorServerMessage, LspServerStatus } from '../../generated/proto
 import { IS_MAC } from '../nvimKeys';
 import { completionsFrom, serverCompletions } from './completion';
 import { languages } from './languages';
-import { offset, type Position, type Range, type TextEdit } from './lspText';
+import { minimalChanges, offset, type Position, type Range, type TextEdit } from './lspText';
 import { inlineCompletions } from './inlineCompletion';
 import { editorConnection } from './connection';
 import { viewDocs, type Doc } from './doc';
@@ -339,9 +339,14 @@ function serverDiagnostics(plugin: LSPPlugin, params: PublishParams): Diagnostic
   // Positions are in the synced document; map them over edits since.
   const synced = plugin.syncedDoc;
   const changes = plugin.unsyncedChanges;
-  return params.diagnostics.map((d) => {
-    const from = changes.mapPos(offset(synced, d.range.start), 1);
-    const to = Math.max(from, changes.mapPos(offset(synced, d.range.end), -1));
+  return params.diagnostics.flatMap((d) => {
+    const start = offset(synced, d.range.start);
+    const end = offset(synced, d.range.end);
+    const from = changes.mapPos(start, 1);
+    const to = Math.max(from, changes.mapPos(end, -1));
+    // Its text was deleted since (a formatter replacing the file): left
+    // in, it would sit where the deletion was.
+    if (end > start && to === from) return [];
     const severity = d.severity === 1 ? 'error' : d.severity === 2 ? 'warning' : d.severity === 3 ? 'info' : 'hint';
     const markClass = (d.tags ?? [])
       .map((t) => TAG_CLASSES[t] ?? '')
@@ -359,7 +364,7 @@ function serverDiagnostics(plugin: LSPPlugin, params: PublishParams): Diagnostic
       renderMessage:
         (code === undefined || code === '') && !d.relatedInformation?.length ? undefined : () => renderMessage(d),
     };
-    return shown;
+    return [shown];
   });
 }
 
@@ -550,16 +555,14 @@ export async function format(view: EditorView) {
     if (!plugins(view).includes(plugin)) {
       // Still the formatted text: apply it there, shown or not.
       if (doc.state?.doc !== start) return;
-      const changes = edits.map((e) => ({
-        from: offset(start, e.range.start),
-        to: offset(start, e.range.end),
-        insert: e.newText,
-      }));
-      doc.update({ changes, userEvent: 'format' });
+      const changes = edits.flatMap((e) =>
+        minimalChanges(start, offset(start, e.range.start), offset(start, e.range.end), e.newText),
+      );
+      if (changes.length) doc.update({ changes, userEvent: 'format' });
       return;
     }
     const changed = mapping.getMapping(uri);
-    const changes = [];
+    const changes: ChangeSpec[] = [];
     for (const edit of edits) {
       let from = mapping.mapPosition(uri, edit.range.start);
       let to = mapping.mapPosition(uri, edit.range.end);
@@ -569,9 +572,9 @@ export async function format(view: EditorView) {
         from = changed.mapPos(from, 1);
         to = changed.mapPos(to, -1);
       }
-      changes.push({ from, to, insert: edit.newText });
+      changes.push(...minimalChanges(view.state.doc, from, to, edit.newText));
     }
-    view.dispatch({ changes, userEvent: 'format' });
+    if (changes.length) view.dispatch({ changes, userEvent: 'format' });
   });
 }
 

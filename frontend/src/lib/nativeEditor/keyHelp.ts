@@ -169,6 +169,7 @@ export const VIM_BASICS: { label: string; keys: string[] }[] = [
   { label: 'Hide the editor', keys: [':q'] },
   { label: 'Save and hide the editor', keys: [':wq'] },
   { label: 'Close the file', keys: [':bd'] },
+  { label: 'Close the other files', keys: [':BufOnly'] },
 ];
 
 /** A row of the key help's editor section. */

@@ -8,6 +8,23 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Added
+
+- The native editor's problems list can show only the shown file's
+  problems: `f` or the header's toggle, the `editor-file-problems` action,
+  and `:lopen`, `:lclose`, and `:lwindow` in Vim mode.
+- Closing the other files in the native editor: a tab's right-click menu,
+  the `editor-close-others` action, and `:BufOnly` in Vim mode.
+- `Tab` completes command names on the native editor's Vim `:` line.
+
+### Fixed
+
+- Formatting in the native editor no longer moves the cursor to the start
+  of the file, or piles diagnostics at its end, when a formatter replaces the
+  whole file (rumdl).
+- A line's diagnostics shown from the keyboard scroll instead of spilling
+  past the tooltip.
+
 ## [0.0.220] - 2026-11-23
 
 ### Added
