@@ -11,7 +11,7 @@ actions, saved state, and API types can change in any release.
 ### Fixed
 
 - Native editor diagnostics from servers that don't report a document version,
-  like Harper, no longer land a few characters off after an edit.
+  like Harper, no longer land a few characters off after an edit. ([#204](https://github.com/btmux-dev/btmux/pull/204))
 
 ## [0.0.222] - 2026-11-24
 
