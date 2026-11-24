@@ -8,6 +8,8 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+## [0.0.221] - 2026-11-24
+
 ### Added
 
 - The native editor's problems list can show only the shown file's
