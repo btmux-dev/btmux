@@ -356,7 +356,14 @@ try {
     await pane.locator('.cm-btmux-problems').getByRole('button', { name: 'This file' }).getAttribute('aria-pressed'),
     'true',
   );
-  await page.keyboard.press('q');
+  // :cclose leaves the location list; :lclose closes it.
+  await content.click();
+  await page.keyboard.type(':cclose');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(300);
+  assert.equal(await pane.locator('.cm-btmux-problems').count(), 1);
+  await page.keyboard.type(':lclose');
+  await page.keyboard.press('Enter');
   await pane.locator('.cm-btmux-problems').waitFor({ state: 'detached' });
   await content.click();
   // ,h is a mapping and a prefix: it runs once no more keys come.

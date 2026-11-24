@@ -183,10 +183,12 @@ export class PaneEditor {
       this.vimMode = mode;
       this.events.changed();
     },
+    // As Vim's quickfix and location lists: closing one, or `:cw` and
+    // `:lw` finding it empty, leaves the other shown.
     problems: (open, scope) => {
-      // `any` counts the scope it asks about.
-      if (open === 'auto') this.problemsList.setScope(scope);
-      this.setProblems(open === 'auto' ? this.problemsList.any() : open, scope);
+      const show = open === 'auto' ? this.problemsList.any(scope) : open;
+      if (show) this.setProblems(true, scope);
+      else if (this.problemsList.scope === scope) this.setProblems(false);
     },
   };
   private waiting: { path: string; resolve: (view: EditorView | null) => void }[] = [];

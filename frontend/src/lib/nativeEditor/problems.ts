@@ -107,16 +107,16 @@ export class ProblemsList {
     this.current?.refresh();
   }
 
-  private problems() {
+  private problems(scope = this.scope) {
     const all = sortedProblems(fileDiagnostics(this.host.servers(), (path) => this.host.state(path)));
-    if (this.scope === 'workspace') return all;
+    if (scope === 'workspace') return all;
     const active = this.host.active();
     return all.filter((d) => d.path === active);
   }
 
-  /** Whether any problem would be listed. */
-  any(): boolean {
-    return this.problems().length > 0;
+  /** Whether `scope` has any problem to list. */
+  any(scope = this.scope): boolean {
+    return this.problems(scope).length > 0;
   }
 
   private panel(view: EditorView): Panel {

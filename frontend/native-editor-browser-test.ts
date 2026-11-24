@@ -763,6 +763,24 @@ try {
     await slowTab.waitFor({ state: 'detached' });
     console.log('PASS the tab menu closes the other files');
 
+    // Many tabs scroll inside the strip rather than widening it.
+    for (let i = 0; i < 20; i++) {
+      const path = join(dir, `a-rather-long-file-name-${i}.txt`);
+      writeFileSync(path, `${i}\n`);
+      await api(`/api/panes/${paneId}/open-editor`, 'POST', { path, line: null, editor: 'native' });
+    }
+    await waitForText(page, paneId, '19\n');
+    const overflow = await page.evaluate((id) => {
+      const pane = document.querySelector(`[data-editor-pane="${id}"]`)!.getBoundingClientRect();
+      const strip = document.querySelector(`[data-editor-pane="${id}"] [role="tablist"]`)!.getBoundingClientRect();
+      return strip.right - pane.right;
+    }, paneId);
+    assert(overflow <= 0, `the tab strip overflows the pane by ${overflow}px`);
+    await mainTab.click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Close others' }).click();
+    await page.getByRole('tab', { name: 'a-rather-long-file-name-0.txt' }).waitFor({ state: 'detached' });
+    console.log('PASS many tabs scroll in the strip');
+
     // A server that isn't installed shows in the status line, and its features stay off.
     const lspConfig = [
       '[language-server.missing]',

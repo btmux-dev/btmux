@@ -344,7 +344,8 @@ export function NativeEditor({
         background: appearance.transparent ? 'transparent' : theme.background,
       }}
     >
-      <HStack gap={1} vAlign="center" className="btm-sans shrink-0 pr-1">
+      {/* The tab menu's wrapper shrinks, so the tabs scroll in it. */}
+      <HStack gap={1} vAlign="center" className="btm-sans shrink-0 pr-1 [&>:first-child]:min-w-0">
         <ContextMenu
           label="File"
           size="sm"

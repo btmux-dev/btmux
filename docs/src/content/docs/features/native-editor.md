@@ -82,7 +82,7 @@ open editors at once.
   `:copen` and `:cclose` show and hide the [problems list](#problems-list)
   with every file's problems, and `:cw` shows it only if there are any.
   `:lopen`, `:lclose`, and `:lw` do the same with the shown file's, as
-  Vim's location list.
+  Vim's location list; each closes only its own list.
 - `Tab` on the `:` line completes the command's name; `Tab` and `Shift-Tab`
   again cycle through the names that match.
 - A double Esc hides the editor only from normal mode with no command pending,
