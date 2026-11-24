@@ -163,7 +163,8 @@ export class PaneEditor {
   private readonly virtualTextC = new Compartment();
   private virtualText = false;
   private readonly softWrapC = new Compartment();
-  private softWrap = false;
+  // On by default, so files opened before the config arrives don't reflow.
+  private softWrap = true;
   private readonly problemsC = new Compartment();
   private readonly problemsList: ProblemsList;
   private problemsOpen = false;

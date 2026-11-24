@@ -248,7 +248,7 @@ export function NativeEditor({
   }, [editor, config?.virtual_text]);
 
   useEffect(() => {
-    editor?.setSoftWrap(!!config?.soft_wrap);
+    editor?.setSoftWrap(config?.soft_wrap ?? true);
   }, [editor, config?.soft_wrap]);
 
   useEffect(() => {

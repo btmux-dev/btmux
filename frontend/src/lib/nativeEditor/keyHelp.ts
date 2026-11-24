@@ -187,7 +187,10 @@ export function editorKeyRows(config: {
   const basics: EditorKeyRow[] = vim
     ? vimCommandRows().map((row) => ({ label: row.label, keys: literal(row.keys) }))
     : plainBasics().map((row) => ({ label: row.label, keys: row.keys.map((key) => ({ caps: [cmKeyCap(key)] })) }));
-  basics.push({ label: 'Hide the editor', keys: [{ caps: ['esc', 'esc'] }] });
+  const doubleEsc = { caps: ['esc', 'esc'] };
+  const hide = basics.find((row) => row.label === 'Hide the editor');
+  if (hide) hide.keys.push(doubleEsc);
+  else basics.push({ label: 'Hide the editor', keys: [doubleEsc] });
   const actions = EDITOR_COMMANDS.flatMap((action) => {
     const keys = editorKeys(action, vim);
     return keys.length ? [{ label: rowLabel(action, config.popups), keys }] : [];
