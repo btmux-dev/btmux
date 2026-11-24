@@ -31,6 +31,9 @@ const keyOf = (target: BroadcastTarget) => `${target.paneId}:${target.agentId}`;
 const eligible = (target: BroadcastTarget) => target.agentId != null && target.status.state !== 'blocked';
 
 /** `failed`: nothing reached the agent. `unknown`: it may have; resending could repeat it. */
+/** The server waits behind another caller's prompt to the same agent, which can take a whole turn. */
+const SEND_TIMEOUT_MS = 15_000;
+
 type Outcome = { kind: 'sent' } | { kind: 'failed' | 'unknown'; reason: string };
 
 async function sendPrompt(target: BroadcastTarget, prompt: string): Promise<Outcome> {
@@ -40,9 +43,10 @@ async function sendPrompt(target: BroadcastTarget, prompt: string): Promise<Outc
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt, wait: false, agent_id: target.agentId }),
+      signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
     });
   } catch (error) {
-    // The server may have submitted it before the reply was lost.
+    // The server may have submitted it before the reply was lost, or still may after a timeout.
     return { kind: 'unknown', reason: error instanceof Error ? error.message : String(error) };
   }
   if (response.ok) return { kind: 'sent' };
@@ -164,7 +168,11 @@ export function AgentBroadcastDialog({ isOpen, targets, onClose }: Props) {
                 ref={promptRef}
                 label="Prompt"
                 value={prompt}
-                onChange={setPrompt}
+                onChange={(value) => {
+                  setPrompt(value);
+                  // The marks are about the draft that was sent.
+                  if (unknown.size) setUnknown(new Set());
+                }}
                 isReadOnly={sending}
                 rows={5}
                 placeholder="Sent to each agent checked below"

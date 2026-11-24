@@ -139,8 +139,8 @@ the prompt, tick the agents to send it to, and press `Enter` or **Send**
 Closing the dialog keeps the draft and its ticks for next time; sending
 clears both. If some agents can't take the prompt, a toast says why, and
 only those agents stay ticked, to try again. An agent whose reply was lost
-might have received it, so it is left unticked and marked, to tick again
-only if it didn't.
+or took over 15 seconds might have received it, so it is left unticked and
+marked, to tick again only if it didn't.
 
 ## Notifications
 
