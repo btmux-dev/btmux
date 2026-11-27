@@ -11,7 +11,7 @@ actions, saved state, and API types can change in any release.
 ### Fixed
 
 - On touch screens, a hidden native editor no longer leaves its tabs' close
-  buttons over the pane.
+  buttons over the pane. ([#208](https://github.com/btmux-dev/btmux/pull/208))
 
 ## [0.0.224] - 2026-11-27
 
