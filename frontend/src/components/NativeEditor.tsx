@@ -83,10 +83,10 @@ function TabClose({
 }) {
   // Touch screens have no hover: inactive tabs always show it, unsaved ones the dot.
   const x = dirty
-    ? 'invisible group-hover:visible'
+    ? 'invisible group-hover:[visibility:inherit]'
     : selected
       ? ''
-      : 'invisible group-hover:visible pointer-coarse:visible';
+      : 'invisible group-hover:[visibility:inherit] pointer-coarse:[visibility:inherit]';
   return (
     <span
       data-tab-close
