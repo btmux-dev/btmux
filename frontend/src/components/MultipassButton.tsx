@@ -20,7 +20,8 @@ const panesNote = (panes: number, verb: string) =>
     : ` Its ${panes === 1 ? 'sandboxed pane offers' : `${panes} sandboxed panes offer`} to ${verb} it again.`;
 
 /** The shared Multipass instance sandboxed sessions run in. */
-export function MultipassButton() {
+/** `lg` is the phone dock's, on the left: its popover opens rightward. */
+export function MultipassButton({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
   const available = useStore((state) => !!state.config?.multipass);
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<InstanceStatus | null>(null);
@@ -142,13 +143,13 @@ export function MultipassButton() {
     <Popover
       label="Multipass sandbox"
       placement="above"
-      alignment="end"
+      alignment={size === 'lg' ? 'start' : 'end'}
       width={360}
       isOpen={open}
       onOpenChange={setOpen}
       content={content}
     >
-      <IconButton label="Multipass sandbox" tooltip="Multipass sandbox" variant="ghost" size="sm" icon={<Box />} />
+      <IconButton label="Multipass sandbox" tooltip="Multipass sandbox" variant="ghost" size={size} icon={<Box />} />
     </Popover>
   );
 }

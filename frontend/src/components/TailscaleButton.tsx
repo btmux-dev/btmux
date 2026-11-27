@@ -100,8 +100,8 @@ function Details({ status, open }: { status: TailscaleStatus; open: boolean }) {
   );
 }
 
-/** The tailnet address of a server started with `--tailscale`. */
-export function TailscaleButton() {
+/** The tailnet address of a server started with `--tailscale`; `lg` is the phone dock's, on the left. */
+export function TailscaleButton({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
   const status = useStore((state) => state.tailscale);
   const [open, setOpen] = useState(false);
   if (!status) return null;
@@ -112,7 +112,7 @@ export function TailscaleButton() {
       <Popover
         label="Tailnet"
         placement="above"
-        alignment="end"
+        alignment={size === 'lg' ? 'start' : 'end'}
         width={360}
         onOpenChange={setOpen}
         content={<Details status={status} open={open} />}
@@ -121,7 +121,7 @@ export function TailscaleButton() {
           label={label}
           tooltip={label}
           variant="ghost"
-          size="sm"
+          size={size}
           icon={<TailscaleGlyph opacity={status.state === 'serving' ? 1 : 0.5} />}
         />
       </Popover>

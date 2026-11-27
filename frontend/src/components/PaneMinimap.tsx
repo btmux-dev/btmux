@@ -60,8 +60,7 @@ export function PaneMinimap({
               // Above the pane-covering surfaces, like the pane numbers.
               zIndex: 36,
             }),
-        width: WIDTH,
-        ...(docked ? {} : { height: HEIGHT }),
+        ...(docked ? { width: '100%' } : { width: WIDTH, height: HEIGHT }),
         padding: 4,
         borderRadius: 'var(--radius-element)',
         border: `1px solid ${theme.selectionBackground}`,

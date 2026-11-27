@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { useMediaQuery } from '@astryxdesign/core/hooks';
 import { Activity, Bot, Command, FolderOpen, GitBranch, Keyboard, KeyboardOff, Menu, Search } from 'lucide-react';
@@ -8,12 +8,21 @@ import { NARROW_QUERY } from '../lib/touch';
 import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
 import { computeRectsAndDividers, paneIdsInOrder } from '../state/layout';
 import { STARTUP_THEME } from '../state/startupTheme';
+import { useNavigate } from 'react-router-dom';
+import { runAction } from '../hooks/useKeybindings';
+import { editorButton } from './EditorIcon';
+import { TailscaleButton } from './TailscaleButton';
+import { MultipassButton } from './MultipassButton';
 import { MobileKeyBar, hideKeyboard } from './MobileKeyBar';
 import { PaneMinimap } from './PaneMinimap';
 import type { Theme } from '../generated/protocol';
 import type { ClientMessage } from '../protocol/messages';
 
 const KEYS_STORAGE = 'btmux-phone-keys';
+/** A button with the gap after it, the toolbar's padding and border, and the minimap's least width with its gap. */
+const BUTTON = 48;
+const TOOLBAR_FRAME = 10;
+const MINIMAP_LEAST = 64 + 10;
 const NO_OVERRIDES = new Map<string, number>();
 
 /** A card floating in the dock, over the wallpaper. */
@@ -31,6 +40,8 @@ const card = (theme: Theme): CSSProperties => ({
 export function PhoneDock({ sessionId, send }: { sessionId: string; send: (message: ClientMessage) => void }) {
   // Only below this width is there a drawer; wider, the side nav shows.
   const narrow = useMediaQuery(NARROW_QUERY);
+  const navigate = useNavigate();
+  const editor = editorButton(useStore((state) => state.config?.editor) ?? 'native');
   const theme = useStore((state) => state.config?.theme) ?? STARTUP_THEME;
   const session = useStore((state) => state.allSessions.find((item) => item.id === sessionId));
   const win = session?.windows[session.active_window];
@@ -47,6 +58,34 @@ export function PhoneDock({ sessionId, send }: { sessionId: string; send: (messa
       localStorage.setItem(KEYS_STORAGE, String(!keysOpen));
     } catch {}
   };
+  // Rows of equal length (6 + 6, not 11 + 1): the fewest rows that fit, then the fewest columns for them.
+  const rowRef = useRef<HTMLDivElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const [toolbarWidth, setToolbarWidth] = useState<number>();
+  const hasMinimap = !!win && win.panes.length > 1;
+  useLayoutEffect(() => {
+    const row = rowRef.current;
+    const toolbar = toolbarRef.current;
+    if (!row || !toolbar) return;
+    const fit = () => {
+      // Popovers leave empty nodes beside their buttons.
+      const count = [...toolbar.children].filter((child) => (child as HTMLElement).offsetWidth > 0).length;
+      const room = row.clientWidth - (hasMinimap ? MINIMAP_LEAST : 0) - TOOLBAR_FRAME + 4;
+      const perRow = Math.max(1, Math.floor(room / BUTTON));
+      const columns = Math.ceil(count / Math.ceil(count / perRow));
+      setToolbarWidth(columns * BUTTON - 4 + TOOLBAR_FRAME);
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(row);
+    // Tailnet and sandbox buttons come and go.
+    const mutations = new MutationObserver(fit);
+    mutations.observe(toolbar, { childList: true });
+    return () => {
+      observer.disconnect();
+      mutations.disconnect();
+    };
+  }, [hasMinimap]);
   // An agent waiting on the user, else one with a result to read.
   const alert = useStore((state) => {
     let done = false;
@@ -103,8 +142,9 @@ export function PhoneDock({ sessionId, send }: { sessionId: string; send: (messa
           <MobileKeyBar sessionId={sessionId} send={send} layout="panel" />
         </div>
       )}
-      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10 }}>
+      <div ref={rowRef} style={{ display: 'flex', alignItems: 'flex-end', gap: 10 }}>
         <div
+          ref={toolbarRef}
           role="toolbar"
           aria-label="Quick actions"
           className="btm-toolbar-glass min-w-0 [&_button]:size-11"
@@ -113,6 +153,7 @@ export function PhoneDock({ sessionId, send }: { sessionId: string; send: (messa
             display: 'flex',
             // Take the room beside the minimap before wrapping.
             flex: '0 1 auto',
+            maxWidth: toolbarWidth,
             // The first buttons stay on the bottom row, nearest the thumb.
             flexWrap: 'wrap-reverse',
             gap: 4,
@@ -154,12 +195,22 @@ export function PhoneDock({ sessionId, send }: { sessionId: string; send: (messa
             onClick={() => open(() => useStore.getState().setAgentGridOpen(true))}
           />
           {action('Switch session', <Search />, () => open(() => useStore.getState().setSwitcherOpen(true)))}
+          {action(editor.label, editor.icon, () =>
+            open(() => runAction('editor', sessionId, send, (name) => navigate(`/s/${encodeURIComponent(name)}`))),
+          )}
           {action('File browser', <FolderOpen />, () => openFiles('files'))}
           {action('Git mode', <GitBranch />, () => openFiles('git'))}
           {action('Process viewer', <Activity />, () => openFiles('process'))}
           {narrow && action('Menu', <Menu />, () => open(() => useStore.getState().setMobileNavOpen(true)))}
+          <TailscaleButton size="lg" />
+          <MultipassButton size="lg" />
         </div>
-        {minimap && <div className="ml-auto self-stretch">{minimap}</div>}
+        {minimap && (
+          // The buttons' height, and the width they leave: narrow beside two rows, wider beside one.
+          <div className="ml-auto self-stretch" style={{ flex: '1 0 64px', maxWidth: 160 }}>
+            {minimap}
+          </div>
+        )}
       </div>
     </div>
   );
