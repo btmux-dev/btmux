@@ -8,6 +8,11 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Changed
+
+- The "Fit to this screen" button is mostly opaque and blurs what is behind it, so
+  terminal text doesn't show through.
+
 ## [0.0.224] - 2026-11-27
 
 ### Added
