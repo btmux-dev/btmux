@@ -134,6 +134,8 @@ try {
   // The buttons stay above the keyboard, which shrinks the visual viewport.
   const setViewportHeight = (height: string) =>
     page.evaluate((height) => document.documentElement.style.setProperty('--btm-viewport-height', height), height);
+  // An armed Ctrl stays armed as the dock compacts.
+  await keys('Ctrl').tap();
   await setViewportHeight('300px');
   // The dock compacts to one row, so the terminal keeps usable rows.
   const terminalHeight = () =>
@@ -156,6 +158,8 @@ try {
     .catch(async () => assert.fail(`the terminal is ${await terminalHeight()}px tall at 300px`));
   const hide = (await keys('Hide keyboard').boundingBox())!;
   assert(hide.y + hide.height <= 300, `buttons end at ${hide.y + hide.height}px`);
+  assert.equal(await keys('Ctrl').getAttribute('aria-pressed'), 'true');
+  await keys('Ctrl').tap();
   await setViewportHeight(`${fit.viewport}px`);
 
   // Taps keep the terminal focused, so the keyboard stays open.

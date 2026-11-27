@@ -61,7 +61,7 @@ function AppInner({
   request: (msg: ClientMessage) => Promise<string | null>;
 }) {
   const touch = useMediaQuery(TOUCH_QUERY);
-  // Phones use SessionPane's large buttons instead of the key bar and status bar.
+  // Phones use PhoneDock instead of the key bar and status bar.
   const phone = useMediaQuery(PHONE_QUERY);
   const allSessions = useStore((s) => s.allSessions);
   const config = useStore((s) => s.config);

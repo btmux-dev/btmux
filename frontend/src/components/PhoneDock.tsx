@@ -11,7 +11,7 @@ import { runAction } from '../hooks/useKeybindings';
 import { editorButton } from './EditorIcon';
 import { TailscaleButton } from './TailscaleButton';
 import { MultipassButton } from './MultipassButton';
-import { MobileKeyBar, hideKeyboard } from './MobileKeyBar';
+import { MobileKeyBar, hideKeyboard, useModifiers } from './MobileKeyBar';
 import { PaneMinimap } from './PaneMinimap';
 import type { Theme } from '../generated/protocol';
 import type { ClientMessage } from '../protocol/messages';
@@ -48,6 +48,8 @@ export function PhoneDock({ sessionId, send }: { sessionId: string; send: (messa
       return false;
     }
   });
+  // Kept here: the keys remount when the dock compacts, which mustn't disarm them.
+  const modifiers = useModifiers();
   const toggleKeys = () => {
     setKeysOpen(!keysOpen);
     try {
@@ -204,7 +206,9 @@ export function PhoneDock({ sessionId, send }: { sessionId: string; send: (messa
     <MultipassButton key="Sandbox" size="lg" />,
     <TailscaleButton key="Tailnet" size="lg" />,
   ];
-  const keyPanel = <MobileKeyBar sessionId={sessionId} send={send} layout={compact ? 'row' : 'panel'} />;
+  const keyPanel = (
+    <MobileKeyBar sessionId={sessionId} send={send} layout={compact ? 'row' : 'panel'} modifiers={modifiers} />
+  );
 
   if (compact) {
     // Short screens (the keyboard is up): one scrolling row, Hide keyboard and the keys first.

@@ -1,8 +1,8 @@
 /**
  * `just dev-tailscale`: `just dev` served to the tailnet over HTTPS (Tailscale
  * Serve), for testing on a phone. It signs in with a random token, never the
- * fixed dev one, and prints a QR code of a one-time pairing link; Enter prints
- * a new one. It refuses a port Serve uses for anything else, or exposes to the
+ * fixed dev one or printed, and prints a QR code of a one-time pairing link;
+ * Enter prints a new one. It refuses a port Serve uses for anything else, or exposes to the
  * internet (Funnel), and removes only a route it made, if it's still there.
  *
  * Usage: bun dev-tailscale.ts FRONTEND_PORT BACKEND_PORT
@@ -48,7 +48,10 @@ async function main() {
   const [frontendPort, backendPort] = process.argv.slice(2).map(Number);
   if (!frontendPort || !backendPort) throw new Error('usage: bun dev-tailscale.ts FRONTEND_PORT BACKEND_PORT');
   const target = `http://127.0.0.1:${frontendPort}`;
-  const status = JSON.parse(await tailscale('status', '--json')) as { BackendState?: string; Self?: { DNSName?: string } };
+  const status = JSON.parse(await tailscale('status', '--json')) as {
+    BackendState?: string;
+    Self?: { DNSName?: string };
+  };
   const host = status.Self?.DNSName?.replace(/\.$/, '');
   if (status.BackendState !== 'Running' || !host) throw new Error('Tailscale is not running');
   const hostPort = `${host}:${frontendPort}`;
@@ -101,7 +104,7 @@ async function main() {
     const link = `https://${hostPort}/pair?code=${code}`;
     console.log(`\n${renderUnicodeCompact(link, { border: 2 })}`);
     console.log(`Scan to sign in at https://${hostPort} (once, within ${Math.round(expires_in / 60)} min).`);
-    console.log(`Or sign in with the token ${token}. Press Enter for a new code.\n`);
+    console.log('Press Enter for a new code.\n');
   };
 
   // The backend compiles first; Vite is up long before it.

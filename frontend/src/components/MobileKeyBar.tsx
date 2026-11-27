@@ -25,6 +25,16 @@ const takesKeys = (target: EventTarget | null) =>
     '[data-pane-terminal], [data-nvim-input], [data-browser-input], [data-native-editor], [data-pane-widget]',
   ) !== null;
 
+type Modifier = [boolean, (armed: boolean) => void];
+export type Modifiers = [ctrl: Modifier, alt: Modifier];
+
+/** Armed Ctrl and Alt for MobileKeyBar. */
+export function useModifiers(): Modifiers {
+  const ctrl = useState(false);
+  const alt = useState(false);
+  return [ctrl, alt];
+}
+
 /** iPhone keyboards have no dismiss key. */
 export const hideKeyboard = () => (document.activeElement as HTMLElement | null)?.blur();
 
@@ -33,11 +43,14 @@ export function MobileKeyBar({
   sessionId,
   send,
   layout = 'bar',
+  modifiers,
 }: {
   sessionId: string;
   send: (message: ClientMessage) => void;
   /** `panel` and `row` are the phone dock's: large keys, wrapping or in its compact row. */
   layout?: 'bar' | 'panel' | 'row';
+  /** Armed Ctrl and Alt, from a parent that swaps layouts, so they survive the remount. */
+  modifiers?: Modifiers;
 }) {
   const config = useStore((state) => state.config);
   const prefixActive = useStore((state) => state.prefixActive);
@@ -51,8 +64,8 @@ export function MobileKeyBar({
     if (nativeEditorOver(state, paneId)) return 'Editor';
     return null;
   });
-  const [ctrl, setCtrl] = useState(false);
-  const [alt, setAlt] = useState(false);
+  const own = useModifiers();
+  const [[ctrl, setCtrl], [alt, setAlt]] = modifiers ?? own;
   const prefix = parsePrefix(getPrefix(config)) ?? parsePrefix(CONFIG_DEFAULTS.prefix)!;
 
   // To the focused terminal or Neovim, else what covers the active pane.
