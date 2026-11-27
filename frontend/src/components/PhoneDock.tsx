@@ -150,27 +150,13 @@ export function PhoneDock({ sessionId, send }: { sessionId: string; send: (messa
             // Take the room beside the minimap before wrapping.
             flex: '0 1 auto',
             maxWidth: toolbarWidth,
-            // The first buttons stay on the bottom row, nearest the thumb.
-            flexWrap: 'wrap-reverse',
+            flexWrap: 'wrap',
             gap: 4,
             padding: 4,
           }}
         >
-          <IconButton
-            label="Keys"
-            variant={keysOpen ? 'secondary' : 'ghost'}
-            size="lg"
-            icon={<Keyboard />}
-            aria-pressed={keysOpen}
-            onClick={toggleKeys}
-          />
-          {action('Hide keyboard', <KeyboardOff />, hideKeyboard)}
-          {action('Commands', <Command />, () =>
-            open(() => {
-              const state = useStore.getState();
-              state.setOverlay({ mode: 'command', title: 'Commands', commands: state.config?.commands ?? [] });
-            }),
-          )}
+          {action('Menu', <Menu />, () => open(() => useStore.getState().setMobileNavOpen(true)))}
+          {action('Switch session', <Search />, () => open(() => useStore.getState().setSwitcherOpen(true)))}
           <IconButton
             label={alert ? `Agents (${alert})` : 'Agents'}
             variant="ghost"
@@ -190,16 +176,29 @@ export function PhoneDock({ sessionId, send }: { sessionId: string; send: (messa
             }
             onClick={() => open(() => useStore.getState().setAgentGridOpen(true))}
           />
-          {action('Switch session', <Search />, () => open(() => useStore.getState().setSwitcherOpen(true)))}
+          {action('Commands', <Command />, () =>
+            open(() => {
+              const state = useStore.getState();
+              state.setOverlay({ mode: 'command', title: 'Commands', commands: state.config?.commands ?? [] });
+            }),
+          )}
+          <IconButton
+            label="Keys"
+            variant={keysOpen ? 'secondary' : 'ghost'}
+            size="lg"
+            icon={<Keyboard />}
+            aria-pressed={keysOpen}
+            onClick={toggleKeys}
+          />
+          {action('Hide keyboard', <KeyboardOff />, hideKeyboard)}
+          {action('Git mode', <GitBranch />, () => openFiles('git'))}
+          {action('File browser', <FolderOpen />, () => openFiles('files'))}
           {action(editor.label, editor.icon, () =>
             open(() => runAction('editor', sessionId, send, (name) => navigate(`/s/${encodeURIComponent(name)}`))),
           )}
-          {action('File browser', <FolderOpen />, () => openFiles('files'))}
-          {action('Git mode', <GitBranch />, () => openFiles('git'))}
           {action('Process viewer', <Activity />, () => openFiles('process'))}
-          {action('Menu', <Menu />, () => open(() => useStore.getState().setMobileNavOpen(true)))}
-          <TailscaleButton size="lg" />
           <MultipassButton size="lg" />
+          <TailscaleButton size="lg" />
         </div>
         {minimap && (
           // The buttons' height, and the width they leave: narrow beside two rows, wider beside one.
