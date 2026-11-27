@@ -1,7 +1,7 @@
 /**
  * `just dev-tailscale`: `just dev` served to the tailnet over HTTPS (Tailscale
  * Serve), for testing on a phone. It signs in with a random token, never the
- * fixed dev one or printed, and prints a QR code of a one-time pairing link;
+ * fixed dev one or printed, and prints a one-time pairing link and its QR code;
  * Enter prints a new one. It refuses a port Serve uses for anything else, or exposes to the
  * internet (Funnel), and removes only a route it made, if it's still there.
  *
@@ -103,7 +103,7 @@ async function main() {
     const { code, expires_in } = (await response.json()) as { code: string; expires_in: number };
     const link = `https://${hostPort}/pair?code=${code}`;
     console.log(`\n${renderUnicodeCompact(link, { border: 2 })}`);
-    console.log(`Scan to sign in at https://${hostPort} (once, within ${Math.round(expires_in / 60)} min).`);
+    console.log(`Scan or open to sign in (once, within ${Math.round(expires_in / 60)} min):\n${link}`);
     console.log('Press Enter for a new code.\n');
   };
 
