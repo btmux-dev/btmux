@@ -847,6 +847,41 @@ try {
   await popup.waitFor({ state: 'detached' });
   await pickOutput(/rc=0/);
 
+  // Touch screens show inactive tabs' close icons, but not over a hidden editor.
+  const editorDir = mkdtempSync(path.join(tmpdir(), 'btmux-mobile-editor-'));
+  const editorFiles = ['one.txt', 'two.txt'].map((name) => path.join(editorDir, name));
+  for (const file of editorFiles) {
+    writeFileSync(file, 'x\n');
+    const opened = await api(`/api/panes/${pickPane}/open-editor`, {
+      method: 'POST',
+      body: JSON.stringify({ path: file, line: null, editor: 'native' }),
+    });
+    assert(opened.ok);
+  }
+  // The visibility override is on the icon, so check it, not the editor or the span.
+  // CSS, not roles: a hidden editor is aria-hidden.
+  const closeIcon = page.locator('[role="tab"]', { hasText: 'one.txt' }).locator('[data-tab-close] svg');
+  await closeIcon.waitFor();
+  const iconVisibility = () => closeIcon.evaluate((icon) => getComputedStyle(icon).visibility);
+  assert.equal(await iconVisibility(), 'visible');
+  const editorView = (op: object) =>
+    page.evaluate(
+      async ({ pane, op }) => {
+        const { useStore } = await import('/src/state/store.tsx' as string);
+        useStore.getState().controlSendFn({ type: 'editor_view', pane_id: pane, op });
+      },
+      { pane: pickPane, op },
+    );
+  await editorView({ kind: 'hide' });
+  await waitForAsync(
+    page,
+    () => getComputedStyle(document.querySelector('[data-editor-pane]')!).visibility === 'hidden',
+  );
+  assert.equal(await iconVisibility(), 'hidden');
+  for (const file of editorFiles) await editorView({ kind: 'close', path: file });
+  await page.locator('[data-editor-pane]').waitFor({ state: 'detached' });
+  rmSync(editorDir, { recursive: true, force: true });
+
   // Installable: the manifest loads with the session cookie.
   const manifest = await page.evaluate(async () =>
     (await fetch('/manifest.webmanifest', { credentials: 'include' })).json(),
