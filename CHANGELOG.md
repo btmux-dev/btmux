@@ -8,6 +8,8 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+## [0.0.225] - 2026-11-27
+
 ### Changed
 
 - The "Fit to this screen" button is mostly opaque and blurs what is behind
