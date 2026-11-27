@@ -444,7 +444,11 @@ export function TerminalPane({
         />
         {clipped && rendering && initialReplayRendered && (
           // Another viewer sized the PTY larger than this pane, so it's clipped.
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2" style={{ zIndex: 25 }}>
+          // Touchscreens show it at the top, clear of the phone buttons and pane minimap.
+          <div
+            className="absolute bottom-3 left-1/2 -translate-x-1/2 pointer-coarse:top-3 pointer-coarse:bottom-auto"
+            style={{ zIndex: 25 }}
+          >
             <Button
               label="Fit to this screen"
               size="sm"

@@ -24,6 +24,8 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
   const setSwitcherOpen = useStore((state) => state.setSwitcherOpen);
   const setWindowGridOpen = useStore((state) => state.setWindowGridOpen);
   const setAgentGridOpen = useStore((state) => state.setAgentGridOpen);
+  const mobileNavOpen = useStore((state) => state.mobileNavOpen);
+  const setMobileNavOpen = useStore((state) => state.setMobileNavOpen);
   const location = useLocation();
   const navigate = useNavigate();
   useSyncExternalStore(
@@ -54,6 +56,7 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
     state.setWindowGridOpen(false);
     state.setAgentGridOpen(false);
     state.setFileBrowserOpen(false);
+    state.setMobileNavOpen(false);
   };
   const appearanceIndex = Math.max(
     0,
@@ -78,6 +81,8 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
         paddingRight: 'env(safe-area-inset-right, 0px)',
       }}
       contentPadding={0}
+      // Phones get no top bar: the status bar's menu button opens the drawer, within thumb reach.
+      mobileNav={{ hasToggle: false, isOpen: mobileNavOpen, onOpenChange: setMobileNavOpen }}
       variant="section"
       // Never scroll the main region: TabList's indicator bleed pokes 1px past
       // the status bar, which shows a scrollbar where scrollbars are classic.

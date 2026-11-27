@@ -6,6 +6,9 @@ export const isTouchPrimary = () => window.matchMedia?.(TOUCH_QUERY).matches ?? 
 /** Phone-width screens, as ConfigPage and SessionSwitcher lay out. */
 export const NARROW_QUERY = '(max-width: 767px)';
 
+/** Touchscreen phones in either orientation: narrow, or too short for several panes. */
+export const PHONE_QUERY = `${TOUCH_QUERY} and (max-width: 767px), ${TOUCH_QUERY} and (max-height: 500px)`;
+
 /** Stop iOS capitalizing and autocorrecting an input; TextInput doesn't forward these. */
 export function plainTextInput(input: HTMLInputElement | null) {
   input?.setAttribute('autocapitalize', 'off');

@@ -7,7 +7,10 @@ import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { Spinner } from './Spinner';
 import { KeyCap } from './KeyHint';
 import { HStack } from '@astryxdesign/core/Layout';
-import { Activity, Box, Cast, FolderOpen, GitBranch, Globe } from 'lucide-react';
+import { Activity, Box, Cast, Ellipsis, FolderOpen, GitBranch, Globe, Menu } from 'lucide-react';
+import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
+import { useMediaQuery } from '@astryxdesign/core/hooks';
+import { NARROW_QUERY } from '../lib/touch';
 import { useStore, type FileBrowserMode } from '../state/store';
 import { chromePalette } from '../lib/chrome-colors';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
@@ -34,6 +37,7 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
   const prefixActive = useStore((state) => state.prefixActive);
   const keyOverlay = useStore((state) => state.keyOverlay);
   const navigate = useNavigate();
+  const narrow = useMediaQuery(NARROW_QUERY);
   useSyncExternalStore(
     (callback) => {
       window.addEventListener(WINDOW_MRU_EVENT, callback);
@@ -66,6 +70,11 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
     state().setFileBrowserOpen(false);
     runAction('editor', session.id, send, (name) => navigate(`/s/${encodeURIComponent(name)}`));
   };
+  const toggleBrowser = () => {
+    closeModals();
+    state().setFileBrowserOpen(false);
+    runAction('browser', session.id, send, (name) => navigate(`/s/${encodeURIComponent(name)}`));
+  };
   const animations = getAnimations(config);
   return (
     <HStack
@@ -78,13 +87,17 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
     >
       <Button
         label={session.name}
-        icon={session.runtime.type === 'multipass' ? <Box /> : undefined}
-        tooltip={session.runtime.type === 'multipass' ? 'Runs in the Multipass sandbox' : undefined}
+        // Phones have no top bar: this opens the sessions drawer instead of the switcher.
+        icon={narrow ? <Menu /> : session.runtime.type === 'multipass' ? <Box /> : undefined}
+        tooltip={
+          narrow ? undefined : session.runtime.type === 'multipass' ? 'Runs in the Multipass sandbox' : undefined
+        }
         variant="ghost"
         size="sm"
         onClick={() => {
           closeModals();
-          state().setSwitcherOpen(true);
+          if (narrow) state().setMobileNavOpen(true);
+          else state().setSwitcherOpen(true);
         }}
       />
       <TabList
@@ -148,71 +161,94 @@ export function StatusBar({ sessionId, send }: { sessionId: string; send: (messa
       <HStack gap={1} className="hidden lg:flex">
         <SysStatBar c={chromePalette(config?.theme ?? null)} barH={28} font={12} animations={getAnimations(config)} />
       </HStack>
-      {editor === 'pane' || editor === 'native' ? (
-        <IconButton
-          label={editorLabel.label}
-          tooltip={editorLabel.label}
-          variant="ghost"
-          size="sm"
-          icon={editorLabel.icon}
-          onClick={toggleEditor}
+      <MultipassButton />
+      {narrow ? (
+        // Phones: one menu, so the window tabs keep their room.
+        <DropdownMenu
+          placement="above"
+          alignment="end"
+          presentation="adaptive"
+          hasChevron={false}
+          renderTrigger={(props) => (
+            <IconButton label="Tools" variant="ghost" size="sm" icon={<Ellipsis />} {...props} />
+          )}
+          items={[
+            { label: editorLabel.label, icon: editorLabel.icon, onClick: toggleEditor },
+            ...(config?.browser ? [{ label: 'Browser', icon: <Globe />, onClick: toggleBrowser }] : []),
+            { label: 'File browser', icon: <FolderOpen />, onClick: () => openFiles('files') },
+            { label: 'Git mode', icon: <GitBranch />, onClick: () => openFiles('git') },
+            { label: 'Process viewer', icon: <Activity />, onClick: () => openFiles('process') },
+            {
+              label: keyOverlay ? 'Hide pressed keys' : 'Show pressed keys',
+              icon: <Cast />,
+              onClick: () => state().setKeyOverlay(!keyOverlay),
+            },
+          ]}
         />
       ) : (
-        <EditorMenu
-          key={editor}
-          editor={editor}
-          paneId={activeWindow?.zoomed_pane ?? pane?.id}
-          onToggle={toggleEditor}
-          onShutDown={() => send({ type: 'shut_down_editor', editor })}
-        />
+        <>
+          {editor === 'pane' || editor === 'native' ? (
+            <IconButton
+              label={editorLabel.label}
+              tooltip={editorLabel.label}
+              variant="ghost"
+              size="sm"
+              icon={editorLabel.icon}
+              onClick={toggleEditor}
+            />
+          ) : (
+            <EditorMenu
+              key={editor}
+              editor={editor}
+              paneId={activeWindow?.zoomed_pane ?? pane?.id}
+              onToggle={toggleEditor}
+              onShutDown={() => send({ type: 'shut_down_editor', editor })}
+            />
+          )}
+          {config?.browser && (
+            <IconButton
+              label="Browser"
+              tooltip="Browser"
+              variant="ghost"
+              size="sm"
+              icon={<Globe />}
+              onClick={toggleBrowser}
+            />
+          )}
+          <IconButton
+            label="File browser"
+            tooltip="File browser"
+            variant="ghost"
+            size="sm"
+            icon={<FolderOpen />}
+            onClick={() => openFiles('files')}
+          />
+          <IconButton
+            label="Git mode"
+            tooltip="Git mode"
+            variant="ghost"
+            size="sm"
+            icon={<GitBranch />}
+            onClick={() => openFiles('git')}
+          />
+          <IconButton
+            label="Process viewer"
+            tooltip="Process viewer"
+            variant="ghost"
+            size="sm"
+            icon={<Activity />}
+            onClick={() => openFiles('process')}
+          />
+          <IconButton
+            label={keyOverlay ? 'Hide pressed keys' : 'Show pressed keys'}
+            tooltip={keyOverlay ? 'Hide pressed keys' : 'Show pressed keys'}
+            variant={keyOverlay ? 'secondary' : 'ghost'}
+            size="sm"
+            icon={<Cast />}
+            onClick={() => state().setKeyOverlay(!keyOverlay)}
+          />
+        </>
       )}
-      {config?.browser && (
-        <IconButton
-          label="Browser"
-          tooltip="Browser"
-          variant="ghost"
-          size="sm"
-          icon={<Globe />}
-          onClick={() => {
-            closeModals();
-            state().setFileBrowserOpen(false);
-            runAction('browser', session.id, send, (name) => navigate(`/s/${encodeURIComponent(name)}`));
-          }}
-        />
-      )}
-      <MultipassButton />
-      <IconButton
-        label="File browser"
-        tooltip="File browser"
-        variant="ghost"
-        size="sm"
-        icon={<FolderOpen />}
-        onClick={() => openFiles('files')}
-      />
-      <IconButton
-        label="Git mode"
-        tooltip="Git mode"
-        variant="ghost"
-        size="sm"
-        icon={<GitBranch />}
-        onClick={() => openFiles('git')}
-      />
-      <IconButton
-        label="Process viewer"
-        tooltip="Process viewer"
-        variant="ghost"
-        size="sm"
-        icon={<Activity />}
-        onClick={() => openFiles('process')}
-      />
-      <IconButton
-        label={keyOverlay ? 'Hide pressed keys' : 'Show pressed keys'}
-        tooltip={keyOverlay ? 'Hide pressed keys' : 'Show pressed keys'}
-        variant={keyOverlay ? 'secondary' : 'ghost'}
-        size="sm"
-        icon={<Cast />}
-        onClick={() => state().setKeyOverlay(!keyOverlay)}
-      />
       <TailscaleButton />
     </HStack>
   );

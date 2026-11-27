@@ -473,10 +473,16 @@ replaces its guesses only while they are before the caret, and stops when
 wterm empties the field. Other keys empty it. An edit deleting a grapheme of
 several code points is undone instead, since shells delete those differently
 (fish a grapheme per Backspace, bash a code point).
+Narrow screens and phones (`PHONE_QUERY`: a narrow or short touchscreen) get
+only the active pane in `SessionPane`, a local zoom, with `PaneMinimap` to
+select another. Phones replace the key bar and status bar with `PhoneDock` in
+the footer: large buttons (the key bar's keys in a panel, `layout="panel"`),
+and the minimap, below the panes so they cover no output.
 `useVisualViewport` sizes `#root` to the visual
 viewport, since iOS doesn't resize the layout for the keyboard. Swipes in
 alternate-screen or mouse-tracking programs become wheel events. Below 768px,
-`SessionPane` shows only the active pane, a local zoom, and the file browser
+the status bar's session button opens the side nav drawer (no top bar), its
+tools are one menu, and the file browser
 and process viewer are fullscreen, showing a list or, after a tap, the
 preview or details. Footer key hints everywhere type their key when tapped
 (`usePressHint`); on touch screens, filters type into an input and a tap on a

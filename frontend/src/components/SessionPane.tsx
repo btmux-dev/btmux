@@ -5,6 +5,7 @@ import { TerminalPane } from './TerminalPane';
 import { NativeEditor } from './NativeEditor';
 import { FileBrowserOverlay } from './FileBrowserOverlay';
 import { PopupDialog } from './PopupDialog';
+import { PaneMinimap } from './PaneMinimap';
 import { wideDialogProps } from '../lib/wideDialog';
 import { ProcessOverlay } from './ProcessOverlay';
 import { ClientConfig, LayoutRect } from '../state/types';
@@ -23,7 +24,7 @@ import { useFileStore } from '../state/fileStore';
 import { STARTUP_THEME } from '../state/startupTheme';
 import { recordWindowMruVisit } from '../state/windowMru';
 import { useWindowAttended } from '../lib/windowAttention';
-import { NARROW_QUERY } from '../lib/touch';
+import { NARROW_QUERY, PHONE_QUERY } from '../lib/touch';
 import { DIVIDER_TOUCH_TARGET } from '../hooks/useSidebarResize';
 import { useDividerDrag } from '../hooks/useDividerDrag';
 import { useLayoutMotion } from '../hooks/useLayoutMotion';
@@ -77,11 +78,14 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send, r
   const windows = session?.windows ?? [];
   const activeWindow = session ? windows[session.active_window] : undefined;
   const activePaneId = activeWindow?.panes[activeWindow.active_pane]?.id ?? null;
-  // Narrow screens show only the active pane, as if zoomed (locally).
   const narrow = useMediaQuery(NARROW_QUERY);
+  // Phones get PhoneDock in place of the key bar and status bar.
+  const phone = useMediaQuery(PHONE_QUERY);
+  // Narrow screens and phones show only the active pane, as if zoomed (locally), with a minimap to switch.
+  const onePane = narrow || phone;
   const previewFullscreen = useFileStore((s) => s.previewFullscreen);
   const zoomedPaneId =
-    activeWindow?.zoomed_pane ?? (narrow && (activeWindow?.panes.length ?? 0) > 1 ? activePaneId : null);
+    activeWindow?.zoomed_pane ?? (onePane && (activeWindow?.panes.length ?? 0) > 1 ? activePaneId : null);
   const focusedPane = activeWindow?.panes.find((pane) => pane.id === (zoomedPaneId ?? activePaneId));
   // A popup over the active pane, else the newest over another pane of the window.
   const popups = useStore((s) => s.popups);
@@ -410,6 +414,17 @@ export function SessionPane({ sessionId, isActiveSession, previewConfig, send, r
             />
           )}
         </Dialog>
+      )}
+      {/* Phones show it in PhoneDock, below the panes. */}
+      {isActiveSession && onePane && !phone && activeWindow && activeWindow.panes.length > 1 && (
+        <PaneMinimap
+          rects={layoutRects.rects}
+          panes={activeWindow.panes}
+          activePaneId={zoomedPaneId ?? activePaneId}
+          numbers={paneNumberById}
+          theme={config?.theme ?? STARTUP_THEME}
+          onSelect={(paneId) => send({ type: 'select_pane', session_id: sessionId, pane_id: paneId })}
+        />
       )}
       {shownPopup && <PopupDialog key={shownPopup.id} popup={shownPopup} sessionId={sessionId} send={send} />}
       {showPaneNumbers &&

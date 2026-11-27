@@ -1204,8 +1204,10 @@ try {
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     'compact shell must not overflow horizontally',
   );
-  await page.getByRole('button', { name: 'Settings', exact: true }).first().click();
-  const compact = await page.locator('dialog[open]').boundingBox();
+  // No top bar: the status bar's session button opens the drawer.
+  await page.getByRole('toolbar', { name: 'Terminal controls' }).getByRole('button').first().click();
+  await page.locator('dialog.btm-side-nav').getByRole('button', { name: 'Settings', exact: true }).click();
+  const compact = await page.getByRole('dialog', { name: 'Settings', exact: true }).boundingBox();
   assert(compact && compact.x >= 0 && compact.width <= 390);
   await page.keyboard.press('Escape');
   assert.deepEqual(errors, []);
