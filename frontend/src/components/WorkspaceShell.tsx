@@ -99,7 +99,7 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
       sideNav={
         <SideNav
           aria-label="Sessions and windows"
-          className="btm-side-nav btm-toolbar-glass"
+          className={`btm-side-nav btm-toolbar-glass${collapsed ? ' btm-side-nav-collapsed' : ''}`}
           collapsible={{
             isCollapsed: collapsed,
             onCollapsedChange: (value) => {
@@ -111,6 +111,44 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
           }}
           // Collapsed, the iconless heading renders nothing but SideNav would still pad it.
           header={collapsed ? undefined : <SideNavHeading heading="btmux" className="btm-brand" />}
+          // Pinned above the scrolling session list.
+          topContent={
+            <SideNavSection title="Workspace">
+              <SideNavItem
+                label="Switch session"
+                icon={Search}
+                onClick={() => {
+                  closeSurfaces();
+                  setSwitcherOpen(true);
+                }}
+              />
+              {active && (
+                <SideNavItem
+                  label="Window overview"
+                  icon={Grid2X2}
+                  onClick={() => {
+                    closeSurfaces();
+                    setWindowGridOpen(true);
+                  }}
+                />
+              )}
+              <AgentNavItem
+                collapsed={collapsed}
+                onClick={() => {
+                  closeSurfaces();
+                  setAgentGridOpen(true);
+                }}
+              />
+              <SideNavItem
+                label="Commands"
+                icon={Command}
+                onClick={() => {
+                  closeSurfaces();
+                  setOverlay({ mode: 'command', title: 'Commands', commands: config?.commands ?? [] });
+                }}
+              />
+            </SideNavSection>
+          }
           footerIcons={
             <>
               <IconButton
@@ -160,87 +198,54 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
             </>
           }
         >
-          <SideNavSection title="Workspace">
-            <SideNavItem
-              label="Switch session"
-              icon={Search}
-              onClick={() => {
-                closeSurfaces();
-                setSwitcherOpen(true);
-              }}
-            />
-            {active && (
-              <SideNavItem
-                label="Window overview"
-                icon={Grid2X2}
-                onClick={() => {
-                  closeSurfaces();
-                  setWindowGridOpen(true);
-                }}
-              />
-            )}
-            <AgentNavItem
-              collapsed={collapsed}
-              onClick={() => {
-                closeSurfaces();
-                setAgentGridOpen(true);
-              }}
-            />
-            <SideNavItem
-              label="Commands"
-              icon={Command}
-              onClick={() => {
-                closeSurfaces();
-                setOverlay({ mode: 'command', title: 'Commands', commands: config?.commands ?? [] });
-              }}
-            />
-          </SideNavSection>
-          <SideNavSection
-            title="Sessions"
-            // The collapsed rail clips endContent; it gets a nav item below instead.
-            endContent={
-              collapsed ? undefined : (
-                <IconButton
-                  label="New session"
-                  tooltip="New session"
-                  variant="ghost"
-                  size="sm"
-                  icon={<Plus />}
-                  onClick={newSession}
-                />
-              )
-            }
-          >
-            {/* Session and window names are identifiers. */}
-            <div className="btm-mono contents">
-              {sortSessions(sessions, getSessionSort(config)).map((session) => (
-                <SessionNavItem
-                  key={session.id}
-                  session={session}
-                  collapsed={collapsed}
-                  isSelected={session.id === active?.id}
-                  onClick={() => {
-                    closeSurfaces();
-                    navigate(`/s/${encodeURIComponent(session.name)}`);
-                  }}
-                >
-                  {sortWindows(session.windows, getWindowSort(config)).map(({ win, index }, displayIndex) => (
-                    <SideNavItem
-                      key={win.id}
-                      label={`${displayIndex} · ${win.name}`}
-                      isSelected={session.id === active?.id && index === session.active_window}
-                      onClick={() => {
-                        closeSurfaces();
-                        send({ type: 'switch_window', session_id: session.id, index });
-                        navigate(`/s/${encodeURIComponent(session.name)}/w/${encodeURIComponent(win.name)}`);
-                      }}
-                    />
-                  ))}
-                </SessionNavItem>
-              ))}
-            </div>
-            {collapsed && <SideNavItem label="New session" icon={Plus} onClick={newSession} />}
-          </SideNavSection>
+          <div className="btm-nav-sessions contents">
+            <SideNavSection
+              title="Sessions"
+              // The collapsed rail clips endContent; it gets a nav item below instead.
+              endContent={
+                collapsed ? undefined : (
+                  <IconButton
+                    label="New session"
+                    tooltip="New session"
+                    variant="ghost"
+                    size="sm"
+                    icon={<Plus />}
+                    onClick={newSession}
+                  />
+                )
+              }
+            >
+              {/* Session and window names are identifiers. */}
+              <div className="btm-mono contents">
+                {sortSessions(sessions, getSessionSort(config)).map((session) => (
+                  <SessionNavItem
+                    key={session.id}
+                    session={session}
+                    collapsed={collapsed}
+                    isSelected={session.id === active?.id}
+                    onClick={() => {
+                      closeSurfaces();
+                      navigate(`/s/${encodeURIComponent(session.name)}`);
+                    }}
+                  >
+                    {sortWindows(session.windows, getWindowSort(config)).map(({ win, index }, displayIndex) => (
+                      <SideNavItem
+                        key={win.id}
+                        label={`${displayIndex} · ${win.name}`}
+                        isSelected={session.id === active?.id && index === session.active_window}
+                        onClick={() => {
+                          closeSurfaces();
+                          send({ type: 'switch_window', session_id: session.id, index });
+                          navigate(`/s/${encodeURIComponent(session.name)}/w/${encodeURIComponent(win.name)}`);
+                        }}
+                      />
+                    ))}
+                  </SessionNavItem>
+                ))}
+              </div>
+              {collapsed && <SideNavItem label="New session" icon={Plus} onClick={newSession} />}
+            </SideNavSection>
+          </div>
         </SideNav>
       }
     >
