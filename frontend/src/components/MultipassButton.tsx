@@ -36,9 +36,9 @@ export function MultipassButton({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Action | null>(null);
 
-  const refresh = useCallback(async (request?: Promise<Response>) => {
+  const refresh = useCallback(async () => {
     try {
-      const response = await (request ?? fetch('/api/multipass'));
+      const response = await fetch('/api/multipass');
       if (!response.ok) throw new Error((await response.text()) || response.statusText);
       setStatus((await response.json()) as InstanceStatus);
       setError(null);
@@ -57,10 +57,20 @@ export function MultipassButton({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
 
   if (!available) return null;
 
+  // Errors go to a toast: a confirmed action runs with the popover closed,
+  // and the next status poll would clear them there.
   const run = async (action: Action) => {
     setBusy(action);
-    await refresh(fetch(`/api/multipass/${action}`, { method: 'POST' }));
-    setBusy(null);
+    try {
+      const response = await fetch(`/api/multipass/${action}`, { method: 'POST' });
+      if (!response.ok) throw new Error((await response.text()) || response.statusText);
+      setStatus((await response.json()) as InstanceStatus);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      useStore.getState().showToast(`Sandbox ${action.replace('-', ' ')} failed: ${message}`, 'error');
+    } finally {
+      setBusy(null);
+    }
   };
   const confirm = (action: Action, title: string) => {
     setOpen(false);
