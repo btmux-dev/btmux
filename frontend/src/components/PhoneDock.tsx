@@ -1,10 +1,8 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { IconButton } from '@astryxdesign/core/IconButton';
-import { useMediaQuery } from '@astryxdesign/core/hooks';
 import { Activity, Bot, Command, FolderOpen, GitBranch, Keyboard, KeyboardOff, Menu, Search } from 'lucide-react';
 import { useStore, type FileBrowserMode } from '../state/store';
 import { agentGroup } from '../lib/agentGroups';
-import { NARROW_QUERY } from '../lib/touch';
 import { openFileBrowserFiles } from '../lib/openFileBrowserFiles';
 import { computeRectsAndDividers, paneIdsInOrder } from '../state/layout';
 import { STARTUP_THEME } from '../state/startupTheme';
@@ -38,8 +36,6 @@ const card = (theme: Theme): CSSProperties => ({
  * panes. They float below the panes, so they never cover terminal output.
  */
 export function PhoneDock({ sessionId, send }: { sessionId: string; send: (message: ClientMessage) => void }) {
-  // Only below this width is there a drawer; wider, the side nav shows.
-  const narrow = useMediaQuery(NARROW_QUERY);
   const navigate = useNavigate();
   const editor = editorButton(useStore((state) => state.config?.editor) ?? 'native');
   const theme = useStore((state) => state.config?.theme) ?? STARTUP_THEME;
@@ -201,7 +197,7 @@ export function PhoneDock({ sessionId, send }: { sessionId: string; send: (messa
           {action('File browser', <FolderOpen />, () => openFiles('files'))}
           {action('Git mode', <GitBranch />, () => openFiles('git'))}
           {action('Process viewer', <Activity />, () => openFiles('process'))}
-          {narrow && action('Menu', <Menu />, () => open(() => useStore.getState().setMobileNavOpen(true)))}
+          {action('Menu', <Menu />, () => open(() => useStore.getState().setMobileNavOpen(true)))}
           <TailscaleButton size="lg" />
           <MultipassButton size="lg" />
         </div>

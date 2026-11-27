@@ -367,9 +367,20 @@ try {
   assert(!zoomed, 'the narrow layout must not zoom on the server');
   // Landscape phones also show one pane, with the minimap.
   const portrait = page.viewportSize()!;
-  await page.setViewportSize({ width: portrait.height, height: portrait.width });
+  // As wide as an iPhone 15 in landscape, past the side nav's breakpoint.
+  await page.setViewportSize({ width: 852, height: portrait.width });
   await minimap.waitFor();
   assert.equal(await shown(), 1);
+  // The drawer, not an inline side nav, holds the sessions there too.
+  await keys('Menu').waitFor();
+  assert(
+    await page.evaluate(() =>
+      [...document.querySelectorAll('.btm-side-nav')].every(
+        (nav) => nav.closest('dialog') || !nav.checkVisibility() || nav.getBoundingClientRect().width === 0,
+      ),
+    ),
+    'landscape phones show an inline side nav',
+  );
   await page.setViewportSize(portrait);
 
   // File browser hints type their keys when tapped.

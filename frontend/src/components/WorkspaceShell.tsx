@@ -5,6 +5,8 @@ import { SideNav, SideNavHeading, SideNavItem, SideNavSection } from '@astryxdes
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { Command, Plus, Search, Settings2, Keyboard, Info, Grid2X2, Zap, ZapOff } from 'lucide-react';
 import { useStore } from '../state/store';
+import { useMediaQuery } from '@astryxdesign/core/hooks';
+import { PHONE_QUERY } from '../lib/touch';
 import { sortSessions, SESSION_MRU_EVENT } from '../state/sessionMru';
 import { sortWindows, WINDOW_MRU_EVENT } from '../state/windowMru';
 import { getAnimations, getSessionSort, getWindowSort } from '../state/configDefaults';
@@ -25,6 +27,7 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
   const setWindowGridOpen = useStore((state) => state.setWindowGridOpen);
   const setAgentGridOpen = useStore((state) => state.setAgentGridOpen);
   const mobileNavOpen = useStore((state) => state.mobileNavOpen);
+  const phone = useMediaQuery(PHONE_QUERY);
   const setMobileNavOpen = useStore((state) => state.setMobileNavOpen);
   const location = useLocation();
   const navigate = useNavigate();
@@ -81,8 +84,14 @@ export function WorkspaceShell({ children, send }: { children: ReactNode; send: 
         paddingRight: 'env(safe-area-inset-right, 0px)',
       }}
       contentPadding={0}
-      // Phones get no top bar: the status bar's menu button opens the drawer, within thumb reach.
-      mobileNav={{ hasToggle: false, isOpen: mobileNavOpen, onOpenChange: setMobileNavOpen }}
+      // No top bar: the status bar's session button or the phone dock's Menu opens the drawer.
+      // Phones always use the drawer, as landscape is wider than its breakpoint.
+      mobileNav={{
+        hasToggle: false,
+        isOpen: mobileNavOpen,
+        onOpenChange: setMobileNavOpen,
+        breakpoint: phone ? '2xl' : 'md',
+      }}
       variant="section"
       // Never scroll the main region: TabList's indicator bleed pokes 1px past
       // the status bar, which shows a scrollbar where scrollbars are classic.
