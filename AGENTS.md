@@ -15,6 +15,7 @@ provides a file/Git browser, REST API, and MCP server for automation.
 The `justfile` is the source of truth (`just` lists all recipes). Common ones:
 
 - `just dev` — run backend (port 8044) and frontend (Vite, port 5173) together. **Develop against http://localhost:5173**; Vite proxies `/ws`, `/api`, and `/wallpaper` to 8044. Development uses `--profile dev` to isolate saved sessions and access credentials. The dev backend uses 8044 (not the production default 8004) so it doesn't collide with a running production/service instance; the port lives in the `dev_port` justfile var and is mirrored in `vite.config.ts`.
+- `just dev-tailscale` — `just dev`, also served at `https://<machine>.<tailnet>.ts.net:5173` through Tailscale Serve, for testing on phones. It reuses an existing route to Vite and otherwise removes the one it made on exit.
 - `just dev-backend` / `just dev-frontend` — run one side only.
 - `just setup` — install frontend dependencies and fetch Rust dependencies.
 - `just check` — `cargo check` + `tsc --noEmit` (fast, run this before claiming a change compiles).
