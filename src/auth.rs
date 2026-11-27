@@ -418,8 +418,8 @@ fn mark_relayed_unauthorized(headers: &mut HeaderMap) {
 const VSCODE_CALLBACK: &str = "/vscode/callback";
 
 /// Load a sign-in callback again from this site: arriving from the provider's,
-/// the navigation is cross-site, which withholds the `SameSite=Strict` cookie,
-/// as for `pair`. The refresh is the same URL, so it can lead nowhere else, and
+/// the navigation is cross-site, which withholds the `SameSite=Strict` cookie.
+/// The refresh is the same URL, so it can lead nowhere else, and
 /// a request still without credentials then gets the usual 401.
 fn return_same_site(request: &Request) -> Option<Response> {
     let header = |name| request.headers().get(name).and_then(|v| v.to_str().ok());

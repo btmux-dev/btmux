@@ -21,18 +21,20 @@ function TailscaleGlyph(props: SVGProps<SVGSVGElement>) {
   );
 }
 
-/** Copies `text`; a promise is written as it settles, within the click, as Safari requires. */
-function copyText(text: string | Promise<string>, copied: string, error: string) {
+/** Copies `text`; a function's promise is written as it settles, within the click, as Safari requires. */
+function copyText(text: string | (() => Promise<string>), copied: string, error: string) {
   const { showToast } = useStore.getState();
   const failed = () => showToast(error, 'error');
   // Absent outside secure contexts, e.g. plain HTTP from another machine.
   if (!navigator.clipboard?.writeText) return failed();
   const written =
-    typeof text !== 'string' && typeof ClipboardItem !== 'undefined'
-      ? navigator.clipboard.write([
-          new ClipboardItem({ 'text/plain': text.then((value) => new Blob([value], { type: 'text/plain' })) }),
-        ])
-      : Promise.resolve(text).then((value) => navigator.clipboard.writeText(value));
+    typeof text === 'string'
+      ? navigator.clipboard.writeText(text)
+      : typeof ClipboardItem !== 'undefined'
+        ? navigator.clipboard.write([
+            new ClipboardItem({ 'text/plain': text().then((value) => new Blob([value], { type: 'text/plain' })) }),
+          ])
+        : text().then((value) => navigator.clipboard.writeText(value));
   written.then(() => showToast(copied, 'success'), failed);
 }
 
@@ -71,7 +73,7 @@ function PairingQr({ url }: { url: string }) {
   // Each copy gets its own code: the shown one may have been scanned.
   const copyLink = () =>
     copyText(
-      issuePairingCode().then(({ code }) => `${url}/pair?code=${code}`),
+      () => issuePairingCode().then(({ code }) => `${url}/pair?code=${code}`),
       'Sign-in link copied',
       'Could not copy the sign-in link',
     );
