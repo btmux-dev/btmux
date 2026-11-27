@@ -8,6 +8,8 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+## [0.0.224] - 2026-11-27
+
 ### Added
 
 - The status bar's sandbox button shows a dot for the Multipass sandbox's
