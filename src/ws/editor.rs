@@ -48,7 +48,12 @@ async fn handle_socket(socket: WebSocket) {
             let Message::Text(text) = msg else { continue };
             match serde_json::from_str::<EditorClientMessage>(&text) {
                 // In order, so a push lands before a later save.
-                Ok(msg) => hub().handle(id, msg).await,
+                // Saves and workspace edits can take seconds.
+                Ok(msg) => {
+                    keepalive
+                        .busy(hub().handle(id, msg), || hub().pong(id))
+                        .await
+                }
                 Err(e) => tracing::debug!("invalid editor message: {e}"),
             }
         }

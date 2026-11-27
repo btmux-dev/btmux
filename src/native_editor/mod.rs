@@ -629,11 +629,13 @@ impl Hub {
                 line,
                 full,
             } => self.git_blame(socket, req, buffer, version, line, full),
-            EditorClientMessage::Ping => {
-                let inner = self.inner.lock().unwrap();
-                inner.send_to(socket, &EditorServerMessage::Pong);
-            }
+            EditorClientMessage::Ping => self.pong(socket),
         }
+    }
+
+    pub fn pong(&self, socket: SocketId) {
+        let inner = self.inner.lock().unwrap();
+        inner.send_to(socket, &EditorServerMessage::Pong);
     }
 
     /// Stage `text` as the buffer's index content, if the index is still at `generation`.

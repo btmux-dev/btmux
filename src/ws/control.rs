@@ -234,7 +234,19 @@ async fn handle_socket(
                     state.read().await.widgets.answer(id, answer);
                     Ok(())
                 }
-                Ok(cmd) => handle_command(cmd, &state).await,
+                // Slow commands (worktrees, palette commands) hold up the reader.
+                Ok(cmd) => {
+                    let idle = serde_json::to_string(&ServerMessage::CommandResult {
+                        request_id: None,
+                        error: None,
+                    })
+                    .unwrap();
+                    keepalive
+                        .busy(handle_command(cmd, &state), || {
+                            let _ = reply_tx.try_send(idle.clone());
+                        })
+                        .await
+                }
                 Err(error) => Err(format!("Invalid command: {error}")),
             };
             let reply = ServerMessage::CommandResult {
