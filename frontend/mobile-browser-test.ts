@@ -63,10 +63,15 @@ try {
   await connect(desktop);
   assert.equal(await desktop.getByRole('button', { name: 'Esc', exact: true }).count(), 0);
 
-  // The tailnet popover's QR code signs a phone in once, without the token.
+  // The tailnet popover's QR code and copied link sign a device in once, without the token.
   await desktop.evaluate(async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     useStore.getState().setTailscale({ state: 'serving', url: location.origin });
+    // WebKit grants tests no clipboard; keep what the page writes.
+    const copied: string[] = ((window as any).copied = []);
+    Object.defineProperty(navigator.clipboard, 'write', {
+      value: async (items: ClipboardItem[]) => copied.push(await (await items[0].getType('text/plain')).text()),
+    });
   });
   let pairRequests = 0;
   desktop.on('request', (request) => request.url().endsWith('/api/pair') && pairRequests++);
@@ -76,34 +81,46 @@ try {
   await desktop.getByRole('button', { name: 'Tailnet', exact: true }).click();
   const { code } = await (await issued).json();
   await desktop.locator('svg.bg-white path').waitFor();
+  // Each copy issues its own code, so a scanned QR code is never copied.
+  const copyLink = desktop.getByRole('button', { name: 'Copy sign-in link', exact: true });
+  const copied = () => desktop.evaluate(() => (window as any).copied as string[]);
+  await copyLink.click();
+  await copyLink.click();
+  await desktop.waitForFunction(() => (window as any).copied.length === 2);
+  const [link, other] = await copied();
+  assert.match(link, new RegExp(`^${url}/pair\\?code=[0-9a-f]+$`));
+  assert.notEqual(link, other);
+  assert.ok(!link.endsWith(code) && !other.endsWith(code));
   await desktop.close();
   const pairing = await browser.newContext({ ...devices['iPhone 15'] });
+  // Fetching the link, as a chat's link preview does, leaves it usable.
+  for (let i = 0; i < 2; i++) {
+    const preview = await pairing.request.get(link, { maxRedirects: 0 });
+    assert.equal(preview.status(), 200);
+    assert.equal(preview.headers()['set-cookie'], undefined);
+  }
   const paired = await pairing.newPage();
-  await paired.goto(`${url}/pair?code=${code}`);
+  await paired.goto(link);
+  await paired.getByRole('button', { name: 'Sign in' }).click();
   await waitForAsync(paired, async () => {
     const { useStore } = await import('/src/state/store.tsx' as string);
     return useStore.getState().terminals.size > 0;
   });
-  assert.equal((await paired.goto(`${url}/pair?code=${code}`))!.status(), 401);
+  assert.equal((await paired.goto(link))!.status(), 401);
   await pairing.close();
 
-  // A link from another site (a web QR scanner) signs in too: SameSite=Strict
-  // withholds the cookie from a redirect that continues that navigation.
+  // A link from another site (a web QR scanner) signs in too: the sign-in
+  // post comes from this site, so SameSite=Strict sends the cookie after it.
   const backend = process.env.BTMUX_TEST_BACKEND_URL ?? 'http://127.0.0.1:8044';
-  const { code: linked } = await (
-    await fetch(`${backend}/api/pair`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    })
-  ).json();
   const scanning = await browser.newContext({ ...devices['iPhone 15'] });
   const scanner = await scanning.newPage();
   await scanner.route('https://scanner.test/', (route) =>
-    route.fulfill({ contentType: 'text/html', body: `<a href="${backend}/pair?code=${linked}">open</a>` }),
+    route.fulfill({ contentType: 'text/html', body: `<a href="${backend}/pair?code=${code}">open</a>` }),
   );
   await scanner.goto('https://scanner.test/');
-  const app = scanner.waitForResponse((response) => response.url() === `${backend}/`);
   await scanner.getByRole('link', { name: 'open' }).click();
+  const app = scanner.waitForResponse((response) => response.url() === `${backend}/`);
+  await scanner.getByRole('button', { name: 'Sign in' }).click();
   assert.equal((await app).status(), 200);
   await scanning.close();
 

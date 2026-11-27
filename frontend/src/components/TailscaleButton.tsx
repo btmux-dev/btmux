@@ -21,6 +21,30 @@ function TailscaleGlyph(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+/** Copies `text`; a function's promise is written as it settles, within the click, as Safari requires. */
+function copyText(text: string | (() => Promise<string>), copied: string, error: string) {
+  const { showToast } = useStore.getState();
+  const failed = () => showToast(error, 'error');
+  // Absent outside secure contexts, e.g. plain HTTP from another machine.
+  if (!navigator.clipboard?.writeText) return failed();
+  const written =
+    typeof text === 'string'
+      ? navigator.clipboard.writeText(text)
+      : typeof ClipboardItem !== 'undefined'
+        ? navigator.clipboard.write([
+            new ClipboardItem({ 'text/plain': text().then((value) => new Blob([value], { type: 'text/plain' })) }),
+          ])
+        : text().then((value) => navigator.clipboard.writeText(value));
+  written.then(() => showToast(copied, 'success'), failed);
+}
+
+/** A code `/pair` exchanges once for this server's sign-in. */
+function issuePairingCode(): Promise<{ code: string; expires_in: number }> {
+  return fetch('/api/pair', { method: 'POST' }).then((response) =>
+    response.ok ? response.json() : Promise.reject(new Error(response.statusText)),
+  );
+}
+
 /** A one-time sign-in link for this tailnet address, renewed before it expires. */
 function PairingQr({ url }: { url: string }) {
   const [code, setCode] = useState<string | null>(null);
@@ -29,17 +53,15 @@ function PairingQr({ url }: { url: string }) {
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
     const issue = () =>
-      fetch('/api/pair', { method: 'POST' })
-        .then((response) => (response.ok ? response.json() : Promise.reject(new Error(response.statusText))))
-        .then(
-          ({ code, expires_in }: { code: string; expires_in: number }) => {
-            if (disposed) return;
-            setCode(code);
-            setFailed(false);
-            timer = setTimeout(issue, expires_in * 750);
-          },
-          () => !disposed && setFailed(true),
-        );
+      issuePairingCode().then(
+        ({ code, expires_in }) => {
+          if (disposed) return;
+          setCode(code);
+          setFailed(false);
+          timer = setTimeout(issue, expires_in * 750);
+        },
+        () => !disposed && setFailed(true),
+      );
     void issue();
     return () => {
       disposed = true;
@@ -48,10 +70,30 @@ function PairingQr({ url }: { url: string }) {
   }, []);
   if (failed) return <Text type="supporting">Could not create a sign-in code.</Text>;
   if (!code) return <div className="size-48" />;
+  // Each copy gets its own code: the shown one may have been scanned.
+  const copyLink = () =>
+    copyText(
+      () => issuePairingCode().then(({ code }) => `${url}/pair?code=${code}`),
+      'Sign-in link copied',
+      'Could not copy the sign-in link',
+    );
   return (
     <VStack gap={1} hAlign="center">
       <QrCode text={`${url}/pair?code=${code}`} />
-      <Text type="supporting">Scan to open btmux on a phone or tablet on your tailnet. Each code signs in once.</Text>
+      <HStack gap={1} vAlign="center">
+        <Text type="supporting">
+          Scan to open btmux on a phone or tablet on your tailnet, or copy the link to another computer. Each code signs
+          in once.
+        </Text>
+        <IconButton
+          label="Copy sign-in link"
+          tooltip="Copy sign-in link"
+          variant="ghost"
+          size="sm"
+          icon={<Copy />}
+          onClick={copyLink}
+        />
+      </HStack>
     </VStack>
   );
 }
@@ -71,13 +113,6 @@ function Details({ status, open }: { status: TailscaleStatus; open: boolean }) {
         <Text type="supporting">btmux keeps retrying.</Text>
       </VStack>
     );
-  const copy = () => {
-    const { showToast } = useStore.getState();
-    const failed = () => showToast('Could not copy the tailnet address; select it to copy it', 'error');
-    // Absent outside secure contexts, e.g. plain HTTP from another machine.
-    if (!navigator.clipboard?.writeText) return failed();
-    navigator.clipboard.writeText(status.url).then(() => showToast('Tailnet address copied', 'success'), failed);
-  };
   return (
     <VStack gap={2} className="btm-sans">
       <HStack gap={1} vAlign="center">
@@ -90,7 +125,9 @@ function Details({ status, open }: { status: TailscaleStatus; open: boolean }) {
           variant="ghost"
           size="sm"
           icon={<Copy />}
-          onClick={copy}
+          onClick={() =>
+            copyText(status.url, 'Tailnet address copied', 'Could not copy the tailnet address; select it to copy it')
+          }
         />
       </HStack>
       {/* Relayed tabs can't issue pairing codes, which sign in with the token. */}

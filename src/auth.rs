@@ -134,14 +134,23 @@ impl Auth {
         code
     }
 
-    fn redeem_pairing_code(&self, code: &str) -> bool {
+    /// The pending code equal to `code`, removed if `redeem`.
+    fn pairing_code_matching(&self, code: &str, redeem: bool) -> Option<String> {
         let now = Instant::now();
         let mut codes = self.pairing_codes.lock().unwrap();
         codes.retain(|(_, expires)| *expires > now);
-        let found = codes
+        let index = codes
             .iter()
-            .position(|(valid, _)| constant_time_eq(valid.as_bytes(), code.as_bytes()));
-        found.map(|index| codes.swap_remove(index)).is_some()
+            .position(|(valid, _)| constant_time_eq(valid.as_bytes(), code.as_bytes()))?;
+        Some(if redeem {
+            codes.swap_remove(index).0
+        } else {
+            codes[index].0.clone()
+        })
+    }
+
+    fn redeem_pairing_code(&self, code: &str) -> bool {
+        self.pairing_code_matching(code, true).is_some()
     }
 
     fn cookie(&self, headers: &HeaderMap) -> HeaderValue {
@@ -253,8 +262,12 @@ pub async fn protect(State(auth): State<Arc<Auth>>, request: Request, next: Next
     if !auth.permitted_request(request.headers()) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    if request.method() == Method::GET && request.uri().path() == "/pair" {
-        return pair(&auth, &request);
+    if request.uri().path() == "/pair" {
+        match *request.method() {
+            Method::GET => return pair_page(&auth, &request),
+            Method::POST => return pair(&auth, request).await,
+            _ => {}
+        }
     }
     if is_guest(request.headers()) {
         let Some(pane) = guest_route(request.method(), request.uri().path()) else {
@@ -405,8 +418,8 @@ fn mark_relayed_unauthorized(headers: &mut HeaderMap) {
 const VSCODE_CALLBACK: &str = "/vscode/callback";
 
 /// Load a sign-in callback again from this site: arriving from the provider's,
-/// the navigation is cross-site, which withholds the `SameSite=Strict` cookie,
-/// as for `pair`. The refresh is the same URL, so it can lead nowhere else, and
+/// the navigation is cross-site, which withholds the `SameSite=Strict` cookie.
+/// The refresh is the same URL, so it can lead nowhere else, and
 /// a request still without credentials then gets the usual 401.
 fn return_same_site(request: &Request) -> Option<Response> {
     let header = |name| request.headers().get(name).and_then(|v| v.to_str().ok());
@@ -437,31 +450,96 @@ fn return_same_site(request: &Request) -> Option<Response> {
     )
 }
 
-/// Sign in a device that scanned a pairing QR code, then load the app. A
-/// redirect would continue a cross-site navigation (a scanner's page), which
-/// withholds the `SameSite=Strict` cookie; the refresh starts a same-site one.
-fn pair(auth: &Auth, request: &Request) -> Response {
-    let code = request
-        .uri()
-        .query()
-        .unwrap_or_default()
+/// The value of `code` in a query string or form body; codes are hex.
+fn pairing_code_param(params: &str) -> Option<&str> {
+    params
         .split('&')
-        .find_map(|pair| pair.strip_prefix("code="));
-    if !code.is_some_and(|code| auth.redeem_pairing_code(code)) {
-        return (
+        .find_map(|pair| pair.strip_prefix("code="))
+}
+
+fn pairing_code_spent() -> Response {
+    (
+        [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))],
+        (
             StatusCode::UNAUTHORIZED,
-            "This pairing code was used or has expired. Scan a new one.",
-        )
-            .into_response();
-    }
+            "This pairing code was used or has expired. Get a new one.",
+        ),
+    )
+        .into_response()
+}
+
+const PAIR_PAGE: &str = r#"<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Sign in to btmux</title>
+<style>
+  body { font: 16px system-ui, sans-serif; display: grid; place-items: center; min-height: 90vh; margin: 0 1em; }
+  main { text-align: center; }
+  button { font: inherit; padding: 0.6em 2em; border-radius: 8px; cursor: pointer; }
+</style>
+<main>
+  <h1>Sign in to btmux</h1>
+  <p>This browser will be signed in to the btmux server that issued this link.</p>
+  <form method="post" action="/pair">
+    <input type="hidden" name="code" value="CODE">
+    <button autofocus>Sign in</button>
+  </form>
+</main>
+"#;
+
+/// The page a pairing link (QR code or copied) opens. Fetching it leaves the
+/// code unspent, so link previews and scanners can't use it up; its button
+/// posts the code to `pair`.
+fn pair_page(auth: &Auth, request: &Request) -> Response {
+    let query = request.uri().query().unwrap_or_default();
+    // Only a pending code goes into the page: hex, nothing to escape.
+    let Some(code) =
+        pairing_code_param(query).and_then(|code| auth.pairing_code_matching(code, false))
+    else {
+        return pairing_code_spent();
+    };
     (
         [
-            (header::SET_COOKIE, auth.cookie(request.headers())),
             (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
-            (header::CONTENT_SECURITY_POLICY, HeaderValue::from_static("default-src 'none'")),
-            (header::REFERRER_POLICY, HeaderValue::from_static("no-referrer")),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                HeaderValue::from_static(
+                    "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'",
+                ),
+            ),
+            // `no-referrer` would make the form's Origin `null`.
+            (header::REFERRER_POLICY, HeaderValue::from_static("same-origin")),
         ],
-        Html(r#"<!doctype html><meta http-equiv="refresh" content="0; url=/"><a href="/">Open btmux</a>"#),
+        Html(PAIR_PAGE.replace("CODE", &code)),
+    )
+        .into_response()
+}
+
+/// Spend a pairing code from `pair_page`'s form for the auth cookie. The post
+/// comes from this site, so the redirect stays same-site and the
+/// `SameSite=Strict` cookie goes with it, even when a scanner's page opened
+/// the link.
+async fn pair(auth: &Auth, request: Request) -> Response {
+    // Browsers send Origin with form posts; `protect` checked it's ours.
+    if !request.headers().contains_key(header::ORIGIN) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let (parts, body) = request.into_parts();
+    let Ok(body) = axum::body::to_bytes(body, 1024).await else {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    };
+    let body = String::from_utf8_lossy(&body);
+    if !pairing_code_param(&body).is_some_and(|code| auth.redeem_pairing_code(code)) {
+        return pairing_code_spent();
+    }
+    (
+        StatusCode::SEE_OTHER,
+        [
+            (header::SET_COOKIE, auth.cookie(&parts.headers)),
+            (header::LOCATION, HeaderValue::from_static("/")),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+        ],
     )
         .into_response()
 }
@@ -671,6 +749,9 @@ mod tests {
         let code = auth.pairing_code();
         let pair = request("GET", &format!("/pair?code={code}"), &[host]);
         assert_eq!(status(&relayed, pair).await, 401);
+        let pair = request("POST", "/pair", &[host, origin]);
+        assert_eq!(status(&relayed, pair).await, 401);
+        assert!(auth.redeem_pairing_code(&code));
 
         for (method, path, headers, expected) in [
             // Another host, origin, or machine under the same parent domain.
@@ -872,14 +953,63 @@ mod middleware_tests {
             let response = app.clone().oneshot(get(uri)).await.unwrap();
             assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{uri}");
         }
+        let post = |body: String, origin: Option<&str>| {
+            let mut request = Request::builder()
+                .method(Method::POST)
+                .uri("/pair")
+                .header(header::HOST, "localhost:8004")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
+            if let Some(origin) = origin {
+                request = request.header(header::ORIGIN, origin);
+            }
+            request.body(axum::body::Body::from(body)).unwrap()
+        };
+        // Fetching the link (a preview, a scanner) leaves the code unspent.
+        for _ in 0..2 {
+            let response = app
+                .clone()
+                .oneshot(get(&format!("/pair?code={code}")))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(!response.headers().contains_key(header::SET_COOKIE));
+            let page = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let page = String::from_utf8(page.to_vec()).unwrap();
+            assert!(page.contains(&format!(r#"name="code" value="{code}""#)));
+        }
+        // Posts need our Origin.
+        for origin in [None, Some("https://elsewhere.test")] {
+            let response = app
+                .clone()
+                .oneshot(post(format!("code={code}"), origin))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::FORBIDDEN, "{origin:?}");
+        }
+        let origin = Some("http://localhost:8004");
         let response = app
             .clone()
-            .oneshot(get(&format!("/pair?code={code}")))
+            .oneshot(post("code=bogus".into(), origin))
             .await
             .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let response = app
+            .clone()
+            .oneshot(post(format!("code={code}"), origin))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(response.headers()[header::LOCATION], "/");
         let cookie = response.headers()[header::SET_COOKIE].to_str().unwrap();
         assert!(cookie.starts_with(&format!("btmux_auth_8004={};", "a".repeat(64))));
+        let response = app
+            .clone()
+            .oneshot(post(format!("code={code}"), origin))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         let response = app
             .oneshot(get(&format!("/pair?code={code}")))
             .await
