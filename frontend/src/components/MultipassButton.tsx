@@ -6,11 +6,18 @@ import { Button } from '@astryxdesign/core/Button';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { Text } from '@astryxdesign/core/Text';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
-import type { InstanceStatus, Usage } from '../generated/protocol';
+import type { HealthLevel, InstanceStatus, Usage } from '../generated/protocol';
 import { formatBytes } from '../lib/processFormat';
 import { useStore } from '../state/store';
 
-type Action = 'start' | 'stop' | 'restart' | 'delete';
+type Action = 'start' | 'stop' | 'force-stop' | 'restart' | 'delete';
+
+const DOT = { ok: 'success', busy: 'warning', down: 'neutral', failing: 'error' } as const satisfies Record<
+  HealthLevel,
+  string
+>;
+
+const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 const usage = (value: Usage | null) => value && `${formatBytes(value.used)} of ${formatBytes(value.total)}`;
 
@@ -23,14 +30,15 @@ const panesNote = (panes: number, verb: string) =>
 /** `lg` is the phone dock's, on the left: its popover opens rightward. */
 export function MultipassButton({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
   const available = useStore((state) => !!state.config?.multipass);
+  const health = useStore((state) => state.sandboxHealth);
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<InstanceStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Action | null>(null);
 
-  const refresh = useCallback(async (request?: Promise<Response>) => {
+  const refresh = useCallback(async () => {
     try {
-      const response = await (request ?? fetch('/api/multipass'));
+      const response = await fetch('/api/multipass');
       if (!response.ok) throw new Error((await response.text()) || response.statusText);
       setStatus((await response.json()) as InstanceStatus);
       setError(null);
@@ -49,10 +57,20 @@ export function MultipassButton({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
 
   if (!available) return null;
 
+  // Errors go to a toast: a confirmed action runs with the popover closed,
+  // and the next status poll would clear them there.
   const run = async (action: Action) => {
     setBusy(action);
-    await refresh(fetch(`/api/multipass/${action}`, { method: 'POST' }));
-    setBusy(null);
+    try {
+      const response = await fetch(`/api/multipass/${action}`, { method: 'POST' });
+      if (!response.ok) throw new Error((await response.text()) || response.statusText);
+      setStatus((await response.json()) as InstanceStatus);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      useStore.getState().showToast(`Sandbox ${action.replace('-', ' ')} failed: ${message}`, 'error');
+    } finally {
+      setBusy(null);
+    }
   };
   const confirm = (action: Action, title: string) => {
     setOpen(false);
@@ -62,6 +80,11 @@ export function MultipassButton({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
   const state = status?.state ?? null;
   const running = state === 'Running';
   const name = status?.instance ?? 'the sandbox';
+  // The heartbeat's, once it checked this instance.
+  const checked = health && (!status || health.instance === status.instance) ? health : null;
+  // Only while Multipass still says it runs: after a force stop, the status
+  // can be newer than the heartbeat.
+  const failing = checked?.level === 'failing' && (!status || running);
   const details = [
     status?.release && `Ubuntu ${status.release}`,
     status?.cpus && `${status.cpus} CPUs`,
@@ -72,12 +95,25 @@ export function MultipassButton({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
   const content = (
     <VStack gap={2} className="btm-sans">
       <HStack gap={1} vAlign="center">
-        {status && <StatusDot variant={running ? 'success' : 'neutral'} label={state ?? 'Not created'} />}
+        {failing ? (
+          <StatusDot variant="error" label={checked.summary} />
+        ) : (
+          status && <StatusDot variant={running ? 'success' : 'neutral'} label={state ?? 'Not created'} />
+        )}
         <Text type="code" className="btm-mono">
-          {name}
+          {checked?.instance ?? name}
         </Text>
-        <Text color="secondary">{status ? (state ?? 'not created').toLowerCase() : 'loading…'}</Text>
+        <Text color="secondary">
+          {failing ? 'not answering' : status ? (state ?? 'not created').toLowerCase() : 'loading…'}
+        </Text>
       </HStack>
+      {failing && (
+        <Text type="supporting" className="break-words">
+          {/* The heading already says "not answering". */}
+          {capitalize(checked.summary.replace(/^not answering: /, ''))}. It may have crashed; if it doesn't recover,
+          force stop it and start it again.
+        </Text>
+      )}
       {details.length > 0 && <Text type="supporting">{details.join(' · ')}</Text>}
       {status && !state && <Text type="supporting">The next sandboxed pane creates it.</Text>}
       {error && (
@@ -88,7 +124,23 @@ export function MultipassButton({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
       )}
       {status && state && (
         <HStack gap={1} wrap="wrap">
-          {running ? (
+          {failing ? (
+            // A clean shutdown (Restart, Stop) needs a VM that answers; one
+            // that doesn't could hang them.
+            <Button
+              size="sm"
+              variant="ghost"
+              label="Force stop"
+              isLoading={busy === 'force-stop'}
+              isDisabled={!!busy}
+              onClick={() =>
+                confirm(
+                  'force-stop',
+                  `Force stop ${name}? It is killed without shutting down, so programs running in it are lost.${panesNote(status.panes, 'start')}`,
+                )
+              }
+            />
+          ) : running ? (
             <>
               <Button
                 size="sm"
@@ -139,17 +191,21 @@ export function MultipassButton({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
     </VStack>
   );
 
+  const label = health ? `Multipass sandbox: ${health.summary}` : 'Multipass sandbox';
   return (
-    <Popover
-      label="Multipass sandbox"
-      placement="above"
-      alignment={size === 'lg' ? 'start' : 'end'}
-      width={360}
-      isOpen={open}
-      onOpenChange={setOpen}
-      content={content}
-    >
-      <IconButton label="Multipass sandbox" tooltip="Multipass sandbox" variant="ghost" size={size} icon={<Box />} />
-    </Popover>
+    <HStack gap={0.5} vAlign="center">
+      <Popover
+        label="Multipass sandbox"
+        placement="above"
+        alignment={size === 'lg' ? 'start' : 'end'}
+        width={360}
+        isOpen={open}
+        onOpenChange={setOpen}
+        content={content}
+      >
+        <IconButton label={label} tooltip={label} variant="ghost" size={size} icon={<Box />} />
+      </Popover>
+      {health && <StatusDot variant={DOT[health.level]} label={label} isPulsing={health.level === 'busy'} />}
+    </HStack>
   );
 }

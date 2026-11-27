@@ -42,6 +42,20 @@ which you'd do to start over or apply new `[multipass]` settings. When the
 instance stops or is deleted, sandboxed panes stay open and offer to start or
 create it again: press Enter. Sessions and their layouts are kept.
 
+While a session uses the sandbox, a dot beside the button shows its health,
+checked every 20 seconds:
+
+| Dot | Meaning |
+| --- | --- |
+| Green | Running and answering. |
+| Yellow | Starting or stopping. |
+| Gray | Stopped, suspended, or not created yet. |
+| Red | Not answering, though Multipass says it runs, or Multipass failed. |
+
+A red dot usually means the VM crashed, for example when resuming from
+suspend failed. The button's menu then offers **Force stop**, which kills the
+VM without shutting it down; start it again, or open a sandboxed pane.
+
 ## Your shell config
 
 The instance has its own home directory. To bring your prompt, aliases, and

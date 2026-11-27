@@ -777,6 +777,19 @@ fn info(instance: &str) -> Result<Option<InstanceInfo>, String> {
         .stdin(Stdio::null())
         .output()
         .map_err(|e| format!("cannot run multipass: {e}"))?;
+    parse_info(instance, &output)
+}
+
+/// [`info`] for the server: killed after `INFO_TIMEOUT`, or when dropped.
+async fn info_bounded(instance: &str) -> Result<Option<InstanceInfo>, String> {
+    let output = bounded(&["info", instance, "--format", "json"], INFO_TIMEOUT).await?;
+    parse_info(instance, &output)
+}
+
+fn parse_info(
+    instance: &str,
+    output: &std::process::Output,
+) -> Result<Option<InstanceInfo>, String> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         if stderr.contains("does not exist") {
@@ -893,12 +906,31 @@ fn prepare(args: &GuestShellArgs) -> Result<(), String> {
         say(&format!("starting {instance}"));
         run_visible(&["start", instance])?;
     }
-    // SSH can briefly fail right after a start.
+    // SSH can briefly fail right after a start. Each check is bounded, so a
+    // hung one can't hold the setup lock past the deadline.
+    let runtime = tokio::runtime::Handle::current();
+    let deadline = Instant::now() + READY_TIMEOUT;
     for attempt in 0.. {
-        match run(&["exec", instance, "-n", "--", "true"]) {
-            Ok(_) => break,
-            Err(error) if attempt == 30 => return Err(error),
-            Err(_) => std::thread::sleep(std::time::Duration::from_secs(2)),
+        match runtime.block_on(exec_true(instance)) {
+            Ok(()) => break,
+            Err(error) if Instant::now() >= deadline => {
+                // A VM that crashed (or failed to resume) can stay "Running".
+                return Err(if current.state == "Running" {
+                    format!(
+                        "{instance} doesn't answer ({error}). Multipass says it is running, so it may have crashed: \
+                         force stop it from the status bar's sandbox button (or run \
+                         `multipass stop --force {instance}`) and open a sandboxed pane again"
+                    )
+                } else {
+                    error
+                });
+            }
+            Err(_) => {
+                if attempt == 0 {
+                    say(&format!("waiting for {instance} to answer"));
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2))
+            }
         }
     }
     // Still initializing when another server or a timed-out launch left it.
@@ -1188,7 +1220,12 @@ pub async fn guest_shell(args: GuestShellArgs) -> i32 {
         return fail("BTMUX_PANE_ID is unset");
     };
     loop {
-        let command = match enter(&args, &pane).await {
+        // Until the shell runs, nothing reads typed keys.
+        let entered = {
+            let _quiet = NoEcho::new();
+            enter(&args, &pane).await
+        };
+        let command = match entered {
             Ok(command) => command,
             Err(error) => return fail(&error),
         };
@@ -1214,6 +1251,7 @@ pub async fn guest_shell(args: GuestShellArgs) -> i32 {
             "\x1b[0m\x1b[?1049l\x1b[?25h\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l"
         );
         eprint!("\r\n\x1b[33mbtmux: {why}.\x1b[0m Press Enter to {verb} it again.\r\n");
+        discard_input();
         let mut line = String::new();
         if !matches!(std::io::stdin().read_line(&mut line), Ok(1..)) {
             return code;
@@ -1322,7 +1360,11 @@ fn run_shell(_: Command) -> Result<i32, String> {
 /// Why the shell ended with the instance, and how to bring it back; `None`
 /// while the instance still answers.
 fn instance_gone(instance: &str) -> Option<(String, &'static str)> {
-    if run(&["exec", instance, "-n", "--", "true"]).is_ok() {
+    // Bounded, so a hung check can't leave the pane waiting forever.
+    if tokio::runtime::Handle::current()
+        .block_on(exec_true(instance))
+        .is_ok()
+    {
         return None;
     }
     // Let a stop or delete finish.
@@ -1337,9 +1379,56 @@ fn instance_gone(instance: &str) -> Option<(String, &'static str)> {
     })
 }
 
+/// Drop keys typed before a prompt, so only an answer to it counts.
+fn discard_input() {
+    #[cfg(unix)]
+    // SAFETY: takes no pointers.
+    unsafe {
+        libc::tcflush(libc::STDIN_FILENO, libc::TCIFLUSH);
+    }
+}
+
+/// Terminal echo off while it lives, so keys typed during setup don't look
+/// like a shell's.
+struct NoEcho {
+    #[cfg(unix)]
+    saved: Option<libc::termios>,
+}
+
+impl NoEcho {
+    fn new() -> Self {
+        #[cfg(unix)]
+        {
+            // SAFETY: tcgetattr/tcsetattr write only `termios`, which we own.
+            let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+            if unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut termios) } != 0 {
+                return Self { saved: None };
+            }
+            let saved = termios;
+            termios.c_lflag &= !libc::ECHO;
+            unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &termios) };
+            Self { saved: Some(saved) }
+        }
+        #[cfg(not(unix))]
+        Self {}
+    }
+}
+
+impl Drop for NoEcho {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(saved) = &self.saved {
+            // Discards what was typed unseen, so it doesn't reach the shell.
+            // SAFETY: as in `new`.
+            unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, saved) };
+        }
+    }
+}
+
 /// Show the error until a key is pressed, then exit, closing the pane.
 fn fail(error: &str) -> i32 {
     eprintln!("\x1b[31mbtmux: {error}\x1b[0m\r\nPress Enter to close this pane.");
+    discard_input();
     let mut line = String::new();
     let _ = std::io::stdin().read_line(&mut line);
     1
@@ -1365,13 +1454,17 @@ pub struct InstanceStatus {
 pub enum InstanceAction {
     Start,
     Stop,
+    /// `stop --force`: kills the VM, for one that doesn't answer. Also
+    /// discards a suspended VM's state.
+    #[serde(rename = "force-stop")]
+    ForceStop,
     Restart,
     /// `delete --purge`.
     Delete,
 }
 
-fn instance_status(instance: String, panes: usize) -> Result<InstanceStatus, String> {
-    let info = info(&instance)?;
+async fn instance_status(instance: String, panes: usize) -> Result<InstanceStatus, String> {
+    let info = info_bounded(&instance).await?;
     Ok(InstanceStatus {
         state: info.as_ref().map(|info| info.state.clone()),
         release: info
@@ -1395,6 +1488,159 @@ fn instance_status(instance: String, panes: usize) -> Result<InstanceStatus, Str
     })
 }
 
+/// How the sandbox is doing, for the status bar's dot.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum HealthLevel {
+    /// Running and answering commands.
+    Ok,
+    /// Starting, stopping, or another transitional state.
+    Busy,
+    /// Stopped, suspended, or not created.
+    Down,
+    /// Not answering while Multipass says it runs, or Multipass failed.
+    Failing,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct SandboxHealth {
+    pub instance: String,
+    pub level: HealthLevel,
+    /// What the status bar says, such as "running" or "not answering: …".
+    pub summary: String,
+}
+
+const HEALTH_TICK: Duration = Duration::from_secs(5);
+/// Between checks of an unchanged instance; each runs `multipass exec`.
+const HEARTBEAT: Duration = Duration::from_secs(20);
+const EXEC_TIMEOUT: Duration = Duration::from_secs(10);
+const INFO_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a pane waits for a started instance to answer.
+const READY_TIMEOUT: Duration = Duration::from_secs(60);
+
+static HEALTH: Mutex<Option<SandboxHealth>> = Mutex::new(None);
+static RECHECK: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+/// The last heartbeat, while a session uses the sandbox; for new control sockets.
+pub fn health() -> Option<SandboxHealth> {
+    HEALTH.lock().unwrap().clone()
+}
+
+/// Checks the sandbox while a session uses it and a tab is connected, and
+/// broadcasts `ServerMessage::Sandbox` when its health changes.
+pub fn spawn_heartbeat(state: crate::AppState) {
+    tokio::spawn(async move {
+        let mut last: Option<(String, Instant)> = None;
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(HEALTH_TICK) => {}
+                _ = RECHECK.notified() => last = None,
+            }
+            let (instance, clients) = {
+                let mgr = state.read().await;
+                (mgr.guest_instance(), mgr.client_count())
+            };
+            let Some(instance) = instance else {
+                last = None;
+                publish_health(&state, None).await;
+                continue;
+            };
+            let due = match &last {
+                Some((checked, at)) => *checked != instance || at.elapsed() >= HEARTBEAT,
+                None => true,
+            };
+            if clients == 0 || !due {
+                continue;
+            }
+            // Async, with its processes killed on drop, so a hung `multipass`
+            // never holds up shutdown.
+            let health = check_health(&instance).await;
+            last = Some((instance, Instant::now()));
+            publish_health(&state, Some(health)).await;
+        }
+    });
+}
+
+async fn publish_health(state: &crate::AppState, health: Option<SandboxHealth>) {
+    {
+        let mut published = HEALTH.lock().unwrap();
+        if *published == health {
+            return;
+        }
+        published.clone_from(&health);
+    }
+    let message = crate::ws::control::ServerMessage::Sandbox { health };
+    let json = serde_json::to_string(&message).unwrap();
+    let _ = state.read().await.events().send(json);
+}
+
+async fn check_health(instance: &str) -> SandboxHealth {
+    let (level, summary) = match info_bounded(instance).await {
+        Err(error) => (HealthLevel::Failing, error),
+        Ok(None) => (HealthLevel::Down, "not created".into()),
+        Ok(Some(info)) => match info.state.as_str() {
+            // One retry: SSH to an idle instance can fail once. A pane
+            // setting it up doesn't count as busy here: one stuck waiting for
+            // a crashed VM must not hide Force stop.
+            "Running" => {
+                let mut answer = exec_true(instance).await;
+                if answer.is_err() {
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    answer = exec_true(instance).await;
+                }
+                match answer {
+                    Ok(()) => (HealthLevel::Ok, "running".into()),
+                    Err(error) => (HealthLevel::Failing, format!("not answering: {error}")),
+                }
+            }
+            "Stopped" | "Suspended" => (HealthLevel::Down, info.state.to_lowercase()),
+            "Deleted" => (HealthLevel::Down, "deleted".into()),
+            other => (HealthLevel::Busy, other.to_lowercase()),
+        },
+    };
+    SandboxHealth {
+        instance: instance.to_string(),
+        level,
+        summary,
+    }
+}
+
+/// `multipass exec … true`, killed after `EXEC_TIMEOUT`.
+async fn exec_true(instance: &str) -> Result<(), String> {
+    let output = bounded(&["exec", instance, "-n", "--", "true"], EXEC_TIMEOUT).await?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(match String::from_utf8_lossy(&output.stderr).trim() {
+        "" => output.status.to_string(),
+        stderr => stderr.to_string(),
+    })
+}
+
+/// Runs `multipass` with `args` to its end, killed after `timeout` or when
+/// the future is dropped.
+async fn bounded(args: &[&str], timeout: Duration) -> Result<std::process::Output, String> {
+    let program = program().ok_or("Multipass is not installed (https://multipass.run)")?;
+    let child = tokio::process::Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("cannot run multipass: {e}"))?;
+    match tokio::time::timeout(timeout, child.wait_with_output()).await {
+        Ok(output) => output.map_err(|e| e.to_string()),
+        Err(_) => Err(format!(
+            "multipass {} didn't answer in {} s",
+            args[0],
+            timeout.as_secs()
+        )),
+    }
+}
+
 /// `GET /api/multipass`.
 pub async fn api_status(
     axum::extract::State(state): axum::extract::State<crate::AppState>,
@@ -1406,7 +1652,7 @@ pub async fn api_status(
             mgr.guest_shells(),
         )
     };
-    respond(tokio::task::spawn_blocking(move || instance_status(instance, panes)).await)
+    respond(instance_status(instance, panes).await)
 }
 
 /// `POST /api/multipass/{action}`. Sandboxed panes offer to start or create
@@ -1419,12 +1665,20 @@ pub async fn api_action(
     let done = {
         let instance = instance.clone();
         tokio::task::spawn_blocking(move || {
-            // Not while a pane sets it up.
-            let _lock = try_lock(&instance)?
-                .ok_or_else(|| format!("a sandboxed pane is setting up {instance}"))?;
+            // Not while a pane sets it up, except Force stop: it recovers an
+            // instance a pane may be stuck waiting for, and that pane then
+            // fails its checks.
+            let _lock = match action {
+                InstanceAction::ForceStop => None,
+                _ => Some(
+                    try_lock(&instance)?
+                        .ok_or_else(|| format!("a sandboxed pane is setting up {instance}"))?,
+                ),
+            };
             let args: &[&str] = match action {
                 InstanceAction::Start => &["start", &instance],
                 InstanceAction::Stop => &["stop", &instance],
+                InstanceAction::ForceStop => &["stop", "--force", &instance],
                 InstanceAction::Restart => &["restart", &instance],
                 InstanceAction::Delete => &["delete", "--purge", &instance],
             };
@@ -1433,23 +1687,20 @@ pub async fn api_action(
         .await
     };
     match done {
-        Ok(Ok(())) => {}
+        Ok(Ok(())) => RECHECK.notify_one(),
         Ok(Err(error)) => return (StatusCode::CONFLICT, error).into_response(),
         Err(error) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response()
         }
     }
     let panes = state.read().await.guest_shells();
-    respond(tokio::task::spawn_blocking(move || instance_status(instance, panes)).await)
+    respond(instance_status(instance, panes).await)
 }
 
-fn respond(
-    result: Result<Result<InstanceStatus, String>, tokio::task::JoinError>,
-) -> axum::response::Response {
+fn respond(result: Result<InstanceStatus, String>) -> axum::response::Response {
     match result {
-        Ok(Ok(status)) => Json(status).into_response(),
-        Ok(Err(error)) => (StatusCode::BAD_GATEWAY, error).into_response(),
-        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
+        Ok(status) => Json(status).into_response(),
+        Err(error) => (StatusCode::BAD_GATEWAY, error).into_response(),
     }
 }
 

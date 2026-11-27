@@ -40,6 +40,8 @@ fn generated_protocol_is_current() {
         crate::multipass::GuestShell::decl(&config),
         crate::session::Runtime::decl(&config),
         crate::multipass::InstanceStatus::decl(&config),
+        crate::multipass::HealthLevel::decl(&config),
+        crate::multipass::SandboxHealth::decl(&config),
         SessionSnapshot::decl(&config),
         SessionSummary::decl(&config),
         SessionSort::decl(&config),

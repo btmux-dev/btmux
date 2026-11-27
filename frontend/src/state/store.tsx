@@ -11,6 +11,7 @@ import type {
   GithubStatus,
   PopupSummary,
   TailscaleStatus,
+  SandboxHealth,
   WidgetSummary,
 } from '../generated/protocol';
 import { mergeTelemetry } from '../lib/agentUsage';
@@ -58,6 +59,8 @@ interface AppStore {
   updateAgentTelemetry: (panes: AgentTelemetry[], replace?: boolean, removed?: string[]) => void;
   // The server's `--tailscale` status; null without it.
   tailscale: TailscaleStatus | null;
+  // The Multipass sandbox's heartbeat, while a session uses it.
+  sandboxHealth: SandboxHealth | null;
   // The server's btmux connect status; null without a registration.
   connect: ConnectStatus | null;
   // display-panes (prefix + q): briefly overlays each pane's index on the active
@@ -139,6 +142,7 @@ interface AppStore {
   setPopups: (popups: PopupSummary[]) => void;
   setPopupShown: (popup: PopupSummary | null) => void;
   setTailscale: (status: TailscaleStatus | null) => void;
+  setSandboxHealth: (health: SandboxHealth | null) => void;
   setConnect: (status: ConnectStatus | null) => void;
   setPaneNumbersVisible: (visible: boolean) => void;
   setSwitcherOpen: (open: boolean) => void;
@@ -277,6 +281,7 @@ export const useStore = create<AppStore>((set, get) => ({
       return { agentTelemetry };
     }),
   tailscale: null,
+  sandboxHealth: null,
   connect: null,
   paneNumbersVisible: false,
   switcherOpen: false,
@@ -345,6 +350,7 @@ export const useStore = create<AppStore>((set, get) => ({
   setPopups: (popups) => set({ popups }),
   setPopupShown: (popupShown) => set({ popupShown }),
   setTailscale: (tailscale) => set({ tailscale }),
+  setSandboxHealth: (sandboxHealth) => set({ sandboxHealth }),
   setConnect: (connect) => set({ connect }),
   setPaneNumbersVisible: (visible) => set({ paneNumbersVisible: visible }),
   setSwitcherOpen: (open) => set({ switcherOpen: open }),
