@@ -76,6 +76,7 @@ try {
   await desktop.getByRole('button', { name: 'Tailnet', exact: true }).click();
   const { code } = await (await issued).json();
   await desktop.locator('svg.bg-white path').waitFor();
+  await desktop.getByRole('button', { name: 'Copy sign-in link', exact: true }).waitFor();
   await desktop.close();
   const pairing = await browser.newContext({ ...devices['iPhone 15'] });
   const paired = await pairing.newPage();

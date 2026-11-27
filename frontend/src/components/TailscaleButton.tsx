@@ -21,6 +21,14 @@ function TailscaleGlyph(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+function copyText(text: string, copied: string, error: string) {
+  const { showToast } = useStore.getState();
+  const failed = () => showToast(error, 'error');
+  // Absent outside secure contexts, e.g. plain HTTP from another machine.
+  if (!navigator.clipboard?.writeText) return failed();
+  navigator.clipboard.writeText(text).then(() => showToast(copied, 'success'), failed);
+}
+
 /** A one-time sign-in link for this tailnet address, renewed before it expires. */
 function PairingQr({ url }: { url: string }) {
   const [code, setCode] = useState<string | null>(null);
@@ -48,10 +56,24 @@ function PairingQr({ url }: { url: string }) {
   }, []);
   if (failed) return <Text type="supporting">Could not create a sign-in code.</Text>;
   if (!code) return <div className="size-48" />;
+  const link = `${url}/pair?code=${code}`;
   return (
     <VStack gap={1} hAlign="center">
-      <QrCode text={`${url}/pair?code=${code}`} />
-      <Text type="supporting">Scan to open btmux on a phone or tablet on your tailnet. Each code signs in once.</Text>
+      <QrCode text={link} />
+      <HStack gap={1} vAlign="center">
+        <Text type="supporting">
+          Scan to open btmux on a phone or tablet on your tailnet, or copy the link to another computer. Each code signs
+          in once.
+        </Text>
+        <IconButton
+          label="Copy sign-in link"
+          tooltip="Copy sign-in link"
+          variant="ghost"
+          size="sm"
+          icon={<Copy />}
+          onClick={() => copyText(link, 'Sign-in link copied', 'Could not copy the sign-in link')}
+        />
+      </HStack>
     </VStack>
   );
 }
@@ -71,13 +93,6 @@ function Details({ status, open }: { status: TailscaleStatus; open: boolean }) {
         <Text type="supporting">btmux keeps retrying.</Text>
       </VStack>
     );
-  const copy = () => {
-    const { showToast } = useStore.getState();
-    const failed = () => showToast('Could not copy the tailnet address; select it to copy it', 'error');
-    // Absent outside secure contexts, e.g. plain HTTP from another machine.
-    if (!navigator.clipboard?.writeText) return failed();
-    navigator.clipboard.writeText(status.url).then(() => showToast('Tailnet address copied', 'success'), failed);
-  };
   return (
     <VStack gap={2} className="btm-sans">
       <HStack gap={1} vAlign="center">
@@ -90,7 +105,9 @@ function Details({ status, open }: { status: TailscaleStatus; open: boolean }) {
           variant="ghost"
           size="sm"
           icon={<Copy />}
-          onClick={copy}
+          onClick={() =>
+            copyText(status.url, 'Tailnet address copied', 'Could not copy the tailnet address; select it to copy it')
+          }
         />
       </HStack>
       {/* Relayed tabs can't issue pairing codes, which sign in with the token. */}
