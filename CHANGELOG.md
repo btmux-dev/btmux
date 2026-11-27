@@ -8,6 +8,11 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Fixed
+
+- On touch screens, a hidden native editor no longer leaves its tabs' close
+  buttons over the pane.
+
 ## [0.0.224] - 2026-11-27
 
 ### Added
