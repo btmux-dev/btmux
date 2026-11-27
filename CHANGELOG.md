@@ -15,8 +15,10 @@ actions, saved state, and API types can change in any release.
   starts, gray when stopped, and red when it doesn't answer although
   Multipass says it runs. A sandbox that doesn't answer can be force
   stopped from it. ([#206](https://github.com/btmux-dev/btmux/pull/206))
-- The tailnet button's popover can copy its one-time sign-in link, to sign
-  in another computer without the access token.
+- The tailnet button's popover can copy a one-time sign-in link, to sign
+  in another computer without the access token. Pairing links now open a
+  page with a **Sign in** button, so link previews and scanners can't use
+  the code up.
   ([#207](https://github.com/btmux-dev/btmux/pull/207))
 
 ### Fixed

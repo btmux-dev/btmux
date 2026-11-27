@@ -1291,11 +1291,14 @@ the loopback listener too.
 Its status (`TailscaleStatus`: starting, serving, error) is pushed to control
 sockets as `ServerMessage::Tailscale` and is in `/api/info`; the status bar's
 `TailscaleButton` shows it, with a QR code of a pairing link while its
-popover is open: `POST /api/pair` issues a random code (single use, valid
-2 min, at most 16 pending), and `protect` exchanges `GET /pair?code=` for the
-auth cookie and a page that refreshes to `/` (from a scanner's page, a
-redirect would stay cross-site and lose the `SameSite=Strict` cookie). It is
-the only unauthenticated route; the
+popover is open and a button copying a link with a fresh code (issued in the
+click, a `ClipboardItem` promise, as Safari requires): `POST /api/pair` issues
+a random code (single use, valid 2 min, at most 16 pending). `GET
+/pair?code=` is a page that leaves the code unspent, so link previews and
+scanners can't use it up; its Sign in button posts it to `POST /pair` (Origin
+required), which `protect` exchanges for the auth cookie and a redirect to
+`/`, same-site since the post is. These are
+the only unauthenticated routes; the
 token itself never enters the URL. The desktop picker can start a kept-running desktop
 server with `--tailscale`, on a saved port (`tailnet-port`, chosen below the
 ephemeral port ranges); its card polls the status while shown.
