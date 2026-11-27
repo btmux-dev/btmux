@@ -6,6 +6,7 @@ import { clipboardImage, pasteImage } from '../lib/pasteImage';
 import { paneMessageHandler } from '../lib/paneSocket';
 import { terminalInput, type InputSocket } from '../lib/terminalInput';
 import type { ConnectionState } from '../lib/connectionState';
+import { onWake, PING, watchSocket } from '../lib/liveness';
 
 interface Options {
   /** The element wterm renders into. */
@@ -213,7 +214,7 @@ export function usePaneTerminal({ containerRef, paneId, termOptions, visibleRef,
           },
         });
         socket.onmessage = messages.onMessage;
-        socket.onclose = () => {
+        const lost = () => {
           messages.dispose();
           if (disposed || ws !== socket) return;
           ws = null;
@@ -222,8 +223,22 @@ export function usePaneTerminal({ containerRef, paneId, termOptions, visibleRef,
           setConnection('reconnecting');
           reconnectTimer = window.setTimeout(connect, Math.min(1000 * 2 ** attempts++, 10000));
         };
+        socket.onclose = lost;
         socket.onerror = () => socket.close();
+        watchSocket(socket, PING, () => {
+          lost();
+          socket.close();
+          clearTimeout(reconnectTimer);
+          connect();
+        });
       };
+      // The network is back: retry now rather than after the backoff.
+      const offWake = onWake(() => {
+        if (disposed || ws || !reconnectTimer) return;
+        clearTimeout(reconnectTimer);
+        attempts = 0;
+        connect();
+      });
       const offData = term.onData((bytes) => {
         if (ws?.readyState === WebSocket.OPEN && ready) {
           for (let i = 0; i < bytes.length; i += 16384) {
@@ -274,6 +289,7 @@ export function usePaneTerminal({ containerRef, paneId, termOptions, visibleRef,
 
       return () => {
         clearTimeout(reconnectTimer);
+        offWake();
         offData();
         offResize();
         offDrag();

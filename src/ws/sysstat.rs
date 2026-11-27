@@ -178,7 +178,12 @@ async fn handle_socket(mut socket: WebSocket) {
         let Ok(json) = serde_json::to_string(&frame) else {
             continue;
         };
-        if socket.send(Message::Text(json.into())).await.is_err() {
+        // A peer that went away without closing stops taking frames.
+        let sent = tokio::time::timeout(
+            Duration::from_secs(10),
+            socket.send(Message::Text(json.into())),
+        );
+        if !matches!(sent.await, Ok(Ok(()))) {
             break;
         }
     }

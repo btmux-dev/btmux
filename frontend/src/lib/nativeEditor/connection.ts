@@ -8,6 +8,7 @@ import type {
   LspServerStatus,
   Update,
 } from '../../generated/protocol';
+import { onWake, PING, watchSocket } from '../liveness';
 
 const RECONNECT_MS = 2000;
 
@@ -65,9 +66,19 @@ class EditorConnection {
     return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/editor`;
   }
 
+  private wakeWatched = false;
+
   private connect() {
+    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     if (this.ws || this.listeners.size === 0) return;
+    if (!this.wakeWatched) {
+      this.wakeWatched = true;
+      // The network is back: retry now rather than after the delay.
+      onWake(() => {
+        if (this.reconnectTimer !== null) this.connect();
+      });
+    }
     const ws = new WebSocket(this.url());
     this.ws = ws;
     ws.onopen = () => {
@@ -77,7 +88,7 @@ class EditorConnection {
     ws.onmessage = (event) => {
       if (typeof event.data === 'string') this.receive(JSON.parse(event.data) as EditorServerMessage);
     };
-    ws.onclose = () => {
+    const lost = () => {
       if (this.ws !== ws) return;
       this.ws = null;
       for (const p of this.pending.values()) {
@@ -91,6 +102,12 @@ class EditorConnection {
       for (const fn of this.connectionListeners) fn(false);
       if (this.listeners.size > 0) this.reconnectTimer = setTimeout(() => this.connect(), RECONNECT_MS);
     };
+    ws.onclose = lost;
+    watchSocket(ws, PING, () => {
+      lost();
+      ws.close();
+      this.connect();
+    });
   }
 
   private send(msg: EditorClientMessage): boolean {
@@ -149,6 +166,8 @@ class EditorConnection {
         pending?.blame?.({ blame: msg.blame, stale: msg.stale, error: msg.error });
         return;
       }
+      case 'pong':
+        return;
       case 'buffers':
         this.buffers = msg.buffers;
         for (const fn of this.summaryListeners) fn(msg.buffers);

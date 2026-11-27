@@ -154,7 +154,9 @@ async fn handle_socket(
         (client, mgr.events().subscribe(), initial_messages(&mgr))
     };
     let (reply_tx, mut replies) = tokio::sync::mpsc::channel::<String>(32);
+    let keepalive = super::keepalive::Keepalive::new();
     let send = async {
+        let mut ping = super::keepalive::ticker();
         let mut pending =
             vec![serde_json::to_string(&ServerMessage::Client { id: client }).unwrap()];
         pending.extend(initial);
@@ -179,6 +181,16 @@ async fn handle_socket(
             let event = tokio::select! {
                 reply = replies.recv() => { if let Some(reply) = reply { pending.push(reply); continue; } else { return; } },
                 event = events.recv() => event,
+                _ = ping.tick() => {
+                    let sent = tokio::time::timeout(
+                        std::time::Duration::from_secs(10),
+                        ws_tx.send(super::keepalive::ping()),
+                    );
+                    if keepalive.expired() || !matches!(sent.await, Ok(Ok(()))) {
+                        return;
+                    }
+                    continue;
+                }
             };
             match event {
                 Ok(json) => pending.push(json),
@@ -191,6 +203,7 @@ async fn handle_socket(
     };
     let receive = async {
         while let Some(Ok(msg)) = ws_rx.next().await {
+            keepalive.seen();
             if matches!(msg, Message::Close(_)) {
                 break;
             }
@@ -203,6 +216,8 @@ async fn handle_socket(
                 .and_then(|v| v.as_str())
                 .map(str::to_owned);
             let result = match value.and_then(serde_json::from_value::<ClientMessage>) {
+                // Answered by the reply, which tells the tab the socket is alive.
+                Ok(ClientMessage::Ping) => Ok(()),
                 Ok(ClientMessage::FocusClient) => {
                     state.write().await.focus_client(client);
                     Ok(())
@@ -554,6 +569,7 @@ async fn handle_command(cmd: ClientMessage, state: &AppState) -> Result<(), Stri
         | ClientMessage::VscodeOpen { .. }
         | ClientMessage::ShutDownEditor { .. }
         | ClientMessage::EditorView { .. }
+        | ClientMessage::Ping
         | ClientMessage::FocusClient
         | ClientMessage::SystemColorMode { .. }
         | ClientMessage::WidgetShown { .. }
@@ -1031,6 +1047,8 @@ pub(crate) enum ClientMessage {
     ResetAgent {
         pane_id: Uuid,
     },
+    /// Does nothing; its `command_result` shows the socket still works.
+    Ping,
     /// This client's window gained focus, so it now shows OS notifications.
     FocusClient,
     /// The browser's system color mode, shown while `appearance` is `auto`.

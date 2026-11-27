@@ -109,6 +109,8 @@ pub enum EditorClientMessage {
         line: u32,
         full: bool,
     },
+    /// Answered with `pong`, so the tab knows the socket still works.
+    Ping,
 }
 
 #[derive(Deserialize, Debug)]
@@ -200,6 +202,8 @@ pub enum EditorServerMessage {
         #[cfg_attr(test, ts(type = "unknown"))]
         selection: Option<Value>,
     },
+    /// The answer to `ping`.
+    Pong,
 }
 
 #[derive(Serialize, Debug)]
@@ -625,6 +629,10 @@ impl Hub {
                 line,
                 full,
             } => self.git_blame(socket, req, buffer, version, line, full),
+            EditorClientMessage::Ping => {
+                let inner = self.inner.lock().unwrap();
+                inner.send_to(socket, &EditorServerMessage::Pong);
+            }
         }
     }
 

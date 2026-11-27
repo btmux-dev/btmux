@@ -8,6 +8,11 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Fixed
+
+- After the computer sleeps or the network drops, tabs reconnect as soon as
+  the network is back instead of after many seconds.
+
 ## [0.0.225] - 2026-11-27
 
 ### Changed

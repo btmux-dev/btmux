@@ -8,6 +8,7 @@ import { revealInEditor } from '../lib/nativeEditor/reveal';
 import { vscodeRequestEditor } from '../lib/vscodeFallback';
 import { atLeast } from '../lib/notifications';
 import { SYSTEM_LIGHT_QUERY, systemColorMode } from '../state/startupTheme';
+import { onWake, PING, watchSocket } from '../lib/liveness';
 
 let nextRequestId = 0;
 // Callers awaiting a command's result, by request id.
@@ -70,10 +71,12 @@ export function useControlSocket() {
       if (disposed) return;
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${protocol}//${window.location.host}/ws/control?color_mode=${systemColorMode()}`);
-      wsRef.current = ws;
+      reconnectTimer = null;
+      const socket = new WebSocket(`${protocol}//${window.location.host}/ws/control?color_mode=${systemColorMode()}`);
+      ws = socket;
+      wsRef.current = socket;
 
-      ws.onopen = () => {
+      socket.onopen = () => {
         console.log('[btmux] control socket connected');
       };
 
@@ -105,7 +108,8 @@ export function useControlSocket() {
         if (osWanted) offerOsNotifications(showToast);
       };
 
-      ws.onmessage = (ev) => {
+      socket.onmessage = (ev) => {
+        if (ws !== socket) return;
         const msg: ServerMessage = JSON.parse(ev.data);
         if (msg.type === 'client') {
           clientId = msg.id;
@@ -206,11 +210,13 @@ export function useControlSocket() {
         }
       };
 
-      ws.onerror = (ev) => {
+      socket.onerror = (ev) => {
         console.error('[btmux] control socket error:', ev);
       };
 
-      ws.onclose = () => {
+      const lost = () => {
+        if (ws !== socket) return;
+        ws = null;
         if (!disposed)
           fetch('/api/sessions', { cache: 'no-store' })
             .then((response) => {
@@ -228,12 +234,26 @@ export function useControlSocket() {
           reconnectTimer = window.setTimeout(connect, 2000);
         }
       };
+      socket.onclose = lost;
+      watchSocket(socket, PING, () => {
+        lost();
+        socket.close();
+        if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+        connect();
+      });
     }
 
     connect();
+    // The network is back: retry now rather than after the delay.
+    const offWake = onWake(() => {
+      if (disposed || ws || reconnectTimer === null) return;
+      clearTimeout(reconnectTimer);
+      connect();
+    });
 
     return () => {
       disposed = true;
+      offWake();
       window.removeEventListener('focus', reportFocus);
       document.removeEventListener('visibilitychange', reportFocus);
       systemLight?.removeEventListener('change', reportColorMode);
