@@ -49,7 +49,8 @@ import { dismissNotification } from './lib/notifications';
 import { useDesktopVersion } from './hooks/useDesktopVersion';
 import { useVisualViewport } from './hooks/useVisualViewport';
 import { MobileKeyBar } from './components/MobileKeyBar';
-import { TOUCH_QUERY } from './lib/touch';
+import { PhoneDock } from './components/PhoneDock';
+import { PHONE_QUERY, TOUCH_QUERY } from './lib/touch';
 import { useMediaQuery } from '@astryxdesign/core/hooks';
 
 function AppInner({
@@ -60,6 +61,8 @@ function AppInner({
   request: (msg: ClientMessage) => Promise<string | null>;
 }) {
   const touch = useMediaQuery(TOUCH_QUERY);
+  // Phones use PhoneDock instead of the key bar and status bar.
+  const phone = useMediaQuery(PHONE_QUERY);
   const allSessions = useStore((s) => s.allSessions);
   const config = useStore((s) => s.config);
   const configPreview = useStore((s) => s.configPreview);
@@ -302,13 +305,20 @@ function AppInner({
           activeSessionId ? (
             <LayoutFooter
               padding={0}
-              hasDivider
-              className="btm-toolbar-glass"
+              // Phones' dock is cards over the wallpaper, not a bar.
+              hasDivider={!phone}
+              className={phone ? undefined : 'btm-toolbar-glass'}
               // Clear the home indicator and rounded screen corners; none above the keyboard.
               style={{ paddingBottom: 'var(--btm-safe-bottom, env(safe-area-inset-bottom, 0px))' }}
             >
-              {touch && <MobileKeyBar sessionId={activeSessionId} send={send} />}
-              <StatusBar sessionId={activeSessionId ?? ''} send={send} />
+              {phone ? (
+                <PhoneDock sessionId={activeSessionId} send={send} />
+              ) : (
+                <>
+                  {touch && <MobileKeyBar sessionId={activeSessionId} send={send} />}
+                  <StatusBar sessionId={activeSessionId} send={send} />
+                </>
+              )}
             </LayoutFooter>
           ) : undefined
         }

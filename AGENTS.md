@@ -15,6 +15,7 @@ provides a file/Git browser, REST API, and MCP server for automation.
 The `justfile` is the source of truth (`just` lists all recipes). Common ones:
 
 - `just dev` — run backend (port 8044) and frontend (Vite, port 5173) together. **Develop against http://localhost:5173**; Vite proxies `/ws`, `/api`, and `/wallpaper` to 8044. Development uses `--profile dev` to isolate saved sessions and access credentials. The dev backend uses 8044 (not the production default 8004) so it doesn't collide with a running production/service instance; the port lives in the `dev_port` justfile var and is mirrored in `vite.config.ts`.
+- `just dev-tailscale` — `just dev`, also served at `https://<machine>.<tailnet>.ts.net:5173` through Tailscale Serve, for testing on phones (`frontend/dev-tailscale.ts`). It uses a random token and prints a QR code of a one-time pairing link (Enter prints another). It reuses only a tailnet-only route to Vite, refuses any other use of the port or Funnel, and removes only the route it made, if unchanged.
 - `just dev-backend` / `just dev-frontend` — run one side only.
 - `just setup` — install frontend dependencies and fetch Rust dependencies.
 - `just check` — `cargo check` + `tsc --noEmit` (fast, run this before claiming a change compiles).
@@ -472,10 +473,18 @@ replaces its guesses only while they are before the caret, and stops when
 wterm empties the field. Other keys empty it. An edit deleting a grapheme of
 several code points is undone instead, since shells delete those differently
 (fish a grapheme per Backspace, bash a code point).
+Narrow screens and phones (`PHONE_QUERY`: a narrow or short touchscreen) get
+only the active pane in `SessionPane`, a local zoom, with `PaneMinimap` to
+select another. Phones replace the key bar and status bar with `PhoneDock` in
+the footer: large buttons (the key bar's keys in a panel, `layout="panel"`),
+and the minimap, below the panes so they cover no output. When the full dock
+would leave the panes less than half the height (the keyboard is up), it
+compacts to one scrolling row (`layout="row"`), Hide keyboard first.
 `useVisualViewport` sizes `#root` to the visual
 viewport, since iOS doesn't resize the layout for the keyboard. Swipes in
 alternate-screen or mouse-tracking programs become wheel events. Below 768px,
-`SessionPane` shows only the active pane, a local zoom, and the file browser
+the status bar's session button opens the side nav drawer (no top bar), its
+tools are one menu, and the file browser
 and process viewer are fullscreen, showing a list or, after a tap, the
 preview or details. Footer key hints everywhere type their key when tapped
 (`usePressHint`); on touch screens, filters type into an input and a tap on a

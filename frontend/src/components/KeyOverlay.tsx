@@ -7,6 +7,8 @@ import { ENTRY_MS, keyCaster, type Cap, type Entry, type KeyInfo } from '../lib/
 import { terminalInput } from '../lib/terminalInput';
 import { getAnimations } from '../state/configDefaults';
 import { useStore } from '../state/store';
+import { useMediaQuery } from '@astryxdesign/core/hooks';
+import { PHONE_QUERY } from '../lib/touch';
 
 const POSITIONS: Record<KeyOverlayPosition, string> = {
   bottom: 'bottom-16 left-1/2 -translate-x-1/2 items-center',
@@ -41,7 +43,9 @@ function keyInfo(e: KeyboardEvent): KeyInfo {
 /** Pressed keys, and what btmux did with them, over everything (for recordings). */
 export function KeyOverlay() {
   const enabled = useStore((s) => s.keyOverlay);
-  if (!enabled) return null;
+  // Phones have nowhere to turn it off, and little room for it.
+  const phone = useMediaQuery(PHONE_QUERY);
+  if (!enabled || phone) return null;
   return <KeyOverlayView />;
 }
 

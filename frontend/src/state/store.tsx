@@ -68,6 +68,8 @@ interface AppStore {
   // with a session→window tree and a live pane preview. Like the window-grid it
   // takes over the keyboard while open (the keybinding hook early-returns).
   switcherOpen: boolean;
+  // The phone-width sidebar drawer, opened from the status bar.
+  mobileNavOpen: boolean;
   // Neovim surface (prefix + e with editor = neovim), pinned over nvimPaneId.
   nvimOpen: boolean;
   nvimPaneId: string | null;
@@ -140,6 +142,7 @@ interface AppStore {
   setConnect: (status: ConnectStatus | null) => void;
   setPaneNumbersVisible: (visible: boolean) => void;
   setSwitcherOpen: (open: boolean) => void;
+  setMobileNavOpen: (open: boolean) => void;
   showToast: (
     message: string,
     level?: NotificationLevel,
@@ -277,6 +280,7 @@ export const useStore = create<AppStore>((set, get) => ({
   connect: null,
   paneNumbersVisible: false,
   switcherOpen: false,
+  mobileNavOpen: false,
   nvimOpen: false,
   nvimPaneId: null,
   nvimRect: null,
@@ -344,6 +348,7 @@ export const useStore = create<AppStore>((set, get) => ({
   setConnect: (connect) => set({ connect }),
   setPaneNumbersVisible: (visible) => set({ paneNumbersVisible: visible }),
   setSwitcherOpen: (open) => set({ switcherOpen: open }),
+  setMobileNavOpen: (open) => set({ mobileNavOpen: open }),
   // One surface per pane: opening one over another's pane closes the other.
   setNvimOpen: (open, paneId) =>
     set((s) => {

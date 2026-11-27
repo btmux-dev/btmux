@@ -1,23 +1,12 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { HStack } from '@astryxdesign/core/Layout';
 import { Button } from '@astryxdesign/core/Button';
 import { IconButton } from '@astryxdesign/core/IconButton';
 import { ToggleButton } from '@astryxdesign/core/ToggleButton';
-import {
-  ArrowDown,
-  ArrowLeft,
-  ArrowRight,
-  ArrowUp,
-  Command,
-  KeyboardOff,
-  PanelBottomClose,
-  SquareSplitHorizontal,
-} from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, KeyboardOff, PanelBottomClose } from 'lucide-react';
 import { nativeEditorInput, nativeEditorOver, useStore } from '../state/store';
 import { CONFIG_DEFAULTS, getPrefix } from '../state/configDefaults';
 import { parsePrefix } from '../lib/prefixKey';
-import { runAction } from '../hooks/useKeybindings';
 import { dispatchKey, type KeyModifiers } from '../lib/paneTerminal';
 import { TEXT_FIELDS } from '../hooks/usePressHint';
 import type { ClientMessage } from '../protocol/messages';
@@ -36,15 +25,35 @@ const takesKeys = (target: EventTarget | null) =>
     '[data-pane-terminal], [data-nvim-input], [data-browser-input], [data-native-editor], [data-pane-widget]',
   ) !== null;
 
+type Modifier = [boolean, (armed: boolean) => void];
+export type Modifiers = [ctrl: Modifier, alt: Modifier];
+
+/** Armed Ctrl and Alt for MobileKeyBar. */
+export function useModifiers(): Modifiers {
+  const ctrl = useState(false);
+  const alt = useState(false);
+  return [ctrl, alt];
+}
+
+/** iPhone keyboards have no dismiss key. */
+export const hideKeyboard = () => (document.activeElement as HTMLElement | null)?.blur();
+
 /** Keys phone keyboards lack. Ctrl and Alt apply to the next key, from here or the keyboard. */
-export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (message: ClientMessage) => void }) {
-  const navigate = useNavigate();
+export function MobileKeyBar({
+  sessionId,
+  send,
+  layout = 'bar',
+  modifiers,
+}: {
+  sessionId: string;
+  send: (message: ClientMessage) => void;
+  /** `panel` and `row` are the phone dock's: large keys, wrapping or in its compact row. */
+  layout?: 'bar' | 'panel' | 'row';
+  /** Armed Ctrl and Alt, from a parent that swaps layouts, so they survive the remount. */
+  modifiers?: Modifiers;
+}) {
   const config = useStore((state) => state.config);
   const prefixActive = useStore((state) => state.prefixActive);
-  const paneCount = useStore((state) => {
-    const session = state.allSessions.find((session) => session.id === sessionId);
-    return session?.windows[session.active_window]?.panes.length ?? 0;
-  });
   // The editor covering the active pane, which a double Esc hides on a keyboard.
   const editor = useStore((state) => {
     const paneId = state.getActivePaneId(sessionId);
@@ -55,8 +64,8 @@ export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (me
     if (nativeEditorOver(state, paneId)) return 'Editor';
     return null;
   });
-  const [ctrl, setCtrl] = useState(false);
-  const [alt, setAlt] = useState(false);
+  const own = useModifiers();
+  const [[ctrl, setCtrl], [alt, setAlt]] = modifiers ?? own;
   const prefix = parsePrefix(getPrefix(config)) ?? parsePrefix(CONFIG_DEFAULTS.prefix)!;
 
   // To the focused terminal or Neovim, else what covers the active pane.
@@ -104,9 +113,6 @@ export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (me
     setCtrl(false);
     setAlt(false);
   };
-
-  const run = (action: string) =>
-    runAction(action, sessionId, send, (name) => navigate(`/s/${encodeURIComponent(name)}`));
 
   // While armed, the next character typed on the keyboard takes the modifiers, or the prefix's binding.
   useEffect(() => {
@@ -157,80 +163,88 @@ export function MobileKeyBar({ sessionId, send }: { sessionId: string; send: (me
     };
   }, [ctrl, alt, prefixActive]);
 
+  // The phone layout's floating panel: large keys, wrapping; it hides the keyboard elsewhere.
+  const panel = layout !== 'bar';
+  const size = panel ? 'lg' : 'sm';
+  const keys = (
+    <>
+      <Button label="Esc" size={size} variant="ghost" onClick={() => press('Escape')} />
+      <Button label="Tab" size={size} variant="ghost" onClick={() => press('Tab')} />
+      <ToggleButton label="Ctrl" size={size} isPressed={ctrl} onPressedChange={setCtrl} />
+      <ToggleButton label="Alt" size={size} isPressed={alt} onPressedChange={setAlt} />
+      {ARROWS.map(({ key, label, icon: Icon }) => (
+        <IconButton key={key} label={label} size={size} variant="ghost" icon={<Icon />} onClick={() => press(key)} />
+      ))}
+      <ToggleButton
+        label={`Prefix (${getPrefix(config)})`}
+        size={size}
+        isPressed={prefixActive}
+        onPressedChange={(pressed) =>
+          pressed
+            ? pressKey(prefix.key, { ctrlKey: prefix.ctrl, altKey: prefix.alt })
+            : useStore.getState().setPrefixActive(false)
+        }
+      >
+        {getPrefix(config)}
+      </ToggleButton>
+      {editor && (
+        <IconButton
+          label={`Hide ${editor}`}
+          size={size}
+          variant="ghost"
+          icon={<PanelBottomClose />}
+          onClick={() => {
+            const state = useStore.getState();
+            const paneId = state.getActivePaneId(sessionId);
+            if (editor === 'Browser') state.setBrowserOpen(false);
+            else if (editor === 'VS Code') state.setVscodeOpen(false);
+            else if (editor === 'Neovim') state.setNvimOpen(false);
+            else if (paneId) send({ type: 'editor_view', pane_id: paneId, op: { kind: 'hide' } });
+          }}
+        />
+      )}
+    </>
+  );
+  // Keep the keyboard open: taps here mustn't take focus from the terminal.
+  // Not on pointerdown, which cancels a tap's click in WebKit.
+  const keepFocus = (event: React.MouseEvent) => event.preventDefault();
+
+  if (panel) {
+    return (
+      <HStack
+        gap={layout === 'row' ? 0.5 : 1}
+        padding={layout === 'row' ? 0 : 1}
+        vAlign="center"
+        // In the dock's compact row, whose 40px squares would clip Esc and Ctrl.
+        className={`btm-mono ${layout === 'row' ? 'shrink-0 [&_button]:h-10 [&_button]:min-w-10 [&_button]:w-auto! [&_button]:px-2!' : 'flex-wrap [&_button]:h-11 [&_button]:min-w-11'}`}
+        aria-label="Terminal keys"
+        onMouseDown={keepFocus}
+      >
+        {keys}
+      </HStack>
+    );
+  }
   return (
     <HStack
       gap={1}
-      paddingInline={2}
+      paddingInline={1}
       paddingBlock={1}
       vAlign="center"
       className="btm-mono"
       aria-label="Terminal keys"
-      // Keep the keyboard open: taps here mustn't take focus from the terminal.
-      // Not on pointerdown, which cancels a tap's click in WebKit.
-      onMouseDown={(event: React.MouseEvent) => event.preventDefault()}
+      onMouseDown={keepFocus}
     >
       {/* Scroll sideways rather than truncate the keys. */}
-      <HStack gap={1} vAlign="center" isScrollable className="min-w-0 flex-1 [&>*]:shrink-0">
-        <Button label="Esc" size="sm" variant="ghost" onClick={() => press('Escape')} />
-        <Button label="Tab" size="sm" variant="ghost" onClick={() => press('Tab')} />
-        <ToggleButton label="Ctrl" size="sm" isPressed={ctrl} onPressedChange={setCtrl} />
-        <ToggleButton label="Alt" size="sm" isPressed={alt} onPressedChange={setAlt} />
-        {ARROWS.map(({ key, label, icon: Icon }) => (
-          <IconButton key={key} label={label} size="sm" variant="ghost" icon={<Icon />} onClick={() => press(key)} />
-        ))}
-        <ToggleButton
-          label={`Prefix (${getPrefix(config)})`}
-          size="sm"
-          isPressed={prefixActive}
-          onPressedChange={(pressed) =>
-            pressed
-              ? pressKey(prefix.key, { ctrlKey: prefix.ctrl, altKey: prefix.alt })
-              : useStore.getState().setPrefixActive(false)
-          }
-        >
-          {getPrefix(config)}
-        </ToggleButton>
-        {paneCount > 1 && (
-          <IconButton
-            label="Next pane"
-            size="sm"
-            variant="ghost"
-            icon={<SquareSplitHorizontal />}
-            onClick={() => run('next-pane')}
-          />
-        )}
-        <IconButton
-          label="Commands"
-          size="sm"
-          variant="ghost"
-          icon={<Command />}
-          onClick={() => run('command-palette')}
-        />
-        {editor && (
-          <IconButton
-            label={`Hide ${editor}`}
-            size="sm"
-            variant="ghost"
-            icon={<PanelBottomClose />}
-            onClick={() => {
-              const state = useStore.getState();
-              const paneId = state.getActivePaneId(sessionId);
-              if (editor === 'Browser') state.setBrowserOpen(false);
-              else if (editor === 'VS Code') state.setVscodeOpen(false);
-              else if (editor === 'Neovim') state.setNvimOpen(false);
-              else if (paneId) send({ type: 'editor_view', pane_id: paneId, op: { kind: 'hide' } });
-            }}
-          />
-        )}
+      <HStack
+        vAlign="center"
+        isScrollable
+        // Tight keys, so a typical phone fits them all without scrolling.
+        className="min-w-0 flex-1 [&>*]:shrink-0 [&_button]:px-1"
+      >
+        {keys}
       </HStack>
       {/* iPhone keyboards have no dismiss key. */}
-      <IconButton
-        label="Hide keyboard"
-        size="sm"
-        variant="ghost"
-        icon={<KeyboardOff />}
-        onClick={() => (document.activeElement as HTMLElement | null)?.blur()}
-      />
+      <IconButton label="Hide keyboard" size="sm" variant="ghost" icon={<KeyboardOff />} onClick={hideKeyboard} />
     </HStack>
   );
 }

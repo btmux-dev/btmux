@@ -116,7 +116,10 @@ try {
   await connect(owner);
   await connect(page);
   const keys = (name: string) => page.getByRole('button', { name, exact: true });
+  // Phones have no key bar or status bar: the Keys button opens the keys, which stay open.
+  await keys('Keys').tap();
   await keys('Esc').waitFor();
+  assert.equal(await page.getByRole('toolbar', { name: 'Terminal controls' }).count(), 0);
   const fitHere = page.getByRole('button', { name: 'Fit to this screen' });
   await fitHere.tap();
   await fitHere.waitFor({ state: 'detached' });
@@ -128,12 +131,35 @@ try {
     viewport: window.visualViewport!.height,
   }));
   assert.equal(Math.round(fit.root), Math.round(fit.viewport));
-  // The key bar stays above the keyboard, which shrinks the visual viewport.
+  // The buttons stay above the keyboard, which shrinks the visual viewport.
   const setViewportHeight = (height: string) =>
     page.evaluate((height) => document.documentElement.style.setProperty('--btm-viewport-height', height), height);
+  // An armed Ctrl stays armed as the dock compacts.
+  await keys('Ctrl').tap();
   await setViewportHeight('300px');
+  // The dock compacts to one row, so the terminal keeps usable rows.
+  const terminalHeight = () =>
+    page.evaluate(() =>
+      Math.max(
+        ...[...document.querySelectorAll('[data-pane-terminal]')]
+          .filter((element) => element.checkVisibility())
+          .map((element) => element.getBoundingClientRect().height),
+      ),
+    );
+  await page
+    .waitForFunction(
+      () =>
+        Math.max(
+          ...[...document.querySelectorAll('[data-pane-terminal]')]
+            .filter((element) => element.checkVisibility())
+            .map((element) => element.getBoundingClientRect().height),
+        ) >= 150,
+    )
+    .catch(async () => assert.fail(`the terminal is ${await terminalHeight()}px tall at 300px`));
   const hide = (await keys('Hide keyboard').boundingBox())!;
-  assert(hide.y + hide.height <= 300, `key bar ends at ${hide.y + hide.height}px`);
+  assert(hide.y + hide.height <= 300, `buttons end at ${hide.y + hide.height}px`);
+  assert.equal(await keys('Ctrl').getAttribute('aria-pressed'), 'true');
+  await keys('Ctrl').tap();
   await setViewportHeight(`${fit.viewport}px`);
 
   // Taps keep the terminal focused, so the keyboard stays open.
@@ -200,10 +226,10 @@ try {
   assert.equal(await takeInput(page), '\r');
   const fieldValue = () => page.evaluate(() => (document.activeElement as HTMLTextAreaElement).value);
   const select = (start: number, end: number) =>
-    page.evaluate(([start, end]) => (document.activeElement as HTMLTextAreaElement).setSelectionRange(start, end), [
-      start,
-      end,
-    ]);
+    page.evaluate(
+      ([start, end]) => (document.activeElement as HTMLTextAreaElement).setSelectionRange(start, end),
+      [start, end],
+    );
   assert.equal(await fieldValue(), '​');
   // Backspace over a selection of retained text deletes all of it.
   await page.keyboard.insertText('hello world');
@@ -216,7 +242,9 @@ try {
   await select(1, 7);
   await page.evaluate(() => {
     const input = document.activeElement as HTMLTextAreaElement;
-    input.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertFromPaste' }));
+    input.dispatchEvent(
+      new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertFromPaste' }),
+    );
     input.value = '​hey';
     input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste' }));
   });
@@ -242,9 +270,7 @@ try {
   await write(page, '\x1b[?1049h\x1b[H\x1b[31mred\x1b[m');
   await page.locator('[data-pane-terminal] .term-row span', { hasText: 'red' }).waitFor();
   const lines = await page.evaluate(async () => {
-    const term = (
-      window as unknown as { term: { measureCell(): { height: number }; write(data: string): void } }
-    ).term;
+    const term = (window as unknown as { term: { measureCell(): { height: number }; write(data: string): void } }).term;
     const element = document.querySelector('[data-pane-terminal]')!;
     const target = [...element.querySelectorAll('.term-row span')].find((span) => span.textContent === 'red')!;
     const rect = element.getBoundingClientRect();
@@ -317,13 +343,14 @@ try {
   const sent = await page.evaluate(() => (window as unknown as { sent: string[] }).sent);
   assert(!sent.some((message) => message.includes('write_pane_input')), 'the prefix was sent');
 
-  // Narrow screens show only the active pane; Next pane cycles them.
+  // Narrow screens show only the active pane; the minimap selects another.
   const panes = await (await api('/api/panes')).json();
   const paneId = panes.find(
     (pane: { window_active: boolean; pane_active: boolean }) => pane.window_active && pane.pane_active,
   ).pane_id;
   assert((await api(`/api/panes/${paneId}/split`, { method: 'POST', body: '{"direction":"right"}' })).ok);
-  await keys('Next pane').waitFor();
+  const minimap = page.getByRole('navigation', { name: 'Panes' });
+  await minimap.waitFor();
   const shown = () =>
     page.evaluate(
       () =>
@@ -348,7 +375,7 @@ try {
       return state.getActivePaneId(state.allSessions[0].id);
     });
   const first = await activePane();
-  await keys('Next pane').tap();
+  await minimap.locator('button:not([aria-current])').tap();
   await waitForAsync(
     page,
     async (first) => {
@@ -361,6 +388,43 @@ try {
   assert.equal(await shown(), 1);
   const zoomed = (await sessionWindows()).some((window) => window.zoomed_pane);
   assert(!zoomed, 'the narrow layout must not zoom on the server');
+  // Landscape phones also show one pane, with the minimap.
+  const portrait = page.viewportSize()!;
+  // As wide as an iPhone 15 in landscape, past the side nav's breakpoint.
+  await page.setViewportSize({ width: 852, height: portrait.width });
+  await minimap.waitFor();
+  assert.equal(await shown(), 1);
+  // The drawer, not an inline side nav, holds the sessions there too.
+  await keys('Menu').waitFor();
+  assert(
+    await page.evaluate(() =>
+      [...document.querySelectorAll('.btm-side-nav')].every(
+        (nav) => nav.closest('dialog') || !nav.checkVisibility() || nav.getBoundingClientRect().width === 0,
+      ),
+    ),
+    'landscape phones show an inline side nav',
+  );
+  // With the keyboard up in landscape, the terminal keeps three rows and the keyboard can be hidden.
+  // First let the resize reach useVisualViewport, which would overwrite the height set here.
+  await page.waitForFunction(
+    () => document.documentElement.style.getPropertyValue('--btm-viewport-height') === `${visualViewport!.height}px`,
+  );
+  await setViewportHeight('150px');
+  await page
+    .waitForFunction(
+      () =>
+        Math.max(
+          ...[...document.querySelectorAll('[data-pane-terminal]')]
+            .filter((element) => element.checkVisibility())
+            .map((element) => element.getBoundingClientRect().height),
+        ) >=
+        3 * 17,
+    )
+    .catch(async () => assert.fail(`the terminal is ${await terminalHeight()}px tall at 150px`));
+  const hideLandscape = (await keys('Hide keyboard').boundingBox())!;
+  assert(hideLandscape.y + hideLandscape.height <= 150, `buttons end at ${hideLandscape.y + hideLandscape.height}px`);
+  await setViewportHeight(`${portrait.width}px`);
+  await page.setViewportSize(portrait);
 
   // File browser hints type their keys when tapped.
   const dir = mkdtempSync(path.join(tmpdir(), 'btmux-mobile-'));
@@ -461,11 +525,7 @@ try {
 
   // The process viewer: hints type their keys, the list or a row's details fill
   // the screen, and the filter takes text through an input.
-  await page.evaluate(async () => {
-    const { useStore } = await import('/src/state/store.tsx' as string);
-    const state = useStore.getState();
-    state.setFileBrowserOpen(true, null, state.getActivePaneId(state.allSessions[0].id), 'process');
-  });
+  await keys('Process viewer').tap();
   const processRow = page.locator('[data-process-pid]').first();
   await processRow.waitFor();
   // Moving up from the bottom keeps the selection clear of the sticky header.
@@ -565,10 +625,8 @@ try {
       })
     ).ok,
   );
-  await page.evaluate(async () => {
-    const { useStore } = await import('/src/state/store.tsx' as string);
-    useStore.getState().setSwitcherOpen(true);
-  });
+  // Phones open it from the quick actions, opposite the minimap.
+  await page.getByRole('toolbar', { name: 'Quick actions' }).getByRole('button', { name: 'Switch session' }).tap();
   const switcher = page.getByRole('dialog', { name: 'Sessions', exact: true });
   await switcher.waitFor();
   await page.getByRole('button', { name: '/: filter', exact: true }).tap();
@@ -605,11 +663,7 @@ try {
   await page.getByRole('button', { name: 'Older match' }).tap();
   await page.getByRole('button', { name: 'Newer match' }).tap();
   assert(await paneSearch.evaluate((input) => input === document.activeElement), 'a match button took focus');
-  // The key bar stays scrolled to where an earlier tap left it. WebKit targets
-  // the scroller's pointerdown, so Playwright's tap refuses; touch the key itself.
-  await keys('Esc').evaluate((key) => key.parentElement!.scrollTo({ left: 0, behavior: 'instant' }));
-  const escBox = (await keys('Esc').boundingBox())!;
-  await page.touchscreen.tap(escBox.x + escBox.width / 2, escBox.y + escBox.height / 2);
+  await keys('Esc').tap();
   await paneSearch.waitFor({ state: 'detached' });
 
   // Settings fill the screen, and a binding takes a key typed into an input.
@@ -634,7 +688,9 @@ try {
   await settings.waitFor({ state: 'hidden' });
 
   // The navigation drawer fills the screen.
-  await page.getByRole('button', { name: 'Open navigation' }).tap();
+  // No top bar: the Menu button opens it.
+  assert.equal(await page.getByRole('button', { name: 'Open navigation' }).count(), 0);
+  await keys('Menu').tap();
   const drawer = page.locator('dialog.btm-side-nav > div');
   await waitForAsync(page, async () => {
     const box = document.querySelector('dialog.btm-side-nav > div')!.getBoundingClientRect();
@@ -712,7 +768,10 @@ try {
   await pick();
   await page.getByLabel('Terminal').first().tap({ force: true });
   await page.keyboard.type('choice-4');
-  await waitForAsync(page, () => document.querySelector('[data-pane-widget] input')?.getAttribute('value') === 'choice-4');
+  await waitForAsync(
+    page,
+    () => document.querySelector('[data-pane-widget] input')?.getAttribute('value') === 'choice-4',
+  );
   assert((await picker.innerText()).includes('1/4'));
   await keys('Esc').tap();
   await picker.waitFor({ state: 'detached' });

@@ -21,6 +21,11 @@ dev frontend_port="5173":
         "cargo run -- --no-browser --profile dev --public-url http://localhost:{{frontend_port}} --public-url http://127.0.0.1:{{frontend_port}} --port {{dev_port}}" \
         "cd frontend && bunx vite --open --port {{frontend_port}}"
 
+# `just dev`, also served to your tailnet over HTTPS (Tailscale Serve), with a
+# random token and a QR code that signs a phone in.
+dev-tailscale frontend_port="5173":
+    cd frontend && bun dev-tailscale.ts {{frontend_port}} {{dev_port}}
+
 # Run only the backend
 dev-backend:
     BTMUX_AUTH_TOKEN={{dev_token}} cargo run -- --profile dev --public-url http://localhost:5173 --public-url http://127.0.0.1:5173 --port {{dev_port}}

@@ -8,6 +8,16 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Changed
+
+- Phones, in portrait and landscape, replace the key bar, status bar, and top
+  bar with large buttons below the terminal: keys, hide keyboard, command
+  palette, agent view, session switcher, editor, file browser, Git mode,
+  process viewer, the sessions menu, and the tailnet and sandbox status. A window shows its active pane, with a map of
+  its panes beside the buttons to switch panes with a tap. On other narrow
+  screens, the status bar's session button opens the sessions list and its
+  tools are one **…** menu. ([#205](https://github.com/btmux-dev/btmux/pull/205))
+
 ### Fixed
 
 - Native editor diagnostics from servers that don't report a document version,
