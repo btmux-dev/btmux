@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ConnectionState } from '../lib/connectionState';
+import { onWake, watchSocket } from '../lib/liveness';
 
 export interface SysStats {
   cpu: number[];
@@ -26,6 +27,7 @@ export function useSysStats(): { stats: SysStats | null; state: ConnectionState 
 
     function connect() {
       if (!mountedRef.current) return;
+      timerRef.current = null;
       const ws = new WebSocket(WS_URL);
       wsRef.current = ws;
 
@@ -37,17 +39,32 @@ export function useSysStats(): { stats: SysStats | null; state: ConnectionState 
         } catch {}
       };
 
-      ws.onclose = () => {
-        if (!mountedRef.current) return;
+      const lost = () => {
+        if (!mountedRef.current || wsRef.current !== ws) return;
+        wsRef.current = null;
         setState('reconnecting');
         timerRef.current = setTimeout(connect, RECONNECT_MS);
       };
+      ws.onclose = lost;
+      // Frames come every second, so no ping is needed.
+      watchSocket(ws, null, () => {
+        lost();
+        ws.close();
+        if (timerRef.current) clearTimeout(timerRef.current);
+        connect();
+      });
     }
 
     connect();
+    const offWake = onWake(() => {
+      if (!mountedRef.current || !timerRef.current) return;
+      clearTimeout(timerRef.current);
+      connect();
+    });
 
     return () => {
       mountedRef.current = false;
+      offWake();
       if (timerRef.current) clearTimeout(timerRef.current);
       wsRef.current?.close();
     };

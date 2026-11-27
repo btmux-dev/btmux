@@ -6,6 +6,7 @@ import type { ClientConfig } from '../state/types';
 import { STARTUP_THEME } from '../state/startupTheme';
 import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS } from '../state/configDefaults';
 import { paneMessageHandler } from '../lib/paneSocket';
+import { onWake, PING, watchSocket } from '../lib/liveness';
 
 interface Props {
   paneId: string;
@@ -116,6 +117,7 @@ export function MirrorPane({ paneId, config: configOverride, visible, onNaturalS
       revealRef.current = revealWhenReady;
       const connect = () => {
         if (disposed) return;
+        timer = 0;
         replayReadyRef.current = false;
         setInitialReplayRendered(false);
         term.setPaused(true);
@@ -146,15 +148,30 @@ export function MirrorPane({ paneId, config: configOverride, visible, onNaturalS
             }
           },
         });
-        ws.onclose = () => {
+        const socket = ws;
+        const lost = () => {
           messages.dispose();
-          if (!disposed) timer = window.setTimeout(connect, 2000);
+          if (disposed || ws !== socket || timer) return;
+          timer = window.setTimeout(connect, 2000);
         };
-        ws.onerror = () => ws.close();
+        ws.onclose = lost;
+        ws.onerror = () => socket.close();
         ws.binaryType = 'arraybuffer';
         ws.onmessage = messages.onMessage;
+        watchSocket(socket, PING, () => {
+          lost();
+          socket.close();
+          clearTimeout(timer);
+          connect();
+        });
       };
       connect();
+      // The network is back: retry now rather than after the delay.
+      const offWake = onWake(() => {
+        if (disposed || !timer) return;
+        clearTimeout(timer);
+        connect();
+      });
 
       const observer = new ResizeObserver(() => {
         refit();
@@ -164,6 +181,7 @@ export function MirrorPane({ paneId, config: configOverride, visible, onNaturalS
 
       return () => {
         clearTimeout(timer);
+        offWake();
         cancelAnimationFrame(revealRafRef.current);
         if (revealRef.current === revealWhenReady) revealRef.current = null;
         replayReadyRef.current = false;

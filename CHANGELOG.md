@@ -15,6 +15,11 @@ actions, saved state, and API types can change in any release.
   list too little room, and the list's edges fade where more sessions are out
   of view, instead of the collapsed rail showing a scrollbar. ([#211](https://github.com/btmux-dev/btmux/pull/211))
 
+### Fixed
+
+- After the computer sleeps or the network drops, tabs reconnect as soon as
+  the network is back instead of after many seconds. ([#210](https://github.com/btmux-dev/btmux/pull/210))
+
 ## [0.0.225] - 2026-11-27
 
 ### Changed

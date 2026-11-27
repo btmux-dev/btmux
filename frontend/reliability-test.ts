@@ -33,17 +33,33 @@ try {
     const Original = window.WebSocket;
     (window as any).testSockets = [];
     (window as any).testMessages = [];
+    // `frozen` sockets act dead, as after sleep: nothing arrives or leaves, and
+    // `close()` fires no close event, which a dead connection would only fire late.
     window.WebSocket = class extends Original {
+      frozen = false;
       constructor(url: string | URL, protocols?: string | string[]) {
         super(url, protocols);
         (window as any).testSockets.push(this);
         this.addEventListener('message', (event) => {
+          if (this.frozen) {
+            event.stopImmediatePropagation();
+            return;
+          }
           if (typeof event.data === 'string') {
             try {
               (window as any).testMessages.push(JSON.parse(event.data));
             } catch {}
           }
         });
+      }
+      send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
+        if (!this.frozen) super.send(data);
+      }
+      close(code?: number, reason?: string) {
+        if (!this.frozen) super.close(code, reason);
+      }
+      realClose() {
+        super.close();
       }
     };
   });
@@ -317,6 +333,50 @@ try {
     controlCount,
   );
   console.log('PASS correlated command errors and control reconnect');
+
+  // After sleep, sockets can look open while dead. On wake, unanswered probes drop them at once.
+  const frozenAt = await page.evaluate(() => {
+    (window as any).testMessages.length = 0;
+    // Not Vite's HMR socket, whose close reloads the page.
+    for (const s of (window as any).testSockets) if (new URL(s.url).pathname.startsWith('/ws/')) s.frozen = true;
+    window.dispatchEvent(new Event('online'));
+    return Date.now();
+  });
+  await waitForAsync(
+    page,
+    async (id) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      const live = (path: string) =>
+        (window as any).testSockets.some((s: any) => s.url.includes(path) && s.readyState === 1 && !s.frozen);
+      return (
+        useStore.getState().controlConnectionState === 'connected' &&
+        live('/ws/control') &&
+        live(`/ws/pane/${id}`) &&
+        (window as any).testMessages.filter((m: any) => m.type === 'ready' && m.pane_id === id).length > 0
+      );
+    },
+    pane,
+  );
+  const recovered = (await page.evaluate(() => Date.now())) - frozenAt;
+  assert(recovered < 6000, `wake recovery took ${recovered} ms`);
+  // Typed through the replacement socket, not the API.
+  await page.evaluate((id) => {
+    (window as any).testSockets
+      .findLast((s: any) => s.url.includes(`/ws/pane/${id}`) && s.readyState === 1 && !s.frozen)
+      .send(new TextEncoder().encode("printf 'WAKE_%s\\n' OK\r"));
+  }, pane);
+  await waitForAsync(
+    page,
+    async (id) => {
+      const { useStore } = await import('/src/state/store.tsx' as string);
+      return !!useStore.getState().terminals.get(id)?.readLines().join('\n').includes('WAKE_OK');
+    },
+    pane,
+  );
+  await page.evaluate(() => {
+    for (const s of (window as any).testSockets) if (s.frozen) s.realClose();
+  });
+  console.log('PASS dead sockets reconnect on wake');
 
   const second = await context.newPage();
   await second.setViewportSize({ width: 800, height: 600 });

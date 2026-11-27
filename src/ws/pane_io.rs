@@ -164,7 +164,10 @@ async fn handle_socket(
         input_mode_frame(hidden, inputs.load(Ordering::Relaxed))
     };
     let mut mode_rx = hidden_input.subscribe();
+    let keepalive = super::keepalive::Keepalive::new();
+    let pong = tokio::sync::Notify::new();
     let send = async {
+        let mut ping = super::keepalive::ticker();
         let mut pending = replay;
         let mut replaying = true;
         let mut owner = is_owner(&owner_rx.borrow_and_update());
@@ -245,6 +248,16 @@ async fn handle_socket(
                         }
                     }
                 }
+                _ = pong.notified() => {
+                    if !send_frame(&mut ws_tx, Message::Text(r#"{"type":"pong"}"#.into())).await {
+                        return;
+                    }
+                }
+                _ = ping.tick() => {
+                    if keepalive.expired() || !send_frame(&mut ws_tx, super::keepalive::ping()).await {
+                        return;
+                    }
+                }
                 changed = owner_rx.changed(), if !mirror => {
                     if changed.is_err() {
                         return;
@@ -263,8 +276,15 @@ async fn handle_socket(
     let receive = async {
         let mut _watch = None;
         while let Some(Ok(msg)) = ws_rx.next().await {
+            keepalive.seen();
             if matches!(msg, Message::Close(_)) {
                 break;
+            }
+            if let Message::Text(text) = &msg {
+                if matches!(serde_json::from_str(text), Ok(ControlMsg::Ping)) {
+                    pong.notify_one();
+                    continue;
+                }
             }
             if mirror {
                 continue;
@@ -279,7 +299,11 @@ async fn handle_socket(
                     }
                     // A kept pane's program exited: nothing reads input, but
                     // it is still counted for the key overlay.
-                    if input_tx.send_wait(data.to_vec()).await.is_err() && alive() {
+                    // A program not reading input stops this reader.
+                    let result = keepalive
+                        .busy(input_tx.send_wait(data.to_vec()), || pong.notify_one())
+                        .await;
+                    if result.is_err() && alive() {
                         break;
                     }
                     if watched {
@@ -313,7 +337,7 @@ async fn handle_socket(
                                 pty.resize_viewer(viewer_id, cols, rows)
                             }
                             ControlMsg::Claim => pty.claim_viewer(viewer_id),
-                            ControlMsg::WatchInput { .. } => {}
+                            ControlMsg::WatchInput { .. } | ControlMsg::Ping => {}
                         }
                     }
                 }
@@ -428,6 +452,8 @@ enum ControlMsg {
     WatchInput {
         on: bool,
     },
+    /// Answered with `pong`, so the tab knows the socket still works.
+    Ping,
 }
 
 /// Hidden if either hid input, unknown if either can't tell.
