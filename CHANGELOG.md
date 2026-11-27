@@ -8,6 +8,11 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Changed
+
+- The "Fit to this screen" button is mostly opaque and blurs what is behind
+  it, so terminal text doesn't show through. ([#209](https://github.com/btmux-dev/btmux/pull/209))
+
 ### Fixed
 
 - On touch screens, a hidden native editor no longer leaves its tabs' close

@@ -138,6 +138,16 @@ try {
   await keys('Esc').waitFor();
   assert.equal(await page.getByRole('toolbar', { name: 'Terminal controls' }).count(), 0);
   const fitHere = page.getByRole('button', { name: 'Fit to this screen' });
+  // Glass, so the terminal's text doesn't show through it.
+  const fitStyle = await fitHere.evaluate((button) => {
+    const style = getComputedStyle(button);
+    const probe = document.createElement('canvas').getContext('2d')!;
+    probe.fillStyle = style.backgroundColor;
+    probe.fillRect(0, 0, 1, 1);
+    return { alpha: probe.getImageData(0, 0, 1, 1).data[3] / 255, blur: style.webkitBackdropFilter };
+  });
+  assert(fitStyle.alpha >= 0.8, `the fit button's background is ${fitStyle.alpha} opaque`);
+  assert.match(fitStyle.blur, /^blur\(/);
   await fitHere.tap();
   await fitHere.waitFor({ state: 'detached' });
   await owner.close();

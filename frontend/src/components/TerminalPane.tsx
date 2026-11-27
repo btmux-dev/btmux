@@ -18,6 +18,7 @@ import { PaneSearch } from './PaneSearch';
 import { CONNECTION_STATE_LABEL } from '../lib/connectionState';
 import { clsx } from 'clsx';
 import { Button } from '@astryxdesign/core/Button';
+import { POPUP_GLASS } from '../lib/popupGlass';
 import { desktopTransparency } from '../lib/desktopTransparency';
 import { hasShaderWallpaper } from '../lib/wallpaperCatalog';
 import {
@@ -453,6 +454,8 @@ export function TerminalPane({
               label="Fit to this screen"
               size="sm"
               elevation="med"
+              // Legible over the terminal's text.
+              style={POPUP_GLASS}
               tooltip="Another viewer set this pane's size"
               onClick={() => claimRef.current?.()}
             />

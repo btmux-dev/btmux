@@ -4,6 +4,7 @@ import { tags as t } from '@lezer/highlight';
 import type { Extension } from '@codemirror/state';
 import type { Theme } from '../../generated/protocol';
 import { readableColor } from '../astryx-theme';
+import { POPUP_GLASS } from '../popupGlass';
 
 export interface EditorAppearance {
   theme: Theme;
@@ -104,12 +105,6 @@ function completionIcons(theme: Theme) {
   }
   return rules;
 }
-
-/** The native editor's popups: `popup-opacity`, blurred by `popup-blur` (`useModalBackdrop`). */
-export const POPUP_GLASS = {
-  backgroundColor: 'color-mix(in srgb, var(--color-background-popover) var(--btm-popup-opacity, 85%), transparent)',
-  backdropFilter: 'blur(var(--btm-popup-blur, 2px))',
-} as const;
 
 /** The editor's look, from the terminal palette and font. */
 export function editorTheme(a: EditorAppearance): Extension {

@@ -3,7 +3,7 @@ import { Text } from '@astryxdesign/core/Text';
 import { KeyCap } from './KeyHint';
 import { keyCapKeys, showKeys } from '../lib/nativeEditor/keyLayer';
 import type { PendingKeys } from '../lib/nativeEditor/sequences';
-import { POPUP_GLASS } from '../lib/nativeEditor/theme';
+import { POPUP_GLASS } from '../lib/popupGlass';
 
 /** What can follow the keys pending in the native editor, after which-key.nvim. */
 export function WhichKey({ pending }: { pending: PendingKeys }) {
