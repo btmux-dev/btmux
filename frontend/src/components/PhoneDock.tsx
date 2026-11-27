@@ -54,6 +54,32 @@ export function PhoneDock({ sessionId, send }: { sessionId: string; send: (messa
       localStorage.setItem(KEYS_STORAGE, String(!keysOpen));
     } catch {}
   };
+  // Compact when the full dock would leave the panes less than half the app's height,
+  // as when the keyboard is up. Full heights are measured only while full, per keys state.
+  const dockRef = useRef<HTMLDivElement>(null);
+  const [shellHeight, setShellHeight] = useState(0);
+  const [fullHeights, setFullHeights] = useState<Partial<Record<'open' | 'closed', number>>>({});
+  const keysState = keysOpen ? 'open' : 'closed';
+  const fullHeight = fullHeights[keysState];
+  const compact = fullHeight !== undefined && shellHeight > 0 && shellHeight - fullHeight < shellHeight / 2;
+  const compactRef = useRef(compact);
+  compactRef.current = compact;
+  useLayoutEffect(() => {
+    const dock = dockRef.current;
+    const shell = dock?.closest('.astryx-app-shell');
+    if (!dock || !shell) return;
+    const measure = () => {
+      setShellHeight(shell.clientHeight);
+      if (compactRef.current) return;
+      const height = dock.offsetHeight;
+      setFullHeights((heights) => (heights[keysState] === height ? heights : { ...heights, [keysState]: height }));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(shell);
+    observer.observe(dock);
+    return () => observer.disconnect();
+  }, [keysState, compact]);
   // Rows of equal length (6 + 6, not 11 + 1): the fewest rows that fit, then the fewest columns for them.
   const rowRef = useRef<HTMLDivElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
@@ -62,7 +88,7 @@ export function PhoneDock({ sessionId, send }: { sessionId: string; send: (messa
   useLayoutEffect(() => {
     const row = rowRef.current;
     const toolbar = toolbarRef.current;
-    if (!row || !toolbar) return;
+    if (compact || !row || !toolbar) return;
     const fit = () => {
       // Popovers leave empty nodes beside their buttons.
       const count = [...toolbar.children].filter((child) => (child as HTMLElement).offsetWidth > 0).length;
@@ -81,7 +107,7 @@ export function PhoneDock({ sessionId, send }: { sessionId: string; send: (messa
       observer.disconnect();
       mutations.disconnect();
     };
-  }, [hasMinimap]);
+  }, [hasMinimap, compact]);
   // An agent waiting on the user, else one with a result to read.
   const alert = useStore((state) => {
     let done = false;
@@ -113,7 +139,7 @@ export function PhoneDock({ sessionId, send }: { sessionId: string; send: (messa
       else useStore.getState().setFileBrowserOpen(true, pane.cwd ?? null, pane.id, mode);
     });
   const action = (label: string, icon: ReactNode, onClick: () => void) => (
-    <IconButton label={label} variant="ghost" size="lg" icon={icon} onClick={onClick} />
+    <IconButton key={label} label={label} variant="ghost" size="lg" icon={icon} onClick={onClick} />
   );
   const minimap = win && win.panes.length > 1 && (
     <PaneMinimap
@@ -126,8 +152,83 @@ export function PhoneDock({ sessionId, send }: { sessionId: string; send: (messa
       onSelect={(paneId) => send({ type: 'select_pane', session_id: sessionId, pane_id: paneId })}
     />
   );
+  const keys = (
+    <IconButton
+      key="Keys"
+      label="Keys"
+      variant={keysOpen ? 'secondary' : 'ghost'}
+      size="lg"
+      icon={<Keyboard />}
+      aria-pressed={keysOpen}
+      onClick={toggleKeys}
+    />
+  );
+  const hide = action('Hide keyboard', <KeyboardOff />, hideKeyboard);
+  const surfaces = [
+    action('Menu', <Menu />, () => open(() => useStore.getState().setMobileNavOpen(true))),
+    action('Switch session', <Search />, () => open(() => useStore.getState().setSwitcherOpen(true))),
+    <IconButton
+      key="Agents"
+      label={alert ? `Agents (${alert})` : 'Agents'}
+      variant="ghost"
+      size="lg"
+      icon={
+        <span className="relative">
+          <Bot />
+          {alert && (
+            <span
+              className="btm-agent-dot -top-0.5 -right-0.5 size-2 rounded-full"
+              // Inline: .btm-agent-dot sets position after the utilities.
+              style={{ position: 'absolute' }}
+              data-agent-state={alert}
+            />
+          )}
+        </span>
+      }
+      onClick={() => open(() => useStore.getState().setAgentGridOpen(true))}
+    />,
+    action('Commands', <Command />, () =>
+      open(() => {
+        const state = useStore.getState();
+        state.setOverlay({ mode: 'command', title: 'Commands', commands: state.config?.commands ?? [] });
+      }),
+    ),
+  ];
+  const tools = [
+    action('Git mode', <GitBranch />, () => openFiles('git')),
+    action('File browser', <FolderOpen />, () => openFiles('files')),
+    action(editor.label, editor.icon, () =>
+      open(() => runAction('editor', sessionId, send, (name) => navigate(`/s/${encodeURIComponent(name)}`))),
+    ),
+    action('Process viewer', <Activity />, () => openFiles('process')),
+    <MultipassButton key="Sandbox" size="lg" />,
+    <TailscaleButton key="Tailnet" size="lg" />,
+  ];
+  const keyPanel = <MobileKeyBar sessionId={sessionId} send={send} layout={compact ? 'row' : 'panel'} />;
+
+  if (compact) {
+    // Short screens (the keyboard is up): one scrolling row, Hide keyboard and the keys first.
+    return (
+      <div ref={dockRef} style={{ padding: '4px 6px' }} onMouseDown={(event) => event.preventDefault()}>
+        <div
+          role="toolbar"
+          aria-label="Quick actions"
+          // 40px keys: a little smaller, still easy to tap.
+          className="btm-toolbar-glass [&_button]:size-10 [&>*]:shrink-0"
+          style={{ ...card(theme), display: 'flex', alignItems: 'center', gap: 2, padding: 2, overflowX: 'auto' }}
+        >
+          {hide}
+          {keys}
+          {keysOpen && keyPanel}
+          {surfaces}
+          {tools}
+        </div>
+      </div>
+    );
+  }
   return (
     <div
+      ref={dockRef}
       style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 10 }}
       // Keep the keyboard open: a tap here mustn't take focus from the terminal.
       // Not on pointerdown, which cancels a tap's click in WebKit.
@@ -135,7 +236,7 @@ export function PhoneDock({ sessionId, send }: { sessionId: string; send: (messa
     >
       {keysOpen && (
         <div className="btm-toolbar-glass self-start" style={card(theme)}>
-          <MobileKeyBar sessionId={sessionId} send={send} layout="panel" />
+          {keyPanel}
         </div>
       )}
       <div ref={rowRef} style={{ display: 'flex', alignItems: 'flex-end', gap: 10 }}>
@@ -155,50 +256,10 @@ export function PhoneDock({ sessionId, send }: { sessionId: string; send: (messa
             padding: 4,
           }}
         >
-          {action('Menu', <Menu />, () => open(() => useStore.getState().setMobileNavOpen(true)))}
-          {action('Switch session', <Search />, () => open(() => useStore.getState().setSwitcherOpen(true)))}
-          <IconButton
-            label={alert ? `Agents (${alert})` : 'Agents'}
-            variant="ghost"
-            size="lg"
-            icon={
-              <span className="relative">
-                <Bot />
-                {alert && (
-                  <span
-                    className="btm-agent-dot -top-0.5 -right-0.5 size-2 rounded-full"
-                    // Inline: .btm-agent-dot sets position after the utilities.
-                    style={{ position: 'absolute' }}
-                    data-agent-state={alert}
-                  />
-                )}
-              </span>
-            }
-            onClick={() => open(() => useStore.getState().setAgentGridOpen(true))}
-          />
-          {action('Commands', <Command />, () =>
-            open(() => {
-              const state = useStore.getState();
-              state.setOverlay({ mode: 'command', title: 'Commands', commands: state.config?.commands ?? [] });
-            }),
-          )}
-          <IconButton
-            label="Keys"
-            variant={keysOpen ? 'secondary' : 'ghost'}
-            size="lg"
-            icon={<Keyboard />}
-            aria-pressed={keysOpen}
-            onClick={toggleKeys}
-          />
-          {action('Hide keyboard', <KeyboardOff />, hideKeyboard)}
-          {action('Git mode', <GitBranch />, () => openFiles('git'))}
-          {action('File browser', <FolderOpen />, () => openFiles('files'))}
-          {action(editor.label, editor.icon, () =>
-            open(() => runAction('editor', sessionId, send, (name) => navigate(`/s/${encodeURIComponent(name)}`))),
-          )}
-          {action('Process viewer', <Activity />, () => openFiles('process'))}
-          <MultipassButton size="lg" />
-          <TailscaleButton size="lg" />
+          {surfaces}
+          {keys}
+          {hide}
+          {tools}
         </div>
         {minimap && (
           // The buttons' height, and the width they leave: narrow beside two rows, wider beside one.

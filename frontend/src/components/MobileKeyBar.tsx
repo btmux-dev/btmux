@@ -36,7 +36,8 @@ export function MobileKeyBar({
 }: {
   sessionId: string;
   send: (message: ClientMessage) => void;
-  layout?: 'bar' | 'panel';
+  /** `panel` and `row` are the phone dock's: large keys, wrapping or in its compact row. */
+  layout?: 'bar' | 'panel' | 'row';
 }) {
   const config = useStore((state) => state.config);
   const prefixActive = useStore((state) => state.prefixActive);
@@ -150,7 +151,7 @@ export function MobileKeyBar({
   }, [ctrl, alt, prefixActive]);
 
   // The phone layout's floating panel: large keys, wrapping; it hides the keyboard elsewhere.
-  const panel = layout === 'panel';
+  const panel = layout !== 'bar';
   const size = panel ? 'lg' : 'sm';
   const keys = (
     <>
@@ -198,10 +199,11 @@ export function MobileKeyBar({
   if (panel) {
     return (
       <HStack
-        gap={1}
-        padding={1}
+        gap={layout === 'row' ? 0.5 : 1}
+        padding={layout === 'row' ? 0 : 1}
         vAlign="center"
-        className="btm-mono flex-wrap [&_button]:h-11 [&_button]:min-w-11"
+        // In the dock's compact row, whose 40px squares would clip Esc and Ctrl.
+        className={`btm-mono ${layout === 'row' ? 'shrink-0 [&_button]:h-10 [&_button]:min-w-10 [&_button]:w-auto! [&_button]:px-2!' : 'flex-wrap [&_button]:h-11 [&_button]:min-w-11'}`}
         aria-label="Terminal keys"
         onMouseDown={keepFocus}
       >

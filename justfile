@@ -21,28 +21,10 @@ dev frontend_port="5173":
         "cargo run -- --no-browser --profile dev --public-url http://localhost:{{frontend_port}} --public-url http://127.0.0.1:{{frontend_port}} --port {{dev_port}}" \
         "cd frontend && bunx vite --open --port {{frontend_port}}"
 
-# `just dev`, also served to your tailnet over HTTPS (Tailscale Serve), for phones.
+# `just dev`, also served to your tailnet over HTTPS (Tailscale Serve), with a
+# random token and a QR code that signs a phone in.
 dev-tailscale frontend_port="5173":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    host="$(tailscale status --json | bun -e 'console.log((await Bun.stdin.json()).Self.DNSName.replace(/\.$/, ""))')"
-    target="http://127.0.0.1:{{frontend_port}}"
-    # Reuse a route to Vite; refuse one serving anything else.
-    current="$(tailscale serve status --json | HOST="$host:{{frontend_port}}" bun -e 'console.log((await Bun.stdin.json()).Web?.[process.env.HOST]?.Handlers?.["/"]?.Proxy ?? "")')"
-    if [ -z "$current" ]; then
-        trap 'tailscale serve --https={{frontend_port}} off >/dev/null' EXIT
-        trap 'exit 130' INT TERM HUP
-        tailscale serve --bg --yes --https={{frontend_port}} "$target" >/dev/null
-    elif [ "$current" != "$target" ]; then
-        echo "error: Tailscale already serves port {{frontend_port}} from $current; see 'tailscale serve status'" >&2
-        exit 1
-    fi
-    echo "Serving https://$host:{{frontend_port}} (token {{dev_token}})"
-    BTMUX_AUTH_TOKEN={{dev_token}} BTMUX_CONSOLE_LOG="${BTMUX_CONSOLE_LOG:-debug}" BTMUX_FILE_LOG="${BTMUX_FILE_LOG:-debug}" \
-      __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS="$host" \
-      bunx concurrently --kill-others --success first --names backend,frontend --prefix-colors blue,green \
-        "cargo run -- --no-browser --profile dev --public-url http://localhost:{{frontend_port}} --public-url http://127.0.0.1:{{frontend_port}} --public-url https://$host:{{frontend_port}} --port {{dev_port}}" \
-        "cd frontend && bunx vite --host 127.0.0.1 --port {{frontend_port}}"
+    cd frontend && bun dev-tailscale.ts {{frontend_port}} {{dev_port}}
 
 # Run only the backend
 dev-backend:

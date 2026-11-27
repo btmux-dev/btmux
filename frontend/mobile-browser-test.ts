@@ -135,6 +135,25 @@ try {
   const setViewportHeight = (height: string) =>
     page.evaluate((height) => document.documentElement.style.setProperty('--btm-viewport-height', height), height);
   await setViewportHeight('300px');
+  // The dock compacts to one row, so the terminal keeps usable rows.
+  const terminalHeight = () =>
+    page.evaluate(() =>
+      Math.max(
+        ...[...document.querySelectorAll('[data-pane-terminal]')]
+          .filter((element) => element.checkVisibility())
+          .map((element) => element.getBoundingClientRect().height),
+      ),
+    );
+  await page
+    .waitForFunction(
+      () =>
+        Math.max(
+          ...[...document.querySelectorAll('[data-pane-terminal]')]
+            .filter((element) => element.checkVisibility())
+            .map((element) => element.getBoundingClientRect().height),
+        ) >= 150,
+    )
+    .catch(async () => assert.fail(`the terminal is ${await terminalHeight()}px tall at 300px`));
   const hide = (await keys('Hide keyboard').boundingBox())!;
   assert(hide.y + hide.height <= 300, `buttons end at ${hide.y + hide.height}px`);
   await setViewportHeight(`${fit.viewport}px`);
@@ -203,10 +222,10 @@ try {
   assert.equal(await takeInput(page), '\r');
   const fieldValue = () => page.evaluate(() => (document.activeElement as HTMLTextAreaElement).value);
   const select = (start: number, end: number) =>
-    page.evaluate(([start, end]) => (document.activeElement as HTMLTextAreaElement).setSelectionRange(start, end), [
-      start,
-      end,
-    ]);
+    page.evaluate(
+      ([start, end]) => (document.activeElement as HTMLTextAreaElement).setSelectionRange(start, end),
+      [start, end],
+    );
   assert.equal(await fieldValue(), '​');
   // Backspace over a selection of retained text deletes all of it.
   await page.keyboard.insertText('hello world');
@@ -219,7 +238,9 @@ try {
   await select(1, 7);
   await page.evaluate(() => {
     const input = document.activeElement as HTMLTextAreaElement;
-    input.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertFromPaste' }));
+    input.dispatchEvent(
+      new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertFromPaste' }),
+    );
     input.value = '​hey';
     input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste' }));
   });
@@ -245,9 +266,7 @@ try {
   await write(page, '\x1b[?1049h\x1b[H\x1b[31mred\x1b[m');
   await page.locator('[data-pane-terminal] .term-row span', { hasText: 'red' }).waitFor();
   const lines = await page.evaluate(async () => {
-    const term = (
-      window as unknown as { term: { measureCell(): { height: number }; write(data: string): void } }
-    ).term;
+    const term = (window as unknown as { term: { measureCell(): { height: number }; write(data: string): void } }).term;
     const element = document.querySelector('[data-pane-terminal]')!;
     const target = [...element.querySelectorAll('.term-row span')].find((span) => span.textContent === 'red')!;
     const rect = element.getBoundingClientRect();
@@ -381,6 +400,26 @@ try {
     ),
     'landscape phones show an inline side nav',
   );
+  // With the keyboard up in landscape, the terminal keeps three rows and the keyboard can be hidden.
+  // First let the resize reach useVisualViewport, which would overwrite the height set here.
+  await page.waitForFunction(
+    () => document.documentElement.style.getPropertyValue('--btm-viewport-height') === `${visualViewport!.height}px`,
+  );
+  await setViewportHeight('150px');
+  await page
+    .waitForFunction(
+      () =>
+        Math.max(
+          ...[...document.querySelectorAll('[data-pane-terminal]')]
+            .filter((element) => element.checkVisibility())
+            .map((element) => element.getBoundingClientRect().height),
+        ) >=
+        3 * 17,
+    )
+    .catch(async () => assert.fail(`the terminal is ${await terminalHeight()}px tall at 150px`));
+  const hideLandscape = (await keys('Hide keyboard').boundingBox())!;
+  assert(hideLandscape.y + hideLandscape.height <= 150, `buttons end at ${hideLandscape.y + hideLandscape.height}px`);
+  await setViewportHeight(`${portrait.width}px`);
   await page.setViewportSize(portrait);
 
   // File browser hints type their keys when tapped.
@@ -725,7 +764,10 @@ try {
   await pick();
   await page.getByLabel('Terminal').first().tap({ force: true });
   await page.keyboard.type('choice-4');
-  await waitForAsync(page, () => document.querySelector('[data-pane-widget] input')?.getAttribute('value') === 'choice-4');
+  await waitForAsync(
+    page,
+    () => document.querySelector('[data-pane-widget] input')?.getAttribute('value') === 'choice-4',
+  );
   assert((await picker.innerText()).includes('1/4'));
   await keys('Esc').tap();
   await picker.waitFor({ state: 'detached' });
