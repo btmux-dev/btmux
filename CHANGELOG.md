@@ -8,6 +8,8 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+## [0.0.226] - 2026-11-27
+
 ### Changed
 
 - In the side nav (not the drawer on narrow screens), the Workspace items
