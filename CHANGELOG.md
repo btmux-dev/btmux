@@ -14,14 +14,14 @@ actions, saved state, and API types can change in any release.
   health while a session uses it: green when it answers, yellow while it
   starts, gray when stopped, and red when it doesn't answer although
   Multipass says it runs. A sandbox that doesn't answer can be force
-  stopped from it.
+  stopped from it. ([#206](https://github.com/btmux-dev/btmux/pull/206))
 
 ### Fixed
 
 - A sandboxed pane says when it waits for the sandbox to answer, no longer
   echoes keys typed meanwhile, and keeps its error shown until Enter is
   pressed after it. When the sandbox crashed but Multipass still says it
-  runs, the error says how to recover.
+  runs, the error says how to recover. ([#206](https://github.com/btmux-dev/btmux/pull/206))
 
 ## [0.0.223] - 2026-11-27
 
