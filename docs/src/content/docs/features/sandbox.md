@@ -48,7 +48,7 @@ checked every 20 seconds:
 | Dot | Meaning |
 | --- | --- |
 | Green | Running and answering. |
-| Yellow | Starting, stopping, or being set up by a pane. |
+| Yellow | Starting or stopping. |
 | Gray | Stopped, suspended, or not created yet. |
 | Red | Not answering, though Multipass says it runs, or Multipass failed. |
 

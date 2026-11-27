@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { waitForAsync } from './browser-test-utils';
@@ -233,6 +233,23 @@ try {
   await page.locator('[data-popup]').getByRole('button', { name: 'Close popup' }).click();
   await page.locator('[data-popup]').waitFor({ state: 'detached' });
   console.log('PASS a popup runs in the guest in its own directory, with widgets and pasted images');
+
+  // A VM that crashed while Multipass still calls it running: a red dot, and
+  // Force stop in place of Restart and Stop.
+  writeFileSync(path.join(fake, 'instances', 'btmux-sandbox', 'crashed'), '');
+  const sandboxButton = page.getByRole('button', { name: /^Multipass sandbox/ });
+  const sandboxLabel = async () => (await sandboxButton.getAttribute('aria-label')) ?? '';
+  await until('the red dot', async () => /: not answering: exec failed/.test(await sandboxLabel()), 60_000);
+  await sandboxButton.click();
+  await popover.getByText(/IP not available\. It may have crashed/).waitFor();
+  assert.equal(await popover.getByRole('button', { name: 'Restart' }).count(), 0);
+  assert.equal(await popover.getByRole('button', { name: 'Stop', exact: true }).count(), 0);
+  await popover.getByRole('button', { name: 'Force stop' }).click();
+  await confirm.getByText(/killed without shutting down/).waitFor();
+  await confirm.getByRole('button', { name: 'Confirm' }).click();
+  await until('the force stop', async () => calls().some((args) => args.join(' ') === 'stop --force btmux-sandbox'));
+  await until('the gray dot', async () => /: stopped$/.test(await sandboxLabel()));
+  console.log("PASS a sandbox that doesn't answer shows a red dot and can be force stopped");
 
   assert.deepEqual(errors, []);
 } finally {

@@ -1360,7 +1360,11 @@ fn run_shell(_: Command) -> Result<i32, String> {
 /// Why the shell ended with the instance, and how to bring it back; `None`
 /// while the instance still answers.
 fn instance_gone(instance: &str) -> Option<(String, &'static str)> {
-    if run(&["exec", instance, "-n", "--", "true"]).is_ok() {
+    // Bounded, so a hung check can't leave the pane waiting forever.
+    if tokio::runtime::Handle::current()
+        .block_on(exec_true(instance))
+        .is_ok()
+    {
         return None;
     }
     // Let a stop or delete finish.
@@ -1491,7 +1495,7 @@ async fn instance_status(instance: String, panes: usize) -> Result<InstanceStatu
 pub enum HealthLevel {
     /// Running and answering commands.
     Ok,
-    /// Starting, stopping, or being set up by a pane.
+    /// Starting, stopping, or another transitional state.
     Busy,
     /// Stopped, suspended, or not created.
     Down,

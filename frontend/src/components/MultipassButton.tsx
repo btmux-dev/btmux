@@ -82,6 +82,9 @@ export function MultipassButton({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
   const name = status?.instance ?? 'the sandbox';
   // The heartbeat's, once it checked this instance.
   const checked = health && (!status || health.instance === status.instance) ? health : null;
+  // Only while Multipass still says it runs: after a force stop, the status
+  // can be newer than the heartbeat.
+  const failing = checked?.level === 'failing' && (!status || running);
   const details = [
     status?.release && `Ubuntu ${status.release}`,
     status?.cpus && `${status.cpus} CPUs`,
@@ -92,8 +95,8 @@ export function MultipassButton({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
   const content = (
     <VStack gap={2} className="btm-sans">
       <HStack gap={1} vAlign="center">
-        {checked ? (
-          <StatusDot variant={DOT[checked.level]} label={checked.summary} />
+        {failing ? (
+          <StatusDot variant="error" label={checked.summary} />
         ) : (
           status && <StatusDot variant={running ? 'success' : 'neutral'} label={state ?? 'Not created'} />
         )}
@@ -101,14 +104,10 @@ export function MultipassButton({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
           {checked?.instance ?? name}
         </Text>
         <Text color="secondary">
-          {checked?.level === 'failing'
-            ? 'not answering'
-            : status
-              ? (state ?? 'not created').toLowerCase()
-              : 'loading…'}
+          {failing ? 'not answering' : status ? (state ?? 'not created').toLowerCase() : 'loading…'}
         </Text>
       </HStack>
-      {checked?.level === 'failing' && (
+      {failing && (
         <Text type="supporting" className="break-words">
           {/* The heading already says "not answering". */}
           {capitalize(checked.summary.replace(/^not answering: /, ''))}. It may have crashed; if it doesn't recover,
@@ -125,33 +124,32 @@ export function MultipassButton({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
       )}
       {status && state && (
         <HStack gap={1} wrap="wrap">
-          {running ? (
+          {failing ? (
+            // A clean shutdown (Restart, Stop) needs a VM that answers; one
+            // that doesn't could hang them.
+            <Button
+              size="sm"
+              variant="ghost"
+              label="Force stop"
+              isLoading={busy === 'force-stop'}
+              isDisabled={!!busy}
+              onClick={() =>
+                confirm(
+                  'force-stop',
+                  `Force stop ${name}? It is killed without shutting down, so programs running in it are lost.${panesNote(status.panes, 'start')}`,
+                )
+              }
+            />
+          ) : running ? (
             <>
-              {checked?.level === 'failing' ? (
-                // A clean shutdown needs a VM that answers.
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  label="Force stop"
-                  isLoading={busy === 'force-stop'}
-                  isDisabled={!!busy}
-                  onClick={() =>
-                    confirm(
-                      'force-stop',
-                      `Force stop ${name}? It is killed without shutting down, so programs running in it are lost.${panesNote(status.panes, 'start')}`,
-                    )
-                  }
-                />
-              ) : (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  label="Restart"
-                  isLoading={busy === 'restart'}
-                  isDisabled={!!busy}
-                  onClick={() => void run('restart')}
-                />
-              )}
+              <Button
+                size="sm"
+                variant="ghost"
+                label="Restart"
+                isLoading={busy === 'restart'}
+                isDisabled={!!busy}
+                onClick={() => void run('restart')}
+              />
               <Button
                 size="sm"
                 variant="ghost"

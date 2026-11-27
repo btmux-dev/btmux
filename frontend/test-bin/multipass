@@ -56,8 +56,10 @@ case "$command" in
     rm -f "$state/instances/$1/stopped"
     ;;
   stop)
-    end_shells "$state/instances/$1"
-    touch "$state/instances/$1/stopped"
+    instance="${*: -1}"
+    end_shells "$state/instances/$instance"
+    rm -f "$state/instances/$instance/crashed"
+    touch "$state/instances/$instance/stopped"
     ;;
   delete)
     instance="${*: -1}"
@@ -71,6 +73,11 @@ case "$command" in
   exec)
     instance="$1"
     shift
+    # A VM that crashed while Multipass still calls it running.
+    if [ -f "$state/instances/$instance/crashed" ]; then
+      echo "exec failed: IP not available" >&2
+      exit 2
+    fi
     if [ ! -d "$state/instances/$instance" ] || [ -f "$state/instances/$instance/stopped" ]; then
       echo "exec failed: $instance is not running" >&2
       exit 2
