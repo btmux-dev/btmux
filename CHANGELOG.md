@@ -8,6 +8,12 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Changed
+
+- The side nav's Workspace items stay in place while the session list
+  scrolls, and the list's edges fade where more sessions are out of view,
+  instead of the collapsed rail showing a scrollbar. ([#211](https://github.com/btmux-dev/btmux/pull/211))
+
 ## [0.0.225] - 2026-11-27
 
 ### Changed
