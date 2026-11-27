@@ -6,11 +6,18 @@ import { Button } from '@astryxdesign/core/Button';
 import { HStack, VStack } from '@astryxdesign/core/Layout';
 import { Text } from '@astryxdesign/core/Text';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
-import type { InstanceStatus, Usage } from '../generated/protocol';
+import type { HealthLevel, InstanceStatus, Usage } from '../generated/protocol';
 import { formatBytes } from '../lib/processFormat';
 import { useStore } from '../state/store';
 
-type Action = 'start' | 'stop' | 'restart' | 'delete';
+type Action = 'start' | 'stop' | 'force-stop' | 'restart' | 'delete';
+
+const DOT = { ok: 'success', busy: 'warning', down: 'neutral', failing: 'error' } as const satisfies Record<
+  HealthLevel,
+  string
+>;
+
+const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 const usage = (value: Usage | null) => value && `${formatBytes(value.used)} of ${formatBytes(value.total)}`;
 
@@ -23,6 +30,7 @@ const panesNote = (panes: number, verb: string) =>
 /** `lg` is the phone dock's, on the left: its popover opens rightward. */
 export function MultipassButton({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
   const available = useStore((state) => !!state.config?.multipass);
+  const health = useStore((state) => state.sandboxHealth);
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState<InstanceStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -62,6 +70,8 @@ export function MultipassButton({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
   const state = status?.state ?? null;
   const running = state === 'Running';
   const name = status?.instance ?? 'the sandbox';
+  // The heartbeat's, once it checked this instance.
+  const checked = health && (!status || health.instance === status.instance) ? health : null;
   const details = [
     status?.release && `Ubuntu ${status.release}`,
     status?.cpus && `${status.cpus} CPUs`,
@@ -72,12 +82,29 @@ export function MultipassButton({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
   const content = (
     <VStack gap={2} className="btm-sans">
       <HStack gap={1} vAlign="center">
-        {status && <StatusDot variant={running ? 'success' : 'neutral'} label={state ?? 'Not created'} />}
+        {checked ? (
+          <StatusDot variant={DOT[checked.level]} label={checked.summary} />
+        ) : (
+          status && <StatusDot variant={running ? 'success' : 'neutral'} label={state ?? 'Not created'} />
+        )}
         <Text type="code" className="btm-mono">
-          {name}
+          {checked?.instance ?? name}
         </Text>
-        <Text color="secondary">{status ? (state ?? 'not created').toLowerCase() : 'loading…'}</Text>
+        <Text color="secondary">
+          {checked?.level === 'failing'
+            ? 'not answering'
+            : status
+              ? (state ?? 'not created').toLowerCase()
+              : 'loading…'}
+        </Text>
       </HStack>
+      {checked?.level === 'failing' && (
+        <Text type="supporting" className="break-words">
+          {/* The heading already says "not answering". */}
+          {capitalize(checked.summary.replace(/^not answering: /, ''))}. It may have crashed; if it doesn't recover,
+          force stop it and start it again.
+        </Text>
+      )}
       {details.length > 0 && <Text type="supporting">{details.join(' · ')}</Text>}
       {status && !state && <Text type="supporting">The next sandboxed pane creates it.</Text>}
       {error && (
@@ -90,14 +117,31 @@ export function MultipassButton({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
         <HStack gap={1} wrap="wrap">
           {running ? (
             <>
-              <Button
-                size="sm"
-                variant="ghost"
-                label="Restart"
-                isLoading={busy === 'restart'}
-                isDisabled={!!busy}
-                onClick={() => void run('restart')}
-              />
+              {checked?.level === 'failing' ? (
+                // A clean shutdown needs a VM that answers.
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  label="Force stop"
+                  isLoading={busy === 'force-stop'}
+                  isDisabled={!!busy}
+                  onClick={() =>
+                    confirm(
+                      'force-stop',
+                      `Force stop ${name}? It is killed without shutting down, so programs running in it are lost.${panesNote(status.panes, 'start')}`,
+                    )
+                  }
+                />
+              ) : (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  label="Restart"
+                  isLoading={busy === 'restart'}
+                  isDisabled={!!busy}
+                  onClick={() => void run('restart')}
+                />
+              )}
               <Button
                 size="sm"
                 variant="ghost"
@@ -139,17 +183,21 @@ export function MultipassButton({ size = 'sm' }: { size?: 'sm' | 'lg' }) {
     </VStack>
   );
 
+  const label = health ? `Multipass sandbox: ${health.summary}` : 'Multipass sandbox';
   return (
-    <Popover
-      label="Multipass sandbox"
-      placement="above"
-      alignment={size === 'lg' ? 'start' : 'end'}
-      width={360}
-      isOpen={open}
-      onOpenChange={setOpen}
-      content={content}
-    >
-      <IconButton label="Multipass sandbox" tooltip="Multipass sandbox" variant="ghost" size={size} icon={<Box />} />
-    </Popover>
+    <HStack gap={0.5} vAlign="center">
+      <Popover
+        label="Multipass sandbox"
+        placement="above"
+        alignment={size === 'lg' ? 'start' : 'end'}
+        width={360}
+        isOpen={open}
+        onOpenChange={setOpen}
+        content={content}
+      >
+        <IconButton label={label} tooltip={label} variant="ghost" size={size} icon={<Box />} />
+      </Popover>
+      {health && <StatusDot variant={DOT[health.level]} label={label} isPulsing={health.level === 'busy'} />}
+    </HStack>
   );
 }

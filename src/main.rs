@@ -522,6 +522,7 @@ async fn main() {
     spawn_meta_change_handler(meta_rx, state.clone());
     update_check::spawn(state.clone());
     github::spawn(state.clone());
+    multipass::spawn_heartbeat(state.clone());
     vscode::find_program(state.clone());
 
     // Persist the session tree to disk on every state change (debounced).

@@ -106,6 +106,9 @@ fn initial_messages(mgr: &crate::session::manager::SessionManager) -> Vec<String
         messages.push(serde_json::to_string(&ServerMessage::Connect { status }).unwrap());
     }
     // Sent when empty too, replacing what a tab kept from before.
+    let health = crate::multipass::health();
+    messages.push(serde_json::to_string(&ServerMessage::Sandbox { health }).unwrap());
+    // Sent when empty too, replacing what a tab kept from before.
     let statuses = crate::github::statuses();
     messages.push(serde_json::to_string(&ServerMessage::Github { statuses }).unwrap());
     // Sent when empty too, replacing what a tab kept from before.
@@ -1262,6 +1265,11 @@ pub enum ServerMessage {
     Popups {
         popups: Vec<crate::popup::PopupSummary>,
     },
+    /// The Multipass sandbox's heartbeat, while a session uses it; sent on
+    /// connect and on change.
+    Sandbox {
+        health: Option<crate::multipass::SandboxHealth>,
+    },
     /// Pull request and CI status of pane branches; sent on connect and on change.
     Github {
         statuses: Vec<crate::github::GithubStatus>,
@@ -1399,11 +1407,15 @@ mod tests {
             Err(tokio::sync::broadcast::error::RecvError::Lagged(_))
         ));
         let state = std::sync::Arc::new(tokio::sync::RwLock::new(mgr));
-        let [config, snapshot, github, popups, widgets] =
+        let [config, snapshot, sandbox, github, popups, widgets] =
             &resynchronize(&mut events, &state).await[..]
         else {
-            panic!("expected config, state, github, popups, and widgets");
+            panic!("expected config, state, sandbox, github, popups, and widgets");
         };
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(sandbox).unwrap(),
+            serde_json::json!({"type": "sandbox", "health": null})
+        );
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(popups).unwrap(),
             serde_json::json!({"type": "popups", "popups": []})

@@ -193,6 +193,8 @@ export function useControlSocket() {
             showToast(`${msg.editor === 'vscode' ? 'VS Code' : 'Neovim'} shut down`, 'info');
         } else if (msg.type === 'tailscale') {
           useStore.getState().setTailscale(msg.status);
+        } else if (msg.type === 'sandbox') {
+          useStore.getState().setSandboxHealth(msg.health);
         } else if (msg.type === 'connect') {
           useStore.getState().setConnect(msg.status);
         } else if (msg.type === 'widgets') {

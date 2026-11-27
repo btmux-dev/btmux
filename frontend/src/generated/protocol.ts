@@ -171,6 +171,16 @@ state: string | null, release: string | null, cpus: number | null, memory: Usage
 panes: number, };
 
 // prettier-ignore
+export type HealthLevel = "ok" | "busy" | "down" | "failing";
+
+// prettier-ignore
+export type SandboxHealth = { instance: string, level: HealthLevel,
+/**
+ * What the status bar says, such as "running" or "not answering: …".
+ */
+summary: string, };
+
+// prettier-ignore
 export type SessionSnapshot = { id: string, name: string, runtime: Runtime, windows: Array<WindowSnapshot>, active_window: number, };
 
 // prettier-ignore
@@ -929,7 +939,7 @@ os_client: number | null, } | { "type": "notification", level: NotificationLevel
 /**
  * The client that should show an OS notification; `None` lets every client decide.
  */
-os_client: number | null, } | { "type": "client", id: number, } | { "type": "open_file_browser", pane_id: string, path: string, mode: FileBrowserMode, focus_file: string | null, } | { "type": "focus_pane", pane_id: string, } | { "type": "editor_reveal", pane_id: string, path: string, line: number, } | { "type": "open_nvim", pane_id: string, } | { "type": "open_vscode", pane_id: string, path: string | null, line: number | null, explicit: boolean, } | { "type": "editor_shut_down", editor: Editor, id: string | null, replay: boolean, } | { "type": "tailscale", status: TailscaleStatus, } | { "type": "connect", status: ConnectStatus, } | { "type": "widgets", widgets: Array<WidgetSummary>, } | { "type": "popups", popups: Array<PopupSummary>, } | { "type": "github", statuses: Array<GithubStatus>, };
+os_client: number | null, } | { "type": "client", id: number, } | { "type": "open_file_browser", pane_id: string, path: string, mode: FileBrowserMode, focus_file: string | null, } | { "type": "focus_pane", pane_id: string, } | { "type": "editor_reveal", pane_id: string, path: string, line: number, } | { "type": "open_nvim", pane_id: string, } | { "type": "open_vscode", pane_id: string, path: string | null, line: number | null, explicit: boolean, } | { "type": "editor_shut_down", editor: Editor, id: string | null, replay: boolean, } | { "type": "tailscale", status: TailscaleStatus, } | { "type": "connect", status: ConnectStatus, } | { "type": "widgets", widgets: Array<WidgetSummary>, } | { "type": "popups", popups: Array<PopupSummary>, } | { "type": "sandbox", health: SandboxHealth | null, } | { "type": "github", statuses: Array<GithubStatus>, };
 
 // prettier-ignore
 export type FileBrowserMode = "files" | "git" | "process";

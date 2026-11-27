@@ -8,6 +8,21 @@ actions, saved state, and API types can change in any release.
 
 ## [Unreleased]
 
+### Added
+
+- The status bar's sandbox button shows a dot for the Multipass sandbox's
+  health while a session uses it: green when it answers, yellow while it
+  starts, gray when stopped, and red when it doesn't answer although
+  Multipass says it runs. A sandbox that doesn't answer can be force
+  stopped from it.
+
+### Fixed
+
+- A sandboxed pane says when it waits for the sandbox to answer, no longer
+  echoes keys typed meanwhile, and keeps its error shown until Enter is
+  pressed after it. When the sandbox crashed but Multipass still says it
+  runs, the error says how to recover.
+
 ## [0.0.223] - 2026-11-27
 
 ### Changed

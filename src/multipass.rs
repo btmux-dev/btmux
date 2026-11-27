@@ -897,8 +897,24 @@ fn prepare(args: &GuestShellArgs) -> Result<(), String> {
     for attempt in 0.. {
         match run(&["exec", instance, "-n", "--", "true"]) {
             Ok(_) => break,
-            Err(error) if attempt == 30 => return Err(error),
-            Err(_) => std::thread::sleep(std::time::Duration::from_secs(2)),
+            Err(error) if attempt == 30 => {
+                // A VM that crashed (or failed to resume) can stay "Running".
+                return Err(if current.state == "Running" {
+                    format!(
+                        "{instance} doesn't answer ({error}). Multipass says it is running, so it may have crashed: \
+                         force stop it from the status bar's sandbox button (or run \
+                         `multipass stop --force {instance}`) and open a sandboxed pane again"
+                    )
+                } else {
+                    error
+                });
+            }
+            Err(_) => {
+                if attempt == 0 {
+                    say(&format!("waiting for {instance} to answer"));
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2))
+            }
         }
     }
     // Still initializing when another server or a timed-out launch left it.
@@ -1188,7 +1204,12 @@ pub async fn guest_shell(args: GuestShellArgs) -> i32 {
         return fail("BTMUX_PANE_ID is unset");
     };
     loop {
-        let command = match enter(&args, &pane).await {
+        // Until the shell runs, nothing reads typed keys.
+        let entered = {
+            let _quiet = NoEcho::new();
+            enter(&args, &pane).await
+        };
+        let command = match entered {
             Ok(command) => command,
             Err(error) => return fail(&error),
         };
@@ -1214,6 +1235,7 @@ pub async fn guest_shell(args: GuestShellArgs) -> i32 {
             "\x1b[0m\x1b[?1049l\x1b[?25h\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l"
         );
         eprint!("\r\n\x1b[33mbtmux: {why}.\x1b[0m Press Enter to {verb} it again.\r\n");
+        discard_input();
         let mut line = String::new();
         if !matches!(std::io::stdin().read_line(&mut line), Ok(1..)) {
             return code;
@@ -1337,9 +1359,55 @@ fn instance_gone(instance: &str) -> Option<(String, &'static str)> {
     })
 }
 
+/// Drop keys typed before a prompt, so only an answer to it counts.
+fn discard_input() {
+    #[cfg(unix)]
+    // SAFETY: takes no pointers.
+    unsafe {
+        libc::tcflush(libc::STDIN_FILENO, libc::TCIFLUSH);
+    }
+}
+
+/// Terminal echo off while it lives, so keys typed during setup don't look
+/// like a shell's.
+struct NoEcho {
+    #[cfg(unix)]
+    saved: Option<libc::termios>,
+}
+
+impl NoEcho {
+    fn new() -> Self {
+        #[cfg(unix)]
+        {
+            // SAFETY: tcgetattr/tcsetattr write only `termios`, which we own.
+            let mut termios: libc::termios = unsafe { std::mem::zeroed() };
+            if unsafe { libc::tcgetattr(libc::STDIN_FILENO, &mut termios) } != 0 {
+                return Self { saved: None };
+            }
+            let saved = termios;
+            termios.c_lflag &= !libc::ECHO;
+            unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &termios) };
+            Self { saved: Some(saved) }
+        }
+        #[cfg(not(unix))]
+        Self {}
+    }
+}
+
+impl Drop for NoEcho {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(saved) = &self.saved {
+            // SAFETY: as in `new`.
+            unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, saved) };
+        }
+    }
+}
+
 /// Show the error until a key is pressed, then exit, closing the pane.
 fn fail(error: &str) -> i32 {
     eprintln!("\x1b[31mbtmux: {error}\x1b[0m\r\nPress Enter to close this pane.");
+    discard_input();
     let mut line = String::new();
     let _ = std::io::stdin().read_line(&mut line);
     1
@@ -1365,6 +1433,10 @@ pub struct InstanceStatus {
 pub enum InstanceAction {
     Start,
     Stop,
+    /// `stop --force`: kills the VM, for one that doesn't answer. Also
+    /// discards a suspended VM's state.
+    #[serde(rename = "force-stop")]
+    ForceStop,
     Restart,
     /// `delete --purge`.
     Delete,
@@ -1393,6 +1465,154 @@ fn instance_status(instance: String, panes: usize) -> Result<InstanceStatus, Str
         instance,
         panes,
     })
+}
+
+/// How the sandbox is doing, for the status bar's dot.
+#[derive(Serialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub enum HealthLevel {
+    /// Running and answering commands.
+    Ok,
+    /// Starting, stopping, or being set up by a pane.
+    Busy,
+    /// Stopped, suspended, or not created.
+    Down,
+    /// Not answering while Multipass says it runs, or Multipass failed.
+    Failing,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct SandboxHealth {
+    pub instance: String,
+    pub level: HealthLevel,
+    /// What the status bar says, such as "running" or "not answering: …".
+    pub summary: String,
+}
+
+const HEALTH_TICK: Duration = Duration::from_secs(5);
+/// Between checks of an unchanged instance; each runs `multipass exec`.
+const HEARTBEAT: Duration = Duration::from_secs(20);
+const EXEC_TIMEOUT: Duration = Duration::from_secs(10);
+
+static HEALTH: Mutex<Option<SandboxHealth>> = Mutex::new(None);
+static RECHECK: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+/// The last heartbeat, while a session uses the sandbox; for new control sockets.
+pub fn health() -> Option<SandboxHealth> {
+    HEALTH.lock().unwrap().clone()
+}
+
+/// Checks the sandbox while a session uses it and a tab is connected, and
+/// broadcasts `ServerMessage::Sandbox` when its health changes.
+pub fn spawn_heartbeat(state: crate::AppState) {
+    tokio::spawn(async move {
+        let mut last: Option<(String, Instant)> = None;
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(HEALTH_TICK) => {}
+                _ = RECHECK.notified() => last = None,
+            }
+            let (instance, clients) = {
+                let mgr = state.read().await;
+                (mgr.guest_instance(), mgr.client_count())
+            };
+            let Some(instance) = instance else {
+                last = None;
+                publish_health(&state, None).await;
+                continue;
+            };
+            let due = match &last {
+                Some((checked, at)) => *checked != instance || at.elapsed() >= HEARTBEAT,
+                None => true,
+            };
+            if clients == 0 || !due {
+                continue;
+            }
+            let name = instance.clone();
+            let Ok(health) = tokio::task::spawn_blocking(move || check_health(&name)).await else {
+                continue;
+            };
+            last = Some((instance, Instant::now()));
+            publish_health(&state, Some(health)).await;
+        }
+    });
+}
+
+async fn publish_health(state: &crate::AppState, health: Option<SandboxHealth>) {
+    {
+        let mut published = HEALTH.lock().unwrap();
+        if *published == health {
+            return;
+        }
+        published.clone_from(&health);
+    }
+    let message = crate::ws::control::ServerMessage::Sandbox { health };
+    let json = serde_json::to_string(&message).unwrap();
+    let _ = state.read().await.events().send(json);
+}
+
+fn check_health(instance: &str) -> SandboxHealth {
+    let (level, summary) = match info(instance) {
+        Err(error) => (HealthLevel::Failing, error),
+        Ok(None) => (HealthLevel::Down, "not created".into()),
+        Ok(Some(info)) => match info.state.as_str() {
+            // One retry: SSH to an idle instance can fail once.
+            "Running" => match exec_true(instance).or_else(|_| {
+                std::thread::sleep(Duration::from_secs(2));
+                exec_true(instance)
+            }) {
+                Ok(()) => (HealthLevel::Ok, "running".into()),
+                // A pane starting it waits for SSH itself.
+                Err(_) if matches!(try_lock(instance), Ok(None)) => {
+                    (HealthLevel::Busy, "being set up".into())
+                }
+                Err(error) => (HealthLevel::Failing, format!("not answering: {error}")),
+            },
+            "Stopped" | "Suspended" => (HealthLevel::Down, info.state.to_lowercase()),
+            "Deleted" => (HealthLevel::Down, "deleted".into()),
+            other => (HealthLevel::Busy, other.to_lowercase()),
+        },
+    };
+    SandboxHealth {
+        instance: instance.to_string(),
+        level,
+        summary,
+    }
+}
+
+/// `multipass exec … true`, killed after `EXEC_TIMEOUT`.
+fn exec_true(instance: &str) -> Result<(), String> {
+    let mut child = multipass()?
+        .args(["exec", instance, "-n", "--", "true"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("cannot run multipass: {e}"))?;
+    let deadline = Instant::now() + EXEC_TIMEOUT;
+    loop {
+        match child.try_wait().map_err(|e| e.to_string())? {
+            Some(status) if status.success() => return Ok(()),
+            Some(status) => {
+                let mut stderr = String::new();
+                if let Some(mut pipe) = child.stderr.take() {
+                    let _ = std::io::Read::read_to_string(&mut pipe, &mut stderr);
+                }
+                return Err(match stderr.trim() {
+                    "" => status.to_string(),
+                    stderr => stderr.to_string(),
+                });
+            }
+            None if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("no answer in {} s", EXEC_TIMEOUT.as_secs()));
+            }
+            None => std::thread::sleep(Duration::from_millis(100)),
+        }
+    }
 }
 
 /// `GET /api/multipass`.
@@ -1425,6 +1645,7 @@ pub async fn api_action(
             let args: &[&str] = match action {
                 InstanceAction::Start => &["start", &instance],
                 InstanceAction::Stop => &["stop", &instance],
+                InstanceAction::ForceStop => &["stop", "--force", &instance],
                 InstanceAction::Restart => &["restart", &instance],
                 InstanceAction::Delete => &["delete", "--purge", &instance],
             };
@@ -1433,7 +1654,7 @@ pub async fn api_action(
         .await
     };
     match done {
-        Ok(Ok(())) => {}
+        Ok(Ok(())) => RECHECK.notify_one(),
         Ok(Err(error)) => return (StatusCode::CONFLICT, error).into_response(),
         Err(error) => {
             return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response()
