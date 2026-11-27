@@ -16,7 +16,7 @@ actions, saved state, and API types can change in any release.
   viewer, and the sessions menu. A window shows its active pane, with a map of
   its panes beside the buttons to switch panes with a tap. On other narrow
   screens, the status bar's session button opens the sessions list and its
-  tools are one **…** menu.
+  tools are one **…** menu. ([#205](https://github.com/btmux-dev/btmux/pull/205))
 
 ### Fixed
 
