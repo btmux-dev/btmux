@@ -17,6 +17,7 @@ actions, saved state, and API types can change in any release.
   stopped from it. ([#206](https://github.com/btmux-dev/btmux/pull/206))
 - The tailnet button's popover can copy its one-time sign-in link, to sign
   in another computer without the access token.
+  ([#207](https://github.com/btmux-dev/btmux/pull/207))
 
 ### Fixed
 
