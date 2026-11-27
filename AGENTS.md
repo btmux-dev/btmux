@@ -1397,8 +1397,11 @@ same id and an optional error, sent only to its originating socket. State remain
 server-authoritative and shared, including active window/pane selection; session
 navigation in the URL is per browser. Lagging control sockets resnapshot config
 and state. Lagging PTY sockets disconnect and reconnect to a fresh replay.
-Sockets can die without closing (a laptop that slept): the server pings
-control, pane, and editor sockets (`ws/keepalive.rs`) and drops peers silent
-for 45 s; tabs (`lib/liveness.ts`) give up on connects not open in 8 s and,
-on wake (`online`, shown, or a timer firing late), send `{"type":"ping"}`,
-dropping sockets that get no frame within 3 s and retrying at once.
+Sockets can die without closing (a laptop that slept, a VPN route change):
+the server pings control, pane, and editor sockets (`ws/keepalive.rs`) and
+drops peers silent for 45 s; tabs (`lib/liveness.ts`) give up on connects not
+open in 8 s and, on wake (`online`, shown, or a timer firing late) or after
+10 s without a frame, send `{"type":"ping"}`, dropping sockets that get no
+frame within 3 s (longer while their send buffer drains) and retrying at
+once. A pane reader waiting on a full PTY input queue counts its peer alive
+and sends `pong` each second, so a stalled paste isn't taken for a dead tab.

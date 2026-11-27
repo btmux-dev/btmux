@@ -39,7 +39,8 @@ async fn handle_socket(socket: WebSocket) {
                 break;
             }
         }
-        let _ = ws_tx.close().await;
+        // Closing flushes the sink, which a dead peer never drains.
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), ws_tx.close()).await;
     };
     let reader = async {
         while let Some(Ok(msg)) = ws_rx.next().await {

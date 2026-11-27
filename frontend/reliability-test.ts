@@ -33,7 +33,8 @@ try {
     const Original = window.WebSocket;
     (window as any).testSockets = [];
     (window as any).testMessages = [];
-    // `frozen` sockets act dead without closing, as after sleep: nothing arrives or leaves.
+    // `frozen` sockets act dead, as after sleep: nothing arrives or leaves, and
+    // `close()` fires no close event, which a dead connection would only fire late.
     window.WebSocket = class extends Original {
       frozen = false;
       constructor(url: string | URL, protocols?: string | string[]) {
@@ -53,6 +54,12 @@ try {
       }
       send(data: string | ArrayBufferLike | Blob | ArrayBufferView) {
         if (!this.frozen) super.send(data);
+      }
+      close(code?: number, reason?: string) {
+        if (!this.frozen) super.close(code, reason);
+      }
+      realClose() {
+        super.close();
       }
     };
   });
@@ -329,7 +336,9 @@ try {
 
   // After sleep, sockets can look open while dead. On wake, unanswered probes drop them at once.
   const frozenAt = await page.evaluate(() => {
-    for (const s of (window as any).testSockets) s.frozen = true;
+    (window as any).testMessages.length = 0;
+    // Not Vite's HMR socket, whose close reloads the page.
+    for (const s of (window as any).testSockets) if (new URL(s.url).pathname.startsWith('/ws/')) s.frozen = true;
     window.dispatchEvent(new Event('online'));
     return Date.now();
   });
@@ -350,7 +359,12 @@ try {
   );
   const recovered = (await page.evaluate(() => Date.now())) - frozenAt;
   assert(recovered < 6000, `wake recovery took ${recovered} ms`);
-  await api(`/api/panes/${pane}/input`, { text: "printf 'WAKE_%s\\n' OK\r" });
+  // Typed through the replacement socket, not the API.
+  await page.evaluate((id) => {
+    (window as any).testSockets
+      .findLast((s: any) => s.url.includes(`/ws/pane/${id}`) && s.readyState === 1 && !s.frozen)
+      .send(new TextEncoder().encode("printf 'WAKE_%s\\n' OK\r"));
+  }, pane);
   await waitForAsync(
     page,
     async (id) => {
@@ -359,6 +373,9 @@ try {
     },
     pane,
   );
+  await page.evaluate(() => {
+    for (const s of (window as any).testSockets) if (s.frozen) s.realClose();
+  });
   console.log('PASS dead sockets reconnect on wake');
 
   const second = await context.newPage();

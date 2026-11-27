@@ -299,7 +299,21 @@ async fn handle_socket(
                     }
                     // A kept pane's program exited: nothing reads input, but
                     // it is still counted for the key overlay.
-                    if input_tx.send_wait(data.to_vec()).await.is_err() && alive() {
+                    let queued = input_tx.send_wait(data.to_vec());
+                    tokio::pin!(queued);
+                    // A program not reading input stops this reader, and with it
+                    // pings and pongs: the peer is sending, so it counts as alive,
+                    // and pongs keep the tab's probes answered.
+                    let result = loop {
+                        tokio::select! {
+                            result = &mut queued => break result,
+                            () = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+                                keepalive.seen();
+                                pong.notify_one();
+                            }
+                        }
+                    };
+                    if result.is_err() && alive() {
                         break;
                     }
                     if watched {
