@@ -449,6 +449,50 @@ dialog::backdrop {
   backdrop-filter: none !important;
 }
 
+/* Side nav session list: edges fade where more sessions are scrolled out of
+   view (a mask, since the nav is translucent glass). */
+@property --btm-nav-fade-start {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@property --btm-nav-fade-end {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@supports (animation-timeline: scroll()) {
+  nav.btm-side-nav > div:has(> .btm-nav-sessions) {
+    --btm-nav-fade: 1.5rem;
+    scroll-padding-block: var(--btm-nav-fade);
+    mask:
+      linear-gradient(black, black) no-clip subtract,
+      linear-gradient(to bottom, black, transparent) 0 0 / 100% var(--btm-nav-fade-start) no-repeat no-clip,
+      linear-gradient(to bottom, transparent, black) 0 100% / 100% var(--btm-nav-fade-end) no-repeat no-clip;
+    animation:
+      btm-nav-fade-start linear both,
+      btm-nav-fade-end linear both;
+    animation-timeline: scroll(self block);
+    animation-range:
+      0 var(--btm-nav-fade),
+      calc(100% - var(--btm-nav-fade)) 100%;
+  }
+  /* The collapsed rail is too narrow for a scrollbar; the fades show it scrolls. */
+  nav.btm-side-nav-collapsed > div:has(> .btm-nav-sessions) {
+    scrollbar-width: none;
+  }
+}
+@keyframes btm-nav-fade-start {
+  to {
+    --btm-nav-fade-start: var(--btm-nav-fade);
+  }
+}
+@keyframes btm-nav-fade-end {
+  from {
+    --btm-nav-fade-end: var(--btm-nav-fade);
+  }
+}
+
 /* Below the breakpoint the side nav is a drawer dialog, capped at 320px; on
    phones that left a strip of backdrop beside it. */
 dialog.btm-side-nav > div {
